@@ -26,6 +26,15 @@ WHERE existing.`id` IS NULL;
 UPDATE `opportunity_package_policies` policy
 JOIN `packages` package
   ON LOWER(policy.`packageName`) = LOWER(package.`name`)
+JOIN (
+  SELECT
+    `id`,
+    `minimumPayoutRateBps` AS `savedMinimumPayoutRateBps`,
+    `maximumPayoutRateBps` AS `savedMaximumPayoutRateBps`,
+    `minimumTradeDurationSeconds` AS `savedMinimumTradeDurationSeconds`,
+    `maximumTradeDurationSeconds` AS `savedMaximumTradeDurationSeconds`
+  FROM `opportunity_package_policies`
+) saved ON saved.`id` = policy.`id`
 SET
   policy.`enabled` = 1,
   policy.`automaticDelivery` = 1,
@@ -34,10 +43,26 @@ SET
     WHEN policy.`dailyPopupTarget` > 0 THEN policy.`dailyPopupTarget`
     ELSE GREATEST(1, package.`opportunitiesPerDay`)
   END,
-  policy.`minimumPayoutRateBps` = COALESCE(policy.`minimumPayoutRateBps`, 200),
-  policy.`maximumPayoutRateBps` = COALESCE(policy.`maximumPayoutRateBps`, GREATEST(COALESCE(policy.`minimumPayoutRateBps`, 200), 300)),
-  policy.`minimumTradeDurationSeconds` = COALESCE(policy.`minimumTradeDurationSeconds`, 300),
-  policy.`maximumTradeDurationSeconds` = COALESCE(policy.`maximumTradeDurationSeconds`, GREATEST(COALESCE(policy.`minimumTradeDurationSeconds`, 300), 900)),
+  policy.`minimumPayoutRateBps` = CASE
+    WHEN saved.`savedMinimumPayoutRateBps` BETWEEN 1 AND 5000
+     AND saved.`savedMaximumPayoutRateBps` BETWEEN saved.`savedMinimumPayoutRateBps` AND 5000
+    THEN saved.`savedMinimumPayoutRateBps` ELSE 200
+  END,
+  policy.`maximumPayoutRateBps` = CASE
+    WHEN saved.`savedMinimumPayoutRateBps` BETWEEN 1 AND 5000
+     AND saved.`savedMaximumPayoutRateBps` BETWEEN saved.`savedMinimumPayoutRateBps` AND 5000
+    THEN saved.`savedMaximumPayoutRateBps` ELSE 300
+  END,
+  policy.`minimumTradeDurationSeconds` = CASE
+    WHEN saved.`savedMinimumTradeDurationSeconds` BETWEEN 10 AND 86400
+     AND saved.`savedMaximumTradeDurationSeconds` BETWEEN saved.`savedMinimumTradeDurationSeconds` AND 86400
+    THEN saved.`savedMinimumTradeDurationSeconds` ELSE 300
+  END,
+  policy.`maximumTradeDurationSeconds` = CASE
+    WHEN saved.`savedMinimumTradeDurationSeconds` BETWEEN 10 AND 86400
+     AND saved.`savedMaximumTradeDurationSeconds` BETWEEN saved.`savedMinimumTradeDurationSeconds` AND 86400
+    THEN saved.`savedMaximumTradeDurationSeconds` ELSE 900
+  END,
   policy.`policyVersion` = GREATEST(COALESCE(policy.`policyVersion`, 0), 1) + 1,
   policy.`updatedAt` = UTC_TIMESTAMP(3);
 --> statement-breakpoint
