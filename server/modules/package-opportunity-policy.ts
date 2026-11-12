@@ -26,11 +26,10 @@ export type PackageOpportunityPolicyPatch = Pick<OpportunityPackagePolicyRow, "p
 /**
  * Defaults for a newly created package's policy row.
  *
- * Delivery masters intentionally remain OFF compatibility placeholders:
- * global delivery/eligibility controls are owned by Package Configuration.
- * The package can be enabled independently, but delivery still requires valid
- * package terms and the global masters. Automatic execution is permitted only
- * when explicitly enabled and the live-result worker can settle from market data.
+ * A newly created package is ready for informational opportunity delivery once
+ * its package lifecycle is enabled. Global delivery masters remain separately
+ * owned by Package Configuration. Automatic financial execution is deliberately
+ * OFF; this policy must never reserve or debit customer funds by default.
  */
 export const DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY = {
   badgeLabel: null,
@@ -51,9 +50,9 @@ export const DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY = {
   marketInfluenceBps: 0,
   burstEnabled: false,
   maxBurstSize: 3,
-  enabled: false,
-  automaticDelivery: false,
-  dailyPopupTarget: 0,
+  enabled: true,
+  automaticDelivery: true,
+  dailyPopupTarget: 10,
   schedulingPeriod: "rolling_24h",
   minIntervalSeconds: 45,
   maxIntervalSeconds: 3600,
@@ -69,7 +68,7 @@ export const DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY = {
   duplicatePrevention: true,
   audioEnabled: true,
   audioSound: "soft-chime",
-  automaticTradingEnabled: true,
+  automaticTradingEnabled: false,
   maxTradeAttemptsPerDay: 0,
   tradeRetryDelaySeconds: 30,
   maxSuccessfulTradesPerDay: 0,
@@ -115,8 +114,7 @@ export function resolveEffectivePackageOpportunityPolicy(
     ...supplied,
     packageName,
     updatedBy,
-    // Keep this package-scoped; the automatic result worker still fails closed
-    // when a live exit snapshot is unavailable.
-    automaticTradingEnabled: Boolean(supplied.automaticTradingEnabled ?? current?.automaticTradingEnabled ?? DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticTradingEnabled),
+    // Financial execution is not enabled by package creation or policy editing.
+    automaticTradingEnabled: false,
   };
 }
