@@ -1,0 +1,90 @@
+name: One-time last2.zip replacement
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  replace:
+    if: github.event.head_commit.message == 'Run one-time extraction of last2.zip'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Validate and extract the seven approved files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f last2.zip
+          unzip -t last2.zip
+          expected="$(printf '%s\\n' \
+            'client/src/App.tsx' \
+            'client/src/index.css' \
+            'drizzle/0112_permanent_automatic_financial_execution.sql' \
+            'drizzle/meta/_journal.json' \
+            'drizzle/schema.ts' \
+            'server/db.ts' \
+            'server/trading-global-policy.ts' | sort)"
+          actual="$(unzip -Z1 last2.zip | grep -v '/$' | sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Archive file list differs from the seven approved paths."
+            printf 'Expected:\\n%s\\nActual:\\n%s\\n' "$expected" "$actual"
+            exit 1
+          fi
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          unzip -q last2.zip -d "$tmp"
+          for path in \
+            'client/src/App.tsx' \
+            'client/src/index.css' \
+            'drizzle/0112_permanent_automatic_financial_execution.sql' \
+            'drizzle/meta/_journal.json' \
+            'drizzle/schema.ts' \
+            'server/db.ts' \
+            'server/trading-global-policy.ts'; do
+            test -f "$tmp/$path"
+            test ! -L "$tmp/$path"
+          done
+          if grep -RInE -- \
+            '-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|sk_live_[A-Za-z0-9]+|DATABASE_URL=[^[:space:]]+|mysql://[^[:space:]]+:[^@[:space:]]+@' \
+            "$tmp/client" "$tmp/drizzle" "$tmp/server"; then
+            echo "Potential credential material detected; refusing to publish."
+            exit 1
+          fi
+          for path in \
+            'client/src/App.tsx' \
+            'client/src/index.css' \
+            'drizzle/0112_permanent_automatic_financial_execution.sql' \
+            'drizzle/meta/_journal.json' \
+            'drizzle/schema.ts' \
+            'server/db.ts' \
+            'server/trading-global-policy.ts'; do
+            install -D "$tmp/$path" "$path"
+          done
+
+      - name: Commit replacements and remove temporary archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            'client/src/App.tsx' \
+            'client/src/index.css' \
+            'drizzle/0112_permanent_automatic_financial_execution.sql' \
+            'drizzle/meta/_journal.json' \
+            'drizzle/schema.ts' \
+            'server/db.ts' \
+            'server/trading-global-policy.ts'
+          git rm -f -- last2.zip .github/workflows/apply-last2-replacement.yml
+          git diff --cached --check
+          git commit -m "Apply seven updated project files and remove upload archive"
+          git push origin HEAD:main
