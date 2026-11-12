@@ -6,7 +6,7 @@ import {
 } from "./modules/package-opportunity-policy";
 
 describe("canonical package opportunity policy contract", () => {
-  it("defines safe defaults for a newly created package with explicit worker-gated execution", () => {
+  it("creates delivery-ready package defaults while keeping financial execution disabled", () => {
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.minimumPayoutRateBps).toBe(200);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.maximumPayoutRateBps).toBe(300);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.minimumTradeDurationSeconds).toBe(300);
@@ -14,9 +14,9 @@ describe("canonical package opportunity policy contract", () => {
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.minIntervalSeconds).toBe(45);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.maxIntervalSeconds).toBe(3600);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.maxPendingDeliveries).toBe(3);
-    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticTradingEnabled).toBe(true);
-    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.enabled).toBe(false);
-    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticDelivery).toBe(false);
+    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticTradingEnabled).toBe(false);
+    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.enabled).toBe(true);
+    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticDelivery).toBe(true);
   });
 
   it("keeps package edits isolated and preserves every omitted saved value", () => {
@@ -38,8 +38,8 @@ describe("canonical package opportunity policy contract", () => {
     expect(beta.dailyPopupTarget).toBe(4);
     expect(beta.maxPendingDeliveries).toBe(8);
     expect(alpha.packageName).not.toBe(beta.packageName);
-    expect(alpha.automaticTradingEnabled).toBe(true);
-    expect(beta.automaticTradingEnabled).toBe(true);
+    expect(alpha.automaticTradingEnabled).toBe(false);
+    expect(beta.automaticTradingEnabled).toBe(false);
   });
 
   it("rejects a saved or submitted policy belonging to another package", () => {
