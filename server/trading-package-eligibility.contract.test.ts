@@ -6,6 +6,7 @@ const source = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const packagePolicySource = readFileSync(new URL("./modules/package-opportunity-policy.ts", import.meta.url), "utf8");
 const router = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const executionOffMigrationSource = readFileSync(new URL("../drizzle/0098_disable_automatic_financial_execution.sql", import.meta.url), "utf8");
+const tierEnableMigrationSource = readFileSync(new URL("../drizzle/0113_enable_tiers_for_informational_delivery.sql", import.meta.url), "utf8");
 
 describe("server-side automatic Trading tier eligibility", () => {
   it("blocks automatic opportunity delivery without a matching active auto-assigned tier", () => {
@@ -57,7 +58,11 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(implementation).toContain("!Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))");
     expect(implementation).not.toContain("!activationPolicy.automaticTradingEnabled");
     expect(implementation).toContain("if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&(");
-    expect(implementation).toContain("Automatic financial execution is a separate control");
+    expect(implementation).toContain("Automatic financial execution remains disabled");
+    expect(implementation).toContain("enabled:true");
+    expect(implementation).toContain("automaticDelivery:true");
+    expect(implementation).toContain("automaticTradingEnabled:false");
+    expect(implementation).toContain("trading_tier_informational_delivery_enabled");
   });
 
   it("does not require a valid delivery policy to edit an already-enabled tier", () => {
@@ -72,27 +77,30 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(defaults).toContain("maximumPayoutRateBps: 300");
     expect(defaults).toContain("minimumTradeDurationSeconds: 300");
     expect(defaults).toContain("maximumTradeDurationSeconds: 900");
-    expect(defaults).toContain("enabled: false");
-    expect(defaults).toContain("automaticDelivery: false");
+    expect(defaults).toContain("enabled: true");
+    expect(defaults).toContain("automaticDelivery: true");
     expect(defaults).toContain("companyRotationEnabled: false");
     expect(defaults).toContain("randomizationEnabled: false");
     expect(defaults).toContain("burstEnabled: false");
     expect(defaults).toContain("maxBurstSize: 3");
-    expect(defaults).toContain("automaticTradingEnabled: true");
+    expect(defaults).toContain("automaticTradingEnabled: false");
     expect(defaults).toContain("requirePreviousSettlement: true");
     expect(defaults).toContain("policyVersion: 1");
     expect(router).toContain("globalTradeControls: adminProcedure.query(() => getTradeGlobalControls())");
   });
 
-  it("enables package-scoped execution only through the live market-result worker", () => {
+  it("keeps financial execution disabled in package defaults and migration 0113", () => {
     expect(source).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;");
     expect(source).toContain("AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.workerCycle");
-    expect(packagePolicySource).toContain("automaticTradingEnabled: true");
+    expect(packagePolicySource).toContain("automaticTradingEnabled: false");
     expect(source).toContain("requested.some(policy=>(policy as Record<string,unknown>).automaticTradingEnabled===true)");
     expect(source).toContain("processAutomaticMarketSettlements");
     expect(source).toContain("recorded_market_snapshot");
     expect(source).toContain("no configured payout percentage was used as the result");
     expect(executionOffMigrationSource).toContain("automaticTradingEnabled");
+    expect(tierEnableMigrationSource).toContain("UPDATE `packages`");
+    expect(tierEnableMigrationSource).toContain("policy.`automaticTradingEnabled` = 0");
+    expect(tierEnableMigrationSource).toContain("policy.`automaticDelivery` = 1");
   });
 
   it("returns the package's persisted enabled state from package creation", () => {
