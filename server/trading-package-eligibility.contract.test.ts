@@ -69,7 +69,7 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(isTradingTierEnablingTransition(true, true)).toBe(false);
   });
 
-  it("creates policy rows with valid tier terms but inert legacy master placeholders", () => {
+  it("creates policy rows with valid terms and informational delivery enabled", () => {
     const start = packagePolicySource.indexOf("export const DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY = {");
     const end = packagePolicySource.indexOf("} as const satisfies", start);
     const defaults = packagePolicySource.slice(start, end);
