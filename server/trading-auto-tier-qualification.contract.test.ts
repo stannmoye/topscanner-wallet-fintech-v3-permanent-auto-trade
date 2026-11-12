@@ -246,13 +246,13 @@ describe("Automatic Trading tier qualification", () => {
     expect(packagePolicySource).toContain("maximumPayoutRateBps: 300");
     expect(packagePolicySource).toContain("minimumTradeDurationSeconds: 300");
     expect(packagePolicySource).toContain("maximumTradeDurationSeconds: 900");
-    expect(packagePolicySource).toContain("automaticTradingEnabled: true");
+    expect(packagePolicySource).toContain("automaticTradingEnabled: false");
     expect(databaseSource).not.toContain("New Trading tiers must be created disabled.");
     expect(packagePolicySource).toContain("companyRotationEnabled: false");
     expect(packagePolicySource).toContain("burstEnabled: false");
     expect(packagePolicySource).toContain("maxBurstSize: 3");
-    expect(packagePolicySource).toContain("enabled: false");
-    expect(packagePolicySource).toContain("automaticDelivery: false");
+    expect(packagePolicySource).toContain("enabled: true");
+    expect(packagePolicySource).toContain("automaticDelivery: true");
     expect(packagePolicySource).toContain("randomizationEnabled: false");
     expect(databaseSource).toContain("expiresAt:input.expiresAt,enabled:input.enabled,termsVersion:1");
     expect(databaseSource).toContain("Save and enable a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier.");
