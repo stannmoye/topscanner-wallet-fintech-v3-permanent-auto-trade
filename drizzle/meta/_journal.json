@@ -1,0 +1,580 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1788785580464,
+      "tag": "0000_initial_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1790811777565,
+      "tag": "0001_silent_tinkerer",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1790813073498,
+      "tag": "0002_eager_overlord",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1790929044690,
+      "tag": "0003_jittery_marvel_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1791014643235,
+      "tag": "0004_legal_bloodscream",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1791103589960,
+      "tag": "0005_v5_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1791103589961,
+      "tag": "0006_v5_reporting_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1791106701093,
+      "tag": "0007_customer_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1791107700180,
+      "tag": "0008_currency_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1791110831533,
+      "tag": "0009_customer_opportunity_visibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1791112000000,
+      "tag": "0010_support_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1788785580466,
+      "tag": "0011_stake_earn",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1788785580467,
+      "tag": "0012_transaction_console",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1788785580468,
+      "tag": "0013_auto_trade_missed_opportunities",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1788785580469,
+      "tag": "0014_console_activity_phrases",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "5",
+      "when": 1791115000000,
+      "tag": "0015_market_data_fx",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1760000000000,
+      "tag": "0016_customer_wallet_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1760000001000,
+      "tag": "0017_customer_opportunity_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1760000002000,
+      "tag": "0018_opportunity_refresh_popup_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1760000003000,
+      "tag": "0019_daily_opportunity_quotas",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1760000004000,
+      "tag": "0020_opportunity_delivery_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1760000005000,
+      "tag": "0021_adaptive_package_rate_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1791355934396,
+      "tag": "0022_popup_lifecycle_reporting",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1791355934397,
+      "tag": "0023_popup_daily_aggregates",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791395748792,
+      "tag": "0024_admin_auto_trade_policy",
+      "breakpoints": false
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791397136509,
+      "tag": "0025_seed_opportunity_package_policies",
+      "breakpoints": false
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791398866824,
+      "tag": "0026_trade_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791399499782,
+      "tag": "0027_database_configuration_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791400750664,
+      "tag": "0028_trade_settlement_gate",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791414924658,
+      "tag": "0029_trade_inter_trade_cooldown",
+      "breakpoints": false
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791437319341,
+      "tag": "0030_admin_timing_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791438094423,
+      "tag": "0031_package_trade_amount_bounds",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1760000006000,
+      "tag": "0032_package_trade_dollar_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791535401065,
+      "tag": "0033_email_delivery_flows",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792771200000,
+      "tag": "0062_worker_runtime_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792771200001,
+      "tag": "0048_pending_boost_rewards",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792858101055,
+      "tag": "0067_trade_settlement_reference_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792858818726,
+      "tag": "0068_trade_realized_profit_accounting",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792859940930,
+      "tag": "0069_trading_package_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792861000000,
+      "tag": "0070_local_scheduled_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793025000000,
+      "tag": "0071_trade_allocation_pause",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793033000000,
+      "tag": "0072_wallet_ledger_reconciliation_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1793035055833,
+      "tag": "0073_trade_settlement_recovery_cases",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1793060000000,
+      "tag": "0074_trade_execution_retries",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1793061000000,
+      "tag": "0075_trade_retry_delay_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793062000000,
+      "tag": "0076_trading_admin_policy_read_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1793062000001,
+      "tag": "0077_trading_package_catalogue_schema_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793063000000,
+      "tag": "0078_trading_customer_package_subscription_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1793064000000,
+      "tag": "0079_trade_settlement_timing_schema_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1793145600000,
+      "tag": "0080_qualifying_admin_deposit_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1793232000000,
+      "tag": "0081_trading_tier_policy_alignment",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1793232000001,
+      "tag": "0082_trading_tier_qualification_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1793318400000,
+      "tag": "0083_trading_opportunity_worker_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1793318400002,
+      "tag": "0084_worker_health_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1793318400003,
+      "tag": "0085_trade_settlement_schema_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1793404800002,
+      "tag": "0086_trading_popup_policy_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1793404800003,
+      "tag": "0087_trading_opportunity_execution_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1793404800004,
+      "tag": "0088_trading_package_policy_schema_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1793404800005,
+      "tag": "0089_trading_popup_policy_ranges",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1793404800006,
+      "tag": "0090_trading_company_spotlight_rotation",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1793404800007,
+      "tag": "0091_trading_popup_trade_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1793404800008,
+      "tag": "0092_trading_trade_wallet_funding_plan_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1793404800009,
+      "tag": "0093_admin_wallet_adjustment_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1793404800010,
+      "tag": "0094_trading_policy_duration_bounds_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1793404800011,
+      "tag": "0095_fx_snapshot_source_timestamp_precision",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1793404800012,
+      "tag": "0096_trade_settlement_review_timestamp",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1793404800013,
+      "tag": "0097_trading_daily_execution_attempt_accounting",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1793404800014,
+      "tag": "0098_disable_automatic_financial_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1793404800015,
+      "tag": "0099_trading_global_timing_policy_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1793404800016,
+      "tag": "0100_global_trade_master_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1793404800017,
+      "tag": "0101_package_fee_policy_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1793404800018,
+      "tag": "0102_opportunity_delivery_retry_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1793404800019,
+      "tag": "0103_automatic_opportunity_generation_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1793404800020,
+      "tag": "0104_catalogue_native_opportunity_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1793404800021,
+      "tag": "0105_default_on_global_information_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1793404800022,
+      "tag": "0106_package_popup_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1794000000000,
+      "tag": "0107_accurate_opportunity_delivery_monitoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1794000000001,
+      "tag": "0108_settlement_evidence_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1794000000002,
+      "tag": "0109_customer_company_country_restrictions",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1794000000003,
+      "tag": "0110_opportunity_delivery_diagnostic_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1794000000004,
+      "tag": "0111_automatic_market_result_settlement",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1794000000012,
+      "tag": "0112_permanent_automatic_financial_execution",
+      "breakpoints": true
+    }
+  ]
+}

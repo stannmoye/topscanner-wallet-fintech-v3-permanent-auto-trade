@@ -1,0 +1,174 @@
+import { describe, expect, it } from "vitest";
+import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, type FxRateSnapshot } from "./trading-wallet-fx";
+
+const rate = (currency: string, scale: number, rateUsdPerUnit: string): FxRateSnapshot => ({
+  currency, scale, rateUsdPerUnit, provider: "test-api", sourceDate: "2026-10-29T10:00:00.000Z",
+  fetchedAt: new Date("2026-10-29T10:00:00.000Z"),
+});
+
+describe("combined spendable wallet balance", () => {
+  it("reports current combined funds and shortfall in the opportunity currency", async () => {
+    const getFreshRate = async (currency: string, scale: number) => currency === "EUR" ? rate(currency, scale, "1.1") : rate(currency, scale, "1");
+    await expect(calculateCombinedBalanceSnapshot({
+      targetCurrency: "USD", targetScale: 2, requiredMinor: 5_000,
+      wallets: [{ currency: "USD", scale: 2, availableMinor: 2_000 }, { currency: "EUR", scale: 2, availableMinor: 3_000 }],
+      getFreshRate,
+    })).resolves.toEqual({ availableMinor: 5_300, balanceStatus: "sufficient", shortfallMinor: 0, valuationCurrency: "USD" });
+    await expect(calculateCombinedBalanceSnapshot({
+      targetCurrency: "USD", targetScale: 2, requiredMinor: 6_000,
+      wallets: [{ currency: "USD", scale: 2, availableMinor: 2_000 }, { currency: "EUR", scale: 2, availableMinor: 3_000 }],
+      getFreshRate,
+    })).resolves.toEqual({ availableMinor: 5_300, balanceStatus: "insufficient", shortfallMinor: 700, valuationCurrency: "USD" });
+  });
+
+  it("uses spendable available funds only and rounds at target minor-unit precision", async () => {
+    const result = await calculateCombinedBalanceSnapshot({
+      targetCurrency: "USD", targetScale: 2, requiredMinor: 1_000,
+      wallets: [{ currency: "USD", scale: 2, availableMinor: 123 }, { currency: "EUR", scale: 2, availableMinor: 999 }],
+      getFreshRate: async (currency, scale) => currency === "EUR" ? rate(currency, scale, "1.105") : rate(currency, scale, "1"),
+    });
+    expect(result.availableMinor).toBe(1_226);
+    expect(result.balanceStatus).toBe("sufficient");
+  });
+
+  it("returns unknown rather than assuming parity when an FX quote is missing or stale", async () => {
+    const wallets = [{ currency: "USD", scale: 2, availableMinor: 100 }, { currency: "EUR", scale: 2, availableMinor: 100 }];
+    const unavailable = { availableMinor: 0, balanceStatus: "unknown", shortfallMinor: 0, valuationCurrency: "USD" };
+    await expect(calculateCombinedBalanceSnapshot({ targetCurrency: "USD", targetScale: 2, requiredMinor: 150, wallets,
+      getFreshRate: async () => null })).resolves.toEqual(unavailable);
+    await expect(calculateCombinedBalanceSnapshot({ targetCurrency: "USD", targetScale: 2, requiredMinor: 150, wallets,
+      getFreshRate: async () => { throw new Error("stale quote"); } })).resolves.toEqual(unavailable);
+  });
+
+  it("values a foreign-only wallet in an opportunity currency with no matching wallet", async () => {
+    const result = await calculateCombinedBalanceSnapshot({
+      targetCurrency: "USD", targetScale: 2, requiredMinor: 1_000,
+      wallets: [{ currency: "EUR", scale: 2, availableMinor: 1_000 }],
+      getFreshRate: async (currency, scale) => currency === "EUR" ? rate(currency, scale, "1.1") : rate(currency, scale, "1"),
+    });
+    expect(result).toMatchObject({ availableMinor: 1_100, balanceStatus: "sufficient", shortfallMinor: 0 });
+  });
+
+  it("values all spendable wallets in the target currency using current FX rates", () => {
+    const result = calculateCombinedAvailableTargetMinor({
+      targetCurrency: "USD",
+      targetRate: rate("USD", 2, "1"),
+      wallets: [
+        { currency: "USD", scale: 2, availableMinor: 2_000 },
+        { currency: "EUR", scale: 2, availableMinor: 3_000, rate: rate("EUR", 2, "1.1") },
+        { currency: "GBP", scale: 2, availableMinor: 2_000, rate: rate("GBP", 2, "1.25") },
+      ],
+    });
+    expect(result).toBe(7_800);
+  });
+
+  it("does not require FX for zero or target-currency-only wallets", () => {
+    expect(calculateCombinedAvailableTargetMinor({
+      targetCurrency: "USD",
+      wallets: [
+        { currency: "USD", scale: 2, availableMinor: 2_000 },
+        { currency: "EUR", scale: 2, availableMinor: 0, rate: null },
+      ],
+    })).toBe(2_000);
+  });
+
+  it("fails closed when a positive foreign wallet has no current FX quote", () => {
+    expect(() => calculateCombinedAvailableTargetMinor({
+      targetCurrency: "USD",
+      targetRate: rate("USD", 2, "1"),
+      wallets: [
+        { currency: "USD", scale: 2, availableMinor: 2_000 },
+        { currency: "EUR", scale: 2, availableMinor: 3_000, rate: null },
+      ],
+    })).toThrow(/current FX quote is unavailable/);
+  });
+
+  it("rejects duplicate wallet currencies and unsafe balances", () => {
+    expect(() => calculateCombinedAvailableTargetMinor({
+      targetCurrency: "USD",
+      wallets: [
+        { currency: "USD", scale: 2, availableMinor: 100 },
+        { currency: "usd", scale: 2, availableMinor: 100 },
+      ],
+    })).toThrow(/Duplicate wallet currency/);
+    expect(() => calculateCombinedAvailableTargetMinor({
+      targetCurrency: "USD",
+      wallets: [{ currency: "USD", scale: 2, availableMinor: -1 }],
+    })).toThrow(/non-negative safe integer/);
+  });
+});
+
+describe("multi-wallet Trading funding plan", () => {
+  it("uses the target wallet first and calculates the exact remaining source debit", () => {
+    const result = planCrossWalletFunding({
+      requiredTargetMinor: 10_000,
+      targetAvailableMinor: 5_000,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 10_000, rate: rate("EUR", 2, "1.1") }],
+    });
+    expect(result.targetCreditMinor).toBe(5_000);
+    expect(result.sourceDebits).toMatchObject([{ currency: "EUR", amountMinor: 4_546, convertedTargetMinor: 5_000 }]);
+  });
+
+  it("combines multiple wallets in stable currency order without exceeding their balances", () => {
+    const result = planCrossWalletFunding({
+      requiredTargetMinor: 10_000,
+      targetAvailableMinor: 5_000,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [
+        { currency: "GBP", scale: 2, availableMinor: 2_000, rate: rate("GBP", 2, "1.25") },
+        { currency: "EUR", scale: 2, availableMinor: 3_000, rate: rate("EUR", 2, "1.1") },
+      ],
+    });
+    expect(result.targetCreditMinor).toBe(5_000);
+    expect(result.sourceDebits.map(x => x.currency)).toEqual(["EUR", "GBP"]);
+    expect(result.sourceDebits.reduce((sum, x) => sum + x.convertedTargetMinor, 0)).toBe(5_000);
+    expect(result.sourceDebits.every(x => x.amountMinor <= (x.currency === "EUR" ? 3_000 : 2_000))).toBe(true);
+  });
+
+  it("fails closed when combined spendable balances cannot cover the target capital", () => {
+    expect(() => planCrossWalletFunding({
+      requiredTargetMinor: 10_000,
+      targetAvailableMinor: 9_000,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 10, rate: rate("EUR", 2, "1.1") }],
+    })).toThrow(/Insufficient combined/);
+  });
+
+  it("rejects invalid scales and missing source rates rather than guessing", () => {
+    expect(() => planCrossWalletFunding({
+      requiredTargetMinor: 100, targetAvailableMinor: 0,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [{ currency: "BTC", scale: 30, availableMinor: 100, rate: rate("BTC", 30, "100000") }],
+    })).toThrow(/scale/);
+    expect(() => planCrossWalletFunding({
+      requiredTargetMinor: 100, targetAvailableMinor: 0,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 100, rate: null }],
+    })).toThrow(/Insufficient combined/);
+  });
+
+  it("rejects FX snapshots whose currency or scale does not match the wallet", () => {
+    expect(() => planCrossWalletFunding({
+      requiredTargetMinor: 100, targetAvailableMinor: 0,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 1_000, rate: rate("GBP", 2, "1.25") }],
+    })).toThrow(/does not match source wallet currency/);
+    expect(() => planCrossWalletFunding({
+      requiredTargetMinor: 100, targetAvailableMinor: 0,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 1_000, rate: rate("EUR", 3, "1.1") }],
+    })).toThrow(/does not match source wallet scale/);
+  });
+
+  it("rejects duplicate source currency wallets rather than planning ambiguous debits", () => {
+    expect(() => planCrossWalletFunding({
+      requiredTargetMinor: 100, targetAvailableMinor: 0,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [
+        { currency: "EUR", scale: 2, availableMinor: 100, rate: rate("EUR", 2, "1.1") },
+        { currency: "eur", scale: 2, availableMinor: 100, rate: rate("EUR", 2, "1.1") },
+      ],
+    })).toThrow(/Duplicate source wallet currency/);
+  });
+});

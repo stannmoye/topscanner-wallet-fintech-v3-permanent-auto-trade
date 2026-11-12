@@ -1,0 +1,86 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const migration = readFileSync(new URL("../drizzle/0078_trading_customer_package_subscription_repair.sql", import.meta.url), "utf8");
+const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"));
+const migrationRunner = readFileSync(new URL("./guarded-main-migrate.mjs", import.meta.url), "utf8");
+
+describe("Trading customer package subscription schema repair", () => {
+  it("repairs every subscription field read by the customer package catalogue", () => {
+    for (const column of [
+      "userId",
+      "packageId",
+      "startsAt",
+      "expiresAt",
+      "status",
+      "activationKey",
+      "termsSnapshotJson",
+      "qualifyingBalanceUsdMinor",
+      "packageTermsVersion",
+      "activatedAt",
+      "createdAt",
+    ]) {
+      expect(migration).toContain("`" + column + "`");
+    }
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS `customer_package_subscriptions`");
+    expect(migration).toContain("ALTER TABLE `customer_package_subscriptions`");
+  });
+
+  it("does not silently turn unverified legacy rows into active subscriptions", () => {
+    expect(migration).toContain("DEFAULT 'expired'");
+    expect(migration).not.toContain("UPDATE `customer_package_subscriptions` SET `status`='active'");
+  });
+
+  it("registers the repair as a forward-only migration after the current journal", () => {
+    const entries = journal.entries;
+    const entry = entries.find((item) => item.tag === "0078_trading_customer_package_subscription_repair");
+    expect(entry).toBeDefined();
+    expect(entry.idx).toBe(entries.indexOf(entry));
+    expect(entries[entry.idx - 1].tag).toBe("0077_trading_package_catalogue_schema_repair");
+    expect(entries[entry.idx + 1].tag).toBe("0079_trade_settlement_timing_schema_repair");
+    const tailStart = entries.length - 25;
+    const tail = entries.slice(tailStart);
+    expect(tail.map((item) => item.tag)).toEqual([
+      "0086_trading_popup_policy_snapshots",
+      "0087_trading_opportunity_execution_leases",
+      "0088_trading_package_policy_schema_reconciliation",
+      "0089_trading_popup_policy_ranges",
+      "0090_trading_company_spotlight_rotation",
+      "0091_trading_popup_trade_snapshots",
+      "0092_trading_trade_wallet_funding_plan_snapshot",
+      "0093_admin_wallet_adjustment_idempotency",
+      "0094_trading_policy_duration_bounds_nullable",
+      "0095_fx_snapshot_source_timestamp_precision",
+      "0096_trade_settlement_review_timestamp",
+      "0097_trading_daily_execution_attempt_accounting",
+      "0098_disable_automatic_financial_execution",
+      "0099_trading_global_timing_policy_version",
+      "0100_global_trade_master_controls",
+      "0101_package_fee_policy_versions",
+      "0102_opportunity_delivery_retry_lifecycle",
+      "0103_automatic_opportunity_generation_templates",
+      "0104_catalogue_native_opportunity_generation",
+      "0105_default_on_global_information_delivery",
+      "0106_package_popup_defaults",
+      "0107_accurate_opportunity_delivery_monitoring",
+      "0109_customer_company_country_restrictions",
+      "0110_opportunity_delivery_diagnostic_history",
+      "0111_automatic_market_result_settlement",
+    ]);
+    tail.forEach((item, offset) => {
+      const index = tailStart + offset;
+      expect(item.idx).toBe(index);
+      expect(item.when).toBeGreaterThan(entries[index - 1].when);
+    });
+    expect(entry.when).toBeGreaterThan(entries.slice(0, entry.idx).reduce((latest, item) => Math.max(latest, item.when), 0));
+  });
+
+  it("repairs live schema drift even when migration history says the files were already applied", () => {
+    expect(migrationRunner).toContain("async function reconcileTradingPackageSchema(");
+    expect(migrationRunner).toContain("information_schema.columns");
+    expect(migrationRunner).toContain("0077_trading_package_catalogue_schema_repair.sql");
+    expect(migrationRunner).toContain("0078_trading_customer_package_subscription_repair.sql");
+    expect(migrationRunner).toContain("Trading package schema verification failed after additive repair");
+    expect(migrationRunner).toContain('currentMigration = "trading-package-schema-drift-reconciliation"');
+  });
+});

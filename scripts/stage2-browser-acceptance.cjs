@@ -1,0 +1,3337 @@
+/* Stage 2 browser acceptance smoke matrix.
+ * Runs against the built client in Chromium. The report and screenshots are
+ * diagnostic evidence; any viewport overflow or failed route load fails CI.
+ */
+const fs = require("node:fs");
+const path = require("node:path");
+const { chromium } = require("playwright");
+
+const BASE_URL = process.env.STAGE2_BASE_URL || "http://127.0.0.1:4173";
+// Sample the minimum phone width, common phone/tablet breakpoints, and wide desktop layouts.
+const WIDTHS = [320, 390, 480, 768, 1024, 1440, 1920];
+const ROUTES = [
+  { path: "/", name: "gateway" },
+  { path: "/customer", name: "customer" },
+  { path: "/ops-console-7f3a", name: "admin" },
+];
+const THEMES = [
+  "original",
+  "midnight-premium",
+  "clean-light",
+  "emerald-finance",
+  "aurora-modern",
+  "gold-luxe",
+];
+const ARTIFACT_DIR = path.resolve("artifacts/stage2-browser");
+fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+
+async function waitForStableViewportTarget(page, locator, { timeout = 10000 } = {}) {
+  await locator.waitFor({ state: "visible", timeout });
+  // The admin rail owns its own scroll; locator.scrollIntoViewIfNeeded() can
+  // leave a target outside that container's visible region when the rail is
+  // sticky or flex-sized. Move the nearest scrollable ancestor explicitly first.
+  await locator.evaluate(element => {
+    let ancestor = element.parentElement;
+    while (ancestor) {
+      const style = getComputedStyle(ancestor);
+      const canScroll = (/(auto|scroll)/.test(style.overflowY) && ancestor.scrollHeight > ancestor.clientHeight) ||
+        (/(auto|scroll)/.test(style.overflowX) && ancestor.scrollWidth > ancestor.clientWidth);
+      if (canScroll) {
+        const target = element.getBoundingClientRect();
+        const container = ancestor.getBoundingClientRect();
+        const padding = 8;
+        if (target.top < container.top + padding) {
+          ancestor.scrollTop += target.top - container.top - padding;
+        } else if (target.bottom > container.bottom - padding) {
+          ancestor.scrollTop += target.bottom - container.bottom + padding;
+        }
+        if (target.left < container.left + padding) {
+          ancestor.scrollLeft += target.left - container.left - padding;
+        } else if (target.right > container.right - padding) {
+          ancestor.scrollLeft += target.right - container.right + padding;
+        }
+        break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+  });
+  await locator.scrollIntoViewIfNeeded();
+  const deadline = Date.now() + timeout;
+  let previous = await locator.boundingBox();
+  while (Date.now() < deadline) {
+    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    if (!previous || previous.x < 0 || previous.x + previous.width > viewport.width ||
+      previous.y < 0 || previous.y + previous.height > viewport.height) {
+      await locator.scrollIntoViewIfNeeded();
+      previous = await locator.boundingBox();
+      continue;
+    }
+    await page.waitForTimeout(100);
+    const current = await locator.boundingBox();
+    if (current && Math.abs(current.x - previous.x) < 0.5 && Math.abs(current.y - previous.y) < 0.5 &&
+      Math.abs(current.width - previous.width) < 0.5 && Math.abs(current.height - previous.height) < 0.5) return;
+    previous = current;
+  }
+  // A fixed or transformed rail can keep Playwright's bounding box outside
+  // the page viewport even though the target itself is still rendered and
+  // enabled in the DOM. Preserve the DOM readiness check here; the subsequent
+  // normal click still performs Playwright's standard pointer/hit-target validation.
+  const domReady = await locator.evaluate(element => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return element.isConnected &&
+      style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0 &&
+      !element.hasAttribute("disabled") && element.getAttribute("aria-disabled") !== "true" &&
+      rect.width > 0 && rect.height > 0;
+  });
+  if (domReady) return;
+  throw new Error("Navigation target did not reach a stable in-viewport layout");
+}
+
+async function clickStableNavigationTarget(page, locator) {
+  await waitForStableViewportTarget(page, locator);
+  await locator.click();
+}
+
+async function clickCanonicalNavigationTarget(page, locator, { timeout = 10000 } = {}) {
+  const navigation = page.locator(".admin-canonical-nav");
+  await navigation.waitFor({ state: "visible", timeout });
+  await locator.waitFor({ state: "visible", timeout });
+  await locator.evaluate(element => {
+    const nav = document.querySelector(".admin-canonical-nav");
+    if (!nav || !nav.contains(element)) throw new Error("Navigation target is outside .admin-canonical-nav");
+    const navRect = nav.getBoundingClientRect();
+    const targetRect = element.getBoundingClientRect();
+    const inset = 8;
+    if (targetRect.top < navRect.top + nav.clientTop + inset) {
+      nav.scrollTop += targetRect.top - navRect.top - nav.clientTop - inset;
+    } else if (targetRect.bottom > navRect.top + nav.clientTop + nav.clientHeight - inset) {
+      nav.scrollTop += targetRect.bottom - navRect.top - nav.clientTop - nav.clientHeight + inset;
+    }
+    if (targetRect.left < navRect.left + nav.clientLeft + inset) {
+      nav.scrollLeft += targetRect.left - navRect.left - nav.clientLeft - inset;
+    } else if (targetRect.right > navRect.left + nav.clientLeft + nav.clientWidth - inset) {
+      nav.scrollLeft += targetRect.right - navRect.left - nav.clientLeft - nav.clientWidth + inset;
+    }
+  });
+
+  const deadline = Date.now() + timeout;
+  let previous;
+  let stableFrames = 0;
+  while (Date.now() < deadline) {
+    const geometry = await locator.evaluate(element => {
+      const nav = document.querySelector(".admin-canonical-nav");
+      const navRect = nav.getBoundingClientRect();
+      const targetRect = element.getBoundingClientRect();
+      const left = Math.max(navRect.left + nav.clientLeft, 0, targetRect.left);
+      const right = Math.min(navRect.left + nav.clientLeft + nav.clientWidth, window.innerWidth, targetRect.right);
+      const top = Math.max(navRect.top + nav.clientTop, 0, targetRect.top);
+      const bottom = Math.min(navRect.top + nav.clientTop + nav.clientHeight, window.innerHeight, targetRect.bottom);
+      const centerX = (left + right) / 2;
+      const centerY = (top + bottom) / 2;
+      const hit = left < right && top < bottom ? document.elementFromPoint(centerX, centerY) : null;
+      const style = getComputedStyle(element);
+      return {
+        scrollTop: nav.scrollTop,
+        scrollLeft: nav.scrollLeft,
+        left: targetRect.left,
+        top: targetRect.top,
+        width: targetRect.width,
+        height: targetRect.height,
+        intersectsNavigation: left < right && top < bottom,
+        intersectsViewport: targetRect.right > 0 && targetRect.left < window.innerWidth &&
+          targetRect.bottom > 0 && targetRect.top < window.innerHeight,
+        hitTarget: Boolean(hit && (hit === element || element.contains(hit))),
+        visible: style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0,
+        enabled: !element.hasAttribute("disabled") && element.getAttribute("aria-disabled") !== "true",
+      };
+    });
+    const isStable = previous && Math.abs(geometry.scrollTop - previous.scrollTop) < 0.5 &&
+      Math.abs(geometry.scrollLeft - previous.scrollLeft) < 0.5 &&
+      Math.abs(geometry.left - previous.left) < 0.5 && Math.abs(geometry.top - previous.top) < 0.5 &&
+      Math.abs(geometry.width - previous.width) < 0.5 && Math.abs(geometry.height - previous.height) < 0.5;
+    stableFrames = isStable ? stableFrames + 1 : 0;
+    if (stableFrames >= 2 && geometry.intersectsNavigation && geometry.intersectsViewport &&
+      geometry.hitTarget && geometry.visible && geometry.enabled) {
+      await locator.click();
+      return;
+    }
+    previous = geometry;
+    await page.waitForTimeout(100);
+  }
+  throw new Error("Canonical navigation target did not settle into an intersecting, hittable position");
+}
+
+async function runAdminAppearanceInteractionCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultTimeout(10000);
+  const apiRequests = [];
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("request", request => {
+    if (request.url().includes("/api/trpc")) apiRequests.push({ method: request.method(), url: request.url() });
+  });
+  page.on("response", response => {
+    if (response.url().includes("/api/trpc")) apiRequests.push({ status: response.status(), url: response.url() });
+  });
+  const initialAppearance = {
+    defaultTheme: "original",
+    enabledThemes: [...THEMES],
+    customerCanSelect: false,
+  };
+  let savedAppearance = { ...initialAppearance, enabledThemes: [...initialAppearance.enabledThemes] };
+  const mutations = [];
+  let failNextSettingsSave = false;
+  const checks = [];
+  const record = (check, passed, details = {}) => checks.push({
+    route: "/ops-console-7f3a",
+    routeName: "admin",
+    width: 1440,
+    theme: "original",
+    check,
+    passed,
+    ...details,
+  });
+
+  try {
+    await page.route(/\/api\/trpc(?:\/|$)/, async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const procedurePath = decodeURIComponent(url.pathname.split("/api/trpc/")[1] || "");
+      const procedures = procedurePath.split(",").filter(Boolean);
+      let envelope = {};
+      try {
+        const raw = request.method() === "GET"
+          ? url.searchParams.get("input")
+          : request.postData();
+        envelope = raw ? JSON.parse(raw) : {};
+      } catch {
+        envelope = {};
+      }
+      const inputAt = index => {
+        const item = Array.isArray(envelope) ? envelope[index] : envelope[String(index)];
+        return item?.json ?? item?.input?.json ?? envelope?.json ?? envelope?.input?.json ?? {};
+      };
+      const output = procedures.map((procedure, index) => {
+        const input = inputAt(index);
+        let data = null;
+        if (procedure === "auth.me") {
+          data = { id: 9001, email: "stage2-admin@example.test", name: "Stage 2 Admin", role: "admin" };
+        } else if (procedure === "appearanceConfig") {
+          data = savedAppearance;
+        } else if (procedure === "adminOperations.settings") {
+          data = { appearance: savedAppearance };
+        } else if (procedure === "adminOperations.customers") {
+          data = [{ id: 8001, name: "Stage Ledger Customer", email: "ledger.customer@example.test", role: "user" }];
+        } else if (procedure === "adminOperations.packagePolicies") {
+          data = [];
+        } else if (procedure === "adminOperations.pendingSettlements") {
+          data = Array.from({ length: 12 }, (_, index) => ({
+            id: 7000 + index,
+            userId: 8000 + index,
+            customerName: `Stage Customer ${index + 1}`,
+            customerEmail: `customer${index + 1}@example.test`,
+            currency: "USD",
+            symbol: "BTC/USD",
+            principalMinor: 100000 + index * 100,
+            rewardReservedMinor: 2500 + index * 10,
+          }));
+        } else if (procedure === "adminOperations.ledgerActivity") {
+          data = {
+            entries: Array.from({ length: 24 }, (_, index) => ({
+              id: 9000 + index,
+              userId: 8001,
+              customerName: "Stage Ledger Customer",
+              customerEmail: "ledger.customer@example.test",
+              entryType: index % 2 ? "trade_reward" : "principal_reservation",
+              amountMinor: index % 2 ? 1250 + index : -(10000 + index * 100),
+              currency: "USD",
+              withdrawable: index % 2 === 1,
+              createdAt: new Date(Date.UTC(2026, 0, 1, 12, index)).toISOString(),
+            })),
+            hasMore: false,
+            nextCursor: null,
+          };
+        } else if (procedure === "adminOperations.currencies") {
+          data = [{ code: "USD", scale: 2 }];
+        } else if (procedure === "adminOperations.autoTradePolicy") {
+          data = { globalEnabled: false };
+        } else if (procedure === "adminOperations.updateSettings") {
+          if (failNextSettingsSave) {
+            failNextSettingsSave = false;
+            return {
+              error: {
+                json: {
+                  message: "Simulated appearance save failure",
+                  code: -32603,
+                  data: {
+                    code: "INTERNAL_SERVER_ERROR",
+                    httpStatus: 500,
+                    path: procedure,
+                  },
+                },
+              },
+            };
+          }
+          mutations.push(input);
+          if (input?.appearance) {
+            savedAppearance = {
+              defaultTheme: input.appearance.defaultTheme,
+              enabledThemes: [...input.appearance.enabledThemes],
+              customerCanSelect: input.appearance.customerCanSelect === true,
+            };
+          }
+          data = { ok: true };
+        }
+        // SuperJSON omits metadata when the payload needs no special-value annotations.
+        // An empty `meta.values` object is not a valid serialized annotation map for this client.
+        return { result: { data: { json: data } } };
+      });
+      apiRequests.push({
+        handled: true,
+        procedurePath,
+        procedures,
+        output,
+      });
+      // Hold the mocked settings save briefly so the acceptance check can
+      // observe the real pending/busy UI state before the server response.
+      if (procedures.includes("adminOperations.updateSettings")) {
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+      try {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          // tRPC v11 httpBatchLink expects a JSON array of response envelopes
+          // in the same order as the batched procedure inputs.
+          body: JSON.stringify(output),
+        });
+        apiRequests.push({ fulfilled: true, procedurePath });
+      } catch (error) {
+        apiRequests.push({
+          fulfilled: false,
+          procedurePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await route.continue();
+      }
+    });
+
+    await page.goto(new URL("/ops-console-7f3a", BASE_URL).href, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    // The route initially renders an authentication loading state while the
+    // mocked tRPC request resolves. Wait for the authenticated shell instead
+    // of asserting synchronously after DOMContentLoaded.
+    await page.getByRole("heading", { name: "Control centre" }).waitFor({
+      state: "visible",
+      timeout: 15000,
+    }).catch(() => undefined);
+    const adminLoaded = await page.getByRole("heading", { name: "Control centre" }).isVisible().catch(() => false);
+    record("mock-authenticated-admin-route", adminLoaded, {
+      note: "Uses mocked auth.me and tRPC responses; this is client-flow evidence, not live API authentication.",
+    });
+    if (adminLoaded) {
+      const mainSurface = await page.locator(".admin-portal .portal-main").evaluate(element => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const text = (element.innerText || "").trim();
+        return {
+          display: style.display,
+          visibility: style.visibility,
+          opacity: Number(style.opacity),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          textLength: text.length,
+          textPreview: text.slice(0, 120),
+        };
+      });
+      const mainVisible = mainSurface.display !== "none" &&
+        mainSurface.visibility !== "hidden" && mainSurface.opacity > 0 &&
+        mainSurface.width > 0 && mainSurface.height > 0 && mainSurface.textLength > 0;
+      record("admin-main-workspace-visible", mainVisible, mainSurface);
+    }
+
+    if (!adminLoaded) {
+      record("admin-appearance-screen-opened", false, {
+        error: "Authenticated admin shell did not render from the mock API.",
+        apiRequests: apiRequests.slice(0, 12),
+        pageErrors,
+        consoleErrors: consoleErrors.slice(0, 12),
+        bodyText: await page.locator("body").innerText().catch(() => ""),
+      });
+      return checks;
+    }
+
+    // Platform Configuration now lives in the right-side Admin Menus drawer.
+    await page.getByRole("button", { name: "Open Admin Menus" }).click();
+    const adminDrawer = page.locator("#admin-navigation-drawer");
+    await adminDrawer.waitFor({ state: "visible" });
+    const platformConfigurationGroup = adminDrawer.locator(".admin-secondary-group-heading")
+      .filter({ hasText: "Platform Configuration" });
+    await platformConfigurationGroup.waitFor({ state: "visible" });
+    // Secondary drawer groups are expanded by default. Only toggle the group
+    // when it is collapsed, otherwise the click would hide its menu items.
+    if (await platformConfigurationGroup.getAttribute("aria-expanded") !== "true") {
+      await platformConfigurationGroup.click();
+    }
+    await adminDrawer.getByRole("button", { name: /Appearance & Themes/ }).click();
+    // AdminAppearance is intentionally lazy-loaded to keep admin-only settings
+    // out of the customer-facing entry bundle. Wait for that async route chunk.
+    await page.getByRole("heading", { name: "Theme management" }).waitFor({
+      state: "visible",
+      timeout: 15000,
+    }).catch(() => undefined);
+    const appearanceLoaded = await page.getByRole("heading", { name: "Theme management" }).isVisible().catch(() => false);
+    record("admin-appearance-screen-opened", appearanceLoaded);
+    if (!appearanceLoaded) return checks;
+
+    // Exercise the accessibility tree and native keyboard behavior, not only source markup.
+    const previewGroup = page.getByRole("group", { name: "Theme preview choices" });
+    const customerThemesGroup = page.getByRole("group", { name: "Available customer themes" });
+    const previewButtons = previewGroup.getByRole("button");
+    const groupedThemeCheckboxes = customerThemesGroup.getByRole("checkbox");
+    const namedGroupsPass =
+      await previewGroup.count() === 1 &&
+      await customerThemesGroup.count() === 1 &&
+      await previewButtons.count() === THEMES.length &&
+      await groupedThemeCheckboxes.count() === THEMES.length &&
+      await page.getByRole("button", { name: /Original Arbitrade/ }).getAttribute("aria-pressed") === "true";
+    record("admin-theme-controls-expose-named-groups-and-pressed-state", namedGroupsPass, {
+      previewGroupCount: await previewGroup.count(),
+      customerThemesGroupCount: await customerThemesGroup.count(),
+      previewButtonCount: await previewButtons.count(),
+      customerThemeCheckboxCount: await groupedThemeCheckboxes.count(),
+    });
+
+    await previewButtons.nth(0).focus();
+    await page.keyboard.press("Tab");
+    const previewTabOrderPass = await previewButtons.nth(1).evaluate(element => element === document.activeElement);
+    record("admin-theme-preview-buttons-follow-native-tab-order", previewTabOrderPass, {
+      focusedButton: await page.evaluate(() => document.activeElement?.textContent?.trim() || ""),
+    });
+
+    // Verify preview buttons activate with both native keyboard activation keys.
+    const midnightPreviewButton = previewGroup.getByRole("button", { name: /Midnight Premium/ });
+    await midnightPreviewButton.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.documentElement.dataset.arbTheme === "midnight-premium");
+    const midnightPressedAfterEnter = await midnightPreviewButton.getAttribute("aria-pressed");
+    const cleanPreviewButton = previewGroup.getByRole("button", { name: /Clean Light/ });
+    await cleanPreviewButton.focus();
+    await page.keyboard.press("Space");
+    await page.waitForFunction(() => document.documentElement.dataset.arbTheme === "clean-light");
+    const cleanPressedAfterSpace = await cleanPreviewButton.getAttribute("aria-pressed");
+    record("admin-theme-preview-buttons-activate-with-enter-and-space",
+      midnightPressedAfterEnter === "true" && cleanPressedAfterSpace === "true", {
+        midnightPressedAfterEnter,
+        cleanPressedAfterSpace,
+      });
+
+    // Use a non-default theme so the keyboard check does not change the published-default control.
+    const auroraThemeCheckbox = customerThemesGroup.getByRole("checkbox", { name: /Aurora Modern/ });
+    await auroraThemeCheckbox.focus();
+    const auroraCheckboxBefore = await auroraThemeCheckbox.isChecked();
+    await page.keyboard.press("Space");
+    const auroraCheckboxAfterFirstSpace = await auroraThemeCheckbox.isChecked();
+    await page.keyboard.press("Space");
+    const auroraCheckboxAfterSecondSpace = await auroraThemeCheckbox.isChecked();
+    record("admin-theme-checkboxes-toggle-and-restore-with-space",
+      auroraCheckboxBefore && !auroraCheckboxAfterFirstSpace && auroraCheckboxAfterSecondSpace, {
+        before: auroraCheckboxBefore,
+        afterFirstSpace: auroraCheckboxAfterFirstSpace,
+        afterSecondSpace: auroraCheckboxAfterSecondSpace,
+      });
+
+
+    const previewCount = await previewButtons.count();
+    const previewThemeLabels = {
+      original: /Original Arbitrade/i,
+      "midnight-premium": /Midnight Premium/i,
+      "clean-light": /Clean Light/i,
+      "emerald-finance": /Emerald Finance/i,
+      "aurora-modern": /Aurora Modern/i,
+      "gold-luxe": /Gold Luxe/i,
+    };
+    const appearanceScreenshotPaths = [];
+    for (const screenshotTheme of THEMES) {
+      await page.getByRole("button", { name: previewThemeLabels[screenshotTheme] }).click();
+      await page.waitForFunction(expected =>
+        document.documentElement.dataset.arbTheme === expected, screenshotTheme);
+      const appearanceThemeSurface = await page.evaluate(() => {
+        const root = document.documentElement;
+        const portalMain = document.querySelector(".admin-portal .portal-main");
+        const card = document.querySelector(".arb-appearance-admin .settings-card");
+        const heading = card?.querySelector("h2");
+        const probe = document.createElement("div");
+        probe.style.backgroundColor = "var(--arb-color-canvas)";
+        probe.style.color = "var(--arb-color-text)";
+        probe.style.setProperty("border-color", "var(--arb-color-surface)");
+        document.body.appendChild(probe);
+        const expectedCanvas = getComputedStyle(probe).backgroundColor;
+        const expectedText = getComputedStyle(probe).color;
+        probe.style.backgroundColor = "var(--arb-color-surface)";
+        const expectedSurface = getComputedStyle(probe).backgroundColor;
+        const actualCanvas = portalMain ? getComputedStyle(portalMain).backgroundColor : null;
+        const actualSurface = card ? getComputedStyle(card).backgroundColor : null;
+        const actualText = heading ? getComputedStyle(heading).color : null;
+        probe.remove();
+        return {
+          theme: root.dataset.arbTheme,
+          expectedCanvas,
+          actualCanvas,
+          expectedSurface,
+          actualSurface,
+          expectedText,
+          actualText,
+          canvasMatches: actualCanvas === expectedCanvas,
+          surfaceMatches: actualSurface === expectedSurface,
+          textMatches: actualText === expectedText,
+        };
+      });
+      record("admin-appearance-theme-surfaces-follow-selected-palette",
+        appearanceThemeSurface.canvasMatches &&
+        appearanceThemeSurface.surfaceMatches &&
+        appearanceThemeSurface.textMatches,
+        { ...appearanceThemeSurface, width: 1440, theme: screenshotTheme });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      // Move away from nav controls before capture so native title tooltips do not contaminate evidence.
+      await page.mouse.move(1, 1);
+      await page.waitForTimeout(100);
+      const desktopScreenshot = path.join(ARTIFACT_DIR, `admin-appearance-1440-${screenshotTheme}.png`);
+      await page.screenshot({ path: desktopScreenshot, fullPage: true, animations: "disabled" });
+      appearanceScreenshotPaths.push(desktopScreenshot);
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      if (screenshotTheme === "original") {
+        const menuBounds = await page.locator(".admin-mobile-nav-trigger").boundingBox();
+        const appearanceBounds = await page.locator(".arb-theme-selector-compact .arb-theme-selector-trigger").boundingBox();
+        const noOverlap = Boolean(menuBounds && appearanceBounds && (
+          menuBounds.x + menuBounds.width <= appearanceBounds.x ||
+          appearanceBounds.x + appearanceBounds.width <= menuBounds.x ||
+          menuBounds.y + menuBounds.height <= appearanceBounds.y ||
+          appearanceBounds.y + appearanceBounds.height <= menuBounds.y
+        ));
+        record("admin-mobile-menu-does-not-overlap-appearance-label", noOverlap, {
+          width: 390,
+          menuBounds,
+          appearanceBounds,
+        });
+        const themeSelectBounds = await page.locator(".arb-theme-selector-compact .arb-theme-selector-trigger").boundingBox();
+        const themeSelectStyle = await page.locator(".arb-theme-selector-compact select").evaluate(element => {
+          const style = getComputedStyle(element);
+          return {
+            width: style.width,
+            minWidth: style.minWidth,
+            flex: style.flex,
+            flexShrink: style.flexShrink,
+            viewportWidth: window.innerWidth,
+            parentWidth: element.parentElement?.getBoundingClientRect().width ?? null,
+          };
+        });
+        record("admin-mobile-theme-button-retains-readable-width", Boolean(
+          themeSelectBounds && themeSelectBounds.width >= 75
+        ), {
+          width: 390,
+          themeSelectBounds,
+          themeSelectStyle,
+        });
+        await page.setViewportSize({ width: 320, height: 844 });
+        const narrowSelectBounds = await page.locator(".arb-theme-selector-compact select").boundingBox();
+        const narrowDocumentWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+        record("admin-320-theme-button-fits-without-page-overflow", Boolean(
+          narrowSelectBounds && narrowSelectBounds.width >= 70 && narrowDocumentWidth <= 320
+        ), {
+          width: 320,
+          narrowSelectBounds,
+          documentWidth: narrowDocumentWidth,
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+      }
+      const selectorLabelColors = await page.locator(".arb-theme-selector-trigger-label").evaluate(element => {
+        const trigger = element.closest(".arb-theme-selector-trigger");
+        const labelColor = getComputedStyle(element).color;
+        const triggerStyle = trigger ? getComputedStyle(trigger) : null;
+        return {
+          labelColor,
+          triggerColor: triggerStyle?.color ?? null,
+          triggerBackgroundColor: triggerStyle?.backgroundColor ?? null,
+        };
+      });
+      record("admin-mobile-theme-button-contrast",
+        selectorLabelColors.labelColor === selectorLabelColors.triggerColor &&
+          selectorLabelColors.triggerBackgroundColor !== "rgba(0, 0, 0, 0)" &&
+          selectorLabelColors.triggerBackgroundColor !== "transparent",
+        { width: 390, theme: screenshotTheme, ...selectorLabelColors });
+      // Clear hover state before taking the mobile screenshot as well.
+      await page.mouse.move(1, 1);
+      await page.waitForTimeout(100);
+      const mobileScreenshot = path.join(ARTIFACT_DIR, `admin-appearance-390-${screenshotTheme}.png`);
+      await page.screenshot({ path: mobileScreenshot, fullPage: true, animations: "disabled" });
+      appearanceScreenshotPaths.push(mobileScreenshot);
+
+      // Exercise the complete authenticated appearance editor at the narrowest
+      // supported viewport for every theme, not only the top-level theme selector.
+      await page.setViewportSize({ width: 320, height: 844 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const narrowAppearanceLayout = await page.evaluate(() => {
+        const root = document.querySelector(".arb-appearance-admin");
+        const select = document.querySelector(".arb-theme-selector-compact select");
+        const saveButton = Array.from(root?.querySelectorAll("button") || [])
+          .find(button => /save appearance policy/i.test(button.innerText));
+        const brand = document.querySelector(".portal-header .brand-lockup strong");
+        const brandRange = document.createRange();
+        if (brand) brandRange.selectNodeContents(brand);
+        const brandNameLineCount = brand ? brandRange.getClientRects().length : 0;
+        const isVisible = (element) => {
+          const style = getComputedStyle(element);
+          const bounds = element.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" &&
+            Number(style.opacity) !== 0 && bounds.width > 0 && bounds.height > 0;
+        };
+        const visibleControls = Array.from(root?.querySelectorAll("input, select, button, textarea") || [])
+          .filter(isVisible)
+          .map(element => {
+            const bounds = element.getBoundingClientRect();
+            return {
+              label: element.getAttribute("aria-label") ||
+                element.getAttribute("name") ||
+                element.innerText?.trim().slice(0, 60) ||
+                element.tagName.toLowerCase(),
+              left: Math.round(bounds.left),
+              right: Math.round(bounds.right),
+              width: Math.round(bounds.width),
+            };
+          });
+        return {
+          theme: document.documentElement.dataset.arbTheme || "",
+          viewportWidth: window.innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          editorFound: Boolean(root),
+          brandName: brand?.textContent?.trim() || "",
+          brandNameLineCount,
+          selectWidth: select ? Math.round(select.getBoundingClientRect().width) : 0,
+          saveButtonVisible: Boolean(saveButton && isVisible(saveButton)),
+          controlsOutsideViewport: visibleControls.filter(control =>
+            control.left < -1 || control.right > window.innerWidth + 1),
+          visibleControlCount: visibleControls.length,
+        };
+      });
+      const narrowAppearanceFits =
+        narrowAppearanceLayout.theme === screenshotTheme &&
+        narrowAppearanceLayout.viewportWidth === 320 &&
+        narrowAppearanceLayout.documentWidth <= 321 &&
+        narrowAppearanceLayout.editorFound &&
+        narrowAppearanceLayout.selectWidth >= 160 &&
+        narrowAppearanceLayout.saveButtonVisible &&
+        narrowAppearanceLayout.controlsOutsideViewport.length === 0 &&
+        narrowAppearanceLayout.visibleControlCount >= 5;
+      record("admin-320-brand-name-stays-on-one-line",
+        narrowAppearanceLayout.brandName === "Arbitrade" && narrowAppearanceLayout.brandNameLineCount === 1,
+        { width: 320, brandName: narrowAppearanceLayout.brandName, lineCount: narrowAppearanceLayout.brandNameLineCount });
+      record("admin-appearance-320-theme-policy-controls-fit",
+        narrowAppearanceFits,
+        { ...narrowAppearanceLayout, expectedTheme: screenshotTheme, width: 320 });
+      await page.mouse.move(1, 1);
+      await page.waitForTimeout(60);
+      const narrowScreenshot = path.join(ARTIFACT_DIR, `admin-appearance-320-${screenshotTheme}.png`);
+      await page.screenshot({ path: narrowScreenshot, fullPage: true, animations: "disabled" });
+      appearanceScreenshotPaths.push(narrowScreenshot);
+
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    }
+    record("admin-appearance-authenticated-panel-screenshots-captured",
+      appearanceScreenshotPaths.length === THEMES.length * 3,
+      { screenshotCount: appearanceScreenshotPaths.length, screenshots: appearanceScreenshotPaths.map(file => path.basename(file)) });
+
+    const previewButton = page.getByRole("button", { name: /Gold Luxe/ });
+    await previewButton.click();
+    await page.waitForTimeout(30);
+    const previewTheme = await page.evaluate(() => document.documentElement.dataset.arbTheme || "");
+    record("admin-theme-preview", previewCount === THEMES.length && previewTheme === "gold-luxe", {
+      previewCount,
+      previewTheme,
+    });
+
+    // Verify the final enabled theme cannot be unchecked, then restore the full list for subsequent policy checks.
+    for (const themeName of THEMES.filter(name => name !== "original")) {
+      const checkbox = customerThemesGroup.getByRole("checkbox", { name: previewThemeLabels[themeName] });
+      if (await checkbox.isChecked()) await checkbox.uncheck();
+    }
+    const originalOnlyCheckbox = customerThemesGroup.getByRole("checkbox", { name: /Original Arbitrade/ });
+    const finalThemeGuardPass = await originalOnlyCheckbox.isChecked() && await originalOnlyCheckbox.isDisabled();
+    record("admin-final-enabled-theme-cannot-be-removed", finalThemeGuardPass, {
+      originalChecked: await originalOnlyCheckbox.isChecked(),
+      originalDisabled: await originalOnlyCheckbox.isDisabled(),
+      checkedThemeCount: await customerThemesGroup.getByRole("checkbox", { checked: true }).count(),
+    });
+    for (const themeName of THEMES.filter(name => name !== "original")) {
+      const checkbox = customerThemesGroup.getByRole("checkbox", { name: previewThemeLabels[themeName] });
+      if (!(await checkbox.isChecked())) await checkbox.check();
+    }
+
+    await page.getByLabel("Default theme").selectOption("clean-light");
+    await page.getByRole("checkbox", { name: /Clean Light/ }).uncheck();
+    const fallbackDefault = await page.getByLabel("Default theme").inputValue();
+    const fallbackOptions = await page.getByLabel("Default theme").locator("option").evaluateAll(options => options.map(option => option.value));
+    record("admin-default-removal-falls-back-to-enabled-theme",
+      fallbackDefault === "original" && !fallbackOptions.includes("clean-light"),
+      { fallbackDefault, fallbackOptions });
+    await page.getByRole("checkbox", { name: /Clean Light/ }).check();
+    await page.getByLabel("Default theme").selectOption("clean-light");
+    await page.getByRole("checkbox", { name: /Midnight Premium/ }).uncheck();
+    const customerChoiceStatusVisible = await page.getByRole("status")
+      .filter({ hasText: "Customer theme selection is enabled" }).isVisible();
+    await page.getByRole("button", { name: "Save appearance policy" }).click();
+    await page.waitForTimeout(60);
+    const saveButton = page.getByRole("button", { name: /Saving…|Save appearance policy/ });
+    const busySaveText = await saveButton.innerText();
+    const busySaveDisabled = await saveButton.isDisabled();
+    const busyDefaultDisabled = await page.getByLabel("Default theme").isDisabled();
+    const busyThemeDisabled = await page.getByRole("checkbox", { name: /Aurora Modern/ }).isDisabled();
+    record("admin-appearance-save-busy-controls-disabled",
+      busySaveText.includes("Saving") && busySaveDisabled && busyDefaultDisabled && busyThemeDisabled && customerChoiceStatusVisible,
+      { busySaveText, busySaveDisabled, busyDefaultDisabled, busyThemeDisabled, customerChoiceStatusVisible });
+    await page.getByRole("status").filter({ hasText: "Appearance policy saved" }).waitFor({ state: "visible" });
+
+    const saved = mutations.length > 0 &&
+      mutations.at(-1)?.appearance?.defaultTheme === "clean-light" &&
+      Array.isArray(mutations.at(-1)?.appearance?.enabledThemes) &&
+      !mutations.at(-1).appearance.enabledThemes.includes("midnight-premium") &&
+      mutations.at(-1).appearance.enabledThemes.includes("clean-light") &&
+      mutations.at(-1).appearance.customerCanSelect === true &&
+      savedAppearance.defaultTheme === "clean-light" &&
+      !savedAppearance.enabledThemes.includes("midnight-premium") &&
+      savedAppearance.customerCanSelect === true;
+    record("admin-appearance-policy-save-request", saved, {
+      mutationCount: mutations.length,
+      savedAppearance,
+      submittedAppearance: mutations.at(-1)?.appearance ?? null,
+    });
+    const updateRequestIndex = apiRequests.findIndex(item =>
+      item.procedures?.includes("adminOperations.updateSettings"));
+    const settingsRefetched = updateRequestIndex >= 0 &&
+      apiRequests.slice(updateRequestIndex + 1).some(item =>
+        item.procedures?.includes("adminOperations.settings"));
+    const feedback = (await page.getByRole("status").filter({ hasText: "Appearance policy saved" }).innerText()).includes("Appearance policy saved") &&
+      (await page.getByLabel("Default theme").inputValue()) === "clean-light" &&
+      settingsRefetched;
+    record("admin-appearance-save-feedback-and-refetch", feedback, {
+      settingsRefetched,
+      updateRequestIndex,
+    });
+
+    // A rejected save must not mutate the mock server's persisted policy or be
+    // recorded as a successful mutation; the UI must also leave pending state.
+    const persistedBeforeRejectedSave = {
+      ...savedAppearance,
+      enabledThemes: [...savedAppearance.enabledThemes],
+    };
+    const successfulMutationCountBeforeRejectedSave = mutations.length;
+    failNextSettingsSave = true;
+    await page.getByRole("checkbox", { name: /Aurora Modern/ }).uncheck();
+    await page.getByRole("button", { name: "Save appearance policy" }).click();
+    const saveError = page.getByRole("alert").filter({ hasText: "Simulated appearance save failure" });
+    await saveError.waitFor({ state: "visible" });
+    const errorSaveEnabled = await page.getByRole("button", { name: "Save appearance policy" }).isEnabled();
+    const errorDefaultEnabled = await page.getByLabel("Default theme").isEnabled();
+    const errorThemeEnabled = await page.getByRole("checkbox", { name: /Aurora Modern/ }).isEnabled();
+    const errorChoiceStatusVisible = await page.getByRole("status")
+      .filter({ hasText: "Customer theme selection is enabled" }).isVisible();
+    record("admin-appearance-save-error-feedback-controls-restored",
+      await saveError.isVisible() && errorSaveEnabled && errorDefaultEnabled && errorThemeEnabled && errorChoiceStatusVisible,
+      { errorVisible: await saveError.isVisible(), errorSaveEnabled, errorDefaultEnabled, errorThemeEnabled, errorChoiceStatusVisible });
+    const rejectedSaveDidNotPersist =
+      JSON.stringify(savedAppearance) === JSON.stringify(persistedBeforeRejectedSave) &&
+      mutations.length === successfulMutationCountBeforeRejectedSave &&
+      savedAppearance.customerCanSelect === true;
+    record("admin-appearance-rejected-save-does-not-persist",
+      rejectedSaveDidNotPersist,
+      {
+        persistedBeforeRejectedSave,
+        persistedAfterRejectedSave: savedAppearance,
+        successfulMutationCountBeforeRejectedSave,
+        successfulMutationCountAfterRejectedSave: mutations.length,
+        note: "Checks mocked server state only; live database persistence remains an independent acceptance gate.",
+      });
+
+    // Reset the admin route after saving appearance settings so the next mobile navigation
+    // check starts from a clean workspace rather than a scrolled settings-card position.
+    // Route navigation resets the active settings section, so reopen Appearance & Themes
+    // before asserting that its controls have hydrated.
+    await page.goto(`${BASE_URL}/ops-console-7f3a`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Control centre" }).waitFor({ state: "visible", timeout: 15000 });
+    await page.getByRole("button", { name: "Open Admin Menus" }).click();
+    const reopenedAdminDrawer = page.locator("#admin-navigation-drawer");
+    await reopenedAdminDrawer.waitFor({ state: "visible" });
+    const reopenedPlatformConfigurationGroup = reopenedAdminDrawer.locator(".admin-secondary-group-heading")
+      .filter({ hasText: "Platform Configuration" });
+    await reopenedPlatformConfigurationGroup.waitFor({ state: "visible" });
+    if (await reopenedPlatformConfigurationGroup.getAttribute("aria-expanded") !== "true") {
+      await reopenedPlatformConfigurationGroup.click();
+    }
+    await reopenedAdminDrawer.getByRole("button", { name: /Appearance & Themes/ }).click();
+    await page.getByRole("heading", { name: "Theme management" }).waitFor({ state: "visible", timeout: 15000 });
+    await page.getByLabel("Default theme").waitFor({ state: "visible" });
+    await page.getByRole("status").filter({ hasText: "Customer theme selection is enabled" }).waitFor({ state: "visible" });
+    await page.waitForFunction(() => {
+      const labelled = Array.from(document.querySelectorAll("label"))
+        .find(label => label.textContent?.trim().startsWith("Default theme"));
+      const select = document.querySelector('select[aria-label="Default theme"]') ||
+        labelled?.querySelector("select");
+      return select instanceof HTMLSelectElement && !select.disabled;
+    });
+    const reloadedDefaultTheme = await page.getByLabel("Default theme").inputValue();
+
+    // Exercise the native theme dropdown with keyboard input, not only selectOption().
+    const keyboardThemeSelect = page.getByLabel("Default theme");
+    await keyboardThemeSelect.focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    const keyboardSelectedTheme = await keyboardThemeSelect.inputValue();
+    const keyboardDropdownWorks = keyboardSelectedTheme !== reloadedDefaultTheme;
+    await keyboardThemeSelect.selectOption(reloadedDefaultTheme);
+    record("admin-default-theme-dropdown-keyboard-navigation",
+      keyboardDropdownWorks,
+      { initialTheme: reloadedDefaultTheme, keyboardSelectedTheme });
+
+    const reloadedCustomerChoice = await page.getByRole("status").filter({ hasText: "Customer theme selection is enabled" }).isVisible();
+    const themeLabelPatterns = {
+      original: /Original/i,
+      "midnight-premium": /Midnight Premium/i,
+      "clean-light": /Clean Light/i,
+      "emerald-finance": /Emerald Finance/i,
+      "aurora-modern": /Aurora Modern/i,
+      "gold-luxe": /Gold Luxe/i,
+    };
+    const reloadedThemeStates = await Promise.all(THEMES.map(async theme => ({
+      theme,
+      enabled: await page.getByRole("checkbox", { name: themeLabelPatterns[theme] }).isChecked(),
+    })));
+    const reloadedEnabledThemes = reloadedThemeStates.filter(item => item.enabled).map(item => item.theme);
+    const rejectedSaveReloadPreservesPersistedPolicy =
+      reloadedDefaultTheme === persistedBeforeRejectedSave.defaultTheme &&
+      reloadedCustomerChoice === persistedBeforeRejectedSave.customerCanSelect &&
+      JSON.stringify(reloadedEnabledThemes) === JSON.stringify(persistedBeforeRejectedSave.enabledThemes);
+    record("admin-appearance-rejected-save-preserves-persisted-policy-on-reload",
+      rejectedSaveReloadPreservesPersistedPolicy,
+      {
+        reloadedDefaultTheme,
+        reloadedCustomerChoice,
+        reloadedEnabledThemes,
+        expectedPersistedPolicy: persistedBeforeRejectedSave,
+        note: "Reload/refetch uses mocked settings storage; live database persistence remains an independent acceptance gate.",
+      });
+
+    // Validate the replacement Admin Menus navigation drawer and then
+    // return to the primary Wallet & Ledger section for the mobile table checks.
+    const adminMenusTrigger = page.getByRole("button", { name: "Open Admin Menus" });
+    const triggerHitTarget = await adminMenusTrigger.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return {
+        visible: rect.width > 0 && rect.height > 0,
+        hitTargetMatches: Boolean(hit && (hit === element || element.contains(hit))),
+        hitTag: hit?.tagName ?? null,
+        hitClass: typeof hit?.className === "string" ? hit.className : null,
+        bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      };
+    });
+    record("admin-menus-trigger-pointer-hit-target",
+      triggerHitTarget.visible && triggerHitTarget.hitTargetMatches,
+      triggerHitTarget);
+    await adminMenusTrigger.focus();
+
+    const adminMenusDialog = page.locator("#admin-navigation-drawer");
+    const closedDrawerFocusability = await adminMenusDialog.evaluate(drawer => ({
+      hidden: drawer.getAttribute("aria-hidden") === "true",
+      searchTabIndex: drawer.querySelector('input[aria-label="Search admin sections"]')?.tabIndex ?? null,
+      unintendedTabStops: drawer.querySelectorAll('a[href]:not([tabindex="-1"]):not([aria-disabled="true"]),button:not([tabindex="-1"]):not([disabled]),input:not([tabindex="-1"]):not([disabled]),select:not([tabindex="-1"]):not([disabled]),textarea:not([tabindex="-1"]):not([disabled]),[tabindex]:not([tabindex="-1"]):not([disabled]),[contenteditable="true"]').length,
+    }));
+    record("admin-menus-closed-drawer-has-no-tab-stops",
+      closedDrawerFocusability.hidden &&
+      closedDrawerFocusability.searchTabIndex === -1 &&
+      closedDrawerFocusability.unintendedTabStops === 0,
+      closedDrawerFocusability);
+
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector("#admin-navigation-drawer");
+      return drawer?.getAttribute("aria-hidden") === "false" &&
+        Boolean(drawer?.contains(document.activeElement));
+    });
+    const dialogSemantics = await adminMenusDialog.evaluate(element => ({
+      visible: element.getAttribute("aria-hidden") === "false",
+      modal: element.getAttribute("aria-modal"),
+      focusInside: element.contains(document.activeElement),
+    }));
+    const triggerExpandedWhileOpen = await page.locator(".admin-slide-trigger").getAttribute("aria-expanded");
+    const adminPortalPlacement = await adminMenusDialog.evaluate(element => ({
+      layerClassPresent: element.parentElement?.classList.contains("admin-slide-portal-layer") ?? false,
+      attachedDirectlyToBody: element.parentElement?.parentElement === document.body,
+    }));
+    const allSecondaryGroups = await adminMenusDialog.locator(".admin-secondary-group-heading").allTextContents();
+    const expectedSecondaryGroups = [
+      "Verification & Risk",
+      "Communications",
+      "Platform Configuration",
+      "Integrations",
+      "Governance & Reports",
+    ];
+    const allSecondaryGroupsPresent = expectedSecondaryGroups.every(expected =>
+      allSecondaryGroups.some(actual => actual.includes(expected))
+    );
+    record("admin-menus-dialog-uses-body-level-portal",
+      adminPortalPlacement.layerClassPresent && adminPortalPlacement.attachedDirectlyToBody,
+      adminPortalPlacement);
+    record("admin-menus-dialog-accessibility-and-focus",
+      dialogSemantics.visible && dialogSemantics.modal === "true" &&
+      dialogSemantics.focusInside && triggerExpandedWhileOpen === "true",
+      { ...dialogSemantics, triggerExpandedWhileOpen });
+    record("admin-menus-contains-all-five-secondary-navigation-groups",
+      allSecondaryGroupsPresent,
+      { expectedSecondaryGroups, actualSecondaryGroups: allSecondaryGroups });
+
+    const adminMenusSearch = adminMenusDialog.getByRole("textbox", {
+      name: "Search admin sections",
+    });
+    await adminMenusSearch.fill("Platform Configuration");
+    const platformGroupVisible = await adminMenusDialog.locator(".admin-secondary-group-heading")
+      .filter({ hasText: "Platform Configuration" }).isVisible();
+    const appearanceDestinationVisible = await adminMenusDialog.getByRole("button", {
+      name: /Appearance & Themes/,
+    }).isVisible();
+    await adminMenusSearch.fill("Governance & Reports");
+    const governanceGroupVisible = await adminMenusDialog.locator(".admin-secondary-group-heading")
+      .filter({ hasText: "Governance & Reports" }).isVisible();
+    const reportsDestinationVisible = await adminMenusDialog.getByRole("button", {
+      name: /Reports & Exports/,
+    }).isVisible();
+    await adminMenusSearch.fill("no-such-admin-section");
+    const noResultsFeedback = await adminMenusDialog.getByRole("status")
+      .filter({ hasText: "No matching admin sections." }).isVisible();
+    await adminMenusSearch.fill("");
+    record("admin-menus-search-filters-navigation-groups-and-destinations",
+      platformGroupVisible && appearanceDestinationVisible &&
+      governanceGroupVisible && reportsDestinationVisible && noResultsFeedback,
+      {
+        platformGroupVisible,
+        appearanceDestinationVisible,
+        governanceGroupVisible,
+        reportsDestinationVisible,
+        noResultsFeedback,
+      });
+
+    // The drawer must remain usable at a narrow phone viewport.
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector("#admin-navigation-drawer");
+      if (!(drawer instanceof HTMLElement)) return false;
+      const rect = drawer.getBoundingClientRect();
+      return rect.left >= 0 && rect.right <= window.innerWidth + 1;
+    });
+    const compactDialogLayout = await adminMenusDialog.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const close = element.querySelector(".admin-slide-close");
+      const search = element.querySelector('input[aria-label="Search admin sections"]');
+      const nav = element.querySelector(".admin-slide-nav");
+      const navStyle = nav ? getComputedStyle(nav) : null;
+      const withinViewport = rect.left >= 0 && rect.top >= 0 &&
+        rect.right <= window.innerWidth + 1 && rect.bottom <= window.innerHeight + 1;
+      return {
+        bounds: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+          width: rect.width, height: rect.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        maxHeight: style.maxHeight,
+        overflowY: navStyle?.overflowY ?? null,
+        navClientHeight: nav instanceof HTMLElement ? nav.clientHeight : null,
+        navScrollHeight: nav instanceof HTMLElement ? nav.scrollHeight : null,
+        withinViewport,
+        closeButtonPresent: close instanceof HTMLElement,
+        searchPresent: search instanceof HTMLInputElement,
+        documentWidth: document.documentElement.scrollWidth,
+      };
+    });
+    const compactCloseButtonVisible = await adminMenusDialog.locator(".admin-slide-close").isVisible();
+    const compactSearchVisible = await adminMenusSearch.isVisible();
+    record("admin-menus-dialog-fits-compact-mobile-viewport",
+      compactDialogLayout.withinViewport &&
+      compactDialogLayout.bounds.width <= 320 &&
+      compactDialogLayout.bounds.height <= 568 &&
+      compactDialogLayout.overflowY === "auto" &&
+      compactDialogLayout.closeButtonPresent &&
+      compactDialogLayout.searchPresent &&
+      compactCloseButtonVisible &&
+      compactSearchVisible &&
+      compactDialogLayout.documentWidth <= 320,
+      { ...compactDialogLayout, compactCloseButtonVisible, compactSearchVisible });
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await adminMenusDialog.evaluate(element => { element.scrollTop = 0; });
+    const drawerFocusable = adminMenusDialog.locator(
+      'button:not([tabindex="-1"]), input:not([tabindex="-1"])'
+    );
+    const drawerFocusableCount = await drawerFocusable.count();
+    const firstDrawerFocusable = drawerFocusable.first();
+    const lastDrawerFocusable = drawerFocusable.last();
+    await firstDrawerFocusable.focus();
+    await page.keyboard.press("Shift+Tab");
+    const reverseFocusWrapped = await lastDrawerFocusable.evaluate(element =>
+      document.activeElement === element
+    );
+    await page.keyboard.press("Tab");
+    const forwardFocusWrapped = await firstDrawerFocusable.evaluate(element =>
+      document.activeElement === element
+    );
+    record("admin-menus-dialog-traps-keyboard-focus",
+      drawerFocusableCount >= 2 && reverseFocusWrapped && forwardFocusWrapped,
+      { drawerFocusableCount, reverseFocusWrapped, forwardFocusWrapped });
+
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() =>
+      document.querySelector("#admin-navigation-drawer")?.getAttribute("aria-hidden") === "true" &&
+      document.activeElement === document.querySelector(".admin-slide-trigger")
+    );
+    const focusRestored = await page.locator(".admin-slide-trigger").evaluate(element =>
+      document.activeElement === element
+    );
+    record("admin-menus-dialog-escape-closes-and-restores-focus", focusRestored, { focusRestored });
+
+    await adminMenusTrigger.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector("#admin-navigation-drawer");
+      return drawer?.getAttribute("aria-hidden") === "false" &&
+        document.activeElement?.getAttribute("aria-label") === "Close Admin Menus";
+    });
+    const dialogState = await adminMenusDialog.evaluate(element => ({
+      modal: element.getAttribute("aria-modal"),
+      hidden: element.getAttribute("aria-hidden"),
+      bodyOverflow: document.body.style.overflow,
+      activeLabel: document.activeElement?.getAttribute("aria-label") || "",
+      activeTag: document.activeElement?.tagName.toLowerCase() || "",
+    }));
+    record("admin-menus-dialog-opens-with-close-focus",
+      dialogState.modal === "true" && dialogState.hidden === "false" &&
+      dialogState.bodyOverflow === "hidden" &&
+      dialogState.activeLabel === "Close Admin Menus" &&
+      dialogState.activeTag === "button",
+      dialogState);
+
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => {
+      const trigger = document.querySelector('[aria-label="Open Admin Menus"]');
+      return Boolean(trigger && trigger.getAttribute("aria-expanded") === "false" && document.activeElement === trigger);
+    });
+    const dialogClosed = await adminMenusDialog.getAttribute("aria-hidden") === "true";
+    const closeRestoredOverflow = await page.evaluate(() => document.body.style.overflow !== "hidden");
+    record("admin-menus-dialog-escape-closes-and-restores-focus",
+      dialogClosed && closeRestoredOverflow,
+      {
+        dialogClosed,
+        closeRestoredOverflow,
+        focusedTrigger: await page.evaluate(() => document.activeElement?.getAttribute("aria-label") || ""),
+      });
+
+    // Wallet & Ledger lives inside the Finance group in the primary rail.
+    // Primary groups intentionally start collapsed, so expand Finance first.
+    const financeGroup = page.getByRole("button", { name: /^Finance/ });
+    const walletLedgerDestination = page.locator(
+      '#admin-main-navigation button[title="Read-only wallet balances and transaction history"]',
+    );
+    if (!(await walletLedgerDestination.isVisible())) {
+      await financeGroup.click();
+    }
+    await walletLedgerDestination.waitFor({ state: "visible" });
+    await walletLedgerDestination.click();
+    await page.getByRole("heading", { name: "Wallet & Ledger" }).waitFor({ state: "visible" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByLabel("Customer (required)").selectOption("8001");
+    await page.waitForFunction(() =>
+      document.querySelectorAll('[aria-label="Wallet activity ledger"] tbody tr').length >= 24,
+    );
+
+    for (const tableCase of [
+      { label: "Wallet activity ledger", check: "populated-financial-table-keyboard-scroll", minimumRows: 20 },
+    ]) {
+      const region = page.getByRole("region", { name: tableCase.label });
+      await region.waitFor({ state: "visible" });
+      const before = await region.evaluate(element => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        scrollLeft: element.scrollLeft,
+        tabIndex: element.tabIndex,
+        role: element.getAttribute("role"),
+        label: element.getAttribute("aria-label"),
+        rows: element.querySelectorAll("tbody tr").length,
+      }));
+      await region.focus();
+      const activeElementAfterFocus = await page.evaluate(() => ({
+        tag: document.activeElement?.tagName ?? null,
+        label: document.activeElement?.getAttribute("aria-label") ?? null,
+        regionFocused: document.activeElement?.getAttribute("aria-label") === "Trades awaiting manual settlement" || document.activeElement?.getAttribute("aria-label") === "Wallet activity ledger",
+      }));
+      await page.keyboard.press("ArrowRight");
+      await page.waitForTimeout(100);
+      const after = await region.evaluate(element => ({
+        scrollLeft: element.scrollLeft,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+      }));
+      const passed = before.rows >= tableCase.minimumRows &&
+        before.scrollWidth > before.clientWidth &&
+        before.tabIndex === 0 &&
+        before.role === "region" &&
+        before.label === tableCase.label &&
+        activeElementAfterFocus.regionFocused &&
+        after.scrollLeft > before.scrollLeft &&
+        after.documentWidth <= after.viewportWidth + 1;
+      record(tableCase.check, passed, {
+        tableLabel: tableCase.label,
+        rows: before.rows,
+        clientWidth: before.clientWidth,
+        scrollWidth: before.scrollWidth,
+        scrollLeftBefore: before.scrollLeft,
+        scrollLeftAfter: after.scrollLeft,
+        tabIndex: before.tabIndex,
+        role: before.role,
+        accessibleName: before.label,
+        activeElementAfterFocus,
+        documentWidth: after.documentWidth,
+        viewportWidth: after.viewportWidth,
+        note: "Uses mocked administrator and ledger data; verifies the rendered table's keyboard scrolling and containment, not live ledger authorization or persistence.",
+      });
+    }
+
+    // Settlement & Reconciliation is a separate Trade Settings owner; it is
+    // intentionally not rendered on the Finance → Wallet & Ledger route.
+    const mobileAdminNavigationTrigger = page.locator(".admin-mobile-nav-trigger");
+    if (await mobileAdminNavigationTrigger.isVisible()) {
+      await mobileAdminNavigationTrigger.click();
+      await page.waitForFunction(() => document.querySelector(".admin-portal")?.classList.contains("mobile-nav-open"));
+    }
+    const tradeSettingsGroup = page.getByRole("button", { name: /Trade Settings/ });
+    if (await tradeSettingsGroup.getAttribute("aria-expanded") !== "true") {
+      await clickCanonicalNavigationTarget(page, tradeSettingsGroup);
+    }
+    if (await mobileAdminNavigationTrigger.isVisible() &&
+      !(await page.locator(".admin-portal").evaluate(element => element.classList.contains("mobile-nav-open")))) {
+      await mobileAdminNavigationTrigger.click();
+      await page.waitForFunction(() => document.querySelector(".admin-portal")?.classList.contains("mobile-nav-open"));
+    }
+    const settlementDestination = page.locator(
+      '#admin-main-navigation button[title="Confirm trade outcomes and reconcile trade settlement records only"]',
+    );
+    await settlementDestination.waitFor({ state: "visible" });
+    await clickCanonicalNavigationTarget(page, settlementDestination);
+    await page.getByRole("heading", { name: "Settlement & Reconciliation" }).waitFor({ state: "visible" });
+    const settlementRegion = page.getByRole("region", { name: "Trades awaiting manual settlement" });
+    await settlementRegion.waitFor({ state: "visible" });
+    const settlementBefore = await settlementRegion.evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      scrollLeft: element.scrollLeft,
+      tabIndex: element.tabIndex,
+      role: element.getAttribute("role"),
+      label: element.getAttribute("aria-label"),
+      rows: element.querySelectorAll("tbody tr").length,
+    }));
+    await settlementRegion.focus();
+    const settlementFocused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "Trades awaiting manual settlement");
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(100);
+    const settlementAfter = await settlementRegion.evaluate(element => ({
+      scrollLeft: element.scrollLeft,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    record("populated-settlement-table-keyboard-scroll",
+      settlementBefore.rows >= 10 &&
+      settlementBefore.scrollWidth > settlementBefore.clientWidth &&
+      settlementBefore.tabIndex === 0 &&
+      settlementBefore.role === "region" &&
+      settlementBefore.label === "Trades awaiting manual settlement" &&
+      settlementFocused &&
+      settlementAfter.scrollLeft > settlementBefore.scrollLeft &&
+      settlementAfter.documentWidth <= settlementAfter.viewportWidth + 1,
+      {
+        tableLabel: "Trades awaiting manual settlement",
+        rows: settlementBefore.rows,
+        clientWidth: settlementBefore.clientWidth,
+        scrollWidth: settlementBefore.scrollWidth,
+        scrollLeftBefore: settlementBefore.scrollLeft,
+        scrollLeftAfter: settlementAfter.scrollLeft,
+        tabIndex: settlementBefore.tabIndex,
+        role: settlementBefore.role,
+        accessibleName: settlementBefore.label,
+        activeElementAfterFocus: settlementFocused,
+        documentWidth: settlementAfter.documentWidth,
+        viewportWidth: settlementAfter.viewportWidth,
+        note: "Uses mocked pending-settlement data on the dedicated Settlement & Reconciliation route; verifies keyboard scrolling and containment, not live settlement authorization or persistence.",
+      });
+  } catch (error) {
+    record("admin-appearance-interaction-unhandled-error", false, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+async function runCustomerAuthFormInteractionCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  page.setDefaultTimeout(10000);
+  const checks = [];
+  const pageErrors = [];
+  let registerRequests = 0;
+  page.on("pageerror", error => pageErrors.push(error.message));
+  const record = (check, passed, details = {}) => checks.push({
+    route: "/customer",
+    routeName: "customer",
+    width: 390,
+    check,
+    passed,
+    ...details,
+  });
+
+  try {
+    await page.route("**/api/customer/register", async route => {
+      registerRequests += 1;
+      // Keep the request pending long enough to observe the actual busy state.
+      await new Promise(resolve => setTimeout(resolve, 450));
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Simulated registration failure" }),
+      });
+    });
+    await page.goto(new URL("/customer", BASE_URL).href, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    await page.getByRole("heading", { name: "Create your customer account" }).waitFor({
+      state: "visible",
+      timeout: 15000,
+    });
+
+    const firstName = page.getByLabel("First name");
+    const lastName = page.getByLabel("Last name");
+    const email = page.getByLabel("Email address");
+    const password = page.getByLabel("Password");
+    const submit = page.getByRole("button", { name: /Register customer account/ });
+    const fieldsFound = await Promise.all([
+      firstName.isVisible(),
+      lastName.isVisible(),
+      email.isVisible(),
+      password.isVisible(),
+    ]);
+    const fieldSemantics = {
+      firstNameRequired: await firstName.getAttribute("required") !== null,
+      lastNameRequired: await lastName.getAttribute("required") !== null,
+      emailRequired: await email.getAttribute("required") !== null,
+      emailType: await email.getAttribute("type"),
+      passwordRequired: await password.getAttribute("required") !== null,
+      passwordMinLength: await password.getAttribute("minlength"),
+    };
+
+    await submit.click();
+    const validationAlert = page.getByRole("alert");
+    await validationAlert.waitFor({ state: "visible" });
+    const validationText = await validationAlert.innerText();
+    const invalidStates = await Promise.all(
+      [firstName, lastName, email, password].map(async field =>
+        await field.getAttribute("aria-invalid") === "true"
+      ),
+    );
+    record("customer-registration-required-fields-validation", 
+      fieldsFound.every(Boolean) &&
+      fieldSemantics.firstNameRequired &&
+      fieldSemantics.lastNameRequired &&
+      fieldSemantics.emailRequired &&
+      fieldSemantics.emailType === "email" &&
+      fieldSemantics.passwordRequired &&
+      fieldSemantics.passwordMinLength === "12" &&
+      invalidStates.every(Boolean) &&
+      /first and last name/i.test(validationText) &&
+      registerRequests === 0,
+      {
+        fieldsFound,
+        fieldSemantics,
+        invalidStates,
+        validationText,
+        registerRequests,
+      },
+    );
+
+    await firstName.fill("Jordan");
+    await lastName.fill("Davis");
+    await email.fill("jordan.davis@example.test");
+    await password.fill("ShortPass12");
+    await submit.click();
+    const shortPasswordAlert = page.getByRole("alert").filter({
+      hasText: /password of at least 12 characters/i,
+    });
+    await shortPasswordAlert.waitFor({ state: "visible" });
+    const shortPasswordRejected =
+      await password.getAttribute("aria-invalid") === "true" &&
+      registerRequests === 0;
+    record("customer-registration-rejects-password-below-server-minimum",
+      shortPasswordRejected,
+      {
+        passwordLength: (await password.inputValue()).length,
+        passwordMinLength: await password.getAttribute("minlength"),
+        registerRequests,
+        validationText: await shortPasswordAlert.innerText(),
+      },
+    );
+
+    await password.fill("StageTwoSecurePass123");
+    const validStates = await Promise.all(
+      [firstName, lastName, email, password].map(async field =>
+        await field.getAttribute("aria-invalid") !== "true"
+      ),
+    );
+    await submit.click();
+    const busyButton = page.getByRole("button", { name: /Working/ });
+    await busyButton.waitFor({ state: "visible" });
+    const busyDisabled = await busyButton.isDisabled();
+    const busyAria = await busyButton.getAttribute("aria-busy");
+    const errorAlert = page.getByRole("alert").filter({ hasText: "Simulated registration failure" });
+    await errorAlert.waitFor({ state: "visible" });
+    const restoredButton = page.getByRole("button", { name: /Register customer account/ });
+    await page.waitForFunction(() => {
+      const button = document.querySelector(".auth-primary");
+      return button instanceof HTMLButtonElement && !button.disabled && button.getAttribute("aria-busy") === "false";
+    });
+    const errorRole = await errorAlert.getAttribute("role");
+    const errorLive = await errorAlert.getAttribute("aria-live");
+    const describedBy = await restoredButton.getAttribute("aria-describedby");
+    record("customer-registration-busy-and-error-recovery",
+      validStates.every(Boolean) &&
+      busyDisabled &&
+      busyAria === "true" &&
+      await restoredButton.isEnabled() &&
+      errorRole === "alert" &&
+      errorLive === "assertive" &&
+      describedBy === "customer-auth-error" &&
+      registerRequests === 1 &&
+      pageErrors.length === 0,
+      {
+        validStates,
+        busyDisabled,
+        busyAria,
+        errorRole,
+        errorLive,
+        describedBy,
+        registerRequests,
+        pageErrors,
+      },
+    );
+  } catch (error) {
+    record("customer-registration-form-interaction-completes", false, {
+      error: error instanceof Error ? error.message : String(error),
+      registerRequests,
+      pageErrors,
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+
+async function runCustomerRecoveryInteractionCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  page.setDefaultTimeout(10000);
+  const checks = [];
+  const pageErrors = [];
+  let requestCount = 0;
+  let confirmCount = 0;
+  page.on("pageerror", error => pageErrors.push(error.message));
+  const record = (check, passed, details = {}) => checks.push({
+    route: "/customer",
+    routeName: "customer",
+    width: 390,
+    check,
+    passed,
+    ...details,
+  });
+
+  try {
+    await page.route("**/api/customer/password-reset/request", async route => {
+      requestCount += 1;
+      await new Promise(resolve => setTimeout(resolve, 350));
+      if (requestCount === 1) {
+        await route.fulfill({
+          status: 429,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Simulated reset request rate limit" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Simulated reset code queued." }),
+      });
+    });
+    await page.route("**/api/customer/password-reset/confirm", async route => {
+      confirmCount += 1;
+      await new Promise(resolve => setTimeout(resolve, 350));
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Simulated reset-code rejection" }),
+      });
+    });
+
+    await page.goto(new URL("/customer", BASE_URL).href, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+    await page.locator(".auth-tabs").getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByRole("button", { name: "Forgot password?", exact: true }).click();
+    await page.getByRole("heading", { name: "Reset password", exact: true }).waitFor({ state: "visible" });
+
+    const panel = page.locator(".email-recovery-panel");
+    const email = panel.getByLabel("Email address");
+    await email.fill("recovery@example.test");
+    const send = page.getByRole("button", { name: "Send reset code", exact: true });
+    const sendRequired = await email.getAttribute("required") !== null &&
+      await email.getAttribute("type") === "email";
+    await send.click();
+    const requesting = page.getByRole("button", { name: "Requesting…", exact: true });
+    await requesting.waitFor({ state: "visible" });
+    const requestBusy = await requesting.isDisabled() &&
+      await requesting.getAttribute("aria-busy") === "true";
+    const requestError = page.getByRole("alert").filter({ hasText: "Simulated reset request rate limit" });
+    await requestError.waitFor({ state: "visible" });
+    const requestErrorRole = await requestError.getAttribute("role");
+    await page.waitForFunction(() => {
+      const button = Array.from(document.querySelectorAll(".email-recovery-panel button"))
+        .find(item => item.textContent?.includes("Send reset code"));
+      return button instanceof HTMLButtonElement && !button.disabled && button.getAttribute("aria-busy") === "false";
+    });
+    record("customer-password-recovery-request-error-recovers",
+      sendRequired && requestBusy && requestErrorRole === "alert" &&
+      await send.isEnabled() && requestCount === 1 && pageErrors.length === 0,
+      { sendRequired, requestBusy, requestErrorRole, requestCount, pageErrors });
+
+    await send.click();
+    const retrying = page.getByRole("button", { name: "Requesting…", exact: true });
+    await retrying.waitFor({ state: "visible" });
+    const retryBusy = await retrying.isDisabled() &&
+      await retrying.getAttribute("aria-busy") === "true";
+    await page.getByRole("status").filter({ hasText: "Simulated reset code queued." }).waitFor({ state: "visible" });
+    const requestStatus = await page.getByRole("status").innerText();
+    const code = page.getByLabel("Eight-digit code");
+    const password = page.getByLabel("New password");
+    const confirmRequired = await code.getAttribute("required") !== null &&
+      await code.getAttribute("pattern") === "[0-9]{8}" &&
+      await code.getAttribute("maxlength") === "8" &&
+      await password.getAttribute("required") !== null &&
+      await password.getAttribute("minlength") === "12";
+    record("customer-password-recovery-request-retry-and-confirm-transition",
+      retryBusy && /Simulated reset code queued/.test(requestStatus) &&
+      confirmRequired && requestCount === 2 && pageErrors.length === 0,
+      { retryBusy, requestStatus, confirmRequired, requestCount, pageErrors });
+
+    await code.fill("12345678");
+    await password.fill("ValidRecoveryPass123!");
+    const update = page.getByRole("button", { name: "Set new password", exact: true });
+    await update.click();
+    const updating = page.getByRole("button", { name: "Updating…", exact: true });
+    await updating.waitFor({ state: "visible" });
+    const confirmBusy = await updating.isDisabled() &&
+      await updating.getAttribute("aria-busy") === "true";
+    const rejection = page.getByRole("alert").filter({ hasText: "Simulated reset-code rejection" });
+    await rejection.waitFor({ state: "visible" });
+    const errorRole = await rejection.getAttribute("role");
+    const recovered = page.getByRole("button", { name: "Set new password", exact: true });
+    await page.waitForFunction(() => {
+      const button = Array.from(document.querySelectorAll("button"))
+        .find(item => item.textContent?.includes("Set new password"));
+      return button instanceof HTMLButtonElement && !button.disabled && button.getAttribute("aria-busy") === "false";
+    });
+    record("customer-password-recovery-confirm-error-recovers",
+      confirmBusy && errorRole === "alert" && await recovered.isEnabled() &&
+      confirmCount === 1 && pageErrors.length === 0,
+      { confirmBusy, errorRole, confirmCount, recoveredEnabled: await recovered.isEnabled(), pageErrors });
+  } catch (error) {
+    record("customer-password-recovery-interaction-completes", false, {
+      error: error instanceof Error ? error.message : String(error),
+      requestCount,
+      confirmCount,
+      pageErrors,
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+async function runCustomerThemePolicyInteractionCheck(browser) {
+  const checks = [];
+  const scenarios = [
+    {
+      name: "customer-choice-enabled-by-default",
+      policy: { defaultTheme: "clean-light", enabledThemes: ["clean-light", "aurora-modern"], customerCanSelect: true },
+      expectedEditable: true,
+    },
+    {
+      name: "customer-choice-enabled",
+      policy: { defaultTheme: "clean-light", enabledThemes: ["clean-light", "aurora-modern"], customerCanSelect: true },
+      expectedEditable: true,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    page.setDefaultTimeout(10000);
+    const pageErrors = [];
+    page.on("pageerror", error => pageErrors.push(error.message));
+    const apiRequests = [];
+    try {
+      await page.addInitScript((storedTheme) => {
+        try {
+          // Seed the policy scenario once per tab so a reload can verify that
+          // the selected account-scoped preference survives navigation.
+          if (sessionStorage.getItem("__stage3-theme-seeded") === "1") return;
+          sessionStorage.setItem("__stage3-theme-seeded", "1");
+          if (storedTheme) localStorage.setItem("arbitrade-theme:user:9002", storedTheme);
+          else localStorage.removeItem("arbitrade-theme:user:9002");
+        } catch {}
+      }, scenario.expectedEditable ? null : "aurora-modern");
+      await page.route(/\/api\/trpc(?:\/|$)/, async route => {
+        const request = route.request();
+        const url = new URL(request.url());
+        const procedurePath = decodeURIComponent(url.pathname.split("/api/trpc/")[1] || "");
+        const procedures = procedurePath.split(",").filter(Boolean);
+        let envelope = {};
+        try {
+          const raw = request.method() === "GET" ? url.searchParams.get("input") : request.postData();
+          envelope = raw ? JSON.parse(raw) : {};
+        } catch {
+          envelope = {};
+        }
+        const inputAt = index => {
+          const item = Array.isArray(envelope) ? envelope[index] : envelope[String(index)];
+          return item?.json ?? item?.input?.json ?? envelope?.json ?? envelope?.input?.json ?? {};
+        };
+        const output = procedures.map((procedure, index) => {
+          let data = null;
+          if (procedure === "auth.me") {
+            data = { id: 9002, email: "stage2-customer@example.test", name: "Stage 2 Customer", role: "customer" };
+          } else if (procedure === "appearanceConfig") {
+            data = scenario.policy;
+          } else if (procedure.endsWith(".logout")) {
+            data = { success: true };
+          } else if (procedure.endsWith(".settings") || procedure.endsWith(".branding")) {
+            data = {};
+          } else if (procedure.startsWith("customer.") && /\.(balances|opportunities|trades|notifications|tickets|soundSettings)$/.test(procedure)) {
+            data = [];
+          }
+          return { result: { data: { json: data } } };
+        });
+        apiRequests.push({ procedures, method: request.method() });
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(output),
+        });
+      });
+
+      await page.goto(new URL("/customer", BASE_URL).href, { waitUntil: "domcontentloaded", timeout: 30000 });
+      const selector = page.locator(".customer-portal .portal-session > .arb-theme-selector-compact");
+      await selector.waitFor({ state: "visible", timeout: 15000 });
+      const customerMainSurface = await page.locator(".customer-portal .portal-main").evaluate(element => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const text = (element.innerText || "").trim();
+        return {
+          display: style.display,
+          visibility: style.visibility,
+          opacity: Number(style.opacity),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          textLength: text.length,
+          textPreview: text.slice(0, 120),
+        };
+      });
+      const customerMainVisible = customerMainSurface.display !== "none" &&
+        customerMainSurface.visibility !== "hidden" && customerMainSurface.opacity > 0 &&
+        customerMainSurface.width > 0 && customerMainSurface.height > 0 &&
+        customerMainSurface.textLength > 0;
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 1440,
+        theme: "runtime-default",
+        check: "customer-main-workspace-visible",
+        ...customerMainSurface,
+        passed: customerMainVisible,
+      });
+      const customerThemeSelectorCount = await page.locator(".customer-portal .arb-theme-selector-compact").count();
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 1440,
+        theme: "runtime-default",
+        check: "customer-theme-selector-single-location",
+        selectorCount: customerThemeSelectorCount,
+        selectorInHeader: await selector.isVisible(),
+        passed: customerThemeSelectorCount === 1 && await selector.isVisible(),
+      });
+
+      // The left-side SETTINGS rail is intentionally inside the customer shell.
+      // Verify that the rail is off-canvas/inert while closed, then visible and
+      // hit-testable above its scrim when opened. Do not expect the removed
+      // customer-left-menu-portal-host wrapper.
+      await page.setViewportSize({ width: 390, height: 844 });
+      const mobileCustomerSelectorCount = await page.locator(".customer-portal .arb-theme-selector-compact").count();
+      const mobileCustomerSelectorVisible = await selector.isVisible();
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 390,
+        theme: "runtime-default",
+        check: "customer-theme-selector-single-location-mobile",
+        selectorCount: mobileCustomerSelectorCount,
+        selectorInHeader: mobileCustomerSelectorVisible,
+        passed: mobileCustomerSelectorCount === 1 && mobileCustomerSelectorVisible,
+      });
+      // Open the separate customer resource drawer on mobile. A selector that
+      // only appears while a portal drawer is open must not escape this check.
+      await page.locator(".customer-resource-peek-trigger").click();
+      await page.locator(".customer-slide-portal.is-open #customer-navigation-drawer").waitFor({ state: "visible", timeout: 15000 });
+      const mobileDrawerSelectorCount = await page.locator(".customer-slide-portal .arb-theme-selector").count();
+      const mobileNavigationSelectorCount = await page.locator(
+        ".customer-portal .customer-primary-rail .arb-theme-selector, .customer-slide-portal .arb-theme-selector"
+      ).count();
+      const mobileHeaderSelectorCountWithDrawerOpen = await page.locator(".customer-portal .arb-theme-selector-compact").count();
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 390,
+        theme: "runtime-default",
+        check: "customer-theme-selector-header-only-when-mobile-drawer-open",
+        headerSelectorCount: mobileHeaderSelectorCountWithDrawerOpen,
+        navigationSelectorCount: mobileNavigationSelectorCount,
+        drawerSelectorCount: mobileDrawerSelectorCount,
+        passed: mobileHeaderSelectorCountWithDrawerOpen === 1 &&
+          mobileNavigationSelectorCount === 0 && mobileDrawerSelectorCount === 0,
+      });
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => !document.querySelector(".customer-slide-portal")?.classList.contains("is-open"), undefined, { timeout: 15000 });
+
+      // Tablet layouts use the same single-header rule; no selector may be
+      // rendered inside the account rail or the separately portalled drawer.
+      await page.setViewportSize({ width: 768, height: 1024 });
+      const tabletHeaderSelectorCount = await page.locator(".customer-portal .arb-theme-selector-compact").count();
+      const tabletHeaderSelectorVisible = await selector.isVisible();
+      const tabletNavigationSelectorCount = await page.locator(
+        ".customer-portal .customer-primary-rail .arb-theme-selector, .customer-slide-portal .arb-theme-selector"
+      ).count();
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 768,
+        theme: "runtime-default",
+        check: "customer-theme-selector-single-location-tablet",
+        headerSelectorCount: tabletHeaderSelectorCount,
+        navigationSelectorCount: tabletNavigationSelectorCount,
+        selectorInHeader: tabletHeaderSelectorVisible,
+        passed: tabletHeaderSelectorCount === 1 && tabletHeaderSelectorVisible && tabletNavigationSelectorCount === 0,
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+
+      // Customer styles are dynamically imported so the app can render even if a
+      // style chunk is slow. Wait for the actual closed-state rail CSS before
+      // evaluating menu visibility; otherwise this assertion races the stylesheet.
+      await page.waitForFunction(() => {
+        const rail = document.querySelector(".customer-portal .portal-body .customer-primary-rail");
+        if (!(rail instanceof HTMLElement) || !matchMedia("(max-width: 900px)").matches) return false;
+        const style = getComputedStyle(rail);
+        return style.visibility === "hidden" &&
+          Number(style.opacity) === 0 &&
+          style.pointerEvents === "none" &&
+          rail.getBoundingClientRect().right <= 0;
+      }, undefined, { timeout: 15000 });
+      const customerOverlayIsolation = await page.evaluate(() => {
+        const shell = document.querySelector(".customer-portal");
+        const layer = shell?.querySelector(".portal-body");
+        const rail = layer?.querySelector(".customer-primary-rail");
+        if (!(shell instanceof HTMLElement) || !(layer instanceof HTMLElement) || !(rail instanceof HTMLElement)) {
+          return { hostPresent: Boolean(shell), hostHasPageShellClass: shell?.classList.contains("customer-portal") ?? false, parentIsShell: false, pointerEvents: "missing", layerWidth: -1, layerHeight: -1, railVisibility: "missing", railOpacity: -1, railRight: 1, closed: false };
+        }
+        const railStyle = getComputedStyle(rail);
+        const railRect = rail.getBoundingClientRect();
+        return {
+          hostPresent: true,
+          hostHasPageShellClass: shell.classList.contains("customer-portal"),
+          parentIsShell: layer.closest(".customer-portal") === shell,
+          pointerEvents: railStyle.pointerEvents,
+          layerWidth: layer.getBoundingClientRect().width,
+          layerHeight: layer.getBoundingClientRect().height,
+          railVisibility: railStyle.visibility,
+          railOpacity: Number(railStyle.opacity),
+          railRight: railRect.right,
+          closed: !layer.classList.contains("customer-primary-menu-open"),
+        };
+      });
+      const customerOverlayDoesNotCoverPage =
+        customerOverlayIsolation.hostPresent &&
+        customerOverlayIsolation.hostHasPageShellClass &&
+        customerOverlayIsolation.parentIsShell &&
+        customerOverlayIsolation.pointerEvents === "none" &&
+        customerOverlayIsolation.layerWidth > 0 &&
+        customerOverlayIsolation.layerHeight > 0 &&
+        customerOverlayIsolation.closed &&
+        customerOverlayIsolation.railVisibility === "hidden" &&
+        customerOverlayIsolation.railOpacity === 0 &&
+        customerOverlayIsolation.railRight <= 0;
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 390,
+        theme: "runtime-default",
+        check: "customer-settings-overlay-isolated-when-closed",
+        passed: customerOverlayDoesNotCoverPage,
+        ...customerOverlayIsolation,
+        note: "The in-shell Settings rail must remain off-canvas and pointer-inert while closed without introducing a viewport-sized body overlay.",
+      });
+
+      const customerLeftSettingsTrigger = page.getByRole("button", { name: "Open Settings" });
+      await customerLeftSettingsTrigger.waitFor({ state: "visible", timeout: 10000 });
+      await customerLeftSettingsTrigger.click();
+      await page.waitForFunction(() => {
+        const shell = document.querySelector(".customer-portal");
+        const layer = shell?.querySelector(".portal-body.customer-primary-menu-open");
+        const rail = layer?.querySelector(".customer-primary-rail");
+        if (!(shell instanceof HTMLElement) || !(layer instanceof HTMLElement) || !(rail instanceof HTMLElement)) return false;
+        const rect = rail.getBoundingClientRect();
+        const style = getComputedStyle(rail);
+        const scrim = layer.querySelector(".customer-primary-menu-scrim");
+        const scrimStyle = scrim ? getComputedStyle(scrim) : null;
+        return layer.closest(".customer-portal") === shell &&
+          style.visibility === "visible" && Number(style.opacity) > 0.95 &&
+          style.pointerEvents !== "none" && style.zIndex === "82" &&
+          scrimStyle?.zIndex === "81" && rect.width > 0 && rect.height > 0 &&
+          rect.left >= -1 && rect.right <= window.innerWidth + 1 &&
+          style.clipPath === "none" && style.filter === "none";
+      }, { timeout: 10000 });
+      const customerLeftMenuPaint = await page.evaluate(() => {
+        const shell = document.querySelector(".customer-portal");
+        const layer = shell?.querySelector(".portal-body.customer-primary-menu-open");
+        const rail = layer?.querySelector(".customer-primary-rail");
+        const firstButton = rail?.querySelector('nav[aria-label="Account preferences navigation"] button');
+        const scrim = layer?.querySelector(".customer-primary-menu-scrim");
+        if (!(shell instanceof HTMLElement) || !(layer instanceof HTMLElement) ||
+            !(rail instanceof HTMLElement) || !(firstButton instanceof HTMLElement) ||
+            !(scrim instanceof HTMLElement)) {
+          return { attachedToCustomerShell: false, railVisible: false, firstItemHitTest: false, themeBackground: "", themeBackgroundImage: "none" };
+        }
+        const rect = firstButton.getBoundingClientRect();
+        const hitPoint = { x: rect.left + Math.min(20, rect.width / 2), y: rect.top + rect.height / 2 };
+        const topmost = document.elementFromPoint(hitPoint.x, hitPoint.y);
+        const railStyle = getComputedStyle(rail);
+        const buttonStyle = getComputedStyle(firstButton);
+        const scrimStyle = getComputedStyle(scrim);
+        const topmostElement = topmost instanceof HTMLElement ? {
+          tag: topmost.tagName,
+          id: topmost.id,
+          className: typeof topmost.className === "string" ? topmost.className : "",
+          ariaLabel: topmost.getAttribute("aria-label"),
+          text: (topmost.innerText || topmost.textContent || "").trim().slice(0, 70),
+        } : null;
+        const backgroundIsVisible = railStyle.backgroundImage !== "none" ||
+          railStyle.backgroundColor !== "rgba(0, 0, 0, 0)";
+        return {
+          attachedToCustomerShell: layer.closest(".customer-portal") === shell,
+          railVisible: railStyle.visibility === "visible" &&
+            Number(railStyle.opacity) > 0 && rail.getBoundingClientRect().width > 0,
+          railRect: (() => { const r = rail.getBoundingClientRect(); return { left:r.left, top:r.top, right:r.right, bottom:r.bottom }; })(),
+          firstButtonRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+          firstButtonStyle: { display: buttonStyle.display, visibility: buttonStyle.visibility, opacity: buttonStyle.opacity, pointerEvents: buttonStyle.pointerEvents, position: buttonStyle.position, zIndex: buttonStyle.zIndex },
+          hitPoint,
+          topmostElement,
+          firstItemHitTest: topmost === firstButton || (topmost instanceof Node && firstButton.contains(topmost)),
+          themeBackground: railStyle.backgroundColor,
+          themeBackgroundImage: railStyle.backgroundImage,
+          backgroundIsVisible,
+          railZIndex: railStyle.zIndex,
+          scrimZIndex: scrimStyle.zIndex,
+          clipPath: railStyle.clipPath,
+          filter: railStyle.filter,
+        };
+      });
+      const customerLeftMenuWorks = customerLeftMenuPaint.attachedToCustomerShell &&
+        customerLeftMenuPaint.railVisible && customerLeftMenuPaint.firstItemHitTest &&
+        customerLeftMenuPaint.backgroundIsVisible &&
+        customerLeftMenuPaint.railZIndex === "82" && customerLeftMenuPaint.scrimZIndex === "81" &&
+        customerLeftMenuPaint.clipPath === "none" && customerLeftMenuPaint.filter === "none";
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 390,
+        theme: "runtime-default",
+        check: "customer-left-settings-menu-paints-above-its-panel",
+        passed: customerLeftMenuWorks,
+        ...customerLeftMenuPaint,
+        note: "Opens the real in-shell left SETTINGS rail, verifies rail-over-scrim stacking, Android compositing overrides, viewport bounds and hit testing of the first navigation item.",
+      });
+      await page.locator(".customer-portal .portal-body.customer-primary-menu-open .customer-primary-menu-scrim").evaluate(element => {
+        if (element instanceof HTMLButtonElement) element.click();
+      });
+      await page.waitForFunction(() => !document.querySelector(".customer-portal .portal-body.customer-primary-menu-open"));
+      await page.setViewportSize({ width: 1440, height: 900 });
+
+      const select = selector.locator("select");
+      const editable = await select.count() === 1;
+      let options = [];
+      let selectedTheme = null;
+      let persistedTheme = null;
+      let restoredTheme = null;
+      let appliedTheme = null;
+      if (editable) {
+        options = await select.locator("option").evaluateAll(items => items.map(item => item.value));
+        if (scenario.expectedEditable) {
+          await select.selectOption("aurora-modern");
+          await page.waitForFunction(() => document.documentElement.dataset.arbTheme === "aurora-modern");
+          selectedTheme = await page.evaluate(() => document.documentElement.dataset.arbTheme || null);
+          persistedTheme = await page.evaluate(() => localStorage.getItem("arbitrade-theme:user:9002"));
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+          await page.waitForFunction(() => document.documentElement.dataset.arbTheme === "aurora-modern", undefined, { timeout: 15000 });
+          restoredTheme = await page.evaluate(() => document.documentElement.dataset.arbTheme || null);
+        }
+      }
+      appliedTheme = await page.evaluate(() => document.documentElement.dataset.arbTheme || null);
+      const correctEditability = editable === scenario.expectedEditable;
+      const correctDisabledFallback = scenario.expectedEditable || appliedTheme === "clean-light";
+      const correctOptions = !scenario.expectedEditable ||
+        (options.length === 2 && options.includes("clean-light") && options.includes("aurora-modern") &&
+          !options.includes("original") && !options.includes("midnight-premium") && !options.includes("emerald-finance"));
+      const correctSelection = !scenario.expectedEditable ||
+        (selectedTheme === "aurora-modern" && persistedTheme === "aurora-modern" && restoredTheme === "aurora-modern");
+      const passed = correctEditability && correctDisabledFallback && correctOptions && correctSelection && pageErrors.length === 0;
+
+      // The customer navigation drawer must be inert while closed and must
+      // preserve a complete keyboard focus loop when open.
+      if (scenario.name === "customer-choice-enabled-by-default") {
+        // Exercise the actual customer sound preference control in the mocked
+        // authenticated portal, not just the standalone WAV asset playback harness.
+        // The same page can have a stored preference after a theme-policy
+        // reload, so reset the preference and reload before asserting the off -> on transition.
+        await page.evaluate(() => window.localStorage.setItem("wisebond-sound-effects", "off"));
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+        const soundToggle = page.locator(".customer-header-sound-toggle");
+        try {
+          await soundToggle.waitFor({ state: "visible" });
+        } catch (error) {
+          // Preserve computed-style and ancestor evidence so a browser-only
+          // visibility regression can be fixed at its source rather than masked.
+          const visibilityDiagnostics = await page.evaluate(() => {
+            const button = document.querySelector(".customer-header-sound-toggle");
+            const ancestors = [];
+            let node = button;
+            while (node && ancestors.length < 8) {
+              const style = getComputedStyle(node);
+              const rect = node.getBoundingClientRect();
+              ancestors.push({
+                tag: node.tagName,
+                className: typeof node.className === "string" ? node.className : "",
+                display: style.display,
+                visibility: style.visibility,
+                opacity: style.opacity,
+                position: style.position,
+                rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+              });
+              node = node.parentElement;
+            }
+            const matchingDisplayRules = [];
+            const visitRules = (rules, source, media = []) => {
+              for (const rule of Array.from(rules || [])) {
+                if (rule.cssRules) {
+                  const nextMedia = rule.conditionText ? [...media, rule.conditionText] : media;
+                  visitRules(rule.cssRules, source, nextMedia);
+                  continue;
+                }
+                if (!rule.selectorText || !rule.style || !button) continue;
+                const display = rule.style.getPropertyValue("display");
+                if (!display) continue;
+                let matches = false;
+                try { matches = button.matches(rule.selectorText); } catch {}
+                if (matches) matchingDisplayRules.push({
+                  source,
+                  selector: rule.selectorText,
+                  display,
+                  important: rule.style.getPropertyPriority("display") === "important",
+                  media,
+                });
+              }
+            };
+            for (const sheet of Array.from(document.styleSheets)) {
+              try { visitRules(sheet.cssRules, sheet.href || "inline stylesheet"); }
+              catch (error) { matchingDisplayRules.push({ source: sheet.href || "inline stylesheet", unreadable: String(error) }); }
+            }
+            return {
+              viewport: { width: window.innerWidth, height: window.innerHeight },
+              media: { max900: matchMedia("(max-width: 900px)").matches, max600: matchMedia("(max-width: 600px)").matches },
+              buttonStyleAttribute: button?.getAttribute("style") ?? null,
+              buttonHiddenAttribute: button?.hasAttribute("hidden") ?? false,
+              matchingDisplayRules,
+              ancestors,
+            };
+          });
+          throw new Error(`${error instanceof Error ? error.message : String(error)}; sound-toggle visibility diagnostics=${JSON.stringify(visibilityDiagnostics)}`);
+        }
+        await page.waitForFunction(() => {
+          const button = document.querySelector(".customer-header-sound-toggle");
+          return button?.getAttribute("aria-pressed") === "false" &&
+            window.localStorage.getItem("wisebond-sound-effects") === "off";
+        });
+        // Simulate an autoplay denial followed by a successful user-gesture retry.
+        // This exercises the actual header toggle/unlock path rather than only checking
+        // the implementation source or dispatching a synthetic warning event.
+        await page.evaluate(() => {
+          const media = HTMLMediaElement.prototype;
+          window.__stage4OriginalMediaPlay = media.play;
+          window.__stage4UnlockPlay = { attempts: 0, resolved: 0 };
+          media.play = function () {
+            const state = window.__stage4UnlockPlay;
+            state.attempts += 1;
+            if (state.attempts === 1) {
+              return Promise.reject(new DOMException("Simulated autoplay denial", "NotAllowedError"));
+            }
+            return Promise.resolve().then(() => { state.resolved += 1; });
+          };
+        });
+        await soundToggle.click();
+        await page.waitForFunction(() => {
+          const button = document.querySelector(".customer-header-sound-toggle");
+          return button?.getAttribute("aria-pressed") === "true" &&
+            window.localStorage.getItem("wisebond-sound-effects") === "on" &&
+            window.__stage4UnlockPlay?.attempts === 1;
+        });
+        await page.waitForTimeout(50);
+        await page.getByRole("button", { name: "Turn notification sounds off" }).click();
+        await page.waitForFunction(() => document.querySelector(".customer-header-sound-toggle")?.getAttribute("aria-pressed") === "false");
+        await soundToggle.click();
+        await page.waitForFunction(() => window.__stage4UnlockPlay?.attempts === 2 && window.__stage4UnlockPlay?.resolved === 1);
+        const unlockRetryState = await page.evaluate(() => ({
+          attempts: window.__stage4UnlockPlay?.attempts ?? 0,
+          resolved: window.__stage4UnlockPlay?.resolved ?? 0,
+          preference: window.localStorage.getItem("wisebond-sound-effects"),
+        }));
+        await page.evaluate(() => {
+          if (window.__stage4OriginalMediaPlay) HTMLMediaElement.prototype.play = window.__stage4OriginalMediaPlay;
+          delete window.__stage4OriginalMediaPlay;
+          delete window.__stage4UnlockPlay;
+        });
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 1440,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-notification-audio-unlock-retries-after-autoplay-denial",
+          passed: unlockRetryState.attempts === 2 && unlockRetryState.resolved === 1 && unlockRetryState.preference === "on",
+          ...unlockRetryState,
+          note: "Simulates a rejected initial unlock and verifies a later explicit user gesture retries successfully.",
+        });
+        const soundEnabledState = await page.evaluate(() => ({
+          label: document.querySelector(".customer-header-sound-toggle")?.textContent?.trim() || null,
+          pressed: document.querySelector(".customer-header-sound-toggle")?.getAttribute("aria-pressed"),
+          preference: window.localStorage.getItem("wisebond-sound-effects"),
+        }));
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 1440,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-notification-sound-preference-enables",
+          passed: soundEnabledState.pressed === "true" &&
+            soundEnabledState.preference === "on" &&
+            soundEnabledState.label === "Sound on",
+          ...soundEnabledState,
+          note: "Exercises the real header control and verifies the customer-local preference is written.",
+        });
+
+        await page.getByRole("button", { name: "Turn notification sounds off" }).click();
+        await page.waitForFunction(() => {
+          const button = document.querySelector(".customer-header-sound-toggle");
+          return button?.getAttribute("aria-pressed") === "false" &&
+            window.localStorage.getItem("wisebond-sound-effects") === "off";
+        });
+        const soundDisabledState = await page.evaluate(() => ({
+          label: document.querySelector(".customer-header-sound-toggle")?.textContent?.trim() || null,
+          pressed: document.querySelector(".customer-header-sound-toggle")?.getAttribute("aria-pressed"),
+          preference: window.localStorage.getItem("wisebond-sound-effects"),
+        }));
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 1440,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-notification-sound-preference-disables",
+          passed: soundDisabledState.pressed === "false" &&
+            soundDisabledState.preference === "off" &&
+            soundDisabledState.label === "Sound off",
+          ...soundDisabledState,
+          note: "Verifies opting out updates the visible state and disables the persisted customer-local preference.",
+        });
+
+        await page.evaluate(() => window.dispatchEvent(new CustomEvent(
+          "arbitrade:notification-audio-blocked",
+          { detail: { kind: "deposit", presetId: "sound-02", occurredAt: Date.now() } },
+        )));
+        const soundWarning = page.locator(".customer-audio-warning");
+        await soundWarning.waitFor({ state: "visible" });
+        const soundWarningState = await soundWarning.evaluate(element => ({
+          text: element.textContent || "",
+          role: element.getAttribute("role"),
+          live: element.getAttribute("aria-live"),
+          dismissLabel: element.querySelector("button")?.getAttribute("aria-label") || null,
+        }));
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 1440,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-notification-audio-blocked-warning-is-accessible",
+          passed: /browser blocked a deposit sound/i.test(soundWarningState.text) &&
+            soundWarningState.role === "status" &&
+            soundWarningState.live === "polite" &&
+            soundWarningState.dismissLabel === "Dismiss audio playback warning",
+          ...soundWarningState,
+          note: "Verifies the real customer recovery message semantics when the audio-blocked event is reported.",
+        });
+        await page.getByRole("button", { name: "Dismiss audio playback warning" }).click();
+        await soundWarning.waitFor({ state: "hidden" });
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 1440,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-notification-audio-warning-can-be-dismissed",
+          passed: await soundWarning.count() === 0,
+        });
+
+        // The customer resources slider is intentionally hidden on desktop where the
+        // permanent account rail is visible. Validate this separate drawer at mobile width.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForFunction(() => {
+          const trigger = document.querySelector(".customer-slide-layer .customer-resource-peek-trigger");
+          if (!(trigger instanceof HTMLElement)) return false;
+          const style = getComputedStyle(trigger);
+          const rect = trigger.getBoundingClientRect();
+          return style.display !== "none" && style.visibility === "visible" &&
+            style.pointerEvents !== "none" && rect.width > 0 && rect.height > 0;
+        }, undefined, { timeout: 15000 });
+        const trigger = page.getByRole("button", { name: "Open customer navigation" });
+        const drawer = page.locator("#customer-navigation-drawer");
+        const focusableSelector = 'a[href]:not([tabindex="-1"]):not([aria-disabled="true"]),button:not([tabindex="-1"]):not([disabled]),input:not([tabindex="-1"]):not([disabled]),select:not([tabindex="-1"]):not([disabled]),textarea:not([tabindex="-1"]):not([disabled]),[tabindex]:not([tabindex="-1"]):not([disabled]),[contenteditable="true"]';
+        const closedState = await drawer.evaluate((element, selector) => ({
+          hidden: element.getAttribute("aria-hidden") === "true",
+          searchTabIndex: element.querySelector('input[aria-label="Search customer pages and resources"]')?.tabIndex ?? null,
+          focusableCount: element.querySelectorAll(selector).length,
+        }), focusableSelector);
+        const closedDrawerSafe = closedState.hidden &&
+          closedState.searchTabIndex === -1 &&
+          closedState.focusableCount === 0;
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-closed-drawer-has-no-tab-stops",
+          passed: closedDrawerSafe,
+          ...closedState,
+          note: "Counts links, buttons, form controls, explicit tab stops, and editable content while the drawer is closed.",
+        });
+
+        await trigger.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => {
+          const element = document.querySelector("#customer-navigation-drawer");
+          return element?.getAttribute("aria-hidden") === "false" &&
+            Boolean(element.contains(document.activeElement));
+        });
+        const customerPortalPlacement = await drawer.evaluate(element => ({
+          layerClassPresent: element.parentElement?.classList.contains("customer-slide-portal") ?? false,
+          attachedDirectlyToBody: element.parentElement?.parentElement === document.body,
+        }));
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-uses-body-level-portal",
+          passed: customerPortalPlacement.layerClassPresent && customerPortalPlacement.attachedDirectlyToBody,
+          ...customerPortalPlacement,
+          note: "Verifies the customer drawer renders outside page-level clipping and stacking contexts.",
+        });
+        const customerSearch = drawer.getByRole("textbox", { name: "Search customer pages and resources" });
+        await customerSearch.fill("wallet");
+        const walletSearchVisible = await drawer.getByRole("button", { name: /Wallet/ }).isVisible();
+        const dashboardHiddenForWallet = await drawer.getByRole("button", { name: /Dashboard/ }).count() === 0;
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-search-filters-destinations",
+          passed: walletSearchVisible && dashboardHiddenForWallet,
+          walletSearchVisible,
+          dashboardHiddenForWallet,
+          note: "Verifies customer navigation search filters destinations in the mocked customer session.",
+        });
+
+        await customerSearch.fill("no-such-customer-destination-xyz");
+        const emptySearchStatus = drawer.getByRole("status").filter({ hasText: /No pages or resources match/ });
+        await emptySearchStatus.waitFor({ state: "visible" });
+        const emptySearchText = await emptySearchStatus.innerText();
+        const emptySearchLiveMode = await emptySearchStatus.getAttribute("aria-live");
+        const emptySearchAnnounced = /No pages or resources match/.test(emptySearchText) &&
+          emptySearchLiveMode === "polite";
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-empty-search-announced",
+          passed: emptySearchAnnounced,
+          emptySearchText,
+          emptySearchLiveMode,
+          note: "Checks the empty-result message is exposed as a polite live status for assistive technology.",
+        });
+
+        await customerSearch.fill("");
+        // Main-page destinations such as Wallet and Dashboard are search-only in this drawer.
+        // Verify an ordinary drawer destination returns when the query is cleared.
+        await drawer.getByRole("button", { name: /Account Settings/ }).waitFor({ state: "visible" });
+        await drawer.evaluate((element, selector) => element.querySelectorAll(selector)[0]?.focus(), focusableSelector);
+        await page.keyboard.press("Shift+Tab");
+        const focusTrapWorks = await drawer.evaluate((element, selector) => {
+          const focusable = Array.from(element.querySelectorAll(selector));
+          return focusable.length > 1 && document.activeElement === focusable[focusable.length - 1];
+        }, focusableSelector);
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-focus-trap-wraps-backward",
+          passed: focusTrapWorks,
+          focusTrapWorks,
+          note: "Verifies Shift+Tab from the first drawer control wraps to the last focusable control.",
+        });
+
+        await page.keyboard.press("Tab");
+        const forwardFocusTrapWorks = await drawer.evaluate((element, selector) => {
+          const focusable = Array.from(element.querySelectorAll(selector));
+          return focusable.length > 1 && document.activeElement === focusable[0];
+        }, focusableSelector);
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-focus-trap-wraps-forward",
+          passed: forwardFocusTrapWorks,
+          forwardFocusTrapWorks,
+          note: "Verifies Tab from the last drawer control wraps to the first focusable control.",
+        });
+
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => {
+          const element = document.querySelector("#customer-navigation-drawer");
+          return element?.getAttribute("aria-hidden") === "true" &&
+            document.activeElement?.getAttribute("aria-label") === "Open customer navigation";
+        });
+        const focusRestored = await trigger.evaluate(element => document.activeElement === element);
+        checks.push({
+          route: "/customer",
+          routeName: "customer",
+          width: 390,
+          theme: scenario.policy.defaultTheme,
+          check: "customer-navigation-escape-restores-trigger-focus",
+          passed: focusRestored,
+          focusRestored,
+        });
+        // Restore the desktop viewport before the remaining policy assertions.
+        await page.setViewportSize({ width: 1440, height: 900 });
+
+      }
+
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 1440,
+        theme: scenario.policy.defaultTheme,
+        check: `customer-theme-policy-${scenario.name}`,
+        passed,
+        expectedEditable: scenario.expectedEditable,
+        editable,
+        options,
+        selectedTheme,
+        persistedTheme,
+        restoredTheme,
+        appliedTheme,
+        staleStoredThemeIgnored: scenario.expectedEditable || appliedTheme === "clean-light",
+        pageErrors,
+        apiProcedures: [...new Set(apiRequests.flatMap(item => item.procedures))],
+        note: "Uses mocked customer auth and appearanceConfig; proves the client policy UI and local preference behavior, not live server authorization or database persistence.",
+      });
+    } catch (error) {
+      checks.push({
+        route: "/customer",
+        routeName: "customer",
+        width: 1440,
+        theme: scenario.policy.defaultTheme,
+        check: `customer-theme-policy-${scenario.name}`,
+        passed: false,
+        error: error instanceof Error ? error.message : String(error),
+        pageErrors,
+        apiProcedures: [...new Set(apiRequests.flatMap(item => item.procedures))],
+      });
+    } finally {
+      await page.close();
+    }
+  }
+  return checks;
+}
+
+async function runNotificationSoundAssetPlaybackCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  page.setDefaultTimeout(10000);
+  const sounds = [
+    { id: "sound-01", name: "Soft Chime", src: "/sounds/notification-soft-chime.wav" },
+    { id: "sound-02", name: "Bright Bell", src: "/sounds/notification-bright-bell.wav" },
+    { id: "sound-03", name: "Double Ping", src: "/sounds/notification-double-ping.wav" },
+    { id: "sound-04", name: "Warm Tone", src: "/sounds/notification-warm-tone.wav" },
+    { id: "sound-05", name: "Urgent Pulse", src: "/sounds/notification-urgent-pulse.wav" },
+  ];
+  const checks = [];
+  try {
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.evaluate(() => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Play notification sound test";
+      button.style.cssText = "position:fixed;top:8px;left:8px;z-index:999999;padding:12px;background:#fff;color:#111";
+      (window).__stage4SoundTestAudio = null;
+      (window).__stage4SoundTestResult = null;
+      button.addEventListener("click", async () => {
+        const audio = (window).__stage4SoundTestAudio;
+        if (!audio) {
+          (window).__stage4SoundTestResult = { ok: false, error: "audio-not-prepared" };
+          return;
+        }
+        try {
+          await audio.play();
+          (window).__stage4SoundTestResult = { ok: true, currentSrc: audio.currentSrc || audio.src };
+          audio.pause();
+          audio.currentTime = 0;
+        } catch (error) {
+          (window).__stage4SoundTestResult = {
+            ok: false,
+            error: error instanceof Error ? error.name : "UnknownError",
+          };
+        }
+      });
+      document.body.appendChild(button);
+    });
+
+    for (const sound of sounds) {
+      const response = await page.request.get(new URL(sound.src, BASE_URL).href);
+      if (!response.ok()) {
+        checks.push({ route: "/", routeName: "sound-assets", check: `audio-asset:${sound.id}`, passed: false, status: response.status() });
+        continue;
+      }
+      await page.evaluate(async ({ src }) => {
+        (window).__stage4SoundTestResult = null;
+        const audio = new Audio(src);
+        audio.preload = "auto";
+        audio.volume = 0.1;
+        (window).__stage4SoundTestAudio = audio;
+        await new Promise((resolve, reject) => {
+          if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return resolve();
+          const timeout = window.setTimeout(() => reject(new Error("audio-load-timeout")), 8000);
+          audio.addEventListener("canplaythrough", () => { window.clearTimeout(timeout); resolve(); }, { once: true });
+          audio.addEventListener("error", () => { window.clearTimeout(timeout); reject(new Error("audio-decode-failed")); }, { once: true });
+          audio.load();
+        });
+      }, { src: sound.src });
+      await page.getByRole("button", { name: "Play notification sound test" }).click();
+      await page.waitForFunction(() => (window).__stage4SoundTestResult !== null, null, { timeout: 5000 });
+      const result = await page.evaluate(() => (window).__stage4SoundTestResult);
+      checks.push({
+        route: "/",
+        routeName: "sound-assets",
+        check: `browser-audio-playback:${sound.id}`,
+        sound: sound.name,
+        passed: result?.ok === true,
+        error: result?.error || null,
+      });
+    }
+  } catch (error) {
+    checks.push({
+      route: "/",
+      routeName: "sound-assets",
+      check: "browser-audio-playback-harness",
+      passed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+
+
+async function runCustomerOpportunityPopupInteractionCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  page.setDefaultTimeout(10000);
+  const checks = [];
+  const pageErrors = [];
+  const mutationCalls = [];
+  let dismissalPersisted = false;
+  let persistDismissalToFeed = true;
+  let failDismissalMutation = false;
+  const offer = {
+    id: 50501, offerId: 50501, deliveryEventId: 60501,
+    packageName: "QA Eligible Tier", symbol: "BTC/USD", currency: "USD",
+    minimumMinor: 10000, balanceAvailableMinor: 15000, balanceStatus: "sufficient",
+    currencyScale: 2, currencySymbol: "$",
+    // Keep the alert expanded long enough to exercise its read-only details before
+    // the independent auto-collapse assertion below. One second caused the popup
+    // to detach while Playwright was interacting with the details toggle.
+    configuredPopupDisplaySeconds: 8,
+    opensAt: "2099-12-31T23:50:00.000Z", closesAt: "2099-12-31T23:59:59.000Z",
+    expiryStatus: "active", offerStatus: "open", popupEligible: true,
+    eventStatus: "DELIVERED", deliveryStatus: "in_progress",
+    deliveryLeaseToken: "c07d9151-a3be-4f1d-95fc-4e8adac1e526",
+    companyDisplayName: "Verified QA Company", companyLogoUrl: null,
+    badgeLabel: "QA tier", badgeStyle: "green",
+  };
+  const record = (check, passed, details = {}) => checks.push({
+    route: "/customer", routeName: "customer", width: 390, check, passed, ...details,
+  });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  try {
+    await page.route(/\/api\/trpc(?:\/|$)/, async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const procedures = decodeURIComponent(url.pathname.split("/api/trpc/")[1] || "").split(",").filter(Boolean);
+      let envelope = {};
+      try {
+        const raw = request.method() === "GET" ? url.searchParams.get("input") : request.postData();
+        envelope = raw ? JSON.parse(raw) : {};
+      } catch {}
+      const inputAt = index => {
+        const item = Array.isArray(envelope) ? envelope[index] : envelope[String(index)];
+        return item?.json ?? item?.input?.json ?? envelope?.json ?? envelope?.input?.json ?? {};
+      };
+      if (failDismissalMutation && procedures.includes("customer.popupLifecycle") &&
+          procedures.some((procedure, index) => procedure === "customer.popupLifecycle" && inputAt(index)?.action === "dismissed")) {
+        await route.abort("failed");
+        return;
+      }
+      const output = procedures.map((procedure, index) => {
+        let data = null;
+        if (procedure === "auth.me") {
+          data = { id: 90501, email: "popup-qa@example.test", name: "Popup QA Customer", role: "customer" };
+        } else if (procedure === "customer.opportunities") {
+          data = {
+            serverTime: new Date().toISOString(),
+            offers: [
+              { ...offer, ...(dismissalPersisted ? {
+                offerStatus: "closed", deliveryStatus: "dismissed",
+                dismissedAt: "2026-11-06T12:00:00.000Z",
+              } : {}) },
+              {
+                id: 50502, offerId: 50502, offerStatus: "open", status: "open",
+                popupEligible: false, deliveryStatus: "delivered", currency: "USD",
+                minimumMinor: 10000, companyDisplayName: "Available QA Company", symbol: "AVAIL",
+                opensAt: "2026-11-06T10:00:00.000Z", closesAt: "2099-12-31T23:59:59.000Z",
+              },
+              {
+                // Malformed API data must remain visible without crashing the customer workspace.
+                id: 50507, offerId: 50507, offerStatus: "pending", status: "pending",
+                popupEligible: false, deliveryStatus: "delivered",
+                minimumMinor: 2500, companyDisplayName: "Missing Currency QA Company", symbol: "NOCUR",
+                opensAt: "2026-11-06T09:30:00.000Z", closesAt: "2099-12-31T23:59:59.000Z",
+              },
+              {
+                id: 50503, offerId: 50503, offerStatus: "closed", status: "closed", currency: "USD",
+                deliveryStatus: "expired", expiredAt: "2026-11-06T09:00:00.000Z",
+                companyDisplayName: "Expired QA Company", symbol: "EXPIRE",
+              },
+            ],
+            missed: [{
+              id: 50504, offerId: 50504, companyName: "Missed QA Company", currency: "USD",
+              amountMinor: 10000, availableMinorAtOpportunity: 4500, shortfallMinor: 5500,
+              symbol: "MISSED", reason: "INSUFFICIENT_AVAILABLE_BALANCE",
+              createdAt: "2026-11-06T08:00:00.000Z",
+            }],
+            autoTrades: [], settled: [],
+            delivery: {
+              enabled: true, packageName: "QA Eligible Tier", maxPopupsPerDay: 6,
+              maxVisibleOffers: 2, remainingDailyQuota: 6, remainingVisibleSlots: 2,
+              popupPolicy: { popupDisplaySeconds: 8 },
+            },
+          };
+        } else if (procedure === "customer.soundSettings") {
+          data = { enabled: false, opportunity: "soft-chime", loopOpportunity: false };
+        } else if (procedure === "customer.balances") {
+          data = { balances: [], currencies: [], summary: { availableUsd: 0, totalUsd: 0 } };
+        } else if (procedure === "customer.trades") {
+          data = [
+            {
+              id: 50505, status: "confirmed", symbol: "ALLOC", currency: "USD",
+              principalMinor: 10000, companyDisplayName: "Allocated QA Company",
+              confirmedAt: "2026-11-06T07:00:00.000Z", stage: "Awaiting settlement",
+            },
+            {
+              id: 50506, status: "settled", symbol: "SETTLED", currency: "USD",
+              principalMinor: 10000, companyDisplayName: "Settled QA Company",
+              settledAt: "2026-11-06T06:00:00.000Z", stage: "Settlement recorded",
+            },
+          ];
+        } else if (procedure === "customer.popupLifecycle" || procedure === "customer.popupDeliveryStatus") {
+          const mutationInput = inputAt(index);
+          mutationCalls.push({ procedure, input: mutationInput });
+          if (procedure === "customer.popupLifecycle" && mutationInput?.action === "dismissed" && persistDismissalToFeed) {
+            dismissalPersisted = true;
+          }
+          data = { ok: true };
+        }
+        return { result: { data: { json: data } } };
+      });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(output) });
+    });
+    await page.goto(new URL("/customer", BASE_URL).href, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.getByRole("heading", { name: "Welcome back, Jordan." }).waitFor({ state: "visible", timeout: 15000 });
+    const minimizedDock = page.locator(".opportunity-popup-dock");
+    if (await minimizedDock.isVisible().catch(() => false)) {
+      await minimizedDock.getByRole("button", { name: "Maximize opportunity alert" }).click();
+    }
+    const popup = page.locator(".center-opportunity-toast").filter({ hasText: "Verified QA Company opportunity notice" });
+    await popup.waitFor({ state: "visible", timeout: 10000 });
+    const popupText = await popup.innerText();
+    const connectionVisible = await popup.getByRole("status")
+      .filter({ hasText: "Live status connected" }).isVisible().catch(() => false);
+    const detailsToggle = popup.locator(".opportunity-popup-details__toggle");
+    await detailsToggle.click();
+    const detailsPanel = popup.locator(".opportunity-popup-details__grid");
+    const detailsVisible = await detailsPanel.isVisible().catch(() => false);
+    const detailsText = detailsVisible ? await detailsPanel.innerText() : "";
+    const detailsInteractiveControls = await detailsPanel.locator("button,input,select,textarea,[contenteditable='true']").count();
+    const expandedState = await detailsToggle.getAttribute("aria-expanded");
+    record("popup-shows-live-connection-state", connectionVisible);
+    record("opportunity-details-expand-accessibly-with-read-only-server-metadata",
+      detailsVisible && expandedState === "true" && detailsInteractiveControls === 0 &&
+      detailsText.includes("Verified QA Company") &&
+      detailsText.includes("QA Eligible Tier") &&
+      detailsText.includes(String(offer.id)) &&
+      detailsText.toLowerCase().includes("scheduled expiry") &&
+      detailsText.toLowerCase().includes("server status"),
+      { expandedState, detailsInteractiveControls, detailsText });
+    const companyVisible = popupText.includes("Verified QA Company") &&
+      await popup.locator(".popup-company-reference").isVisible().catch(() => false);
+    const incorrectlyMissed = popupText.includes("Missed — insufficient balance");
+    const expiryCountdownVisible = popupText.includes("Opportunity expires in") &&
+      popupText.includes("Countdown is synchronised to the server-saved expiry timestamp.") &&
+      await popup.locator(".opportunity-expiry-panel").isVisible().catch(() => false);
+    const informationalOnly = popupText.includes("Informational notice only") &&
+      !popupText.includes("AUTOMATED OPPORTUNITY") && !popupText.includes("Configured return rate:");
+    record("eligible-open-opportunity-renders-informational-customer-popup", await popup.isVisible().catch(() => false), {
+      offerId: offer.id, companyVisible, incorrectlyMissed, informationalOnly,
+      note: "Customer session and opportunity API are mocked; this verifies React rendering and the client eligibility gate, not live server publication or account authorization.",
+    });
+    record("verified-company-reference-is-rendered", companyVisible, { companyName: offer.companyDisplayName });
+    record("active-open-offer-is-not-misclassified-as-insufficient-balance", !incorrectlyMissed);
+    record("popup-makes-no-financial-execution-claim", informationalOnly);
+    record("opportunity-popup-renders-server-synchronised-expiry-countdown", expiryCountdownVisible);
+    const countdownBefore = await popup.locator(".opportunity-expiry-ring span").innerText();
+    // The component updates on a one-second interval. Poll across a complete
+    // interval instead of sleeping 1.1s from an arbitrary point in that cycle.
+    const countdownDeadline = Date.now() + 3000;
+    let countdownAfter = countdownBefore;
+    while (countdownAfter === countdownBefore && Date.now() < countdownDeadline) {
+      await page.waitForTimeout(100);
+      countdownAfter = await popup.locator(".opportunity-expiry-ring span").innerText();
+    }
+    record("opportunity-expiry-countdown-updates-in-real-time", countdownBefore !== countdownAfter, {
+      countdownBefore, countdownAfter,
+    });
+    const dock = page.locator(".opportunity-popup-dock");
+    // The offer expires in the future. The legacy 8-second popupDisplaySeconds mock
+    // must not override that saved expiry or collapse the still-open opportunity.
+    await page.waitForTimeout(8500);
+    const remainsExpandedUntilSavedExpiry = await popup.isVisible().catch(() => false) &&
+      !(await dock.isVisible().catch(() => false));
+    record("popup-remains-expanded-until-server-saved-expiry", remainsExpandedUntilSavedExpiry, {
+      popupVisible: await popup.isVisible().catch(() => false),
+      dockVisible: await dock.isVisible().catch(() => false),
+    });
+    await popup.getByRole("button", { name: "Minimize opportunity alert" }).click({ force: true });
+    await dock.waitFor({ state: "visible", timeout: 3000 });
+    const dockText = await dock.innerText().catch(() => "");
+    record("minimized-dock-keeps-live-expiry-countdown", dockText.includes("Opportunity expires in") || dockText.includes("Expiry time reached"), { dockText });
+    record("customer-can-minimize-alert-before-saved-expiry", await dock.isVisible().catch(() => false));
+    await dock.getByRole("button", { name: "Maximize opportunity alert" }).click();
+    await popup.waitFor({ state: "visible", timeout: 3000 });
+    record("customer-can-maximize-docked-alert", await popup.isVisible().catch(() => false));
+    // Use the visible manual control; the server-saved expiry remains authoritative.
+    await popup.getByRole("button", { name: "Minimize opportunity alert" }).click({ force: true });
+    await dock.waitFor({ state: "visible", timeout: 3000 });
+    record("customer-can-manually-minimize-alert", await dock.isVisible().catch(() => false));
+    record("popup-delivery-lifecycle-is-acknowledged", mutationCalls.some(call =>
+      call.procedure === "customer.popupDeliveryStatus" && call.input?.status === "rendered"
+    ), { mutationCalls, pageErrors });
+    await dock.getByRole("button", { name: "Dismiss" }).click();
+    await dock.waitFor({ state: "detached", timeout: 3000 });
+    record("customer-can-dismiss-opportunity-alert", mutationCalls.some(call =>
+      call.procedure === "customer.popupLifecycle" && call.input?.action === "dismissed"
+    ), { mutationCalls });
+    await page.getByText("Dismissal saved and refreshed in opportunity history.").waitFor({ state: "visible", timeout: 5000 });
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("arbitrade:customer-navigate", { detail: "opportunities" })));
+    await page.getByRole("heading", { name: "Opportunity history" }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByRole("button", { name: /Dismissed/ }).click();
+    const dismissedHistoryItem = page.locator(".customer-opportunity-history__item").filter({ hasText: "Verified QA Company" });
+    await dismissedHistoryItem.waitFor({ state: "visible", timeout: 5000 });
+    record("popup-dismissal-is-reflected-in-read-only-opportunity-history",
+      dismissalPersisted && (await dismissedHistoryItem.innerText()).includes("Dismissed · presentation only"),
+      { dismissalPersisted, historyText: await dismissedHistoryItem.innerText().catch(() => "") });
+
+    // Review the complete six-category history from one combined mocked feed.
+    await page.getByRole("button", { name: /All activity/ }).click();
+    const historyPanel = page.locator(".customer-opportunity-history");
+    const historyItems = historyPanel.locator(".customer-opportunity-history__item");
+    const expectedHistoryCategories = ["available", "missed", "allocated", "settled", "dismissed", "expired"];
+    const categoryCounts = {};
+    for (const category of expectedHistoryCategories) {
+      categoryCounts[category] = await historyPanel.locator(
+        `.customer-opportunity-history__metric--${category} strong`
+      ).innerText().catch(() => "0");
+    }
+    const combinedHistoryTitles = await historyItems.locator(
+      ".customer-opportunity-history__topline > strong"
+    ).allTextContents();
+    record("combined-history-shows-all-six-server-recorded-categories",
+      expectedHistoryCategories.every(category => categoryCounts[category] === "1") &&
+      combinedHistoryTitles.length === 6 &&
+      new Set(combinedHistoryTitles).size === 6 &&
+      ["Available QA Company", "Missed QA Company", "Allocated QA Company",
+        "Settled QA Company", "Verified QA Company", "Expired QA Company"]
+        .every(title => combinedHistoryTitles.includes(title)),
+      { categoryCounts, combinedHistoryTitles });
+    const historySearch = historyPanel.getByRole("searchbox", {
+      name: "Search company, reference or status",
+    });
+    await historySearch.fill("Expired QA Company");
+    const filteredHistoryCount = await historyItems.count();
+    const filteredHistorySummary = await historyPanel.locator(
+      ".customer-opportunity-history__summary"
+    ).innerText().catch(() => "");
+    const categoryCountsAfterSearch = {};
+    for (const category of expectedHistoryCategories) {
+      categoryCountsAfterSearch[category] = await historyPanel.locator(
+        `.customer-opportunity-history__metric--${category} strong`
+      ).innerText().catch(() => "0");
+    }
+    record("combined-history-search-filters-without-changing-category-totals",
+      filteredHistoryCount === 1 && filteredHistorySummary.includes("1–1 of 1") &&
+      expectedHistoryCategories.every(category =>
+        categoryCounts[category] === "1" && categoryCountsAfterSearch[category] === categoryCounts[category]
+      ),
+      { filteredHistoryCount, filteredHistorySummary, categoryCounts, categoryCountsAfterSearch });
+    await historySearch.fill("");
+    const historyLayout = await historyPanel.evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    record("combined-history-fits-mobile-viewport-without-panel-overflow",
+      historyLayout.scrollWidth <= historyLayout.clientWidth + 1 &&
+      historyLayout.clientWidth <= historyLayout.viewportWidth + 1,
+      historyLayout);
+
+    // Re-run with a stale feed response: mutation succeeds, but persistence is not
+    // reflected by the server feed. The UI must not claim success or invent history.
+    dismissalPersisted = false;
+    persistDismissalToFeed = false;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Welcome back, Jordan." }).waitFor({ state: "visible", timeout: 15000 });
+    const staleFeedPopup = page.locator(".center-opportunity-toast").filter({ hasText: "Verified QA Company opportunity notice" });
+    await staleFeedPopup.waitFor({ state: "visible", timeout: 10000 });
+    const staleFeedDock = page.locator(".opportunity-popup-dock");
+    await staleFeedPopup.getByRole("button", { name: "Minimize opportunity alert" }).click({ force: true });
+    await staleFeedDock.waitFor({ state: "visible", timeout: 3000 });
+    await staleFeedDock.getByRole("button", { name: "Dismiss" }).click();
+    await staleFeedDock.waitFor({ state: "detached", timeout: 3000 });
+    await page.getByText("The alert was closed, but the server did not confirm the dismissal in opportunity history. It may not appear there.")
+      .waitFor({ state: "visible", timeout: 5000 });
+    record("stale-refreshed-feed-does-not-report-dismissal-success", !dismissalPersisted);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("arbitrade:customer-navigate", { detail: "opportunities" })));
+    await page.getByRole("heading", { name: "Opportunity history" }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByRole("button", { name: /Dismissed/ }).click();
+    const falseDismissedEntry = page.locator(".customer-opportunity-history__item").filter({ hasText: "Verified QA Company" });
+    record("stale-refreshed-feed-does-not-create-dismissed-history-entry",
+      !(await falseDismissedEntry.isVisible().catch(() => false)),
+      { historyEntryVisible: await falseDismissedEntry.isVisible().catch(() => false) });
+
+    // A transport failure must also remain explicitly unconfirmed.
+    failDismissalMutation = true;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Welcome back, Jordan." }).waitFor({ state: "visible", timeout: 15000 });
+    const failedMutationPopup = page.locator(".center-opportunity-toast").filter({ hasText: "Verified QA Company opportunity notice" });
+    await failedMutationPopup.waitFor({ state: "visible", timeout: 10000 });
+    const failedMutationDock = page.locator(".opportunity-popup-dock");
+    await failedMutationPopup.getByRole("button", { name: "Minimize opportunity alert" }).click({ force: true });
+    await failedMutationDock.waitFor({ state: "visible", timeout: 3000 });
+    await failedMutationDock.getByRole("button", { name: "Dismiss" }).click();
+    await failedMutationDock.waitFor({ state: "detached", timeout: 3000 });
+    await page.getByText("The alert was closed, but the server did not confirm the dismissal in opportunity history. It may not appear there.")
+      .waitFor({ state: "visible", timeout: 5000 });
+    record("failed-dismissal-request-does-not-report-persistence", failDismissalMutation);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("arbitrade:customer-navigate", { detail: "opportunities" })));
+    await page.getByRole("heading", { name: "Opportunity history" }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByRole("button", { name: /Dismissed/ }).click();
+    const failedMutationHistoryItem = page.locator(".customer-opportunity-history__item").filter({ hasText: "Verified QA Company" });
+    record("failed-dismissal-request-does-not-create-history-entry",
+      !(await failedMutationHistoryItem.isVisible().catch(() => false)),
+      { historyEntryVisible: await failedMutationHistoryItem.isVisible().catch(() => false) });
+  } catch (error) {
+    record("customer-opportunity-popup-interaction-completes", false, {
+      error: error instanceof Error ? error.message : String(error),
+      mutationCalls, pageErrors, bodyText: await page.locator("body").innerText().catch(() => ""),
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+async function runCustomerOpportunityPopupSlotReplacementCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  page.setDefaultTimeout(10000);
+  const checks = [];
+  const pageErrors = [];
+  const lifecycleCalls = [];
+  let serverConfirmedExpired = false;
+  let latestExpiredOffer = null;
+  const now = Date.now();
+  const activeOffer = {
+    id: 50601, offerId: 50601, deliveryEventId: 60601,
+    packageName: "QA Slot Tier", symbol: "BTC/USD", currency: "USD",
+    minimumMinor: 10000, balanceAvailableMinor: 15000, balanceStatus: "sufficient",
+    currencyScale: 2, currencySymbol: "$", configuredPopupDisplaySeconds: 30,
+    configuredDurationSeconds: 90,
+    opensAt: new Date(now - 5000).toISOString(), closesAt: new Date(now + 60_000).toISOString(),
+    expiryStatus: "active", offerStatus: "open", popupEligible: true,
+    eventStatus: "DELIVERED", deliveryStatus: "delivered",
+    companyDisplayName: "Stale QA Company", companyLogoUrl: null,
+    badgeLabel: "QA tier", badgeStyle: "green",
+  };
+  const replacementOffer = {
+    ...activeOffer,
+    id: 50602, offerId: 50602, deliveryEventId: 60602,
+    closesAt: new Date(now + 120_000).toISOString(),
+    companyDisplayName: "Replacement QA Company",
+  };
+  const record = (check, passed, details = {}) => checks.push({
+    route: "/customer", routeName: "customer", width: 390, check, passed, ...details,
+  });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  try {
+    await page.route(/\/api\/trpc(?:\/|$)/, async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const procedures = decodeURIComponent(url.pathname.split("/api/trpc/")[1] || "").split(",").filter(Boolean);
+      let envelope = {};
+      try {
+        const raw = request.method() === "GET" ? url.searchParams.get("input") : request.postData();
+        envelope = raw ? JSON.parse(raw) : {};
+      } catch {}
+      const output = procedures.map((procedure, index) => {
+        const item = Array.isArray(envelope) ? envelope[index] : envelope[String(index)];
+        const input = item?.json ?? item?.input?.json ?? envelope?.json ?? envelope?.input?.json ?? {};
+        let data = null;
+        if (procedure === "auth.me") {
+          data = { id: 90502, email: "popup-slot-qa@example.test", name: "Popup Slot QA Customer", role: "customer" };
+        } else if (procedure === "customer.opportunities") {
+          const expiredOwner = serverConfirmedExpired ? {
+            ...activeOffer,
+            closesAt: new Date(Date.now() - 1000).toISOString(),
+            expiryStatus: "expired", offerStatus: "open", popupEligible: false,
+            deliveryStatus: "rendered",
+          } : null;
+          if (expiredOwner) latestExpiredOffer = expiredOwner;
+          data = {
+            serverTime: new Date().toISOString(),
+            offers: serverConfirmedExpired ? [expiredOwner, replacementOffer] : [activeOffer, replacementOffer],
+            missed: [], autoTrades: [], settled: [],
+            delivery: {
+              enabled: true, packageName: "QA Slot Tier", maxPopupsPerDay: 6,
+              maxVisibleOffers: 3, remainingDailyQuota: 6, remainingVisibleSlots: 3,
+              popupPolicy: { popupDisplaySeconds: 30 },
+            },
+          };
+        } else if (procedure === "customer.soundSettings") {
+          data = { enabled: false, opportunity: "soft-chime", loopOpportunity: false };
+        } else if (procedure === "customer.balances") {
+          data = { balances: [], currencies: [], summary: { availableUsd: 0, totalUsd: 0 } };
+        } else if (procedure === "customer.trades") {
+          data = [];
+        } else if (procedure === "customer.popupLifecycle" || procedure === "customer.popupDeliveryStatus") {
+          if (procedure === "customer.popupLifecycle") lifecycleCalls.push(input);
+          data = { ok: true };
+        }
+        return { result: { data: { json: data } } };
+      });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(output) });
+    });
+    await page.goto(new URL("/customer", BASE_URL).href, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.getByRole("heading", { name: "Welcome back, Jordan." }).waitFor({ state: "visible", timeout: 15000 });
+    const stalePopup = page.locator(".center-opportunity-toast").filter({ hasText: "Stale QA Company opportunity notice" });
+    const replacementPopup = page.locator(".center-opportunity-toast").filter({ hasText: "Replacement QA Company opportunity notice" });
+    await stalePopup.waitFor({ state: "visible", timeout: 10000 });
+    const replacementPreempted = await replacementPopup.isVisible().catch(() => false);
+    record("new-opportunity-waits-without-preempting-active-popup",
+      await stalePopup.isVisible().catch(() => false) && !replacementPreempted,
+      { secondOpportunityPresentInFeed: true, pageErrors });
+    const staleDock = page.locator(".opportunity-popup-dock");
+    await stalePopup.getByRole("button", { name: "Minimize opportunity alert" }).click({ force: true });
+    await staleDock.waitFor({ state: "visible", timeout: 3000 });
+
+    // The offer remains offerStatus=open after the server confirms its expiry,
+    // matching the stale-reference state that previously blocked the next card.
+    serverConfirmedExpired = true;
+    await replacementPopup.waitFor({ state: "visible", timeout: 15000 });
+    const staleCardStillVisible = await staleDock.isVisible().catch(() => false) ||
+      await stalePopup.isVisible().catch(() => false);
+    record("server-expired-open-popup-releases-slot-for-next-eligible-opportunity",
+      await replacementPopup.isVisible().catch(() => false) && !staleCardStillVisible,
+      {
+        expiredOwnerStatus: latestExpiredOffer?.offerStatus,
+        expiredOwnerExpiry: latestExpiredOffer?.expiryStatus,
+        expiredOwnerPopupEligible: latestExpiredOffer?.popupEligible,
+        replacementVisible: await replacementPopup.isVisible().catch(() => false),
+        staleCardStillVisible,
+        lifecycleCalls,
+        pageErrors,
+      });
+    record("slot-release-does-not-falsely-dismiss-expired-opportunity",
+      latestExpiredOffer?.offerStatus === "open" && latestExpiredOffer?.expiryStatus === "expired" &&
+      !lifecycleCalls.some(call => call?.action === "dismissed" && Number(call?.eventId) === activeOffer.deliveryEventId),
+      { lifecycleCalls, pageErrors });
+  } catch (error) {
+    record("customer-popup-slot-replacement-completes", false, {
+      error: error instanceof Error ? error.message : String(error),
+      lifecycleCalls, pageErrors,
+      bodyText: await page.locator("body").innerText().catch(() => ""),
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+async function runAdminTradingControlsInteractionCheck(browser) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultTimeout(10000);
+  const checks = [];
+  const pageErrors = [];
+  const mutationCalls = [];
+  let savedPolicy = {
+    packageName: "QA Trading Tier", enabled: true, automaticDelivery: true,
+    companyRotationEnabled: true, randomizationEnabled: true, burstEnabled: true,
+    automaticTradingEnabled: false, requirePreviousSettlement: true,
+    minSettlementDelaySeconds: 900, maxSettlementDelaySeconds: 900, policyVersion: 1,
+  };
+  let savedGlobal = {
+    tierPolicyMasterEnabled: true,
+    informationalPopupDeliveryEnabled: true,
+    companyRotationEnabled: true,
+    randomizedTimingEnabled: true,
+    burstDeliveryEnabled: true,
+    available: true,
+    policyVersion: 1,
+  };
+  const record = (check, passed, details = {}) => checks.push({
+    route: "/ops-console-7f3a", routeName: "admin", width: 1440, check, passed, ...details,
+  });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  try {
+    await page.route(/\/api\/trpc(?:\/|$)/, async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const procedures = decodeURIComponent(url.pathname.split("/api/trpc/")[1] || "").split(",").filter(Boolean);
+      let envelope = {};
+      try {
+        const raw = request.method() === "GET" ? url.searchParams.get("input") : request.postData();
+        envelope = raw ? JSON.parse(raw) : {};
+      } catch {}
+      const inputAt = index => {
+        const item = Array.isArray(envelope) ? envelope[index] : envelope[String(index)];
+        return item?.json ?? item?.input?.json ?? envelope?.json ?? envelope?.input?.json ?? {};
+      };
+      const output = procedures.map((procedure, index) => {
+        const input = inputAt(index);
+        let data = null;
+        if (procedure === "auth.me") {
+          data = { id: 90502, email: "admin-qa@example.test", name: "Trading QA Admin", role: "admin" };
+        } else if (procedure === "adminOperations.packagePolicies" || procedure === "adminOperations.overviewPackagePolicies") {
+          data = [{ ...savedPolicy }];
+        } else if (procedure === "adminOperations.globalTradeControls") {
+          data = { ...savedGlobal };
+        } else if (procedure === "adminOperations.customers" || procedure === "adminOperations.pendingSettlements" ||
+          procedure === "adminOperations.ledgerActivity" || procedure === "adminOperations.currencies") {
+          data = [];
+        } else if (procedure === "adminOperations.updatePackagePolicies") {
+          const patches = Array.isArray(input?.policies) ? input.policies : [];
+          mutationCalls.push({ reason: input?.reason, policies: patches });
+          for (const patch of patches) {
+            if (patch.packageName === savedPolicy.packageName) savedPolicy = { ...savedPolicy, ...patch };
+          }
+          data = { ok: true };
+        } else if (procedure === "adminOperations.updateGlobalTradeControl") {
+          savedGlobal = { ...savedGlobal, [input?.key]: input?.enabled, policyVersion: savedGlobal.policyVersion + 1 };
+          mutationCalls.push({ key: input?.key, enabled: input?.enabled });
+          data = { ok: true };
+        } else if (procedure === "adminOperations.settings") {
+          data = {};
+        }
+        return { result: { data: { json: data } } };
+      });
+      if (procedures.includes("adminOperations.updatePackagePolicies")) await new Promise(resolve => setTimeout(resolve, 150));
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(output) });
+    });
+    await page.goto(new URL("/ops-console-7f3a", BASE_URL).href, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.getByRole("heading", { name: "Control centre" }).waitFor({ state: "visible", timeout: 15000 });
+    // Trading is in the main admin navigation rail, not the supplemental drawer.
+    const tradeSettingsNavigation = page.locator("#admin-main-navigation .admin-nav-group--trade-settings");
+    const tradeSettingsHeading = tradeSettingsNavigation.getByRole("button", { name: /Trade Settings/ });
+    if (await tradeSettingsHeading.getAttribute("aria-expanded") !== "true") {
+      await clickStableNavigationTarget(page, tradeSettingsHeading);
+    }
+    const packageConfigurationDestination = tradeSettingsNavigation.locator(
+      'button[title="Manage package-policy controls and the system-wide allocation safety gate"]',
+    );
+    await clickStableNavigationTarget(page, packageConfigurationDestination);
+    await page.getByRole("heading", { name: "Global Trade master controls" }).waitFor({ state: "visible", timeout: 10000 });
+    const unavailableNotice = page.getByRole("alert").filter({ hasText: "canonical global policy is not installed or is malformed" });
+    const controlsAvailable = await unavailableNotice.count() === 0;
+    const keys = [
+      ["Tier policy master", "tierPolicyMasterEnabled"], ["Pop-up delivery", "informationalPopupDeliveryEnabled"],
+      ["Company rotation", "companyRotationEnabled"], ["Randomized timing", "randomizedTimingEnabled"],
+      ["Burst delivery", "burstDeliveryEnabled"],
+    ];
+    let enabledControlInteractions = 0;
+    const switches = page.getByRole("switch");
+    const switchCount = await switches.count();
+    const disabledSwitches = [];
+    for (let index = 0; index < switchCount; index += 1) {
+      const switchControl = switches.nth(index);
+      if (await switchControl.isDisabled()) {
+        disabledSwitches.push(await switchControl.getAttribute("aria-label"));
+      }
+    }
+    // An unavailable policy, an empty control set, or any disabled global
+    // control is a terminal fail-closed result. Do not enter the mutation loop
+    // or manufacture save feedback from a control that cannot be changed.
+    const controlsFailClosed = !controlsAvailable || switchCount === 0 || disabledSwitches.length > 0;
+    if (controlsFailClosed) {
+      record("admin-global-controls-unavailable-fail-closed",
+        (!controlsAvailable ? await unavailableNotice.isVisible() : true) && mutationCalls.length === 0,
+        {
+          unavailable: !controlsAvailable,
+          switchCount,
+          disabledSwitches,
+          mutationCalls,
+          note: "No global control mutation is attempted when the canonical policy or any required switch is unavailable/disabled.",
+        });
+      record("admin-global-controls-disabled-state-is-truthful",
+        mutationCalls.length === 0,
+        { disabledSwitches, mutationCalls, terminal: true });
+    } else {
+      // Switches are disabled until the required audited reason is supplied.
+      await page.getByLabel("Administrator reason (required, 5–500 characters)")
+        .fill("Stage 2 verifies the canonical global control owner.");
+      for (const [label, key] of keys) {
+        const ariaLabel = label;
+        const control = page.getByRole("switch", { name: ariaLabel });
+        await waitForStableViewportTarget(page, control);
+        const before = savedGlobal[key];
+        enabledControlInteractions += 1;
+        await control.click();
+        await page.waitForFunction(({ label, expected }) => {
+          const element = Array.from(document.querySelectorAll('[role="switch"]')).find(node => node.getAttribute("aria-label") === label);
+          return element?.getAttribute("aria-checked") === String(expected);
+        }, { label: ariaLabel, expected: !before });
+        const switchedOff = savedGlobal[key] === !before;
+        await page.waitForFunction(label => {
+          const element = Array.from(document.querySelectorAll('[role="switch"]')).find(node => node.getAttribute("aria-label") === label);
+          return element instanceof HTMLButtonElement && !element.disabled;
+        }, ariaLabel);
+        await waitForStableViewportTarget(page, control);
+        await control.click();
+        await page.waitForFunction(({ label, expected }) => {
+          const element = Array.from(document.querySelectorAll('[role="switch"]')).find(node => node.getAttribute("aria-label") === label);
+          return element?.getAttribute("aria-checked") === String(expected);
+        }, { label: ariaLabel, expected: before });
+        const switchedBack = savedGlobal[key] === before;
+        record("admin-" + key + "-switch-saves-and-restores", switchedOff && switchedBack, {
+          initial: before, afterOff: !before, afterRestore: savedGlobal[key],
+        });
+      }
+      record("admin-global-controls-disabled-state-is-truthful",
+        disabledSwitches.length === 0,
+        { disabledSwitches, mutationCalls });
+    }
+    const financialExecutionStayedOff = savedPolicy.automaticTradingEnabled === false &&
+      mutationCalls.every(call => !Array.isArray(call.policies) ||
+        call.policies.every(patch => patch.automaticTradingEnabled !== true));
+    record("delivery-switches-never-enable-financial-execution", financialExecutionStayedOff, { mutationCalls, pageErrors });
+    record("admin-switches-show-save-feedback",
+      enabledControlInteractions === 0 || await page.getByText("Global Trade control saved and verified from a fresh database read.").isVisible().catch(() => false),
+      { controlsAvailable, enabledControlInteractions, note: enabledControlInteractions > 0 ? "Save feedback is asserted only after an enabled control interaction." : "No enabled control was clicked; no save feedback is expected." });
+  } catch (error) {
+    record("admin-trading-controls-interaction-completes", false, {
+      error: error instanceof Error ? error.message : String(error),
+      mutationCalls, pageErrors, bodyText: await page.locator("body").innerText().catch(() => ""),
+    });
+  } finally {
+    await page.close();
+  }
+  return checks;
+}
+
+async function main() {
+  const browser = await chromium.launch({ headless: true });
+  const results = [];
+  const failures = [];
+
+  try {
+    for (const route of ROUTES) {
+      for (const width of WIDTHS) {
+        const page = await browser.newPage({
+          viewport: { width, height: 900 },
+          deviceScaleFactor: 1,
+        });
+        page.setDefaultTimeout(15000);
+        const pageErrors = [];
+        page.on("pageerror", error => pageErrors.push(error.message));
+
+        try {
+          const response = await page.goto(new URL(route.path, BASE_URL).href, {
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
+          });
+          await page.locator("#root").waitFor({ state: "attached" });
+          await page.waitForTimeout(350);
+
+          const dimensions = await page.evaluate(() => ({
+            viewportWidth: window.innerWidth,
+            documentWidth: document.documentElement.scrollWidth,
+            bodyWidth: document.body.scrollWidth,
+            rootWidth: document.querySelector("#root")?.scrollWidth ?? 0,
+            hasRenderedContent: Boolean(document.querySelector("#root")?.childElementCount),
+            title: document.title,
+          }));
+
+          if (route.name === "gateway" && width <= 360) {
+            const headingWord = await page.evaluate(() => {
+              const heading = document.querySelector(".portal-gateway .gateway-card h1");
+              if (!heading) return { found: false, rectCount: 0, fontSize: null, text: null };
+              const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT);
+              let node;
+              while ((node = walker.nextNode())) {
+                const text = node.textContent || "";
+                const start = text.toLowerCase().indexOf("workspace");
+                if (start < 0) continue;
+                const range = document.createRange();
+                range.setStart(node, start);
+                range.setEnd(node, start + "workspace".length);
+                return {
+                  found: true,
+                  rectCount: range.getClientRects().length,
+                  fontSize: getComputedStyle(heading).fontSize,
+                  text: heading.textContent?.trim() || "",
+                };
+              }
+              return { found: false, rectCount: 0, fontSize: getComputedStyle(heading).fontSize, text: heading.textContent?.trim() || "" };
+            });
+            const headingItem = {
+              route: route.path,
+              routeName: route.name,
+              width,
+              check: "gateway-heading-word-not-split",
+              ...headingWord,
+              passed: headingWord.found && headingWord.rectCount === 1,
+            };
+            results.push(headingItem);
+            if (!headingItem.passed) failures.push(headingItem);
+          }
+
+          const overflow = dimensions.documentWidth > dimensions.viewportWidth + 1;
+          await page.keyboard.press("Tab");
+          const focusItem = await page.evaluate(() => {
+            const element = document.activeElement;
+            if (!element || element === document.body || element === document.documentElement) {
+              return { found: false, visible: false, focusStyle: false, tag: null };
+            }
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            const visible = rect.width > 0 && rect.height > 0 &&
+              rect.bottom > 0 && rect.right > 0 &&
+              rect.top < window.innerHeight && rect.left < window.innerWidth;
+            const focusStyle = (style.outlineStyle !== "none" &&
+              Number.parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none";
+            return { found: true, visible, focusStyle, tag: element.tagName.toLowerCase(),
+              outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth,
+              boxShadow: style.boxShadow };
+          });
+          const focusResult = {
+            route: route.path,
+            routeName: route.name,
+            width,
+            check: "keyboard-focus-visible",
+            ...focusItem,
+            passed: focusItem.found && focusItem.visible && focusItem.focusStyle,
+          };
+          results.push(focusResult);
+          if (!focusResult.passed) failures.push(focusResult);
+          // Measure default-state text contrast separately from the focus-ring
+          // check above so focused-control overlays do not distort the audit.
+          await page.evaluate(() => {
+            const active = document.activeElement;
+            if (active instanceof HTMLElement) active.blur();
+          });
+          const ok = Boolean(response && response.status() < 500) &&
+            dimensions.hasRenderedContent && !overflow && pageErrors.length === 0;
+          const item = {
+            route: route.path,
+            routeName: route.name,
+            width,
+            theme: "runtime-default",
+            httpStatus: response?.status() ?? null,
+            ...dimensions,
+            pageErrors,
+            passed: ok,
+          };
+          results.push(item);
+          if (!ok) failures.push(item);
+
+          // Keep a compact set of visual artifacts for mobile and desktop.
+          if (width === 320 || width === 1440) {
+            await page.screenshot({
+              path: path.join(ARTIFACT_DIR, `${route.name}-${width}-default.png`),
+              fullPage: true,
+              animations: "disabled",
+            });
+          }
+
+          // Exercise each theme's CSS selector in the actual browser. This is a
+          // visual-token smoke check, not a substitute for authenticated admin
+          // interactions or a human WCAG contrast review.
+          {
+            // Sample settled colors, not interpolated mid-transition values.
+            await page.addStyleTag({
+              content: "*, *::before, *::after { transition: none !important; animation: none !important; }",
+            });
+            for (const theme of THEMES) {
+              await page.evaluate(value => {
+                document.documentElement.dataset.arbTheme = value;
+                document.documentElement.classList.toggle("dark", value !== "clean-light");
+                document.documentElement.style.colorScheme = value === "clean-light" ? "light" : "dark";
+              }, theme);
+              await page.waitForTimeout(80);
+              const visual = await page.evaluate(() => {
+                const root = document.documentElement;
+                const body = document.body;
+                const parseColor = value => {
+                  const input = String(value).trim();
+                  const hex = input.match(/^#([\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i);
+                  if (hex) {
+                    let digits = hex[1];
+                    if (digits.length === 3 || digits.length === 4) {
+                      digits = digits.slice(0, 3).split("").map(channel => channel + channel).join("");
+                    } else if (digits.length === 8) {
+                      digits = digits.slice(0, 6);
+                    }
+                    return [0, 2, 4].map(index => Number.parseInt(digits.slice(index, index + 2), 16));
+                  }
+                  const parts = input.match(/[\d.]+/g);
+                  return parts && parts.length >= 3 ? parts.slice(0, 3).map(Number) : null;
+                };
+                const luminance = rgb => {
+                  const linear = rgb.map(channel => {
+                    const normalized = channel / 255;
+                    return normalized <= 0.04045
+                      ? normalized / 12.92
+                      : ((normalized + 0.055) / 1.055) ** 2.4;
+                  });
+                  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+                };
+                const contrastRatio = (foreground, background) => {
+                  const first = luminance(foreground);
+                  const second = luminance(background);
+                  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+                };
+                const styles = getComputedStyle(root);
+                const tokenPairs = [
+                  { name: "text-on-canvas", foreground: "--arb-color-text", background: "--arb-color-canvas", minimum: 4.5 },
+                  { name: "text-on-surface", foreground: "--arb-color-text", background: "--arb-color-surface", minimum: 4.5 },
+                  { name: "soft-text-on-canvas", foreground: "--arb-color-text-soft", background: "--arb-color-canvas", minimum: 4.5 },
+                  { name: "muted-text-on-canvas", foreground: "--arb-color-text-muted", background: "--arb-color-canvas", minimum: 4.5 },
+                  { name: "focus-ring-on-canvas", foreground: "--arb-focus-ring", background: "--arb-color-canvas", minimum: 3 },
+                ];
+                const contrastChecks = tokenPairs.map(pair => {
+                  const foregroundValue = styles.getPropertyValue(pair.foreground).trim();
+                  const backgroundValue = styles.getPropertyValue(pair.background).trim();
+                  const foreground = parseColor(foregroundValue);
+                  const background = parseColor(backgroundValue);
+                  const ratio = foreground && background
+                    ? contrastRatio(foreground, background)
+                    : null;
+                  return {
+                    name: pair.name,
+                    foregroundToken: pair.foreground,
+                    backgroundToken: pair.background,
+                    foreground: foregroundValue,
+                    background: backgroundValue,
+                    ratio: ratio === null ? null : Number(ratio.toFixed(2)),
+                    minimum: pair.minimum,
+                    passed: ratio !== null && ratio + 1e-6 >= pair.minimum,
+                  };
+                });
+                const parseColorWithAlpha = value => {
+                  const parts = String(value).match(/[\d.]+/g);
+                  if (!parts || parts.length < 3) return null;
+                  const channels = parts.map(Number);
+                  return {
+                    rgb: channels.slice(0, 3),
+                    alpha: channels.length >= 4 ? channels[3] : 1,
+                  };
+                };
+                const solidBackground = element => {
+                  let current = element;
+                  while (current && current !== document.documentElement.parentElement) {
+                    const parsed = parseColorWithAlpha(getComputedStyle(current).backgroundColor);
+                    if (parsed && parsed.alpha >= 0.99) {
+                      return {
+                        rgb: parsed.rgb,
+                        value: getComputedStyle(current).backgroundColor,
+                        source: current.tagName.toLowerCase(),
+                      };
+                    }
+                    current = current.parentElement;
+                  }
+                  const fallback = parseColorWithAlpha(styles.getPropertyValue("--arb-color-canvas"));
+                  return fallback
+                    ? { rgb: fallback.rgb, value: styles.getPropertyValue("--arb-color-canvas").trim(), source: "--arb-color-canvas" }
+                    : null;
+                };
+                const textSamples = [];
+                const textFailures = [];
+                for (const element of Array.from(document.querySelectorAll("body *"))) {
+                  const text = Array.from(element.childNodes)
+                    .filter(node => node.nodeType === Node.TEXT_NODE)
+                    .map(node => node.textContent || "")
+                    .join(" ")
+                    .trim();
+                  if (!text) continue;
+                  const computed = getComputedStyle(element);
+                  // WCAG text-contrast criteria exclude inactive controls; their
+                  // disabled/busy presentation is handled as a separate state.
+                  if (element.matches(":disabled,[aria-disabled='true']") ||
+                    element.closest("[aria-disabled='true']")) continue;
+                  if (computed.display === "none" || computed.visibility === "hidden" ||
+                    Number(computed.opacity) === 0) continue;
+                  const rect = element.getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) continue;
+                  const foreground = parseColorWithAlpha(computed.color);
+                  const background = solidBackground(element);
+                  if (!foreground || !background) continue;
+                  const ratio = contrastRatio(foreground.rgb, background.rgb);
+                  const fontSize = Number.parseFloat(computed.fontSize) || 16;
+                  const fontWeight = Number.parseInt(computed.fontWeight, 10) || 400;
+                  const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);
+                  const minimum = largeText ? 3 : 4.5;
+                  const sample = {
+                    text: text.slice(0, 80),
+                    tag: element.tagName.toLowerCase(),
+                    className: typeof element.className === "string" ? element.className.slice(0, 100) : "",
+                    foreground: computed.color,
+                    background: background.value,
+                    backgroundSource: background.source,
+                    ratio: Number(ratio.toFixed(2)),
+                    minimum,
+                    passed: ratio + 1e-6 >= minimum,
+                  };
+                  textSamples.push(sample);
+                  if (!sample.passed) textFailures.push(sample);
+                }
+                const renderedTextAudit = {
+                  measured: textSamples.length,
+                  belowThreshold: textFailures.length,
+                  minimumRatio: textSamples.length
+                    ? Math.min(...textSamples.map(sample => sample.ratio))
+                    : null,
+                  failures: textFailures.slice(0, 20),
+                };
+                return {
+                  theme: root.dataset.arbTheme || null,
+                  background: getComputedStyle(body).backgroundColor,
+                  textColor: getComputedStyle(body).color,
+                  viewportWidth: window.innerWidth,
+                  documentWidth: root.scrollWidth,
+                  contrastChecks,
+                  renderedTextAudit,
+                };
+              });
+              const { contrastChecks, renderedTextAudit, ...visualSummary } = visual;
+              const themeItem = {
+                route: route.path,
+                routeName: route.name,
+                width,
+                theme,
+                ...visualSummary,
+                passed: visualSummary.theme === theme &&
+                  visualSummary.documentWidth <= visualSummary.viewportWidth + 1,
+              };
+              results.push(themeItem);
+              if (!themeItem.passed) failures.push(themeItem);
+              const renderedTextItem = {
+                route: route.path,
+                routeName: route.name,
+                width,
+                theme,
+                check: "rendered-text-contrast",
+                ...renderedTextAudit,
+                passed: renderedTextAudit.measured > 0 && renderedTextAudit.belowThreshold === 0,
+              };
+              results.push(renderedTextItem);
+              if (!renderedTextItem.passed) failures.push(renderedTextItem);
+              for (const check of contrastChecks) {
+                const contrastItem = {
+                  route: route.path,
+                  routeName: route.name,
+                  width,
+                  theme,
+                  check: `contrast:${check.name}`,
+                  ...check,
+                  passed: check.passed,
+                };
+                results.push(contrastItem);
+                if (!contrastItem.passed) failures.push(contrastItem);
+              }
+              if (width === 320 || width === 1440) {
+                await page.screenshot({
+                  path: path.join(ARTIFACT_DIR, `${route.name}-${width}-${theme}.png`),
+                  fullPage: true,
+                  animations: "disabled",
+                });
+              }
+            }
+          }
+        } catch (error) {
+          const item = {
+            route: route.path,
+            routeName: route.name,
+            width,
+            passed: false,
+            error: error instanceof Error ? error.message : String(error),
+            pageErrors,
+          };
+          results.push(item);
+          failures.push(item);
+        } finally {
+          await page.close();
+        }
+      }
+    }
+    const notificationSoundChecks = await runNotificationSoundAssetPlaybackCheck(browser);
+    results.push(...notificationSoundChecks);
+    failures.push(...notificationSoundChecks.filter(check => !check.passed));
+    const customerFormChecks = await runCustomerAuthFormInteractionCheck(browser);
+    results.push(...customerFormChecks);
+    failures.push(...customerFormChecks.filter(check => !check.passed));
+    const customerRecoveryChecks = await runCustomerRecoveryInteractionCheck(browser);
+    results.push(...customerRecoveryChecks);
+    failures.push(...customerRecoveryChecks.filter(check => !check.passed));
+    const customerPolicyChecks = await runCustomerThemePolicyInteractionCheck(browser);
+    results.push(...customerPolicyChecks);
+    failures.push(...customerPolicyChecks.filter(check => !check.passed));
+    const interactionChecks = await runAdminAppearanceInteractionCheck(browser);
+    results.push(...interactionChecks);
+    failures.push(...interactionChecks.filter(check => !check.passed));
+    const popupChecks = await runCustomerOpportunityPopupInteractionCheck(browser);
+    results.push(...popupChecks);
+    failures.push(...popupChecks.filter(check => !check.passed));
+    const popupSlotChecks = await runCustomerOpportunityPopupSlotReplacementCheck(browser);
+    results.push(...popupSlotChecks);
+    failures.push(...popupSlotChecks.filter(check => !check.passed));
+    const tradingControlChecks = await runAdminTradingControlsInteractionCheck(browser);
+    results.push(...tradingControlChecks);
+    failures.push(...tradingControlChecks.filter(check => !check.passed));
+  } finally {
+    await browser.close();
+  }
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    baseUrl: BASE_URL,
+    widths: WIDTHS,
+    routes: ROUTES,
+    themes: THEMES,
+    checks: results.length,
+    failures: failures.length,
+    passed: results.length - failures.length,
+    results,
+    failureDetails: failures,
+    limitations: [
+      "The admin appearance interaction uses mocked auth.me and tRPC responses; it verifies the client flow and submitted policy only, not live server authorization or database persistence.",
+      "Customer theme-choice enabled/disabled checks use mocked auth.me and appearanceConfig responses; they verify selector visibility, allow-list options, applied theme, and local preference only, not live server authorization or database persistence.",
+      "Customer registration form checks use a mocked rejected registration response; they verify client-side required-field validation and busy/error recovery, not live signup authorization or persistence.",
+      "Static-client browser smoke tests do not authenticate to the live API or verify customer-role enforcement.",
+      "Customer opportunity popup and administrator Trading switch interaction checks use mocked auth and tRPC data. They verify the React UI, client-side gates, submitted policy patches and mocked persistence; they do not verify live server authorization, SQL persistence, worker publication or a real customer's account eligibility.",
+      "Keyboard scrolling is exercised on populated mocked administrator settlement and wallet-ledger tables; live ledger data/authorization and the full authenticated form/dialog/dropdown/disabled/busy interaction matrix remain outside this static-client run.",
+      "The rendered contrast audit covers visible text on the three entry routes and semantic token pairs; human review of screenshots and broader authenticated portal coverage remain required.",
+    ],
+  };
+  fs.writeFileSync(path.join(ARTIFACT_DIR, "report.json"), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify({
+    checks: report.checks,
+    passed: report.passed,
+    failures: report.failures,
+    report: path.join(ARTIFACT_DIR, "report.json"),
+  }, null, 2));
+  if (failures.length) {
+    // Keep failed assertions visible in the Actions log as well as report.json,
+    // so a failed browser job can be diagnosed without downloading its artifact.
+    console.error(JSON.stringify({ failureDetails: failures }, null, 2));
+    process.exitCode = 1;
+  }
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -1,0 +1,159 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const source = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
+const start = source.indexOf("export async function manuallySettleTrade(");
+const end = source.indexOf("\nexport async function processConfirmedTradeCredits(", start);
+const implementation = source.slice(start, end);
+const creditStart = source.indexOf("export async function processConfirmedTradeCredits(");
+const creditEnd = source.indexOf("\nexport async function createOpportunityOffer(", creditStart);
+const creditImplementation = source.slice(creditStart, creditEnd);
+
+const pendingStart = source.indexOf("export async function listPendingSettlements(");
+const pendingEnd = source.indexOf("\nexport async function manuallySettleTrade(", pendingStart);
+const pendingImplementation = source.slice(pendingStart, pendingEnd);
+
+
+describe("read-only settlement integrity audit", () => {
+  const start = source.indexOf("export async function listTradeSettlementIntegrityIssues(");
+  const end = source.indexOf("\nexport async function manuallySettleTrade(", start);
+  const implementation = source.slice(start, end);
+
+  it("surfaces legacy and inconsistent settlement states without mutating financial records", () => {
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(implementation).toContain('eq(tradePositions.settlementOutcome, "legacy_unrecorded")');
+    expect(implementation).toContain('eq(tradePositions.status, "settled")');
+    expect(implementation).toContain('isNull(tradePositions.settlementReference)');
+    expect(implementation).toContain('isNull(tradeSettlementReferenceClaims.tradeId)');
+    expect(implementation).toContain('"pending_trade_missing_reward_reservation"');
+    expect(implementation).toContain('"pending_trade_reservation_not_reserved"');
+    expect(implementation).toContain('"settled_trade_reservation_still_reserved"');
+    expect(implementation).toContain(".filter((row) => row.issues.length > 0)");
+    expect(implementation).toContain("limit(safeLimit + 1)");
+    expect(implementation).toContain("nextBeforeTradeId");
+    expect(implementation).not.toContain("tx.update(");
+    expect(implementation).not.toContain("tx.insert(");
+    expect(implementation).not.toContain("tx.delete(");
+  });
+});
+
+describe("pending settlement reconciliation visibility", () => {
+  it("exposes lifecycle timing and reward-reservation identity for admin reconciliation", () => {
+    expect(pendingStart).toBeGreaterThanOrEqual(0);
+    expect(pendingEnd).toBeGreaterThan(pendingStart);
+    expect(pendingImplementation).toContain("lifecycleStage:tradePositions.lifecycleStage");
+    expect(pendingImplementation).toContain("creditAt:tradePositions.creditAt");
+    expect(pendingImplementation).toContain("packageSubscriptionId:tradePositions.packageSubscriptionId");
+    expect(pendingImplementation).toContain("reservationStatus:tradeRewardReservations.status");
+    expect(pendingImplementation).toContain("reservationPackageName:tradeRewardReservations.packageName");
+    expect(pendingImplementation).toContain("reservationAmountMinor:tradeRewardReservations.reservedMinor");
+    expect(pendingImplementation).toContain("leftJoin(tradeRewardReservations,eq(tradeRewardReservations.tradeId,tradePositions.id))");
+  });
+});
+
+const referenceClaimsMigration = readFileSync(new URL("../drizzle/0067_trade_settlement_reference_claims.sql", import.meta.url), "utf8");
+const migrationJournal = readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8");
+
+describe("settlement reference uniqueness migration", () => {
+  it("registers a database-enforced global unique reference claim and one claim per trade", () => {
+    expect(referenceClaimsMigration).toContain("PRIMARY KEY (`settlementReference`)");
+    expect(referenceClaimsMigration).toContain("UNIQUE KEY `trade_settlement_reference_claim_trade_unique` (`tradeId`)");
+    expect(migrationJournal).toContain('"tag": "0067_trade_settlement_reference_claims"');
+  });
+
+  it("claims the evidence reference before saving the confirmed result", () => {
+    const claim = implementation.indexOf("tx.insert(tradeSettlementReferenceClaims)");
+    const confirmation = implementation.indexOf('settlementStatus:"confirmed_awaiting_credit"');
+    expect(claim).toBeGreaterThanOrEqual(0);
+    expect(confirmation).toBeGreaterThan(claim);
+    expect(implementation).toContain("Settlement reference has already been used");
+  });
+
+  it("requires the persisted reference claim before the delayed worker posts any ledger entry", () => {
+    const claimRead = creditImplementation.indexOf("tx.select().from(tradeSettlementReferenceClaims)");
+    const firstLedgerPost = creditImplementation.indexOf("tx.insert(balanceLedger)");
+    expect(claimRead).toBeGreaterThanOrEqual(0);
+    expect(firstLedgerPost).toBeGreaterThan(claimRead);
+  });
+});
+
+describe("manual trade settlement idempotency", () => {
+  it("enforces the minimum reference length and note limit in the settlement service", () => {
+    expect(implementation).toContain("Settlement reference must contain at least 3 characters");
+    expect(implementation).toContain("Settlement reference must not exceed 160 characters");
+    expect(implementation).toContain("Settlement notes must not exceed 2000 characters");
+  });
+
+  it("allows evidence review at trade completion without waiting for the later wallet-credit timestamp", () => {
+    expect(implementation).toContain("const settlementDueAt=trade.settlementReviewAt||trade.creditAt||trade.settlesAt");
+    expect(implementation).toContain("Trade is not yet due for settlement confirmation");
+    expect(implementation).toContain("new Date(settlementDueAt).getTime()>Date.now()");
+    expect(implementation).toContain('settlementStatus:"confirmed_awaiting_credit"');
+    expect(implementation).not.toContain("const settlementDueAt=trade.creditAt||trade.settlesAt");
+  });
+
+  it("locks the trade and treats a matching completed reference/result as a replay", () => {
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(implementation).toContain('.limit(1).for("update")');
+    expect(implementation).toContain('trade.status==="settled"&&trade.settlementStatus==="completed"');
+    expect(implementation).toContain("trade.settlementReference===reference");
+    expect(implementation).toContain("Number(trade.realizedGrossProfitMinor)!==input.grossProfitMinor");
+    expect(implementation).toContain("trade.settlementReference===reference");
+  });
+
+  it("fails closed instead of silently clamping an inconsistent locked principal", () => {
+    expect(implementation).toContain("const lockedMinor=Number(wallet.lockedMinor)");
+    expect(implementation).toContain("!Number.isSafeInteger(lockedMinor)||lockedMinor<principal");
+    expect(implementation).toContain("Settlement wallet locked balance is inconsistent with the trade principal");
+    expect(implementation).not.toContain("lockedMinor:sql`${customerBalances.lockedMinor}-${principal}`");
+    expect(implementation).not.toContain("GREATEST(${customerBalances.lockedMinor}-${principal},0)");
+    expect(creditImplementation).toContain("lockedMinor:sql`${customerBalances.lockedMinor}-${principal}`");
+  });
+
+  it("locks and validates the reward reservation before recording confirmation", () => {
+    const reservationLock = implementation.indexOf("tx.select().from(tradeRewardReservations)");
+    const confirmation = implementation.indexOf('settlementStatus:"confirmed_awaiting_credit"');
+    expect(reservationLock).toBeGreaterThanOrEqual(0);
+    expect(confirmation).toBeGreaterThan(reservationLock);
+    expect(implementation).toContain('reservation.status!=="reserved"');
+    expect(implementation).toContain("reservation.userId!==trade.userId||reservation.currency!==trade.currency||reservation.tradeId!==trade.id");
+    expect(implementation).toContain("Number(reservation.reservedMinor)!==reservedMinor");
+    expect(implementation).toContain("Trade has a reserved reward amount but its reservation record is missing");
+    expect(implementation).not.toContain("tx.update(tradeRewardReservations)");
+  });
+
+  it("keeps the reservation reserved until the delayed wallet posting transaction", () => {
+    expect(creditImplementation).toContain('reservation.status!=="reserved"');
+    expect(creditImplementation).toContain('status:accounting.netProfitMinor>0?"credited":"released"');
+    expect(creditImplementation).toContain('assertExactlyOneAffectedRow(reservationUpdate,"Confirmed trade reward reservation posting")');
+  });
+
+  it("validates reservation identity and amount before confirming the actual result", () => {
+    expect(implementation).toContain("const reservation=(await tx.select().from(tradeRewardReservations)");
+    expect(implementation).toContain("reservation.userId!==trade.userId||reservation.currency!==trade.currency||reservation.tradeId!==trade.id");
+    expect(implementation).toContain("Number(reservation.reservedMinor)!==reservedMinor");
+    expect(implementation).toContain("Trade has a reserved reward amount but its reservation record is missing");
+    expect(implementation).not.toContain("tx.update(tradeRewardReservations)");
+  });
+
+  it("validates package subscription ownership and reservation package identity before postings", () => {
+    const subscriptionCheck = implementation.indexOf("Trade package subscription identity is inconsistent");
+    const confirmation = implementation.indexOf('settlementStatus:"confirmed_awaiting_credit"');
+    expect(subscriptionCheck).toBeGreaterThanOrEqual(0);
+    expect(confirmation).toBeGreaterThan(subscriptionCheck);
+    expect(implementation).toContain("subscription.userId!==trade.userId");
+    expect(implementation).toContain("Trade package identity cannot be resolved");
+    expect(implementation).toContain("reservation.packageName!==packageName");
+    expect(implementation).toContain("Trade reward reservation package does not match the trade subscription");
+  });
+
+  it("claims references in a database-unique table before any financial postings", () => {
+    const claim = implementation.indexOf("tx.insert(tradeSettlementReferenceClaims)");
+    const confirmation = implementation.indexOf('settlementStatus:"confirmed_awaiting_credit"');
+    expect(claim).toBeGreaterThanOrEqual(0);
+    expect(confirmation).toBeGreaterThan(claim);
+    expect(implementation).toContain('if(code==="ER_DUP_ENTRY") throw new Error("Settlement reference has already been used")');
+  });
+});

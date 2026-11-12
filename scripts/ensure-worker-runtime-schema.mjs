@@ -1,0 +1,278 @@
+import mysql from "mysql2/promise";
+import { config } from "dotenv";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { executeCompatibleMigrationSql } from "./mysql-compatible-migration-sql.mjs";
+import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+config({ path: resolve(root, ".env"), override: false });
+
+async function assertMiningCustomerPackagesTable(db) {
+  const requiredColumns = [
+    "id", "userId", "packageId", "packageVersionId", "status", "purchasedAt",
+    "startsAt", "expiresAt", "endedAt", "baseThsSnapshot", "boostBonusThsSnapshot",
+    "priceAmount", "priceAsset", "paymentAmount", "paymentAsset", "ledgerTransactionId",
+    "idempotencyKey", "termsSnapshot", "createdAt",
+  ];
+  const [rows] = await db.execute(
+    "SELECT column_name AS columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='mining_customer_packages'",
+  );
+  const actual = new Set(rows.map(row => String(row.columnName)));
+  const missing = requiredColumns.filter(column => !actual.has(column));
+  if (missing.length) {
+    throw new Error(`Mining worker schema contract failed for mining_customer_packages; missing columns: ${missing.join(", ")}`);
+  }
+}
+
+async function hasColumn(db, table, column) {
+  const [rows] = await db.execute(
+    "SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=? LIMIT 1",
+    [table, column],
+  );
+  return rows.length > 0;
+}
+
+async function ensureColumn(db, table, column, definition) {
+  if (await hasColumn(db, table, column)) return false;
+  // Identifiers/definitions are constants owned by this file, never user input.
+  try {
+    await db.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+  } catch (error) {
+    if (await hasColumn(db, table, column)) return false;
+    throw error;
+  }
+  console.log(`[worker-schema] added ${table}.${column}`);
+  return true;
+}
+
+async function hasIndex(db, table, index) {
+  const [rows] = await db.execute(
+    "SELECT 1 FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=? LIMIT 1",
+    [table, index],
+  );
+  return rows.length > 0;
+}
+
+async function ensureIndex(db, table, index, createSql) {
+  if (await hasIndex(db, table, index)) return false;
+  if (index === "customer_notifications_event_key_uq") {
+    const [duplicates] = await db.query(
+      "SELECT eventKey FROM customer_notifications WHERE eventKey IS NOT NULL GROUP BY eventKey HAVING COUNT(*) > 1 LIMIT 1",
+    );
+    if (duplicates.length) {
+      throw new Error("customer_notifications has duplicate eventKey values; review those rows before enabling notification idempotency.");
+    }
+  }
+  try {
+    await db.query(createSql);
+  } catch (error) {
+    if (await hasIndex(db, table, index)) return false;
+    throw error;
+  }
+  console.log(`[worker-schema] added index ${table}.${index}`);
+  return true;
+}
+
+async function ensureWithdrawnStatus(db, table, column, values) {
+  const [rows] = await db.execute(
+    "SELECT column_type AS columnType FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=? LIMIT 1",
+    [table, column],
+  );
+  if (!rows.length) throw new Error(`Required column ${table}.${column} is missing.`);
+  const columnType = String(rows[0].columnType || "").toLowerCase();
+  if (columnType.includes("'withdrawn'")) return false;
+  try {
+    await db.query(`ALTER TABLE \`${table}\` MODIFY COLUMN \`${column}\` ${values}`);
+  } catch (error) {
+    const [refreshed] = await db.execute(
+      "SELECT column_type AS columnType FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=? LIMIT 1",
+      [table, column],
+    );
+    if (String(refreshed[0]?.columnType || "").toLowerCase().includes("'withdrawn'")) return false;
+    throw error;
+  }
+  console.log(`[worker-schema] enabled withdrawn status in ${table}.${column}`);
+  return true;
+}
+
+async function ensureDeliveryLifecycleStatus(db) {
+  const [rows] = await db.execute(
+    "SELECT column_type AS columnType FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='opportunity_popup_events' AND column_name='deliveryStatus' LIMIT 1",
+  );
+  if (!rows.length) throw new Error("Required column opportunity_popup_events.deliveryStatus is missing.");
+  const current = String(rows[0].columnType || "").toLowerCase();
+  const required = ["queued", "in_progress", "retry_wait", "delivered", "received", "rendered", "failed", "dismissed", "expired"];
+  if (required.every(value => current.includes(`'${value}'`))) return false;
+  await db.query("ALTER TABLE `opportunity_popup_events` MODIFY COLUMN `deliveryStatus` ENUM('queued','in_progress','retry_wait','delivered','received','rendered','failed','dismissed','expired') NOT NULL DEFAULT 'delivered'");
+  console.log("[worker-schema] aligned opportunity popup delivery lifecycle status");
+  return true;
+}
+async function ensureDeliveryLifecycle(db) {
+  let repairs = 0;
+  const eventColumns = [
+    ["packageId", "INT NULL"], ["deliveryRetryAfter", "TIMESTAMP NULL DEFAULT NULL"],
+    ["deliveryLeaseToken", "VARCHAR(64) NULL DEFAULT NULL"], ["deliveryLeaseExpiresAt", "TIMESTAMP NULL DEFAULT NULL"],
+    ["deliveryPolicyVersionSnapshot", "INT NOT NULL DEFAULT 1"],
+  ];
+  for (const [column, definition] of eventColumns) if (await ensureColumn(db, "opportunity_popup_events", column, definition)) repairs++;
+  if (await ensureDeliveryLifecycleStatus(db)) repairs++;
+  const idempotencySql = "CREATE TABLE IF NOT EXISTS `opportunity_delivery_idempotency` (`id` INT NOT NULL AUTO_INCREMENT,`userId` INT NOT NULL,`offerId` INT NOT NULL,`popupEventId` INT NULL,`packageId` INT NOT NULL DEFAULT 0,`packageName` VARCHAR(80) NOT NULL,`createdAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY (`id`),UNIQUE KEY `opportunity_delivery_idempotency_user_offer_uq` (`userId`,`offerId`),KEY `opportunity_delivery_idempotency_popup_idx` (`popupEventId`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+  await db.query(idempotencySql);
+  if (await ensureColumn(db, "opportunity_delivery_idempotency", "packageId", "INT NOT NULL DEFAULT 0")) repairs++;
+  const indexes = [
+    ["opportunity_popup_pending_package_id_idx", "CREATE INDEX `opportunity_popup_pending_package_id_idx` ON `opportunity_popup_events` (`userId`,`packageId`,`deliveryStatus`)"],
+    ["opportunity_popup_retry_due_idx", "CREATE INDEX `opportunity_popup_retry_due_idx` ON `opportunity_popup_events` (`deliveryStatus`,`deliveryRetryAfter`)"],
+  ];
+  for (const [name, sql] of indexes) if (await ensureIndex(db, "opportunity_popup_events", name, sql)) repairs++;
+  await db.query("UPDATE opportunity_popup_events e JOIN packages p ON p.name COLLATE utf8mb4_unicode_ci=e.packageName COLLATE utf8mb4_unicode_ci SET e.packageId=p.id WHERE e.packageId IS NULL");
+  await db.query("UPDATE opportunity_popup_events e JOIN (SELECT userId,offerId,COALESCE(MIN(CASE WHEN deliveryStatus IN ('queued','in_progress','retry_wait') AND tradeId IS NULL AND eventStatus NOT IN ('TRADED','SETTLED','WITHDRAWN') AND executionStatus NOT IN ('RUNNING','SUCCEEDED') THEN id END),MIN(id)) canonicalId FROM opportunity_popup_events GROUP BY userId,offerId HAVING COUNT(*)>1) d ON d.userId=e.userId AND d.offerId=e.offerId SET e.deliveryStatus='failed',e.deliveryRetryAfter=NULL,e.deliveryLeaseToken=NULL,e.deliveryLeaseExpiresAt=NULL,e.lastErrorCode='DELIVERY_DUPLICATE_LEGACY',e.updatedAt=CURRENT_TIMESTAMP WHERE e.id<>d.canonicalId AND e.tradeId IS NULL AND e.eventStatus NOT IN ('TRADED','SETTLED','WITHDRAWN') AND e.executionStatus NOT IN ('RUNNING','SUCCEEDED') AND e.deliveryStatus IN ('queued','in_progress','retry_wait')");
+  await db.query("UPDATE opportunity_popup_events SET deliveryStatus='failed',deliveryRetryAfter=NULL,deliveryLeaseToken=NULL,deliveryLeaseExpiresAt=NULL,lastErrorCode='DELIVERY_PACKAGE_ID_UNRESOLVED',updatedAt=CURRENT_TIMESTAMP WHERE packageId IS NULL AND deliveryStatus IN ('queued','in_progress','retry_wait') AND tradeId IS NULL AND eventStatus NOT IN ('TRADED','SETTLED','WITHDRAWN') AND executionStatus NOT IN ('RUNNING','SUCCEEDED')");
+  await db.query("INSERT INTO opportunity_delivery_idempotency (userId,offerId,popupEventId,packageId,packageName,createdAt) SELECT e.userId,e.offerId,e.id,COALESCE(e.packageId,0),e.packageName,e.createdAt FROM opportunity_popup_events e JOIN (SELECT userId,offerId,COALESCE(MIN(CASE WHEN deliveryStatus IN ('queued','in_progress','retry_wait') AND tradeId IS NULL AND eventStatus NOT IN ('TRADED','SETTLED','WITHDRAWN') AND executionStatus NOT IN ('RUNNING','SUCCEEDED') THEN id END),MIN(id)) canonicalId FROM opportunity_popup_events GROUP BY userId,offerId) c ON c.canonicalId=e.id ON DUPLICATE KEY UPDATE userId=VALUES(userId)");
+  await db.query("UPDATE opportunity_delivery_idempotency d JOIN (SELECT userId,offerId,COALESCE(MIN(CASE WHEN deliveryStatus IN ('queued','in_progress','retry_wait') AND tradeId IS NULL AND eventStatus NOT IN ('TRADED','SETTLED','WITHDRAWN') AND executionStatus NOT IN ('RUNNING','SUCCEEDED') THEN id END),MIN(id)) canonicalId FROM opportunity_popup_events GROUP BY userId,offerId) c ON c.userId=d.userId AND c.offerId=d.offerId JOIN opportunity_popup_events e ON e.id=c.canonicalId SET d.popupEventId=e.id,d.packageId=COALESCE(e.packageId,0),d.packageName=e.packageName");
+  await db.query("INSERT INTO app_settings (settingKey,settingValue,updatedBy) VALUES ('trade.deliveryRetryPolicy',JSON_OBJECT('policy','none','maxAttempts',1,'intervalsSeconds',JSON_ARRAY(),'version',1,'effectiveAt',NULL,'updatedBy',NULL,'updatedAt',NULL,'reason','Initial fail-closed delivery retry policy; explicit intervals have not been saved.','configured',FALSE),NULL) ON DUPLICATE KEY UPDATE settingKey=VALUES(settingKey)");
+  return repairs;
+}
+async function main() {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) throw new Error("DATABASE_URL is required; load the private application environment first.");
+  const url = new URL(raw);
+  if (!["mysql:", "mariadb:"].includes(url.protocol)) throw new Error("DATABASE_URL must use mysql:// or mariadb://.");
+  if (url.protocol === "mariadb:") url.protocol = "mysql:";
+  url.searchParams.set("timezone", "Z");
+  const db = await mysql.createConnection(url.toString());
+  let repairs = 0;
+  try {
+    if (process.argv.includes("--verify-only")) {
+      await assertMiningCustomerPackagesTable(db);
+      const verified = await assertWorkerSchemaContracts(db);
+      console.log(`[worker-schema] PASS: read-only verification of ${verified.checkedTables} worker-critical table contracts plus the Mining customer-package table.`);
+      return;
+    }
+    // Blitz and other hosts may have completed the main Drizzle chain without
+    // applying the separate portal migration chain. MiningWorker directly reads
+    // mining_customer_packages, so bridge its canonical idempotent base migration
+    // before starting any worker. CREATE TABLE IF NOT EXISTS preserves existing
+    // customer-package rows and never resets the Mining catalogue or ledger.
+    const miningPortalMigration = await readFile(resolve(root, "drizzle/0036_crypto_mining_portal.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, miningPortalMigration);
+    await assertMiningCustomerPackagesTable(db);
+
+    // This journaled bridge deliberately duplicates the worker-table DDL from the
+    // standalone mining and portal migration files. It covers hosts that invoke a
+    // different migration entry point; contract checks below detect shape drift.
+    const workerMigration = await readFile(resolve(root, "drizzle/0062_worker_runtime_tables.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, workerMigration);
+
+    // Delivery diagnostics are defined in the portal migration chain, but the
+    // opportunity worker also runs on hosts that invoke only the main migration
+    // entry point. Bridge this idempotent additive migration before worker SQL.
+    const deliveryDiagnosticsMigration = await readFile(resolve(root, "drizzle/0052_delivery_diagnostics.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, deliveryDiagnosticsMigration);
+
+    // The Trading tier queue is worker-critical too. Apply its idempotent DDL
+    // here so hosts using this runtime-schema bridge cannot start with the
+    // ledger writer enqueueing into a missing table. The journal still tracks
+    // migration 0082 for standard migration history.
+    const tierQualificationMigration = await readFile(resolve(root, "drizzle/0082_trading_tier_qualification_jobs.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, tierQualificationMigration);
+
+    // Keep the runtime-schema bridge aligned with the journaled Trading worker
+    // index migration so direct runtime repairs and normal installs converge.
+    const tradingOpportunityWorkerMigration = await readFile(resolve(root, "drizzle/0083_trading_opportunity_worker_indexes.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, tradingOpportunityWorkerMigration);
+
+    // The worker health registry is required by worker wrappers and the admin
+    // monitor. Apply the same idempotent DDL during runtime preflight so the
+    // application never exposes a healthy monitor backed by a missing table.
+    const workerHealthMigration = await readFile(resolve(root, "drizzle/0084_worker_health_registry.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, workerHealthMigration);
+
+    // Settlement reconciliation and manual confirmation use the same canonical schema
+    // even when an older migration tracker says settlement DDL was already applied.
+    const settlementSchemaMigration = await readFile(resolve(root, "drizzle/0085_trade_settlement_schema_reconciliation.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, settlementSchemaMigration);
+
+    // Bridge all known Trading migration branches in the canonical forward order.
+    // Every DDL file is idempotent; this also reconciles hosts with older trackers.
+    const popupPolicySnapshotMigration = await readFile(resolve(root, "drizzle/0086_trading_popup_policy_snapshots.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, popupPolicySnapshotMigration);
+    const opportunityExecutionLeaseMigration = await readFile(resolve(root, "drizzle/0087_trading_opportunity_execution_leases.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, opportunityExecutionLeaseMigration);
+    const packagePolicySchemaMigration = await readFile(resolve(root, "drizzle/0088_trading_package_policy_schema_reconciliation.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, packagePolicySchemaMigration);
+    const popupPolicyRangeMigration = await readFile(resolve(root, "drizzle/0089_trading_popup_policy_ranges.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, popupPolicyRangeMigration);
+    const companySpotlightRotationMigration = await readFile(resolve(root, "drizzle/0090_trading_company_spotlight_rotation.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, companySpotlightRotationMigration);
+    const popupTradeSnapshotsMigration = await readFile(resolve(root, "drizzle/0091_trading_popup_trade_snapshots.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, popupTradeSnapshotsMigration);
+    // Keep immutable funding-plan snapshots available on the allocated trade row.
+    const walletFundingPlanMigration = await readFile(resolve(root, "drizzle/0092_trading_trade_wallet_funding_plan_snapshot.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, walletFundingPlanMigration);
+    const walletAdjustmentIdempotencyMigration = await readFile(resolve(root, "drizzle/0093_admin_wallet_adjustment_idempotency.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, walletAdjustmentIdempotencyMigration);
+    const nullablePolicyDurationBoundsMigration = await readFile(resolve(root, "drizzle/0094_trading_policy_duration_bounds_nullable.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, nullablePolicyDurationBoundsMigration);
+    const fxSnapshotSourceTimestampMigration = await readFile(resolve(root, "drizzle/0095_fx_snapshot_source_timestamp_precision.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, fxSnapshotSourceTimestampMigration);
+    const settlementReviewTimestampMigration = await readFile(resolve(root, "drizzle/0096_trade_settlement_review_timestamp.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, settlementReviewTimestampMigration);
+    const dailyExecutionAttemptAccountingMigration = await readFile(resolve(root, "drizzle/0097_trading_daily_execution_attempt_accounting.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, dailyExecutionAttemptAccountingMigration);
+    const automaticFinancialExecutionOffMigration = await readFile(resolve(root, "drizzle/0098_disable_automatic_financial_execution.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, automaticFinancialExecutionOffMigration);
+    const packageFeePolicyMigration = await readFile(resolve(root, "drizzle/0101_package_fee_policy_versions.sql"), "utf8");
+    await executeCompatibleMigrationSql(db, packageFeePolicyMigration);
+
+    const columns = [
+      ["eventKey", "VARCHAR(180) NULL"],
+      ["category", "VARCHAR(40) NOT NULL DEFAULT 'account'"],
+      ["priority", "VARCHAR(20) NOT NULL DEFAULT 'normal'"],
+      ["href", "VARCHAR(512) NULL"],
+    ];
+    for (const [column, definition] of columns) {
+      if (await ensureColumn(db, "customer_notifications", column, definition)) repairs++;
+    }
+
+    const indexes = [
+      ["customer_notifications_event_key_uq", "CREATE UNIQUE INDEX `customer_notifications_event_key_uq` ON `customer_notifications` (`eventKey`)"],
+      ["customer_notifications_user_read_created_idx", "CREATE INDEX `customer_notifications_user_read_created_idx` ON `customer_notifications` (`userId`, `readAt`, `createdAt`)"],
+      ["customer_notifications_user_created_id_idx", "CREATE INDEX `customer_notifications_user_created_id_idx` ON `customer_notifications` (`userId`, `createdAt`, `id`)"],
+    ];
+    for (const [name, createSql] of indexes) {
+      if (await ensureIndex(db, "customer_notifications", name, createSql)) repairs++;
+    }
+
+    if (await ensureWithdrawnStatus(
+      db,
+      "notification_campaigns",
+      "status",
+      "ENUM('draft','scheduled','published','expired','failed','withdrawn') NOT NULL DEFAULT 'draft'",
+    )) repairs++;
+    if (await ensureWithdrawnStatus(
+      db,
+      "notification_campaign_deliveries",
+      "status",
+      "ENUM('pending','delivered','read','failed','expired','withdrawn') NOT NULL DEFAULT 'pending'",
+    )) repairs++;
+
+    repairs += await ensureDeliveryLifecycle(db);
+    const verified = await assertWorkerSchemaContracts(db);
+    console.log(repairs
+      ? `[worker-schema] PASS: applied ${repairs} additive, non-destructive runtime repair(s); verified ${verified.checkedTables} worker-critical table contracts.`
+      : `[worker-schema] PASS: verified ${verified.checkedTables} worker-critical table contracts and notification schema repairs.`);
+  } finally {
+    await db.end();
+  }
+}
+
+main().catch((error) => {
+  const code = String(error?.code || "UNKNOWN").replace(/[^A-Z0-9_]/gi, "").slice(0, 40);
+  const message = error instanceof Error
+    ? error.message.replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]").slice(0, 400)
+    : "Unknown error";
+  console.error("[worker-schema] FAIL: runtime schema preflight did not complete", { code: code || "UNKNOWN", message });
+  process.exitCode = 1;
+});

@@ -1,0 +1,118 @@
+# Arbitrade Platform
+
+Arbitrade is a Node.js/Express and React customer-and-operations platform for database-backed opportunity workflows, wallets, immutable ledger records, reporting, support, and administration.
+
+## Production requirements
+
+- Node.js 20+ (Node.js 22 recommended)
+- pnpm 10.18
+- MySQL 8-compatible or MariaDB database
+- HTTPS
+- Email transport only if outbound email is required (optional during installation)
+- cPanel Setup Node.js App or a VPS
+
+## Self-hosted runtime
+
+The runtime uses Arbitrade-owned MySQL sessions, the configured MySQL/MariaDB database, persistent local file storage, a database-backed scheduler and operator-configured optional integrations. No hosted builder identity, API proxy, storage gateway or scheduler is required. Read [the self-hosted deployment guide](docs/SELF_HOSTED_DEPLOYMENT.md) before installing or upgrading.
+
+## Database source of truth
+
+The repository-root `database.sql` is the single canonical database artifact for this application. It contains the database-backed application state, including accounts, wallets, balances, ledgers, mining packages, mining contracts, CKI economics, settings, and portal records. Before moving hosts or completing database changes, run `pnpm db:backup:github`; on a new empty database, run `pnpm db:restore:github`. See [`DATABASE_SOURCE_OF_TRUTH.md`](DATABASE_SOURCE_OF_TRUTH.md).
+
+The application does not ship default users, default passwords, demo seed data, or client-only authentication fallbacks.
+
+## Local development
+
+```bash
+pnpm install
+cp .env.example .env
+pnpm check
+pnpm test
+pnpm dev
+```
+
+Set `DATABASE_URL`, `SESSION_SECRET`, and `PASSWORD_PEPPER` before using authentication. Do not commit `.env`.
+
+## Production build
+
+```bash
+pnpm install --frozen-lockfile
+pnpm db:migrate
+pnpm build
+ADMIN_EMAIL=admin@your-domain.example ADMIN_PASSWORD='use-a-new-12-character-password' \
+CUSTOMER_EMAIL=customer@your-domain.example CUSTOMER_PASSWORD='use-a-different-12-character-password' \
+pnpm accounts:provision
+pnpm start
+```
+
+The standalone provisioning command creates both requested accounts in MySQL, stores salted scrypt hashes, and never stores plaintext passwords in the repository. The browser fresh-install wizard collects both account credential sets and creates the administrator and customer transactionally after migrations succeed. SMTP is optional during installation and is configured after sign-in from the administrator portal.
+
+Migration `0006_v5_reporting_jobs.sql` adds customer reporting-timezone history, daily-report preferences, failed-job visibility, and the customer/reporting-day uniqueness invariant. Back up MySQL before applying it and reconcile wallet balances afterward.
+
+## cPanel deployment
+
+Follow [`cpanel/README.md`](cpanel/README.md). The browser-assisted setup wizard is documented in [`installer/README.md`](installer/README.md): it validates database access and writes protected configuration, then the private cPanel terminal runs `node installer/run-install.mjs --fresh-install` for a new empty database or `node installer/run-install.mjs --existing-database` after an existing database has been imported. It never replaces existing account credentials. Configure the Node application startup file as `dist/index.js`, keep `.env` outside the public document root, and use cPanel Cron for authenticated scheduled work. PHP-only hosting cannot run the Express application.
+
+## Main routes
+
+- `/` — workspace gateway
+- `/customer` — database-authenticated customer portal
+- `/ops-console-7f3a` — database-authenticated administrator portal
+- `/api/health` — health check
+
+## Database and security
+
+Customer and administrator accounts, roles, packages, opportunities, balances, ledger entries, support tickets, notifications, and operational settings are stored in MySQL. Local passwords use salted scrypt hashes; sessions are signed, httpOnly cookies. Financial values use decimal-safe server-side rules and immutable ledger records.
+
+Before production launch, configure HTTPS, SMTP, rate limiting, CSRF protections appropriate to the deployment, admin 2FA, backups, reconciliation, and provider secrets through the host environment.
+
+The trading workflow records real-money trading allocations, capital movements, realized results, fees, and settlement in the customer's internal ledger. Financial changes must be supported by recorded trade lifecycle/result data and posted transactionally and idempotently; configured estimates alone must never be recorded as realized profit.
+
+## Trading financial accounting
+
+Trading is treated as a real-money operation. Trading allocations, capital debits and returns, realized profits, platform fees, losses, and settlement records must be posted to the customer's internal ledger as appropriate to the actual trade lifecycle. Every posting must be durable, auditable, transactional, and idempotent. The interface must display committed ledger results, not create financial changes on its own. Deposit and withdrawal workflows are specified separately.
+
+## OAuth and email
+
+OAuth callback URLs:
+
+```text
+https://YOUR_DOMAIN/api/oauth/google/callback
+https://YOUR_DOMAIN/api/oauth/microsoft/callback
+```
+
+Keep OAuth client secrets and SMTP credentials server-side. Configure SPF, DKIM, DMARC, sender verification, and failure/retry handling.
+
+## Recovery
+
+Back up MySQL before migrations. Restore the database first, run forward migrations only, reconcile stored balances against the immutable ledger, retry incomplete jobs idempotently, and then restart the Node application.
+
+
+## Canonical build and release instructions
+
+All CI and external deployment tools should use the repository-root `Dockerfile` and build from the verified `main` commit. See [`BUILD_AND_RELEASE.md`](BUILD_AND_RELEASE.md) for the standard build commands, required runtime configuration, release gates, and source-of-truth policy. Do not deploy from an unmerged release branch or ZIP archive.
+
+## Connected coding agents and build platforms
+
+Read [`AGENTS.md`](AGENTS.md), [`BUILD_SOURCE.json`](BUILD_SOURCE.json), [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md), and [`BUILD_AND_RELEASE.md`](BUILD_AND_RELEASE.md) before building or changing this application. Resolve the current full SHA of `main` at build time. Use repository root as the build context and the root `Dockerfile` as the production container definition; do not use an unmerged feature branch, a cached main SHA, or a historical Stage 4/Pass 4-only ZIP as the latest source.
+
+The current full-application release workflow is [`.github/workflows/full-production-release.yml`](.github/workflows/full-production-release.yml). It packages the integrated application from `main`, verifies Stages 1–5 and the six theme variants, and attaches a detached SHA-256 checksum. See `BUILD_SOURCE.json` for artifact scope and acceptance status. Passing build checks does not by itself mean hosted Stage 5 acceptance or production certification is complete.
+
+
+## Canonical trading system requirements
+
+### Company image catalogue instructions
+
+The current company-image reference collection contains 1,811 indexed records (IDs 1–1811), with company names and local images organized under `client/public/assets/company-logo-source/by-country/{Country}/`. Use `company-logo-index.json` as the ID/name/path source of truth and `company-logo-country-groups.json` for country groupings. The latest country audit has 1,799 assigned records and 12 still under `Unverified`; do not describe all 1,811 countries as verified. Earlier 950- and 1,000-company figures refer to separate legacy/catalogue datasets and are not the size of this image pool.
+
+The customer-facing company search, counts and summaries expose only records whose Logo IDs are currently in the administrator's approved `verifiedIds` set and absent from `archivedIds` and `disabledIds` in `trade.companyCatalogue.adminState`; filtering is enforced server-side before pagination. Unverified, pending, rejected/unapproved, disabled and archived source records are not retrievable by customer accounts. The full 1,811-record source catalogue and direct lookup tools are administrator-only. Customer opportunity pop-ups and active popup reads use the same current allowlist, so unverify/disable/archive changes remove active customer identities on the next read; no unapproved fallback is allowed. Admin approval permits display only; it does not prove a public listing, verified headquarters, market execution, or trade eligibility. A logo ID is not a ticker or trading number, and a country folder is not proof of a public listing or verified headquarters. Rotation must never create a trade or financial ledger entry. See [the canonical Trading System Specification](docs/TRADING_SYSTEM_SPECIFICATION.md) for the full contract and [the company catalogue source guide](docs/COMPANY_CATALOGUE_SOURCE_GUIDE.md) for the data-handling checklist.
+
+Before changing the customer Trading page or any trading-related backend, read [docs/TRADING_SYSTEM_SPECIFICATION.md](docs/TRADING_SYSTEM_SPECIFICATION.md). This is the canonical product contract for Trading eligibility, automatic opportunity processing, insufficient-balance opportunity cards, trade lifecycle, fee and wallet accounting, company catalogue/rotation, notifications, and admin controls. Also read the [Trading Pop-up & Admin Configuration Manual](docs/TRADING_POPUP_ADMIN_CONFIGURATION_MANUAL.md) for package editor buttons, badge settings, required capital, configured profit percentage bounds, display duration, company rotation, exact customer-card content, and restart-safe worker requirements. Trading tiers are assigned automatically from qualifying credits manually submitted by an authorized administrator through the admin portal's Credit Customer flow only; customer/provider deposits, signup credits, imports, profits, rewards, returns, transfers, swaps, conversions and every other credit source are excluded. All developers and AI coding agents must follow it and keep the source policy in [docs/COMPANY_CATALOGUE_SOURCE_GUIDE.md](docs/COMPANY_CATALOGUE_SOURCE_GUIDE.md) aligned with the catalogue implementation. The repository currently has no tracked companion PDF at docs/TRADING_SYSTEM_SPECIFICATION.pdf.
+
+## Trading tier qualification and wallet FX
+
+Trading tiers are assigned automatically from qualifying credits manually issued by an authorized administrator through the admin portal's Credit Customer form. For each qualifying credit, the server converts the native wallet amount to USD using a validated live exchange-rate API at credit time for every supported enabled wallet currency (Frankfurter/ECB with Open ExchangeRate API fallback for fiat, and CoinGecko for registered crypto/tokens), then records the USD-minor attribution, rate, provider, source timestamp and FX evidence with the ledger entry. USD uses 1:1. If a currency cannot be priced or its rate is stale/invalid, the qualifying classification fails closed rather than using a manually entered currency-registry rate. The administrator portal must show each customer's automatically assigned active tiers and cumulative qualifying USD amount. This rule does not change normal wallet transfers.
+
+## Automatic Trading tier qualification worker
+
+Qualifying administrator wallet credits and qualifying-deposit reversals enqueue durable jobs in the same database transaction as their ledger entry. A server-side worker polls the indexed queue every five seconds in bounded batches, independently of customer sessions. When idle it performs a lightweight indexed queue lookup rather than scanning all customers. Jobs are idempotent, recover stale leases after restarts, retry transient failures with backoff, and remain in a dead-letter state after eight failed attempts for operator review. Ordinary transfers and non-qualifying credits do not enter this queue. Migration `0082_trading_tier_qualification_jobs` creates the queue and its indexes.

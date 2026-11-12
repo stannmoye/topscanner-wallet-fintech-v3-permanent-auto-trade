@@ -1,0 +1,6728 @@
+import crypto from "node:crypto";
+import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
+import { createPool, type Pool } from "mysql2/promise";
+import { ENV } from "./_core/env";
+import { InsertUser, appSettings, authEmailTokens, customerBalances, customerEmailPreferences, customerNotifications, customerPackageSubscriptions, packages, customerSessions, customerTotpAuthenticators, customerWalletPreferences, currencyRegistry, fxRateSnapshots, customerControls, emailOutbox, kycProfiles, payoutRequests, notificationCampaigns, notificationCampaignDeliveries, customerOpportunityRules, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityOffers, opportunityPackagePolicies, opportunityPopupEvents, opportunityGenerationTemplates, opportunityGenerationAssignments, opportunityGenerationBatches, balanceLedger, tradingTierQualificationJobs, tradingPackageFeePolicyVersions, adminWalletAdjustmentIdempotency, stakePositions, tradePositions, tradeRewardReservations, tradeSettlementReferenceClaims, tradeLifecycleEvents, settlementEvidenceRecords, settlementEvidenceAuditEvents, users, v5AuditEvents, v5Wallets, missedOpportunities, marketSnapshots } from "../drizzle/schema";
+import { consumeTotpRecoveryCode, decryptTotpSecret, encryptTotpSecret, generateTotpRecoveryCodes, generateTotpSecret, hashTotpRecoveryCode, totpProvisioningUri, verifyTotpCode } from "./modules/totp";
+import { calculateTradeSettlement } from "./modules/trade-settlement";
+import { calculateAutomaticTradeDebit, calculateAutomaticTradeCredit } from "./modules/automatic-trade-lifecycle-math";
+import { calculateRealizedProfitSettlement, type FeeRoundingMode } from "./modules/realized-profit-accounting";
+import { buildSettlementLedgerCandidateReferences, inspectSettlementLedgerPostings, inspectWalletLedgerSnapshot } from "./modules/wallet-ledger-reconciliation";
+import { addCalendarMonths } from "./modules/calendar-months";
+import { validateOpportunityOfferClosure, validateOpportunityOfferPublication, type OpportunityOfferClosureInput, type OpportunityOfferPublicationInput } from "./modules/opportunity-publication";
+import { createCatalogueIdentityOpportunityTemplate, selectOpportunityGenerationTerms, validateOpportunityGenerationTemplate, type OpportunityGenerationTemplate } from "./modules/opportunity-generation-template";
+import { assessOpportunityPackageCompatibility, type OpportunityPackageCompatibility } from "./modules/opportunity-package-compatibility";
+import { claimPopupDeliveryDispatches, ensurePopupDeliveries, updatePopupLifecycleForOffer } from "./opportunityLifecycle";
+import { assertTradeAmountWithinBounds, chooseSecureTradeAmount } from "./modules/package-trade-allocation";
+import { calculateConfiguredProfitMinor, chooseInclusiveInteger } from "./modules/trading-popup-policy";
+import { isOpportunityDurationWithinBounds, validateOpportunityDurationSnapshot } from "./modules/opportunity-duration-snapshot";
+import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, type FxRateSnapshot } from "./modules/trading-wallet-fx";
+import { fetchCryptoRates, fetchFiatRates, fetchMostActiveStocks, fetchCurrencyUsdRate } from "./marketProviders";
+import { nativeMinorToUsd, nativeMinorToUsdMinorExact, proportionalMinorAmount, usdUnitsToNativeMinor } from "../shared/money";
+import { selectRotatingExchangeProvider } from "../shared/exchange-providers";
+import { normalizeCompanyRotationCountryNames, normalizeCustomerCompanyCountryRestrictions, intersectCompanyCountryFilters, buildCompanySpotlightPool, nextCompanySpotlight, parseCompanyCatalogueAdminState, createCompanySpotlightDisplayGuard, isCompanySpotlightDisplayAllowed, type CompanySpotlightState } from "./modules/company-spotlight-rotation";
+import { COMPANY_REFERENCE_CATALOGUE, getCompanyReferenceById, normalizeCompanyCatalogueActionReason, transitionCompanyCatalogueAdminState, type CompanyCatalogueStatusAction } from "./modules/company-catalogue-reference";
+import { isPopupExecutionEligible } from "./modules/popup-execution-policy";
+import { validatePackageAutomationPolicy, remainingRewardAllowance } from "./modules/advanced-auto-trading";
+import { DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY, PACKAGE_OPPORTUNITY_POLICY_PATCH_KEYS, resolveEffectivePackageOpportunityPolicy, type PackageOpportunityPolicyPatch } from "./modules/package-opportunity-policy";
+import { calculateEffectiveEntitlementQuota, calculateTierDeliveryCaps, calculateTradingDeliveryCapacity, countActiveVisiblePopupEvents, countConsumedDeliveryOffers, resolveCurrentPackageEntitlementQuota, resolveTradingQuotaWindow, resolveTradingDeliverySchedule, resolveTradingBurstLimit } from "./modules/trading-delivery-quota";
+import { indexTradingPackagePolicies, normalizeTradingPackagePolicyKey } from "./modules/trading-package-policy-index";
+import { isWithinDailyAllocationLimit } from "./modules/daily-allocation";
+import { decideTradeExecutionRetry, MAX_TRANSIENT_ATTEMPTS_PER_OPPORTUNITY } from "./modules/trade-execution-retry";
+import { normalizeTicketUploadPolicy } from "./modules/ticket-upload-policy";
+import { isAllowedAttachmentRequest, isSupportAttachmentStorageKeyForTicket, isValidSupportAttachmentStorageKey } from "./_core/attachmentPolicy";
+import { assertNotificationPayloadMatches, buildNotificationEventKey, buildTradeSettlementNotices, filterNotificationCategories, filterVisibleNotificationEventCursor, normalizeBroadcastTargetUserId, normalizeNotificationHref, normalizeNotificationText, partitionNotificationRecipients, NOTIFICATION_CATEGORIES, type AdminBroadcastCategory, type NotificationCategory, type NotificationPriority } from "./modules/notification-events";
+import { isCustomerOpportunityAllowed, isWithinQuietHours } from "./opportunityEligibility";
+import { deliveryAdmissionLockKey } from "./modules/opportunity-delivery-lifecycle";
+import { assertExactlyOneAffectedRow } from "./db-mutation-guards";
+import { isValidSettlementEvidenceReference, isValidSettlementEvidenceStorageKey, type SettlementEvidenceType } from "./settlement-evidence";
+import { isTradingTierEnablingTransition } from "./modules/trading-tier-activation";
+import { FAIL_CLOSED_TRADE_GLOBAL_CONTROLS, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_MASTER_KEYS, parseTradeGlobalControlPolicy, requiresPreviousSettlementForAllocation, type TradeGlobalMasterKey, type TradeGlobalControlStatus } from "./trading-global-policy";
+import { classifyTradeFeeSnapshot, normalizeImmutableTradeFeeSnapshot, normalizeLegacyTradeFeePolicy, resolvePackageFeePolicyWrite, selectLatestEffectivePackageFeePolicy } from "./modules/package-fee-policy";
+const TRADE_FEE_SETTING_KEYS = ["trade.platformFeeBps", "trade.feeRoundingMode", "trade.feePolicyVersion"] as const;
+const READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS = new Set<string>(TRADE_FEE_SETTING_KEYS);
+import { canReplaceDeliveryRetryPolicy, DELIVERY_RETRY_POLICY_SETTING_KEY, FAIL_CLOSED_DELIVERY_RETRY_POLICY, normalizeDeliveryRetryEffectiveAt, parseDeliveryRetryPolicy, validateDeliveryRetryPolicyInput, type PersistedDeliveryRetryPolicy } from "./modules/opportunity-delivery-retry-policy";
+let _db: MySql2Database<Record<string, unknown>> | null = null;
+let _pool: Pool | null = null;
+
+type TradingFxConfig = { code: string; scale: number; assetType: "fiat" | "crypto" | "token"; externalCode: string | null };
+type TradingFxCacheEntry = { expiresAt: number; value?: FxRateSnapshot; pending?: Promise<FxRateSnapshot> };
+const tradingFxRateCache = new Map<string, TradingFxCacheEntry>();
+
+async function getFreshTradingFxRate(config: TradingFxConfig): Promise<FxRateSnapshot> {
+  const code = config.code.trim().toUpperCase();
+  const key = code + ":" + config.assetType + ":" + (config.externalCode || "");
+  const now = Date.now();
+  const cached = tradingFxRateCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    if (cached.value) return cached.value;
+    if (cached.pending) return cached.pending;
+  }
+  const pending = fetchCurrencyUsdRate({ code, assetType: config.assetType, externalCode: config.externalCode })
+    .then(result => ({
+      currency: code,
+      scale: config.scale,
+      rateUsdPerUnit: result.rate,
+      provider: result.provider,
+      sourceDate: result.sourceDate,
+      fetchedAt: result.fetchedAt,
+    }));
+  tradingFxRateCache.set(key, { expiresAt: now + 30_000, pending });
+  try {
+    const value = await pending;
+    tradingFxRateCache.set(key, { expiresAt: Date.now() + 30_000, value });
+    while (tradingFxRateCache.size > 256) {
+      const oldest = tradingFxRateCache.keys().next().value;
+      if (oldest === undefined) break;
+      tradingFxRateCache.delete(oldest);
+    }
+    return value;
+  } catch (error) {
+    tradingFxRateCache.delete(key);
+    throw error;
+  }
+}
+
+
+
+// Lazily create the drizzle instance so local tooling can run without a DB.
+export async function getDb() {
+  if (!_db && process.env.DATABASE_URL) {
+    try {
+      const connectionUrl = new URL(process.env.DATABASE_URL);
+      const sslParam = connectionUrl.searchParams.get("ssl");
+      let ssl: Record<string, unknown> | undefined;
+      if (sslParam) {
+        try {
+          const parsed = JSON.parse(sslParam);
+          ssl = parsed === true ? {} : parsed && typeof parsed === "object" ? parsed : undefined;
+        } catch {
+          ssl = undefined;
+        }
+      }
+      const pool = createPool({
+        host: connectionUrl.hostname,
+        port: Number(connectionUrl.port || 3306),
+        user: decodeURIComponent(connectionUrl.username),
+        password: decodeURIComponent(connectionUrl.password),
+        database: decodeURIComponent(connectionUrl.pathname.slice(1)),
+        ssl,
+      });
+      _pool = pool;
+      _db = drizzle(pool);
+    } catch (error) {
+      console.warn("[Database] Failed to connect:", error);
+      _db = null;
+    }
+  }
+  return _db;
+}
+
+/** Close the shared MySQL pool after server requests and worker cycles have drained. */
+export async function closeDbPool(): Promise<void> {
+  const pool = _pool;
+  _pool = null;
+  _db = null;
+  if (pool) await pool.end();
+}
+
+export async function getAppSetting(key: string, fallback?: string) {
+  const db = await getDb(); if (!db) return fallback;
+  const row = (await db.select().from(appSettings).where(eq(appSettings.settingKey, key)).limit(1))[0];
+  return row?.settingValue ?? fallback;
+}
+export async function setAppSetting(key: string, value: string, updatedBy?: number) {
+  if (READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS.has(key)) {
+    throw new Error("Legacy global Trading fee settings are read-only; configure a package-specific fee policy instead");
+  }
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  const existing = (await db.select().from(appSettings).where(eq(appSettings.settingKey, key)).limit(1))[0];
+  if (existing) await db.update(appSettings).set({ settingValue: value, updatedBy: updatedBy ?? null }).where(eq(appSettings.settingKey, key));
+  else await db.insert(appSettings).values({ settingKey: key, settingValue: value, updatedBy: updatedBy ?? null });
+}
+
+export async function updateCompanyCatalogueAdminState(input: {
+  ids: string[];
+  status: CompanyCatalogueStatusAction;
+  reason: string;
+  updatedBy: number;
+}) {
+  const ids = [...new Set(input.ids)];
+  if (!ids.length || ids.length > 1811 || ids.some(id => !/^logo-brand-\d{4}$/.test(id))) {
+    throw new Error("Select between 1 and 1,811 valid company catalogue IDs.");
+  }
+  const reason = normalizeCompanyCatalogueActionReason(input.reason);
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async tx => {
+    const settingKey = "trade.companyCatalogue.adminState";
+    await tx.insert(appSettings).values({ settingKey, settingValue: "{}", updatedBy: input.updatedBy })
+      .onDuplicateKeyUpdate({ set: { settingKey } });
+    const row = (await tx.select().from(appSettings).where(eq(appSettings.settingKey, settingKey)).limit(1).for("update"))[0];
+    const currentCatalogueState = parseCompanyCatalogueAdminState(row?.settingValue ?? "{}");
+    const nextState = transitionCompanyCatalogueAdminState(currentCatalogueState, ids, input.status);
+    const updatedAt = new Date().toISOString();
+    const nextValue = JSON.stringify({
+      ...nextState,
+      lastAction: { status: input.status, count: ids.length, reason, updatedAt, updatedBy: input.updatedBy },
+    });
+    await tx.update(appSettings).set({ settingValue: nextValue, updatedBy: input.updatedBy, updatedAt: new Date() }).where(eq(appSettings.settingKey, settingKey));
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: input.updatedBy,
+      action: "company_catalogue.bulk_status_updated",
+      entityType: "company_catalogue",
+      entityId: "bulk",
+      reason,
+      reference: `company-catalogue:${input.status}:${updatedAt}`,
+      metadataJson: JSON.stringify({ status: input.status, count: ids.length, ids, updatedAt }),
+    });
+    return { success: true, updated: ids.length, status: input.status, updatedAt };
+  });
+}
+
+export async function listAdminAuditEvents(){ const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(v5AuditEvents).orderBy(desc(v5AuditEvents.createdAt)).limit(200); }
+const TRADE_SETTINGS_AUDIT_ACTIONS = ["trade_fee_policy_updated", "trade_global_timing_policy_updated", "trade_global_control_updated", "trade_global_controls_migrated", "trade_delivery_retry_policy_updated", "trading_new_allocations_paused", "trading_new_allocations_resumed", "trading_package_created", "trading_package_terms_updated", "trading_package_fee_policy_initialized", "trading_package_fee_policy_updated", "trading_delivery_policy_updated", "company_catalogue.bulk_status_updated", "trading_opportunity_published", "trading_opportunity_closed", "trading_opportunity_usage_reset"] as const;
+export type TradeAuditScope = "global" | "package" | "record";
+export type AdminTradeAuditHistoryFilters = { actorUserId?: number; fromDate?: string; toDate?: string; key?: string; entityType?: string; entityId?: string; package?: string; scope?: TradeAuditScope; cursor?: string; pageSize?: number };
+type TradeAuditCursor = { createdAt: string; id: number };
+export function encodeTradeAuditCursor(createdAt: Date, id: number) {
+  return Buffer.from(JSON.stringify({ createdAt: createdAt.toISOString(), id }), "utf8").toString("base64url");
+}
+export function decodeTradeAuditCursor(value?: string): TradeAuditCursor | null {
+  if (value === undefined) return null;
+  try {
+    if (!/^[A-Za-z0-9_-]{1,200}$/.test(value)) throw new Error("Invalid cursor encoding");
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<TradeAuditCursor>;
+    const date = new Date(String(parsed.createdAt ?? ""));
+    if (!Number.isFinite(date.getTime()) || date.toISOString() !== parsed.createdAt || !Number.isSafeInteger(parsed.id) || Number(parsed.id) < 1) throw new Error("Invalid cursor values");
+    return { createdAt: date.toISOString(), id: Number(parsed.id) };
+  } catch { throw new Error("Trade audit cursor is invalid"); }
+}
+function auditRecord(value: unknown): Record<string, unknown> | null { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
+function auditString(record: Record<string, unknown> | null, ...keys: string[]): string | null {
+  for (const key of keys) if (typeof record?.[key] === "string" && record[key]) return record[key] as string;
+  return null;
+}
+function parseTradeAuditMetadata(raw: string | null) { try { return raw ? auditRecord(JSON.parse(raw)) : null; } catch { return null; } }
+export function deriveTradeAuditScope(action: string, entityType: string): TradeAuditScope | null {
+  if (action === "company_catalogue.bulk_status_updated" || entityType === "company_catalogue" || entityType === "opportunity_offer" || entityType === "opportunity_usage_reset") return "record";
+  if (["trading_package_created", "trading_package_terms_updated", "trading_package_fee_policy_initialized", "trading_package_fee_policy_updated", "trading_delivery_policy_updated"].includes(action)
+    || entityType === "trading_package" || entityType === "opportunity_package_policy") return "package";
+  return TRADE_SETTINGS_AUDIT_ACTIONS.includes(action as typeof TRADE_SETTINGS_AUDIT_ACTIONS[number]) ? "global" : null;
+}
+function projectTradeAuditEvent(row: typeof v5AuditEvents.$inferSelect) {
+  const metadata = parseTradeAuditMetadata(row.metadataJson);
+  const before = Object.hasOwn(metadata ?? {}, "old") ? metadata!.old : Object.hasOwn(metadata ?? {}, "oldPolicy") ? metadata!.oldPolicy : undefined;
+  const after = Object.hasOwn(metadata ?? {}, "new") ? metadata!.new : Object.hasOwn(metadata ?? {}, "newPolicy") ? metadata!.newPolicy : undefined;
+  const beforeRecord = auditRecord(before);
+  const afterRecord = auditRecord(after);
+  const version = metadata?.policyVersion ?? metadata?.nextVersion ?? metadata?.version ?? metadata?.termsVersion ?? afterRecord?.policyVersion ?? afterRecord?.termsVersion;
+  return {
+    id: row.id, actorUserId: row.actorUserId, action: row.action, entityType: row.entityType, entityId: row.entityId,
+    reason: row.reason, reference: row.reference, createdAt: row.createdAt,
+    beforeAvailable: before !== undefined, before: before ?? null, afterAvailable: after !== undefined, after: after ?? null,
+    source: auditString(metadata, "source"), scope: deriveTradeAuditScope(row.action, row.entityType),
+    policyVersion: version === undefined || version === null ? null : String(version),
+    effectiveAt: auditString(metadata, "effectiveAt") ?? auditString(afterRecord, "effectiveAt"),
+    packageName: auditString(metadata, "packageName", "name") ?? auditString(beforeRecord, "name") ?? auditString(afterRecord, "name"),
+    changedKey: auditString(metadata, "changedKey"), valueKeys: [...Object.keys(metadata ?? {}), ...Object.keys(beforeRecord ?? {}), ...Object.keys(afterRecord ?? {})],
+  };
+}
+function matchesTradeAuditFilters(event: ReturnType<typeof projectTradeAuditEvent>, filters: AdminTradeAuditHistoryFilters) {
+  const contains = (candidate: string | null | undefined, value: string | undefined) => !value || Boolean(candidate?.toLocaleLowerCase().includes(value.toLocaleLowerCase()));
+  return (!filters.key || contains(event.changedKey, filters.key) || event.valueKeys.some(key => contains(key, filters.key)) || contains(event.action, filters.key))
+    && (!filters.package || contains(event.packageName, filters.package) || contains(event.entityId, filters.package))
+    && (!filters.scope || event.scope === filters.scope);
+}
+function validAuditDate(value: string) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+function auditKeysetPredicate(cursor: TradeAuditCursor) {
+  const date = new Date(cursor.createdAt);
+  return or(lt(v5AuditEvents.createdAt, date), and(eq(v5AuditEvents.createdAt, date), lt(v5AuditEvents.id, cursor.id)))!;
+}
+export async function listAdminTradeAuditHistory(filters: AdminTradeAuditHistoryFilters) {
+  const pageSize = filters.pageSize ?? 50;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new Error("Trade audit page size must be from 1 to 100");
+  if (filters.fromDate && !validAuditDate(filters.fromDate)) throw new Error("Trade audit start date must be a valid UTC calendar date");
+  if (filters.toDate && !validAuditDate(filters.toDate)) throw new Error("Trade audit end date must be a valid UTC calendar date");
+  if (filters.fromDate && filters.toDate && filters.fromDate > filters.toDate) throw new Error("Trade audit start date must not follow its end date");
+  let scanCursor = decodeTradeAuditCursor(filters.cursor);
+  const base: any[] = [inArray(v5AuditEvents.action, [...TRADE_SETTINGS_AUDIT_ACTIONS])];
+  if (filters.actorUserId !== undefined) base.push(eq(v5AuditEvents.actorUserId, filters.actorUserId));
+  if (filters.fromDate) base.push(gte(v5AuditEvents.createdAt, new Date(`${filters.fromDate}T00:00:00.000Z`)));
+  if (filters.toDate) { const end = new Date(`${filters.toDate}T00:00:00.000Z`); end.setUTCDate(end.getUTCDate() + 1); base.push(lt(v5AuditEvents.createdAt, end)); }
+  if (filters.entityType) base.push(eq(v5AuditEvents.entityType, filters.entityType));
+  if (filters.entityId) base.push(eq(v5AuditEvents.entityId, filters.entityId));
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const matches: ReturnType<typeof projectTradeAuditEvent>[] = [];
+  let scanned = 0;
+  let ended = false;
+  let hasMore = false;
+  let scanCapped = false;
+  const batchSize = 200;
+  const scanLimit = 1000;
+  while (scanned < scanLimit && matches.length <= pageSize && !ended) {
+    const limit = Math.min(batchSize, scanLimit - scanned);
+    const predicates = scanCursor ? [...base, auditKeysetPredicate(scanCursor)] : base;
+    const rows = await db.select().from(v5AuditEvents).where(and(...predicates)).orderBy(desc(v5AuditEvents.createdAt), desc(v5AuditEvents.id)).limit(limit);
+    if (rows.length < limit) ended = true;
+    for (const row of rows) {
+      scanned += 1;
+      scanCursor = { createdAt: row.createdAt.toISOString(), id: row.id };
+      const event = projectTradeAuditEvent(row);
+      if (matchesTradeAuditFilters(event, filters)) matches.push(event);
+      if (matches.length > pageSize) break;
+    }
+    if (matches.length > pageSize) { hasMore = true; break; }
+  }
+  if (!hasMore && !ended && scanned >= scanLimit && scanCursor) {
+    const [remainingCandidate] = await db.select({ id: v5AuditEvents.id }).from(v5AuditEvents)
+      .where(and(...base, auditKeysetPredicate(scanCursor)))
+      .orderBy(desc(v5AuditEvents.createdAt), desc(v5AuditEvents.id)).limit(1);
+    hasMore = Boolean(remainingCandidate);
+    scanCapped = hasMore;
+  }
+  const events = matches.slice(0, pageSize);
+  const nextCursor = hasMore
+    ? scanCapped && matches.length <= pageSize && scanCursor
+      ? Buffer.from(JSON.stringify(scanCursor), "utf8").toString("base64url")
+      : events.length ? encodeTradeAuditCursor(events[events.length - 1].createdAt, events[events.length - 1].id) : null
+    : null;
+  return { events, nextCursor, scanCapped };
+}
+export async function getTradeFeePolicy() {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const rows=await db.select().from(appSettings).where(inArray(appSettings.settingKey,[...TRADE_FEE_SETTING_KEYS]));
+  const byKey=new Map(rows.map(row=>[row.settingKey,row.settingValue]));
+  const missing=TRADE_FEE_SETTING_KEYS.filter(key=>!byKey.has(key));
+  if(missing.length) throw new Error(`Legacy global Trading fee settings are incomplete: ${missing.join(", ")}`);
+  const policy=normalizeLegacyTradeFeePolicy({
+    feeRateBps:byKey.get("trade.platformFeeBps"),
+    roundingMode:byKey.get("trade.feeRoundingMode"),
+    policyVersion:byKey.get("trade.feePolicyVersion"),
+  });
+  return {...policy,feePercent:policy.feeRateBps/100};
+}
+export async function setTradeFeePolicy(input:{feeRateBps:number;roundingMode:FeeRoundingMode},updatedBy:number) {
+  void input; void updatedBy;
+  throw new Error("Legacy global Trading fee settings are read-only; configure a package-specific fee policy instead");
+}
+function normalizePackageFeePolicy(row:any) {
+  const feeRateBps=Number(row.feeRateBps), version=Number(row.version);
+  const roundingMode=String(row.roundingMode) as FeeRoundingMode;
+  if(!Number.isInteger(feeRateBps)||feeRateBps<0||feeRateBps>10000||!Number.isSafeInteger(version)||version<1||!["half_up","down","up","half_even"].includes(roundingMode)) throw new Error("Saved package fee policy is invalid");
+  return {...row,packageId:Number(row.packageId),version,feeRateBps,roundingMode,effectiveAt:new Date(row.effectiveAt).toISOString(),changedAt:new Date(row.changedAt).toISOString()};
+}
+export async function getPackageFeePolicies() {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const [packageRows,versions]=await Promise.all([
+    db.select({packageId:packages.id,packageName:packages.name}).from(packages).orderBy(packages.id),
+    db.select().from(tradingPackageFeePolicyVersions).orderBy(desc(tradingPackageFeePolicyVersions.version)),
+  ]);
+  const byPackage=new Map<number,any[]>();
+  for(const row of versions) {
+    const packageId=Number(row.packageId);
+    const packageVersions=byPackage.get(packageId)??[];
+    packageVersions.push(row);
+    byPackage.set(packageId,packageVersions);
+  }
+  const asOf=new Date();
+  return packageRows.map(pkg=>{
+    const packageVersions=byPackage.get(pkg.packageId)??[];
+    const latest=packageVersions.reduce<any>((selected,row)=>!selected||Number(row.version)>Number(selected.version)?row:selected,null);
+    const active=selectLatestEffectivePackageFeePolicy(packageVersions,asOf);
+    const activePolicy=active?normalizePackageFeePolicy(active):null;
+    const latestPolicy=latest?normalizePackageFeePolicy(latest):null;
+    return {
+      packageId:pkg.packageId,
+      packageName:pkg.packageName,
+      // Preserve the original flat read-model fields as the currently effective policy.
+      feeRateBps:activePolicy?.feeRateBps??null,
+      roundingMode:activePolicy?.roundingMode??null,
+      version:activePolicy?.version??null,
+      effectiveAt:activePolicy?.effectiveAt??null,
+      changedBy:activePolicy?.changedBy??null,
+      changedAt:activePolicy?.changedAt??null,
+      reason:activePolicy?.reason??null,
+      source:activePolicy?.source??null,
+      configured:Boolean(activePolicy),
+      activePolicy,
+      activeVersion:activePolicy?.version??null,
+      latestPolicy,
+      latestVersion:latestPolicy?.version??null,
+      scheduled:!!latestPolicy&&latestPolicy.version!==activePolicy?.version,
+    };
+  });
+}
+export async function getPackageFeeHistory(packageId:number) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const pkg=(await db.select({packageId:packages.id,packageName:packages.name}).from(packages).where(eq(packages.id,packageId)).limit(1))[0];
+  if(!pkg) throw new Error("Package not found");
+  const rows=await db.select().from(tradingPackageFeePolicyVersions).where(eq(tradingPackageFeePolicyVersions.packageId,packageId)).orderBy(desc(tradingPackageFeePolicyVersions.version));
+  return rows.map(row=>({packageId:pkg.packageId,packageName:pkg.packageName,...normalizePackageFeePolicy(row)}));
+}
+export async function updatePackageFeePolicy(input:{packageId:number;expectedVersion:number;feeRateBps:number;roundingMode:FeeRoundingMode;effectiveAt:string;reason:string},actorId:number) {
+  if(!Number.isSafeInteger(input.packageId)||input.packageId<1||!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion<0) throw new Error("Package and expected version must be valid");
+  if(!Number.isInteger(input.feeRateBps)||input.feeRateBps<0||input.feeRateBps>10000||!["half_up","down","up","half_even"].includes(input.roundingMode)) throw new Error("Package fee policy is invalid");
+  const reason=input.reason.trim(); if(reason.length<3||reason.length>2000) throw new Error("A reason of 3 to 2000 characters is required");
+  const effectiveAt=new Date(input.effectiveAt); if(!Number.isFinite(effectiveAt.getTime())||effectiveAt.toISOString()!==input.effectiveAt) throw new Error("Effective time must be a valid UTC ISO timestamp");
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const changedAt=new Date();
+  await db.transaction(async tx=>{
+    const pkg=(await tx.select({id:packages.id,name:packages.name}).from(packages).where(eq(packages.id,input.packageId)).limit(1).for("update"))[0];
+    if(!pkg) throw new Error("Package not found");
+    const current=(await tx.select().from(tradingPackageFeePolicyVersions).where(eq(tradingPackageFeePolicyVersions.packageId,input.packageId)).orderBy(desc(tradingPackageFeePolicyVersions.version)).limit(1).for("update"))[0];
+    const write=resolvePackageFeePolicyWrite(current?Number(current.version):null,input.expectedVersion);
+    if(effectiveAt.getTime()<changedAt.getTime()||(current&&effectiveAt.getTime()<=new Date(current.effectiveAt).getTime())) throw new Error("Package fee policy effective time must not be retroactive or stale");
+    const version=write.version;
+    const source=write.initial?"admin_initial":"admin_update";
+    const values={packageId:input.packageId,version,feeRateBps:input.feeRateBps,roundingMode:input.roundingMode,effectiveAt,changedBy:String(actorId),changedAt,reason,source};
+    await tx.insert(tradingPackageFeePolicyVersions).values(values);
+    await tx.insert(v5AuditEvents).values({actorUserId:actorId,action:write.initial?"trading_package_fee_policy_initialized":"trading_package_fee_policy_updated",entityType:"trading_package_fee_policy",entityId:String(input.packageId),reason,reference:`trading-package-fee-policy:${input.packageId}:${version}`,metadataJson:JSON.stringify({packageId:input.packageId,packageName:pkg.name,old:current?{version:Number(current.version),feeRateBps:Number(current.feeRateBps),roundingMode:current.roundingMode,effectiveAt:new Date(current.effectiveAt).toISOString()}:null,new:{version,feeRateBps:input.feeRateBps,roundingMode:input.roundingMode,effectiveAt:effectiveAt.toISOString()},source})});
+  });
+  const history=await getPackageFeeHistory(input.packageId);
+  const saved=history[0];
+  const expected=resolvePackageFeePolicyWrite(input.expectedVersion===0?null:input.expectedVersion,input.expectedVersion);
+  const expectedSource=expected.initial?"admin_initial":"admin_update";
+  if(!saved||saved.version!==expected.version||saved.feeRateBps!==input.feeRateBps||saved.roundingMode!==input.roundingMode||saved.effectiveAt!==effectiveAt.toISOString()||saved.reason!==reason||saved.source!==expectedSource) throw new Error("Package fee policy save could not be verified by fresh read-back");
+  return saved;
+}
+export async function getTradeSettlementPolicy() {
+  const db = await getDb();
+  const keys = [...TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TRADE_SETTLEMENT_POLICY_VERSION_KEY];
+  let rows = db ? await db.select().from(appSettings).where(inArray(appSettings.settingKey, keys)) : [];
+  let settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
+  const rawSettlementDelay = settings.get("trade.settlementDelaySeconds");
+  const parsedSettlementDelay = Number(rawSettlementDelay);
+
+  // Older Blitz databases can contain a stale/out-of-range global delay even
+  // though the current API only accepts 900–604800 seconds. Do not let one bad
+  // legacy setting crash every AutoTrade cycle. Repair only this invalid key to
+  // the documented 15-minute minimum, preserve every valid setting, and record
+  // the previous value in the immutable audit stream. Lock/recheck to make the
+  // repair safe when multiple app instances start at the same time.
+  if (db && rawSettlementDelay !== undefined && rawSettlementDelay !== null &&
+      (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 900 || parsedSettlementDelay > 604800)) {
+    await db.transaction(async tx => {
+      await tx.insert(appSettings).values({
+        settingKey: "trade.settlementDelaySeconds",
+        settingValue: "900",
+        updatedBy: null,
+      }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
+      const locked = (await tx.select().from(appSettings)
+        .where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"))
+        .limit(1).for("update"))[0];
+      const lockedValue = locked?.settingValue;
+      const lockedNumber = Number(lockedValue);
+      if (lockedValue !== undefined && lockedValue !== null &&
+          (!Number.isSafeInteger(lockedNumber) || lockedNumber < 900 || lockedNumber > 604800)) {
+        const repairedAt = new Date();
+        await tx.update(appSettings).set({
+          settingValue: "900",
+          updatedBy: null,
+          updatedAt: repairedAt,
+        }).where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"));
+        await tx.insert(v5AuditEvents).values({
+          actorUserId: null,
+          action: "trade_global_timing_policy_repaired",
+          entityType: "trade_global_timing_policy",
+          entityId: "settlement-review-delay",
+          reason: "Invalid persisted settlement review delay repaired to the documented safe minimum of 900 seconds during policy read.",
+          reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
+          metadataJson: JSON.stringify({
+            settingKey: "trade.settlementDelaySeconds",
+            previousValue: lockedValue,
+            repairedValue: "900",
+          }),
+        });
+      }
+    });
+    rows = await db.select().from(appSettings).where(inArray(appSettings.settingKey, keys));
+    settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
+  }
+  const policy = normalizeTradeSettlementPolicy({
+    delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "900",
+    creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
+    cooldownSeconds: settings.get("trade.interTradeCooldownSeconds") ?? "30",
+    nextPopupFormulaDelaySeconds: settings.get("opportunity.nextPopupFormulaDelaySeconds") ?? "30",
+    popupCooldownSeconds: settings.get("opportunity.popup.minGapSeconds") ?? "45",
+    popupDisplaySeconds: settings.get("opportunity.popup.displaySeconds") ?? "8",
+    popupPreAlertSeconds: settings.get("opportunity.popup.preAlertSeconds") ?? "4",
+    popupJitterSeconds: settings.get("opportunity.popup.jitterSeconds") ?? "90",
+    popupMaxPerHour: settings.get("opportunity.popup.maxPerHour") ?? "12",
+    marketRefreshIntervalMinutes: settings.get("market.refreshIntervalMinutes") ?? "120",
+    blockUntilSettled: settings.get("trade.blockOpportunitiesUntilSettled") ?? "true",
+    policyVersion: settings.get(TRADE_SETTLEMENT_POLICY_VERSION_KEY) ?? "1",
+  });
+  return { ...policy, settlementDelaySeconds: policy.delaySeconds };
+}
+const TRADE_SETTLEMENT_POLICY_VERSION_KEY = "trade.timingPolicyVersion";
+const TRADE_SETTLEMENT_POLICY_SETTING_KEYS = [
+  "trade.settlementDelaySeconds", "trade.creditDelaySeconds", "trade.interTradeCooldownSeconds",
+  "trade.blockOpportunitiesUntilSettled", "opportunity.nextPopupFormulaDelaySeconds",
+  "opportunity.popup.minGapSeconds", "opportunity.popup.displaySeconds", "opportunity.popup.preAlertSeconds",
+  "opportunity.popup.jitterSeconds", "opportunity.popup.maxPerHour", "market.refreshIntervalMinutes",
+] as const;
+type TradeSettlementPolicyInput = {
+  delaySeconds: number; creditDelaySeconds: number; cooldownSeconds: number; nextPopupFormulaDelaySeconds: number;
+  popupCooldownSeconds: number; popupDisplaySeconds: number; popupPreAlertSeconds: number; popupJitterSeconds: number;
+  popupMaxPerHour: number; marketRefreshIntervalMinutes: number; blockUntilSettled: boolean;
+};
+function normalizeTradeSettlementPolicy(values: Record<string, unknown> & { policyVersion?: unknown }) {
+  const numeric = {
+    delaySeconds: Number(values.delaySeconds), creditDelaySeconds: Number(values.creditDelaySeconds),
+    cooldownSeconds: Number(values.cooldownSeconds), nextPopupFormulaDelaySeconds: Number(values.nextPopupFormulaDelaySeconds),
+    popupCooldownSeconds: Number(values.popupCooldownSeconds), popupDisplaySeconds: Number(values.popupDisplaySeconds),
+    popupPreAlertSeconds: Number(values.popupPreAlertSeconds), popupJitterSeconds: Number(values.popupJitterSeconds),
+    popupMaxPerHour: Number(values.popupMaxPerHour), marketRefreshIntervalMinutes: Number(values.marketRefreshIntervalMinutes),
+  };
+  const bounds = [
+    ["settlement review delay", numeric.delaySeconds, 900, 604800], ["credit delay", numeric.creditDelaySeconds, 0, 604800],
+    ["inter-trade cooldown", numeric.cooldownSeconds, 0, 604800], ["formula delay", numeric.nextPopupFormulaDelaySeconds, 0, 604800],
+    ["popup cooldown", numeric.popupCooldownSeconds, 0, 604800], ["popup display", numeric.popupDisplaySeconds, 1, 3600],
+    ["popup pre-alert", numeric.popupPreAlertSeconds, 0, 3600], ["popup jitter", numeric.popupJitterSeconds, 0, 604800],
+    ["popup hourly cap", numeric.popupMaxPerHour, 1, 10000], ["market refresh", numeric.marketRefreshIntervalMinutes, 1, 10080],
+  ] as const;
+  for (const [label, value, min, max] of bounds) if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${label} timing is outside its allowed range`);
+  const rawBlock = values.blockUntilSettled;
+  const blockUntilSettled = rawBlock === undefined || rawBlock === null || rawBlock === "true" || rawBlock === true
+    ? true : rawBlock === "false" || rawBlock === false ? false : (() => { throw new Error("Malformed settlement safety setting; new opportunities must remain blocked until administrator review"); })();
+  const policyVersion = Number(values.policyVersion ?? 1);
+  if (!Number.isSafeInteger(policyVersion) || policyVersion < 1) throw new Error("Trade timing policy version is invalid");
+  return { ...numeric, blockUntilSettled, policyVersion };
+}
+export class TradeTimingPolicyVersionConflictError extends Error {
+  constructor() { super("Trade timing settings changed in another session. Refresh the saved settings before retrying."); this.name = "TradeTimingPolicyVersionConflictError"; }
+}
+export async function setTradeSettlementPolicy(input:TradeSettlementPolicyInput, updatedBy:number, reason:string, expectedPolicyVersion:number) {
+  const auditReason = reason.trim();
+  if (auditReason.length < 5 || auditReason.length > 500) throw new Error("A 5–500 character administrator reason is required for Trade timing changes");
+  if (!Number.isSafeInteger(expectedPolicyVersion) || expectedPolicyVersion < 1) throw new Error("A valid saved Trade timing policy version is required");
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  const next = await db.transaction(async tx => {
+    await tx.insert(appSettings).values({ settingKey: TRADE_SETTLEMENT_POLICY_VERSION_KEY, settingValue: "1", updatedBy: null })
+      .onDuplicateKeyUpdate({ set: { settingKey: TRADE_SETTLEMENT_POLICY_VERSION_KEY } });
+    const keys = [...TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TRADE_SETTLEMENT_POLICY_VERSION_KEY];
+    const rows = await tx.select().from(appSettings).where(inArray(appSettings.settingKey, keys)).for("update");
+    const settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
+    const current = normalizeTradeSettlementPolicy({
+      delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "900", creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
+      cooldownSeconds: settings.get("trade.interTradeCooldownSeconds") ?? "30", nextPopupFormulaDelaySeconds: settings.get("opportunity.nextPopupFormulaDelaySeconds") ?? "30",
+      popupCooldownSeconds: settings.get("opportunity.popup.minGapSeconds") ?? "45", popupDisplaySeconds: settings.get("opportunity.popup.displaySeconds") ?? "8",
+      popupPreAlertSeconds: settings.get("opportunity.popup.preAlertSeconds") ?? "4", popupJitterSeconds: settings.get("opportunity.popup.jitterSeconds") ?? "90",
+      popupMaxPerHour: settings.get("opportunity.popup.maxPerHour") ?? "12", marketRefreshIntervalMinutes: settings.get("market.refreshIntervalMinutes") ?? "120",
+      blockUntilSettled: settings.get("trade.blockOpportunitiesUntilSettled") ?? "true", policyVersion: settings.get(TRADE_SETTLEMENT_POLICY_VERSION_KEY) ?? "1",
+    });
+    if (current.policyVersion !== expectedPolicyVersion) throw new TradeTimingPolicyVersionConflictError();
+    const saved = normalizeTradeSettlementPolicy({ ...input, policyVersion: current.policyVersion + 1 });
+    const updates: Array<[string, string]> = [
+      ["trade.settlementDelaySeconds", String(saved.delaySeconds)], ["trade.creditDelaySeconds", String(saved.creditDelaySeconds)],
+      ["trade.interTradeCooldownSeconds", String(saved.cooldownSeconds)], ["trade.blockOpportunitiesUntilSettled", String(saved.blockUntilSettled)],
+      ["opportunity.nextPopupFormulaDelaySeconds", String(saved.nextPopupFormulaDelaySeconds)], ["opportunity.popup.minGapSeconds", String(saved.popupCooldownSeconds)],
+      ["opportunity.popup.displaySeconds", String(saved.popupDisplaySeconds)], ["opportunity.popup.preAlertSeconds", String(saved.popupPreAlertSeconds)],
+      ["opportunity.popup.jitterSeconds", String(saved.popupJitterSeconds)], ["opportunity.popup.maxPerHour", String(saved.popupMaxPerHour)],
+      ["market.refreshIntervalMinutes", String(saved.marketRefreshIntervalMinutes)], [TRADE_SETTLEMENT_POLICY_VERSION_KEY, String(saved.policyVersion)],
+    ];
+    for (const [settingKey, settingValue] of updates) {
+      await tx.insert(appSettings).values({ settingKey, settingValue, updatedBy })
+        .onDuplicateKeyUpdate({ set: { settingValue, updatedBy, updatedAt: new Date() } });
+    }
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: updatedBy, action: "trade_global_timing_policy_updated", entityType: "trade_global_timing_policy",
+      entityId: String(saved.policyVersion), reason: auditReason, reference: `trade-global-timing:${saved.policyVersion}`,
+      metadataJson: JSON.stringify({ old: current, new: saved }),
+    });
+    return saved;
+  });
+  const persisted = await getTradeSettlementPolicy();
+  const expected = { ...next, settlementDelaySeconds: next.delaySeconds };
+  if (JSON.stringify(persisted) !== JSON.stringify(expected)) throw new Error("Trade timing save committed, but a fresh database read did not confirm every value and the new policy version");
+  return persisted;
+}
+function parseTradeGlobalControlDiagnostic(raw:unknown):Record<string,unknown>|null {
+  if(typeof raw!=="string") return null;
+  try { const value=JSON.parse(raw); return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null; }
+  catch { return null; }
+}
+export async function getTradeGlobalControls():Promise<TradeGlobalControlStatus> {
+  const unavailable={...FAIL_CLOSED_TRADE_GLOBAL_CONTROLS,policyVersion:1,updatedBy:null,updatedAt:null,available:false,migrationDiagnostic:null};
+  const db=await getDb();
+  if(!db) return unavailable;
+  const rows=await db.select().from(appSettings).where(inArray(appSettings.settingKey,[TRADE_GLOBAL_CONTROL_SETTINGS_KEY,TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY]));
+  const policyRow=rows.find(row=>row.settingKey===TRADE_GLOBAL_CONTROL_SETTINGS_KEY);
+  const diagnostic=parseTradeGlobalControlDiagnostic(rows.find(row=>row.settingKey===TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY)?.settingValue);
+  if(!policyRow) return {...unavailable,migrationDiagnostic:diagnostic};
+  const policy=parseTradeGlobalControlPolicy(policyRow.settingValue);
+  if(!policy) return {...unavailable,migrationDiagnostic:diagnostic};
+  return {...policy,available:true,migrationDiagnostic:diagnostic};
+}
+export class TradeGlobalControlVersionConflictError extends Error {
+  constructor() { super("Global Trade controls changed in another session. Refresh the saved settings before retrying."); this.name="TradeGlobalControlVersionConflictError"; }
+}
+export async function setTradeGlobalControl(input:{key:TradeGlobalMasterKey;enabled:boolean;reason:string;expectedPolicyVersion:number},updatedBy:number) {
+  const auditReason=String(input.reason??"").trim();
+  if(auditReason.length<5||auditReason.length>500) throw new Error("A 5–500 character administrator reason is required for global Trade control changes");
+  if(!Number.isSafeInteger(input.expectedPolicyVersion)||input.expectedPolicyVersion<1) throw new Error("A valid saved global Trade policy version is required");
+  if(!TRADE_GLOBAL_MASTER_KEYS.includes(input.key)) throw new Error("Unknown global Trade control key");
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const saved=await db.transaction(async tx=>{
+    const currentRow=(await tx.select().from(appSettings).where(eq(appSettings.settingKey,TRADE_GLOBAL_CONTROL_SETTINGS_KEY)).limit(1).for("update"))[0];
+    if(!currentRow) throw new Error("Global Trade control migration is not installed; no settings were changed.");
+    const current=parseTradeGlobalControlPolicy(currentRow.settingValue);
+    if(!current) throw new Error("Saved global Trade controls are malformed; no settings were changed.");
+    if(current.policyVersion!==input.expectedPolicyVersion) throw new TradeGlobalControlVersionConflictError();
+    const policyVersion=current.policyVersion+1;
+    if(!Number.isSafeInteger(policyVersion)) throw new Error("Global Trade policy version has reached its limit");
+    const next={...current,[input.key]:input.enabled,policyVersion,updatedBy,updatedAt:new Date().toISOString()};
+    await tx.update(appSettings).set({settingValue:JSON.stringify(next),updatedBy,updatedAt:new Date()}).where(eq(appSettings.settingKey,TRADE_GLOBAL_CONTROL_SETTINGS_KEY));
+    await tx.insert(v5AuditEvents).values({
+      actorUserId:updatedBy,action:"trade_global_control_updated",entityType:"trade_global_control_policy",entityId:String(policyVersion),
+      reason:auditReason,reference:`trade-global-controls:${policyVersion}`,
+      metadataJson:JSON.stringify({changedKey:input.key,old:current,new:next}),
+    });
+    return next;
+  });
+  const persisted=await getTradeGlobalControls();
+  if(!persisted.available||persisted.policyVersion!==saved.policyVersion||TRADE_GLOBAL_MASTER_KEYS.some(key=>persisted[key]!==saved[key])) {
+    throw new Error("Global Trade control save committed, but a fresh database read did not confirm every value and the new policy version");
+  }
+  return persisted;
+}
+export class DeliveryRetryPolicyVersionConflictError extends Error {
+  constructor() { super("Global delivery retry policy changed in another session. Refresh the saved settings before retrying."); this.name="DeliveryRetryPolicyVersionConflictError"; }
+}
+export async function getDeliveryRetryPolicy():Promise<PersistedDeliveryRetryPolicy> {
+  const db=await getDb();
+  if(!db) return FAIL_CLOSED_DELIVERY_RETRY_POLICY;
+  const row=(await db.select().from(appSettings).where(eq(appSettings.settingKey,DELIVERY_RETRY_POLICY_SETTING_KEY)).limit(1))[0];
+  if(!row) return FAIL_CLOSED_DELIVERY_RETRY_POLICY;
+  return parseDeliveryRetryPolicy(row.settingValue) || { ...FAIL_CLOSED_DELIVERY_RETRY_POLICY, configured:false };
+}
+export async function updateDeliveryRetryPolicy(input:{expectedVersion:number;policy:"none"|"temporary";maxAttempts:number;intervalsSeconds:number[];effectiveAt:string;reason:string},updatedBy:number) {
+  const validated=validateDeliveryRetryPolicyInput(input);
+  if(!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion<1) throw new Error("A valid saved delivery retry policy version is required.");
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const saved=await db.transaction(async tx=>{
+    const currentRow=(await tx.select().from(appSettings).where(eq(appSettings.settingKey,DELIVERY_RETRY_POLICY_SETTING_KEY)).limit(1).for("update"))[0];
+    if(!currentRow) throw new Error("Delivery retry policy migration is not installed; no settings were changed.");
+    const current=parseDeliveryRetryPolicy(currentRow.settingValue);
+    if(!current) throw new Error("Saved global delivery retry policy is malformed; no settings were changed.");
+    if(current.version!==input.expectedVersion) throw new DeliveryRetryPolicyVersionConflictError();
+    if(!canReplaceDeliveryRetryPolicy(current,validated.effectiveAt,new Date())) {
+      throw new Error("A future-effective delivery policy cannot replace an active policy; activate it in a later save after the current policy expires or choose an immediate effective time.");
+    }
+    const changedAt=new Date();
+    const effectiveAt=normalizeDeliveryRetryEffectiveAt(validated.effectiveAt,changedAt);
+    const next:PersistedDeliveryRetryPolicy={policy:validated.policy,maxAttempts:validated.maxAttempts,intervalsSeconds:[...validated.intervalsSeconds],version:current.version+1,effectiveAt,updatedBy,updatedAt:changedAt.toISOString(),reason:validated.reason,configured:true};
+    await tx.update(appSettings).set({settingValue:JSON.stringify(next),updatedBy,updatedAt:changedAt}).where(eq(appSettings.settingKey,DELIVERY_RETRY_POLICY_SETTING_KEY));
+    await tx.insert(v5AuditEvents).values({actorUserId:updatedBy,action:"trade_delivery_retry_policy_updated",entityType:"trade_delivery_retry_policy",entityId:String(next.version),reason:validated.reason,reference:`trade-delivery-retry-policy:${next.version}`,metadataJson:JSON.stringify({old:current,new:next})});
+    return next;
+  });
+  const persisted=await getDeliveryRetryPolicy();
+  if(persisted.version!==saved.version||persisted.policy!==saved.policy||persisted.maxAttempts!==saved.maxAttempts||JSON.stringify(persisted.intervalsSeconds)!==JSON.stringify(saved.intervalsSeconds)||persisted.effectiveAt!==saved.effectiveAt||persisted.updatedBy!==updatedBy||persisted.configured!==true) throw new Error("Delivery retry policy save committed, but a fresh database read did not confirm every value and the new policy version.");
+  return persisted;
+}
+export async function countOutstandingTrades(userId?: number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); const rows=await db.select({id:tradePositions.id}).from(tradePositions).where(userId===undefined?eq(tradePositions.status,"confirmed"):and(eq(tradePositions.userId,userId),eq(tradePositions.status,"confirmed"))); return rows.length; }
+export async function getTicketUploadPolicy() {
+  return normalizeTicketUploadPolicy(
+    await getAppSetting("ticket.maxAttachmentMb", "25"),
+    await getAppSetting(
+      "ticket.allowedMimeTypes",
+      "image/*,application/pdf,text/plain,.doc,.docx,.xls,.xlsx",
+    ),
+  );
+}
+
+/** Stable, non-reversible account tombstone key. It stores no external OAuth identifier. */
+function closedAccountIdentityKey(openId: string): string | null {
+  const secret = ENV.cookieSecret;
+  if (!secret) return null;
+  const digest = crypto.createHmac("sha256", secret).update(openId).digest("hex").slice(0, 57);
+  return `closed:${digest}`;
+}
+
+export async function upsertUser(user: InsertUser): Promise<void> {
+  if (!user.openId) {
+    throw new Error("User openId is required for upsert");
+  }
+
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database is not available");
+  }
+
+  try {
+    const values: InsertUser = {
+      openId: user.openId,
+    };
+    const updateSet: Record<string, unknown> = {};
+
+    const textFields = ["name", "email", "loginMethod"] as const;
+    type TextField = (typeof textFields)[number];
+
+    const assignNullable = (field: TextField) => {
+      const value = user[field];
+      if (value === undefined) return;
+      const normalized = value ?? null;
+      values[field] = normalized;
+      updateSet[field] = normalized;
+    };
+
+    textFields.forEach(assignNullable);
+
+    if (user.lastSignedIn !== undefined) {
+      values.lastSignedIn = user.lastSignedIn;
+      updateSet.lastSignedIn = user.lastSignedIn;
+    }
+    if (user.role !== undefined) {
+      values.role = user.role;
+      updateSet.role = user.role;
+    }
+
+    if (!values.lastSignedIn) {
+      values.lastSignedIn = new Date();
+    }
+
+    if (Object.keys(updateSet).length === 0) {
+      updateSet.lastSignedIn = new Date();
+    }
+
+    const tombstoneKey = closedAccountIdentityKey(user.openId);
+    await db.transaction(async (tx) => {
+      // Serialize OAuth upserts against account closure and block recreation after closure.
+      if (tombstoneKey) {
+        const closedIdentity = (await tx.select({ id: users.id, loginMethod: users.loginMethod })
+          .from(users).where(eq(users.openId, tombstoneKey)).limit(1).for("update"))[0];
+        if (closedIdentity?.loginMethod === "closed") {
+          throw new Error("This account has been permanently closed and cannot be recreated.");
+        }
+      }
+      const existing = (await tx.select({ id: users.id, loginMethod: users.loginMethod })
+        .from(users).where(eq(users.openId, user.openId)).limit(1).for("update"))[0];
+      if (existing?.loginMethod === "closed") {
+        throw new Error("This account has been permanently closed and cannot be recreated.");
+      }
+      await tx.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+    });
+  } catch (error) {
+    console.error("[Database] Failed to upsert user:", error);
+    throw error;
+  }
+}
+
+export async function getUserByEmail(email: string) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  return (await db.select().from(users).where(eq(users.email, email.toLowerCase())).limit(1))[0] ?? null;
+}
+export async function getUserById(id: number) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  return (await db.select().from(users).where(eq(users.id, id)).limit(1))[0] ?? null;
+}
+export async function createLocalCustomer(input: { email: string; passwordHash: string; name: string }) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  const email = input.email.toLowerCase();
+  const existing = await getUserByEmail(email);
+  if (existing) throw new Error("An account with this email already exists");
+  const openId = `local:customer:${email}`;
+  const result = await db.insert(users).values({ openId, email, name: input.name, loginMethod: "email", role: "user", passwordHash: input.passwordHash });
+  await provisionSignupCredit(Number(result[0].insertId));
+  return (await db.select().from(users).where(eq(users.id, Number(result[0].insertId))).limit(1))[0];
+}
+
+/**
+ * Resolve a signed session identity for logout without performing OAuth auto-provisioning.
+ * Unlike getUserByOpenId, this helper fails closed when the database is unavailable.
+ */
+export async function getUserForSessionRevocation(openId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Authentication storage is unavailable");
+  const direct = (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0];
+  if (direct) return direct;
+
+  const tombstoneKey = closedAccountIdentityKey(openId);
+  if (tombstoneKey) {
+    const tombstone = (await db.select().from(users).where(eq(users.openId, tombstoneKey)).limit(1))[0];
+    if (tombstone?.loginMethod === "closed") return tombstone;
+  }
+  return null;
+}
+
+export async function getUserByOpenId(openId: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user: database not available");
+    return undefined;
+  }
+
+  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  if (result.length > 0) return result[0];
+
+  // Resolve a closed identity to its anonymized tombstone so OAuth cannot auto-provision it again.
+  const tombstoneKey = closedAccountIdentityKey(openId);
+  if (!tombstoneKey) return undefined;
+  const tombstone = await db.select().from(users).where(eq(users.openId, tombstoneKey)).limit(1);
+  return tombstone[0]?.loginMethod === "closed" ? tombstone[0] : undefined;
+}
+
+// TODO: add feature queries here as your schema grows.
+
+
+import { riskReports, supportAttachments, supportMessages, supportTickets } from "../drizzle/schema";
+
+export async function createRiskReport(userId: number, title: string, requestedFor?: string) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  const result = await db.insert(riskReports).values({ userId, title, requestedFor: requestedFor || null });
+  return { id: Number(result[0].insertId), status: "requested" as const };
+}
+export async function listRiskReports(userId: number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(riskReports).where(eq(riskReports.userId,userId)).orderBy(desc(riskReports.createdAt)); }
+export async function upsertCustomerSession(userId:number, data:{deviceLabel:string;ipAddress?:string;countryCode?:string;userAgent?:string}) { const db=await getDb(); if(!db) throw new Error("Database is not available"); const existing=await db.select().from(customerSessions).where(and(eq(customerSessions.userId,userId),eq(customerSessions.deviceLabel,data.deviceLabel))).limit(1); if(existing[0]) { await db.update(customerSessions).set({ ...data, lastSeenAt:new Date(), isCurrent:true }).where(eq(customerSessions.id,existing[0].id)); return existing[0].id; } const result=await db.insert(customerSessions).values({userId,...data}); return Number(result[0].insertId); }
+export async function listCustomerSessions(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(customerSessions).where(eq(customerSessions.userId,userId)).orderBy(desc(customerSessions.lastSeenAt)); }
+export async function revokeCustomerSession(userId:number,id:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); await db.update(customerSessions).set({isCurrent:false}).where(and(eq(customerSessions.id,id),eq(customerSessions.userId,userId))); }
+export async function createTicket(userId:number,input:{subject:string;body:string;priority:"low"|"normal"|"high"|"urgent";category?:string}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const subject=normalizeNotificationText(input.subject,200,"ticket subject");
+  const body=normalizeNotificationText(input.body,20000,"ticket message");
+  if(subject.length<3) throw new Error("Ticket subject must contain at least 3 characters");
+  const ticketNumber=`ARB-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+  // A ticket without its opening message is not a usable support case. Persist
+  // both records together, then send best-effort notifications after commit.
+  const ticketId=await db.transaction(async tx=>{
+    const result=await tx.insert(supportTickets).values({ticketNumber,customerId:userId,subject,category:input.category||"account",priority:input.priority});
+    const id=Number(result[0].insertId);
+    await tx.insert(supportMessages).values({ticketId:id,authorId:userId,body});
+    return id;
+  });
+  try {
+    const admins=await db.select({id:users.id}).from(users).where(eq(users.role,"admin"));
+    const notificationResults=await Promise.allSettled([
+      ...admins.map(admin=>createNotification(admin.id,"New customer support ticket",`${ticketNumber}: ${subject}`,{eventKey:`support-ticket-created:${ticketId}:admin:${admin.id}`,category:"support",priority:input.priority==="urgent"?"urgent":input.priority==="high"?"high":"normal"})),
+      createNotification(userId,subject,`${ticketNumber}: Your support ticket was created and is now in the support centre.`,{eventKey:`support-ticket-created-customer:${ticketId}`,category:"support",priority:input.priority==="urgent"?"urgent":input.priority==="high"?"high":"normal"}),
+    ]);
+    if(notificationResults.some(result=>result.status==="rejected")) console.error("[Notifications] One or more ticket-created notices failed after ticket persistence.");
+  } catch(error) {
+    console.error("[Notifications] Ticket-created notices failed after ticket persistence:",error instanceof Error?error.name:"UnknownError");
+  }
+  return {ticketId,ticketNumber};
+ }
+export async function listCustomerTickets(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(supportTickets).where(eq(supportTickets.customerId,userId)).orderBy(desc(supportTickets.updatedAt)); }
+export const ACCOUNT_CLOSURE_TICKET_SUBJECT = "Account closure request — administrator review required";
+export type AccountClosureReason = "not-using" | "experience" | "fees" | "privacy" | "support";
+
+export async function createAccountClosureTicket(userId: number, reasons: AccountClosureReason[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const labels: Record<AccountClosureReason, string> = {
+    "not-using": "I no longer use the platform",
+    experience: "The platform experience did not meet my expectations",
+    fees: "Costs, fees, or available features",
+    privacy: "Privacy or account-security concerns",
+    support: "Customer support or another reason",
+  };
+  const body = [
+    "ACCOUNT CLOSURE REQUEST — CUSTOMER SUBMISSION", "",
+    "The customer is requesting account closure. This ticket requests administrator review only and does not close or delete the account.", "",
+    "Selected reasons:",
+    ...reasons.map((reason) => `- ${labels[reason]}`), "",
+    "Customer acknowledgments:",
+    "- I understand that my account remains active until an authorized administrator reviews and approves this request.",
+    "- I understand that personal information eligible for deletion may be deleted or anonymized, while records may be retained where required for legal, regulatory, security, accounting, fraud-prevention, audit, dispute-resolution, or financial-recordkeeping obligations.",
+    "- I understand that closure may be irreversible and can remove access to account services and eligible account history.", "",
+    "The customer explicitly acknowledged the closure disclosure. The administrator must record an explicit approve/reject decision. Ticket creation alone must never trigger deletion.",
+  ].join("\n");
+  const created = await db.transaction(async (tx) => {
+    // Lock the account row so multiple tabs cannot create duplicate pending cases.
+    const user = (await tx.select({ id: users.id, role: users.role, loginMethod: users.loginMethod })
+      .from(users).where(eq(users.id, userId)).limit(1).for("update"))[0];
+    if (!user || user.role !== "user" || user.loginMethod === "closed") {
+      throw new Error("Only an active customer account can request closure.");
+    }
+    const pending = (await tx.select({
+      id: supportTickets.id, ticketNumber: supportTickets.ticketNumber,
+    }).from(supportTickets).where(and(
+      eq(supportTickets.customerId, userId),
+      eq(supportTickets.subject, ACCOUNT_CLOSURE_TICKET_SUBJECT),
+      inArray(supportTickets.status, ["open", "answered"]),
+    )).limit(1).for("update"))[0];
+    if (pending) return { ...pending, alreadyPending: true };
+
+    const ticketNumber = `ARB-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    const inserted = await tx.insert(supportTickets).values({
+      ticketNumber, customerId: userId, subject: ACCOUNT_CLOSURE_TICKET_SUBJECT,
+      category: "account", priority: "high",
+    });
+    const ticketId = Number(inserted[0].insertId);
+    await tx.insert(supportMessages).values({ ticketId, authorId: userId, body });
+    return { ticketId, ticketNumber, alreadyPending: false };
+  });
+  if (created.alreadyPending) return created;
+
+  // Notifications are best-effort after commit; they cannot lose the persisted request.
+  try {
+    const admins = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin"));
+    const results = await Promise.allSettled([
+      ...admins.map((admin) => createNotification(admin.id, "Account closure request", `${created.ticketNumber}: A customer requested account closure and needs an explicit review decision.`, {
+        eventKey: `account-closure-request:${created.ticketId}:admin:${admin.id}`, category: "support", priority: "high",
+      })),
+      createNotification(userId, "Account closure request received", `${created.ticketNumber}: Your request is awaiting administrator review. Your account remains active.`, {
+        eventKey: `account-closure-request:${created.ticketId}:customer`, category: "support", priority: "high",
+      }),
+    ]);
+    if (results.some((result) => result.status === "rejected")) console.error("[AccountClosure] A request notification failed after the ticket was persisted.");
+  } catch (error) {
+    console.error("[AccountClosure] Request notifications failed:", error instanceof Error ? error.name : "UnknownError");
+  }
+  return created;
+}
+
+
+export async function listAllTickets() { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select({id:supportTickets.id,ticketNumber:supportTickets.ticketNumber,customerId:supportTickets.customerId,assignedAdminId:supportTickets.assignedAdminId,subject:supportTickets.subject,category:supportTickets.category,priority:supportTickets.priority,status:supportTickets.status,createdAt:supportTickets.createdAt,updatedAt:supportTickets.updatedAt,customerName:users.name,customerEmail:users.email}).from(supportTickets).leftJoin(users,eq(users.id,supportTickets.customerId)).orderBy(desc(supportTickets.updatedAt)); }
+export async function listSupportAssignees() { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select({id:users.id,name:users.name,email:users.email}).from(users).where(eq(users.role,"admin")).orderBy(users.id); }
+export async function assignSupportTicket(actorId:number,ticketId:number,assignedAdminId:number|null) {
+ const db=await getDb(); if(!db) throw new Error("Database is not available");
+ const committed=await db.transaction(async tx=>{
+  const actor=(await tx.select({id:users.id,role:users.role}).from(users).where(eq(users.id,actorId)).limit(1))[0];
+  if(!actor||actor.role!=="admin") throw new Error("Only administrators can assign support tickets");
+  const ticket=(await tx.select().from(supportTickets).where(eq(supportTickets.id,ticketId)).limit(1).for("update"))[0];
+  if(!ticket) throw new Error("Ticket not found");
+  let assignee:{id:number;name:string|null;email:string|null}|null=null;
+  if(assignedAdminId!==null) {
+   assignee=(await tx.select({id:users.id,name:users.name,email:users.email}).from(users).where(and(eq(users.id,assignedAdminId),eq(users.role,"admin"))).limit(1))[0]??null;
+   if(!assignee) throw new Error("Assignee must be an existing administrator");
+  }
+  if((ticket.assignedAdminId??null)===assignedAdminId) return {changed:false,ticket,assignee};
+  const changedAt=new Date();
+  await tx.update(supportTickets).set({assignedAdminId,updatedAt:changedAt}).where(eq(supportTickets.id,ticketId));
+  await tx.insert(v5AuditEvents).values({actorUserId:actorId,action:assignedAdminId===null?"support.ticket.unassigned":"support.ticket.assigned",entityType:"support_ticket",entityId:String(ticketId),reason:assignedAdminId===null?"Support ticket returned to the unassigned queue":"Support ticket assigned to administrator",reference:ticket.ticketNumber,metadataJson:JSON.stringify({previousAssigneeId:ticket.assignedAdminId??null,assignedAdminId})});
+  return {changed:true,ticket,assignee,changedAt};
+ });
+ if(committed.changed&&committed.assignee) {
+  try { await createNotification(committed.assignee.id,"Support ticket assigned",`${committed.ticket.ticketNumber}: ${committed.ticket.subject}`,{eventKey:`support-ticket:${ticketId}:assignment:${committed.changedAt!.getTime()}`,category:"support",priority:committed.ticket.priority==="urgent"?"urgent":committed.ticket.priority==="high"?"high":committed.ticket.priority==="low"?"low":"normal",href:"/admin"}); }
+  catch(error) { console.error("[Notifications] Support assignment notice failed after assignment commit:",error instanceof Error?error.name:"UnknownError"); }
+ }
+ return {success:true,changed:committed.changed,assignedAdminId:committed.assignee?.id??null};
+}
+export async function getCustomerTicket(userId:number,ticketId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return (await db.select().from(supportTickets).where(and(eq(supportTickets.id,ticketId),eq(supportTickets.customerId,userId))).limit(1))[0] ?? null; }
+export async function getSupportTicketById(ticketId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return (await db.select({id:supportTickets.id,subject:supportTickets.subject,category:supportTickets.category,customerId:supportTickets.customerId,status:supportTickets.status}).from(supportTickets).where(eq(supportTickets.id,ticketId)).limit(1))[0] ?? null; }
+export async function addTicketMessage(actorId:number,ticketId:number,body:string,status?:"open"|"answered"|"resolved"|"closed") {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  // Keep the message and ticket status in one transaction: a failed status
+  // update must not leave a committed reply with stale inbox state.
+  const committed=await db.transaction(async tx=>{
+    const ticket=(await tx.select().from(supportTickets).where(eq(supportTickets.id,ticketId)).limit(1).for("update"))[0];
+    if(!ticket) throw new Error("Ticket not found");
+    const actor=(await tx.select({role:users.role}).from(users).where(eq(users.id,actorId)).limit(1))[0];
+    if(!actor) throw new Error("Message author not found");
+    const isAdmin=actor.role==="admin";
+    if(!isAdmin && ticket.customerId!==actorId) throw new Error("You do not have access to this ticket");
+    const normalizedBody=normalizeNotificationText(body,20000,"ticket message");
+    if(!isAdmin && (ticket.status==="closed" || ticket.status==="resolved")) throw new Error("Resolved or closed tickets must be reopened before a customer reply");
+    const inserted=await tx.insert(supportMessages).values({ticketId,authorId:actorId,body:normalizedBody});
+    const messageId=Number(inserted[0].insertId);
+    const nextStatus=isAdmin ? (status||"answered") : "open";
+    await tx.update(supportTickets).set({status:nextStatus,updatedAt:new Date()}).where(eq(supportTickets.id,ticketId));
+    return {ticket,isAdmin,normalizedBody,messageId};
+  });
+  // Notifications are deliberately post-commit and best-effort: a notification
+  // outage must not make a successfully persisted reply appear to have failed.
+  if(committed.isAdmin){
+    try {
+      await createNotification(committed.ticket.customerId,"Support replied to your ticket",`${committed.ticket.ticketNumber}: ${committed.normalizedBody.slice(0,240)}`,{eventKey:`support-ticket:${ticketId}:message:${committed.messageId}`,category:"support",priority:"normal"});
+    } catch(error) {
+      console.error("[Notifications] Ticket reply notice failed after message commit:",error instanceof Error?error.name:"UnknownError");
+    }
+  } else {
+    try {
+      const admins=await db.select({id:users.id}).from(users).where(eq(users.role,"admin"));
+      const results=await Promise.allSettled(admins.map(admin=>createNotification(admin.id,"Customer replied to a support ticket",`${committed.ticket.ticketNumber}: ${committed.normalizedBody.slice(0,240)}`,{eventKey:`support-ticket:${ticketId}:message:${committed.messageId}:admin:${admin.id}`,category:"support",priority:committed.ticket.priority==="urgent"?"urgent":committed.ticket.priority==="high"?"high":"normal"})));
+      if(results.some(result=>result.status==="rejected")) console.error("[Notifications] One or more customer-reply notices failed after message commit.");
+    } catch(error) {
+      console.error("[Notifications] Customer reply notices failed after message commit:",error instanceof Error?error.name:"UnknownError");
+    }
+  }
+}
+export async function reopenSupportTicket(actorId:number,ticketId:number) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const ticket=(await db.select().from(supportTickets).where(eq(supportTickets.id,ticketId)).limit(1))[0];
+  if(!ticket) throw new Error("Ticket not found");
+  const actor=(await db.select({role:users.role}).from(users).where(eq(users.id,actorId)).limit(1))[0];
+  if(!actor) throw new Error("Ticket actor not found");
+  const isAdmin=actor.role==="admin";
+  if(!isAdmin && ticket.customerId!==actorId) throw new Error("You do not have access to this ticket");
+  if(ticket.status!=="closed" && ticket.status!=="resolved") return {success:true,changed:false,status:ticket.status};
+  const previousUpdatedAt=new Date(ticket.updatedAt as any).getTime();
+  // Conditional update prevents two concurrent reopen requests from both
+  // claiming that they changed the same closed/resolved ticket.
+  const changed=await db.update(supportTickets).set({status:"open",updatedAt:new Date()})
+    .where(and(eq(supportTickets.id,ticketId),or(eq(supportTickets.status,"closed"),eq(supportTickets.status,"resolved"))));
+  const affected=Number((changed as any)?.[0]?.affectedRows ?? (changed as any)?.affectedRows ?? 0);
+  if(affected!==1) {
+    const current=(await db.select({status:supportTickets.status}).from(supportTickets).where(eq(supportTickets.id,ticketId)).limit(1))[0];
+    return {success:true,changed:false,status:current?.status ?? "open"};
+  }
+  const eventKey=`support-ticket:${ticketId}:reopened:${previousUpdatedAt}`;
+  try {
+    if(isAdmin) {
+      await createNotification(ticket.customerId,"Your support ticket was reopened",`${ticket.ticketNumber}: support has reopened this case and the conversation is available again.`,{eventKey,category:"support",priority:ticket.priority==="urgent"?"urgent":"normal"});
+    } else {
+      const admins=await db.select({id:users.id}).from(users).where(eq(users.role,"admin"));
+      const results=await Promise.allSettled(admins.map(admin=>createNotification(admin.id,"Customer reopened a support ticket",`${ticket.ticketNumber}: the customer reopened this case.`,{eventKey:`${eventKey}:admin:${admin.id}`,category:"support",priority:ticket.priority==="urgent"?"urgent":"normal"})));
+      if(results.some(result=>result.status==="rejected")) console.error("[Notifications] One or more reopen notices failed after status commit.");
+    }
+  } catch(error) {
+    console.error("[Notifications] Ticket reopen notice failed after status commit:",error instanceof Error?error.name:"UnknownError");
+  }
+  return {success:true,changed:true,status:"open" as const};
+}
+export async function listTicketMessages(ticketId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select({id:supportMessages.id,ticketId:supportMessages.ticketId,authorId:supportMessages.authorId,authorName:users.name,authorRole:users.role,body:supportMessages.body,createdAt:supportMessages.createdAt}).from(supportMessages).leftJoin(users,eq(users.id,supportMessages.authorId)).where(eq(supportMessages.ticketId,ticketId)).orderBy(supportMessages.createdAt); }
+export async function listTicketAttachments(ticketId:number) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const rows=await db.select({id:supportAttachments.id,fileName:supportAttachments.fileName,mimeType:supportAttachments.mimeType,sizeBytes:supportAttachments.sizeBytes,storageKey:supportAttachments.storageKey,createdAt:supportAttachments.createdAt})
+    .from(supportAttachments).where(eq(supportAttachments.ticketId,ticketId)).orderBy(supportAttachments.createdAt);
+  return rows.filter(row=>isValidSupportAttachmentStorageKey(row.storageKey)).map(({storageKey,...row})=>({...row,url:`/storage/${storageKey}`}));
+}
+export async function createNotification(userId:number,title:string,body:string,options:{eventKey?:string|null;category?:NotificationCategory;priority?:NotificationPriority;href?:string|null}={}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const safeTitle=normalizeNotificationText(title,200,"title");
+  const safeBody=normalizeNotificationText(body,10000,"body");
+  const eventKey=buildNotificationEventKey(userId,options.eventKey);
+  const href=normalizeNotificationHref(options.href);
+  const values={userId,title:safeTitle,body:safeBody,eventKey,category:options.category||"account",priority:options.priority||"normal",href};
+  let notificationId=0;
+  if(eventKey){
+    await db.insert(customerNotifications).values(values).onDuplicateKeyUpdate({set:{eventKey}});
+    const existing=(await db.select({id:customerNotifications.id,userId:customerNotifications.userId,title:customerNotifications.title,body:customerNotifications.body,category:customerNotifications.category,priority:customerNotifications.priority,href:customerNotifications.href}).from(customerNotifications).where(eq(customerNotifications.eventKey,eventKey)).limit(1))[0];
+    if(!existing) throw new Error("Notification persistence could not be confirmed");
+    assertNotificationPayloadMatches(existing,{userId,title:safeTitle,body:safeBody,category:options.category||"account",priority:options.priority||"normal",href});
+    notificationId=existing.id;
+  } else {
+    const inserted=await db.insert(customerNotifications).values(values);
+    notificationId=Number(inserted[0].insertId)||0;
+  }
+  // Do not let a broadcast count an attempt as successful unless its durable
+  // notification row can be identified (including on idempotent duplicate retries).
+  if(!notificationId) throw new Error("Notification persistence could not be confirmed");
+  // Email delivery is keyed by the persisted notification ID; duplicate event
+  // retries therefore reuse the same outbox idempotency key.
+  if(notificationId){
+    try { const { enqueueSystemNotificationEmail }=await import("./emailQueue"); await enqueueSystemNotificationEmail(userId,safeTitle,safeBody,`notification:${notificationId}`); }
+    catch(error) { console.error("[Email] System notification enqueue failed:",error instanceof Error?error.name:"UnknownError"); }
+  }
+  return notificationId;
+}
+export async function broadcastCustomerNotification(adminId:number,input:{title:string;body:string;eventKey:string;category:AdminBroadcastCategory;priority:NotificationPriority;href?:string|null;targetUserId?:number|null;scheduledAt?:string|null;expiresAt?:string|null}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  if(!Number.isSafeInteger(adminId) || adminId <= 0) throw new RangeError("Broadcast administrator must be a positive integer user ID");
+  const targetUserId=normalizeBroadcastTargetUserId(input.targetUserId);
+  const title=normalizeNotificationText(input.title,200,"title");
+  const body=normalizeNotificationText(input.body,10000,"body");
+  const eventKey=normalizeNotificationText(input.eventKey,120,"event key");
+  const href=normalizeNotificationHref(input.href);
+  const parseDate=(value:string|null|undefined,label:string):Date|null=>{ if(value==null||value==="")return null; const date=new Date(value); if(!Number.isFinite(date.getTime()))throw new RangeError("Announcement "+label+" must be a valid date"); return date; };
+  const scheduledAt=parseDate(input.scheduledAt,"schedule time");
+  const expiresAt=parseDate(input.expiresAt,"expiry time");
+  const now=new Date();
+  if(expiresAt && expiresAt.getTime()<=now.getTime())throw new RangeError("Announcement expiry must be in the future");
+  if(scheduledAt && expiresAt && expiresAt.getTime()<=scheduledAt.getTime())throw new RangeError("Announcement expiry must be later than its scheduled publish time");
+  const sameDate=(left:Date|null|undefined,right:Date|null)=>left==null?right==null:right!=null&&left.getTime()===right.getTime();
+  const activeCustomerCondition=or(isNull(customerControls.accountStatus),eq(customerControls.accountStatus,"active"));
+  const findRecipients=async()=>targetUserId!==null
+    ? await db.select({id:users.id}).from(users).leftJoin(customerControls,eq(customerControls.userId,users.id)).where(and(eq(users.id,targetUserId),eq(users.role,"user"),activeCustomerCondition)).limit(1)
+    : await db.select({id:users.id}).from(users).leftJoin(customerControls,eq(customerControls.userId,users.id)).where(and(eq(users.role,"user"),activeCustomerCondition));
+  let campaign=(await db.select().from(notificationCampaigns).where(and(eq(notificationCampaigns.createdBy,adminId),eq(notificationCampaigns.eventKey,eventKey))).limit(1))[0];
+  const matchesPayload=(row:typeof campaign)=>Boolean(row && row.title===title && row.body===body && row.category===input.category && row.priority===input.priority && row.href===(href??null) && row.targetUserId===(targetUserId??null) && sameDate(row.scheduledAt,scheduledAt) && sameDate(row.expiresAt,expiresAt));
+  if(campaign && !matchesPayload(campaign))throw new Error("Announcement event key was already used with a different campaign payload");
+  if(!campaign) {
+    const recipients=await findRecipients();
+    if(targetUserId!==null && !recipients.length)throw new Error("Selected customer account was not found or is not active");
+    await db.insert(notificationCampaigns).values({createdBy:adminId,eventKey,title,body,category:input.category,priority:input.priority,href,targetUserId:targetUserId??null,status:"draft",scheduledAt,expiresAt,totalRecipientCount:recipients.length}).onDuplicateKeyUpdate({set:{eventKey}});
+    campaign=(await db.select().from(notificationCampaigns).where(and(eq(notificationCampaigns.createdBy,adminId),eq(notificationCampaigns.eventKey,eventKey))).limit(1))[0];
+    if(!campaign)throw new Error("Announcement campaign persistence could not be confirmed");
+    if(!matchesPayload(campaign))throw new Error("Announcement event key was already used with a different campaign payload");
+  }
+  if(campaign.status==="expired")throw new Error("Expired announcement campaigns cannot be republished");
+  if(campaign.status==="withdrawn")throw new Error("Withdrawn announcement campaigns cannot be republished");
+  if(campaign.expiresAt && campaign.expiresAt.getTime()<=now.getTime()) {
+    const expiredUpdate=await db.update(notificationCampaigns).set({status:"expired"}).where(and(eq(notificationCampaigns.id,campaign.id),inArray(notificationCampaigns.status,["draft","scheduled","published","failed"])));
+    if(Number(expiredUpdate[0]?.affectedRows||0)>0) {
+      await db.update(notificationCampaignDeliveries).set({status:"expired"}).where(and(eq(notificationCampaignDeliveries.campaignId,campaign.id),or(eq(notificationCampaignDeliveries.status,"pending"),eq(notificationCampaignDeliveries.status,"failed"))));
+      return {campaignId:campaign.id,recipientCount:0,totalRecipientCount:campaign.totalRecipientCount,readCount:0,failedCount:0,pendingCount:0,eventKey,targetUserId:targetUserId??null,status:"expired" as const};
+    }
+    campaign=(await db.select().from(notificationCampaigns).where(eq(notificationCampaigns.id,campaign.id)).limit(1))[0]!;
+    if(campaign.status==="withdrawn")throw new Error("Withdrawn announcement campaigns cannot be republished");
+    if(campaign.status==="expired")return {campaignId:campaign.id,recipientCount:0,totalRecipientCount:campaign.totalRecipientCount,readCount:0,failedCount:0,pendingCount:0,eventKey,targetUserId:targetUserId??null,status:"expired" as const};
+  }
+  if(campaign.status==="scheduled" && campaign.scheduledAt && campaign.scheduledAt.getTime()>now.getTime()) {
+    const rows=await db.select({status:notificationCampaignDeliveries.status}).from(notificationCampaignDeliveries).where(eq(notificationCampaignDeliveries.campaignId,campaign.id));
+    return {campaignId:campaign.id,recipientCount:0,totalRecipientCount:rows.length,readCount:0,failedCount:rows.filter(x=>x.status==="failed").length,pendingCount:rows.filter(x=>x.status==="pending").length,eventKey,targetUserId:targetUserId??null,status:"scheduled" as const};
+  }
+  if(campaign.status==="draft") {
+    const recipients=await findRecipients();
+    if(targetUserId!==null && !recipients.length)throw new Error("Selected customer account was not found or is not active");
+    for(const batch of partitionNotificationRecipients(recipients,50)) {
+      if(batch.length)await db.insert(notificationCampaignDeliveries).values(batch.map(recipient=>({campaignId:campaign!.id,userId:recipient.id,status:"pending" as const}))).onDuplicateKeyUpdate({set:{campaignId:campaign!.id}});
+    }
+    const nextStatus=scheduledAt&&scheduledAt.getTime()>now.getTime()?"scheduled":"published";
+    await db.update(notificationCampaigns).set({status:nextStatus,publishedAt:nextStatus==="published"?now:null,totalRecipientCount:recipients.length}).where(and(eq(notificationCampaigns.id,campaign.id),eq(notificationCampaigns.status,"draft")));
+    campaign=(await db.select().from(notificationCampaigns).where(eq(notificationCampaigns.id,campaign.id)).limit(1))[0]!;
+  } else if(campaign.status==="scheduled") {
+    await db.update(notificationCampaigns).set({status:"published",publishedAt:now}).where(and(eq(notificationCampaigns.id,campaign.id),eq(notificationCampaigns.status,"scheduled")));
+    campaign=(await db.select().from(notificationCampaigns).where(eq(notificationCampaigns.id,campaign.id)).limit(1))[0]!;
+  }
+  if(campaign.status==="scheduled" && campaign.scheduledAt && campaign.scheduledAt.getTime()>now.getTime()) {
+    const rows=await db.select({status:notificationCampaignDeliveries.status}).from(notificationCampaignDeliveries).where(eq(notificationCampaignDeliveries.campaignId,campaign.id));
+    return {campaignId:campaign.id,recipientCount:0,totalRecipientCount:rows.length,readCount:0,failedCount:rows.filter(x=>x.status==="failed").length,pendingCount:rows.filter(x=>x.status==="pending").length,eventKey,targetUserId:targetUserId??null,status:"scheduled" as const};
+  }
+  if(campaign.status!=="published")throw new Error("Announcement campaign is not ready for delivery");
+  const pending=await db.select({id:notificationCampaignDeliveries.id,userId:notificationCampaignDeliveries.userId}).from(notificationCampaignDeliveries).where(and(eq(notificationCampaignDeliveries.campaignId,campaign.id),or(eq(notificationCampaignDeliveries.status,"pending"),eq(notificationCampaignDeliveries.status,"failed"))));
+  for(const batch of partitionNotificationRecipients(pending,50)) {
+    await Promise.allSettled(batch.map(async delivery=>{
+      const attemptedAt=new Date();
+      try {
+        const notificationId=await createNotification(delivery.userId,title,body,{eventKey:"admin-broadcast:"+adminId+":"+eventKey,category:input.category,priority:input.priority,href});
+        // A campaign may be withdrawn or expired while this delivery is in flight.
+        // Transition only a still-retryable row; never resurrect a terminal state.
+        const deliveryUpdate=await db.update(notificationCampaignDeliveries).set({notificationId,status:"delivered",attemptedAt,deliveredAt:new Date(),errorCode:null}).where(and(eq(notificationCampaignDeliveries.id,delivery.id),inArray(notificationCampaignDeliveries.status,["pending","failed"])));
+        if(Number(deliveryUpdate[0]?.affectedRows||0)===0) {
+          // Link the created row for suppression/audit, but preserve withdrawn,
+          // expired, read, or already-delivered status and its error code.
+          await db.update(notificationCampaignDeliveries).set({notificationId,attemptedAt,deliveredAt:new Date()}).where(eq(notificationCampaignDeliveries.id,delivery.id));
+        }
+      } catch(error) {
+        try { await db.update(notificationCampaignDeliveries).set({status:"failed",attemptedAt,errorCode:"DELIVERY_FAILED"}).where(and(eq(notificationCampaignDeliveries.id,delivery.id),inArray(notificationCampaignDeliveries.status,["pending","failed"]))); } catch {}
+        console.error("[Notifications] Announcement recipient delivery failed:",error instanceof Error?error.name:"UnknownError");
+      }
+    }));
+  }
+  const deliveries=await db.select({status:notificationCampaignDeliveries.status}).from(notificationCampaignDeliveries).where(eq(notificationCampaignDeliveries.campaignId,campaign.id));
+  const recipientCount=deliveries.filter(row=>row.status==="delivered"||row.status==="read").length;
+  const readCount=deliveries.filter(row=>row.status==="read").length;
+  const failedCount=deliveries.filter(row=>row.status==="failed").length;
+  const pendingCount=deliveries.filter(row=>row.status==="pending").length;
+  await db.update(notificationCampaigns).set({totalRecipientCount:deliveries.length}).where(eq(notificationCampaigns.id,campaign.id));
+  return {campaignId:campaign.id,recipientCount,totalRecipientCount:deliveries.length,readCount,failedCount,pendingCount,eventKey,targetUserId:targetUserId??null,status:"published" as const};
+}
+
+export async function retryNotificationCampaign(adminId:number,campaignId:number) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  if(!Number.isSafeInteger(adminId)||adminId<=0)throw new RangeError("Broadcast administrator must be a positive integer user ID");
+  const campaign=(await db.select().from(notificationCampaigns).where(eq(notificationCampaigns.id,campaignId)).limit(1))[0];
+  if(!campaign)throw new Error("Announcement campaign not found");
+  return broadcastCustomerNotification(campaign.createdBy,{title:campaign.title,body:campaign.body,eventKey:campaign.eventKey,category:campaign.category as AdminBroadcastCategory,priority:campaign.priority as NotificationPriority,href:campaign.href,targetUserId:campaign.targetUserId,scheduledAt:campaign.scheduledAt?.toISOString()??null,expiresAt:campaign.expiresAt?.toISOString()??null});
+}
+
+export async function withdrawNotificationCampaign(adminId:number,campaignId:number) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  if(!Number.isSafeInteger(adminId)||adminId<=0)throw new RangeError("Withdrawal administrator must be a positive integer user ID");
+  if(!Number.isSafeInteger(campaignId)||campaignId<=0)throw new RangeError("Campaign ID must be a positive integer");
+  return db.transaction(async tx=>{
+    const actor=(await tx.select({id:users.id,role:users.role}).from(users).where(eq(users.id,adminId)).limit(1).for("update"))[0];
+    if(!actor||actor.role!=="admin")throw new Error("Only administrators can withdraw announcement campaigns");
+    const campaign=(await tx.select().from(notificationCampaigns).where(eq(notificationCampaigns.id,campaignId)).limit(1).for("update"))[0];
+    if(!campaign)throw new Error("Announcement campaign not found");
+    if(campaign.status==="withdrawn")return {success:true,changed:false,status:"withdrawn" as const};
+    if(campaign.status==="expired")return {success:true,changed:false,status:"expired" as const};
+    if(!["draft","scheduled","published","failed"].includes(campaign.status))throw new Error("Announcement campaign cannot be withdrawn from its current state");
+    await tx.update(notificationCampaigns).set({status:"withdrawn",updatedAt:new Date()}).where(and(eq(notificationCampaigns.id,campaign.id),eq(notificationCampaigns.status,campaign.status)));
+    await tx.update(notificationCampaignDeliveries).set({status:"withdrawn",errorCode:"CAMPAIGN_WITHDRAWN"}).where(and(eq(notificationCampaignDeliveries.campaignId,campaign.id),or(eq(notificationCampaignDeliveries.status,"pending"),eq(notificationCampaignDeliveries.status,"failed"))));
+    await tx.insert(v5AuditEvents).values({actorUserId:adminId,action:"notification.campaign.withdrawn",entityType:"notification_campaign",entityId:String(campaign.id),reason:"Administrator withdrew announcement campaign",reference:campaign.eventKey,metadataJson:JSON.stringify({previousStatus:campaign.status,totalRecipientCount:campaign.totalRecipientCount})});
+    return {success:true,changed:true,status:"withdrawn" as const};
+  });
+}
+
+export async function processNotificationCampaignLifecycle() {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  const now=new Date();
+  let expiredCount=0;
+  const expired=await db.select().from(notificationCampaigns).where(and(inArray(notificationCampaigns.status,["draft","scheduled","published","failed"]),lte(notificationCampaigns.expiresAt,now))).limit(100);
+  for(const campaign of expired) {
+    const changed=await db.update(notificationCampaigns).set({status:"expired"}).where(and(eq(notificationCampaigns.id,campaign.id),inArray(notificationCampaigns.status,["draft","scheduled","published","failed"])));
+    if(Number(changed[0]?.affectedRows||0)>0) {
+      expiredCount++;
+      await db.update(notificationCampaignDeliveries).set({status:"expired"}).where(and(eq(notificationCampaignDeliveries.campaignId,campaign.id),or(eq(notificationCampaignDeliveries.status,"pending"),eq(notificationCampaignDeliveries.status,"failed"))));
+    }
+  }
+  const due=await db.select().from(notificationCampaigns).where(and(eq(notificationCampaigns.status,"scheduled"),lte(notificationCampaigns.scheduledAt,now))).limit(100);
+  let published=0,failed=0,expiredDuringPublish=0;
+  for(const campaign of due) {
+    try {
+      const result=await broadcastCustomerNotification(campaign.createdBy,{title:campaign.title,body:campaign.body,eventKey:campaign.eventKey,category:campaign.category as AdminBroadcastCategory,priority:campaign.priority as NotificationPriority,href:campaign.href,targetUserId:campaign.targetUserId,scheduledAt:campaign.scheduledAt?.toISOString()??null,expiresAt:campaign.expiresAt?.toISOString()??null});
+      // A campaign can expire between the initial expiry sweep and this due batch.
+      // Count the actual persisted outcome, not merely a non-throwing function call.
+      if(result.status==="published") published++;
+      else if(result.status==="expired") expiredDuringPublish++;
+    } catch(error) {
+      failed++;
+      const details = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; code?: unknown; table?: unknown } : {};
+      const message = typeof details.message === "string"
+        ? details.message.replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]").slice(0, 500)
+        : "No error message was provided";
+      const code = details.code == null ? undefined : String(details.code).replace(/[^A-Z0-9_]/gi, "").slice(0, 80);
+      const table = details.table == null ? undefined : String(details.table).replace(/[^A-Z0-9_]/gi, "").slice(0, 120);
+      console.error("[Notifications] Scheduled announcement lifecycle failed", {
+        name: typeof details.name === "string" ? details.name.slice(0, 80) : "UnknownError",
+        code,
+        table,
+        message,
+      });
+    }
+  }
+  return {expired:expiredCount+expiredDuringPublish,published,failed};
+}
+export async function listAdminNotificationCampaigns() {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const campaigns=await db.select().from(notificationCampaigns).orderBy(desc(notificationCampaigns.createdAt)).limit(100);
+  const counts=await db.select({
+    campaignId:notificationCampaignDeliveries.campaignId,
+    status:notificationCampaignDeliveries.status,
+    count:sql<number>`COUNT(*)`,
+  }).from(notificationCampaignDeliveries).where(inArray(notificationCampaignDeliveries.campaignId,campaigns.map(campaign=>campaign.id))).groupBy(notificationCampaignDeliveries.campaignId,notificationCampaignDeliveries.status);
+  const byCampaign=new Map<number,{total:number;delivered:number;read:number;failed:number;pending:number;expired:number;withdrawn:number}>();
+  for(const row of counts) {
+    const summary=byCampaign.get(row.campaignId)??{total:0,delivered:0,read:0,failed:0,pending:0,expired:0,withdrawn:0};
+    const count=Number(row.count)||0;
+    summary.total+=count;
+    if(row.status==="delivered") summary.delivered+=count;
+    if(row.status==="read") { summary.read+=count; summary.delivered+=count; }
+    if(row.status==="failed") summary.failed+=count;
+    if(row.status==="pending") summary.pending+=count;
+    if(row.status==="expired") summary.expired+=count;
+    if(row.status==="withdrawn") summary.withdrawn+=count;
+    byCampaign.set(row.campaignId,summary);
+  }
+  return campaigns.map(campaign=>({
+    ...campaign,
+    delivery:byCampaign.get(campaign.id)??{total:0,delivered:0,read:0,failed:0,pending:0,expired:0,withdrawn:0},
+  }));
+}
+export async function getNotificationCategoryVisibility():Promise<Record<NotificationCategory,boolean>> {
+  const defaults=Object.fromEntries(NOTIFICATION_CATEGORIES.map(category=>[category,true])) as Record<NotificationCategory,boolean>;
+  const raw=await getAppSetting("notification.categoryVisibility");
+  if(!raw)return defaults;
+  try { const parsed=JSON.parse(raw) as Record<string,unknown>; for(const category of NOTIFICATION_CATEGORIES) if(typeof parsed[category]==="boolean") defaults[category]=parsed[category] as boolean; } catch {}
+  return defaults;
+}
+export async function setNotificationCategoryVisibility(input:Record<NotificationCategory,boolean>,updatedBy:number) {
+  const normalized=Object.fromEntries(NOTIFICATION_CATEGORIES.map(category=>[category,input[category]!==false])) as Record<NotificationCategory,boolean>;
+  await setAppSetting("notification.categoryVisibility",JSON.stringify(normalized),updatedBy);
+  return normalized;
+}
+async function getSuppressedCampaignNotificationIds(userId:number) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  const rows=await db.select({notificationId:notificationCampaignDeliveries.notificationId}).from(notificationCampaignDeliveries)
+    .innerJoin(notificationCampaigns,eq(notificationCampaigns.id,notificationCampaignDeliveries.campaignId))
+    .where(and(eq(notificationCampaignDeliveries.userId,userId),inArray(notificationCampaigns.status,["expired","withdrawn"]),sql`${notificationCampaignDeliveries.notificationId} IS NOT NULL`));
+  return rows.map(row=>row.notificationId).filter((id):id is number=>id!==null);
+}
+import { decodeNotificationCursor, encodeNotificationCursor, normalizeNotificationPageSize } from "./modules/notification-pagination";
+
+async function getVisibleNotificationConditions(userId:number,visibility:Record<NotificationCategory,boolean>,expiredIds:number[]) {
+  const conditions=[eq(customerNotifications.userId,userId)];
+  const disabled=NOTIFICATION_CATEGORIES.filter(category=>visibility[category]===false);
+  if(disabled.length) {
+    const categoryVisibilityCondition=or(isNull(customerNotifications.category),notInArray(customerNotifications.category,disabled));
+    if(categoryVisibilityCondition)conditions.push(categoryVisibilityCondition);
+  }
+  if(expiredIds.length)conditions.push(notInArray(customerNotifications.id,expiredIds));
+  return conditions;
+}
+
+async function countUnreadWithFilters(userId:number,visibility:Record<NotificationCategory,boolean>,expiredIds:number[]) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  const conditions=await getVisibleNotificationConditions(userId,visibility,expiredIds);
+  conditions.push(isNull(customerNotifications.readAt));
+  const [row]=await db.select({total:count()}).from(customerNotifications).where(and(...conditions));
+  return Number(row?.total)||0;
+}
+
+export async function getCustomerNotificationUnreadCount(userId:number) {
+  const [visibility,expiredIds]=await Promise.all([getNotificationCategoryVisibility(),getSuppressedCampaignNotificationIds(userId)]);
+  return countUnreadWithFilters(userId,visibility,expiredIds);
+}
+
+export async function listCustomerNotificationPage(userId:number,cursorValue?:string|null,requestedLimit?:number) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  const limit=normalizeNotificationPageSize(requestedLimit);
+  const [visibility,expiredIds]=await Promise.all([
+    getNotificationCategoryVisibility(),
+    getSuppressedCampaignNotificationIds(userId),
+  ]);
+  const conditions=await getVisibleNotificationConditions(userId,visibility,expiredIds);
+  if(cursorValue!=null) {
+    const cursor=decodeNotificationCursor(cursorValue);
+    if(!cursor)throw new Error("Invalid notification history cursor");
+    const cursorCondition=or(
+      lt(customerNotifications.createdAt,cursor.createdAt),
+      and(eq(customerNotifications.createdAt,cursor.createdAt),lt(customerNotifications.id,cursor.id)),
+    );
+    if(cursorCondition)conditions.push(cursorCondition);
+  }
+  const rows=await db.select().from(customerNotifications).where(and(...conditions))
+    .orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)).limit(limit+1);
+  const hasMore=rows.length>limit;
+  const items=filterNotificationCategories(rows.slice(0,limit),visibility);
+  const last=items[items.length-1];
+  return {
+    items,
+    cursor:cursorValue??null,
+    nextCursor:hasMore&&last?encodeNotificationCursor(last.createdAt,last.id):null,
+    pageSize:limit,
+  };
+}
+
+export async function listCustomerNotifications(userId:number) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  const [visibility,expiredIds]=await Promise.all([getNotificationCategoryVisibility(),getSuppressedCampaignNotificationIds(userId)]);
+  const conditions=await getVisibleNotificationConditions(userId,visibility,expiredIds);
+  const rows=await db.select().from(customerNotifications).where(and(...conditions))
+    .orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)).limit(50);
+  return filterNotificationCategories(rows,visibility);
+}
+export async function listNotifications(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(customerNotifications).where(eq(customerNotifications.userId,userId)).orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)); }
+export async function listNotificationEventCursor(userId:number) {
+  const db=await getDb(); if(!db)throw new Error("Database is not available");
+  const visibility=await getNotificationCategoryVisibility();
+  const disabled=NOTIFICATION_CATEGORIES.filter(category=>visibility[category]===false);
+  const expiredIds=await getSuppressedCampaignNotificationIds(userId);
+  const conditions=[eq(customerNotifications.userId,userId)];
+  // Preserve legacy/unknown-category events exactly as the shared visibility filter does.
+  // SQL NOT IN evaluates to UNKNOWN for NULL, which would otherwise hide these rows.
+  if(disabled.length) {
+    const categoryVisibilityCondition = or(isNull(customerNotifications.category),notInArray(customerNotifications.category,disabled));
+    // Drizzle types `or()` as possibly undefined even with two arguments; only add a real predicate.
+    if(categoryVisibilityCondition) conditions.push(categoryVisibilityCondition);
+  }
+  if(expiredIds.length)conditions.push(notInArray(customerNotifications.id,expiredIds));
+  const rows=await db.select({id:customerNotifications.id,category:customerNotifications.category,readAt:customerNotifications.readAt}).from(customerNotifications).where(and(...conditions)).orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)).limit(500);
+  return filterVisibleNotificationEventCursor(rows,visibility);
+}
+export async function markCustomerNotificationsRead(userId:number, notificationId?:number) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const condition=notificationId
+    ? and(eq(customerNotifications.userId,userId),eq(customerNotifications.id,notificationId))
+    : and(eq(customerNotifications.userId,userId),sql`${customerNotifications.readAt} IS NULL`);
+  await db.update(customerNotifications).set({readAt:new Date()}).where(condition);
+  const readRows=await db.select({id:customerNotifications.id}).from(customerNotifications)
+    .innerJoin(notificationCampaignDeliveries,eq(notificationCampaignDeliveries.notificationId,customerNotifications.id))
+    .where(and(eq(customerNotifications.userId,userId),eq(notificationCampaignDeliveries.userId,userId),eq(notificationCampaignDeliveries.status,"delivered"),sql`${customerNotifications.readAt} IS NOT NULL`));
+  const ids=readRows.map(row=>row.id);
+  if(ids.length) await db.update(notificationCampaignDeliveries).set({status:"read",readAt:new Date()})
+    .where(and(eq(notificationCampaignDeliveries.userId,userId),inArray(notificationCampaignDeliveries.notificationId,ids),eq(notificationCampaignDeliveries.status,"delivered")));
+  return listCustomerNotifications(userId);
+}
+export async function getCustomerWalletPreferences(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); let row=(await db.select().from(customerWalletPreferences).where(eq(customerWalletPreferences.userId,userId)).limit(1))[0]; if(!row){await db.insert(customerWalletPreferences).values({userId}); row=(await db.select().from(customerWalletPreferences).where(eq(customerWalletPreferences.userId,userId)).limit(1))[0];} return row; }
+export async function updateCustomerWalletPreferences(userId:number,input:{tradingCurrency?:string;swapCurrency?:string;autoTopUpEnabled?:boolean;withdrawalWhitelistEnabled?:boolean}) { const db=await getDb(); if(!db) throw new Error("Database is not available"); await getCustomerWalletPreferences(userId); const values:any={...input}; if(values.tradingCurrency) values.tradingCurrency=values.tradingCurrency.toUpperCase(); if(values.swapCurrency) values.swapCurrency=values.swapCurrency.toUpperCase(); await db.update(customerWalletPreferences).set(values).where(eq(customerWalletPreferences.userId,userId)); return getCustomerWalletPreferences(userId); }
+export async function getCustomerOpportunityRules(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); let row=(await db.select().from(customerOpportunityRules).where(eq(customerOpportunityRules.userId,userId)).limit(1))[0]; if(!row){await db.insert(customerOpportunityRules).values({userId}); row=(await db.select().from(customerOpportunityRules).where(eq(customerOpportunityRules.userId,userId)).limit(1))[0];} return row; }
+export async function updateCustomerOpportunityRules(userId:number,input:{enabled?:boolean;minimumRewardBps?:number;maxDailyAllocationMinor?:number;allowedAssets?:string;quietHoursStart?:string;quietHoursEnd?:string}) { const db=await getDb(); if(!db) throw new Error("Database is not available"); await getCustomerOpportunityRules(userId); const values:any={...input}; if(values.allowedAssets) values.allowedAssets=values.allowedAssets.toUpperCase().replace(/\s+/g,""); await db.update(customerOpportunityRules).set(values).where(eq(customerOpportunityRules.userId,userId)); return getCustomerOpportunityRules(userId); }
+
+export async function addTicketAttachment(userId:number,input:{ticketId:number;fileName:string;mimeType:string;sizeBytes:number;storageKey:string}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const policy=await getTicketUploadPolicy();
+  if(!isAllowedAttachmentRequest({fileName:input.fileName,mimeType:input.mimeType,sizeBytes:input.sizeBytes},{maxAttachmentMb:policy.maxAttachmentMb,allowedMimeTypes:policy.allowedMimeTypes})) throw new Error("Attachment does not meet the current upload policy");
+  if(!isSupportAttachmentStorageKeyForTicket(input.storageKey,input.ticketId)) throw new Error("Invalid support attachment storage key for this ticket");
+  const ticket=(await db.select().from(supportTickets).where(and(eq(supportTickets.id,input.ticketId),eq(supportTickets.customerId,userId))).limit(1))[0];
+  if(!ticket) throw new Error("Ticket not found");
+  // A storage key identifies one private object. Never allow a second ticket to
+  // claim an existing key, including a legacy-format key issued before the
+  // ticket-scoped key format was deployed.
+  const existingKey=(await db.select({id:supportAttachments.id}).from(supportAttachments).where(eq(supportAttachments.storageKey,input.storageKey)).limit(1))[0];
+  if(existingKey) throw new Error("Attachment storage key has already been registered");
+  await db.insert(supportAttachments).values({ticketId:input.ticketId,uploadedBy:userId,fileName:input.fileName.slice(0,255),mimeType:input.mimeType.slice(0,160),sizeBytes:input.sizeBytes,storageKey:input.storageKey.slice(0,512)});
+  return {success:true};
+}
+export async function getTicketAttachmentAccess(storageKey:string) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const rows=await db.select({ticketId:supportTickets.id,customerId:supportTickets.customerId})
+    .from(supportAttachments)
+    .innerJoin(supportTickets,eq(supportTickets.id,supportAttachments.ticketId))
+    .where(eq(supportAttachments.storageKey,storageKey));
+  // Fail closed if legacy data or a concurrent registration ever creates
+  // duplicate claims for the same object; never choose an arbitrary owner.
+  if(rows.length!==1) return null;
+  return rows[0] ?? null;
+}
+
+// Controlled opportunity engine: this is an internal paper-ledger boundary. Real execution requires licensed providers/custody.
+// Legacy Starter/Growth/Pro/Institutional defaults are no longer seeded.
+// Trading entitlements now come from the canonical package catalogue and subscriptions.
+export async function provisionSignupCredit(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const amount = Number(await getAppSetting("signup.autoCreditMinor"));
+  const currency = (await getAppSetting("signup.autoCreditCurrency")) || "USD";
+  if (!Number.isSafeInteger(amount) || amount <= 0) return;
+
+  const credited = await db.transaction(async (tx) => {
+    // Serialize concurrent signup provisioning, and keep the idempotency read,
+    // wallet mutation, and ledger append within the same rollback boundary.
+    const userLock = await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`) as any;
+    if (!userLock?.[0]?.[0]?.id) throw new Error("Customer account was not found for signup credit");
+
+    const existing = await tx.select().from(balanceLedger)
+      .where(and(eq(balanceLedger.userId, userId), eq(balanceLedger.entryType, "signup_credit")))
+      .limit(1).for("update");
+    if (existing[0]) {
+      return {
+        amountMinor: Number(existing[0].amountMinor),
+        currency: String(existing[0].currency),
+      };
+    }
+
+    const balance = (await tx.select().from(customerBalances)
+      .where(and(eq(customerBalances.userId, userId), eq(customerBalances.currency, currency)))
+      .limit(1).for("update"))[0];
+    if (balance) {
+      const available = Number(balance.availableMinor);
+      const promotional = Number(balance.promotionalMinor);
+      if (
+        !Number.isSafeInteger(available) || available < 0 ||
+        !Number.isSafeInteger(promotional) || promotional < 0 ||
+        !Number.isSafeInteger(available + amount) ||
+        !Number.isSafeInteger(promotional + amount)
+      ) {
+        throw new Error("Signup credit wallet amounts are inconsistent or exceed safe integer precision");
+      }
+      const updated = await tx.update(customerBalances).set({
+        availableMinor: available + amount,
+        promotionalMinor: promotional + amount,
+        updatedAt: new Date(),
+      }).where(eq(customerBalances.id, balance.id));
+      if (Number((updated as any)[0]?.affectedRows || 0) !== 1) {
+        throw new Error("Signup credit wallet update did not affect exactly one row");
+      }
+    } else {
+      await tx.insert(customerBalances).values({
+        userId,
+        currency,
+        availableMinor: amount,
+        promotionalMinor: amount,
+        earnedMinor: 0,
+      });
+    }
+
+    await tx.insert(balanceLedger).values({
+      userId,
+      currency,
+      amountMinor: amount,
+      entryType: "signup_credit",
+      reference: "signup-" + userId,
+      withdrawable: false,
+    });
+    return { amountMinor: amount, currency };
+  });
+
+  // Notifications are best-effort after commit: a delivery failure cannot undo
+  // the wallet/ledger pair, and an idempotent call can retry the notice safely.
+  const notifySignupCredit = async (creditedAmount: number, creditedCurrency: string) => {
+    try {
+      await createNotification(
+        userId,
+        "Signup credit added",
+        "A signup credit of " + creditedAmount + " minor units was added to your " + creditedCurrency + " wallet. This credit is not withdrawable.",
+        { eventKey: "signup-credit:" + userId, category: "ledger_credit", priority: "normal" }
+      );
+    } catch (error) {
+      console.error("[Notifications] Signup credit notice failed after ledger persistence:", error instanceof Error ? error.name : "UnknownError");
+    }
+  };
+  await notifySignupCredit(credited.amountMinor, credited.currency);
+}
+const defaultCurrencies=[{code:"USD",name:"US Dollar",symbol:"$",scale:2,assetType:"fiat" as const,usdRate:"1",rateProvider:"manual",externalCode:"USD",enabled:true},{code:"EUR",name:"Euro",symbol:"€",scale:2,assetType:"fiat" as const,usdRate:"1.08",rateProvider:"manual",externalCode:"EUR",enabled:true},{code:"GBP",name:"British Pound",symbol:"£",scale:2,assetType:"fiat" as const,usdRate:"1.27",rateProvider:"manual",externalCode:"GBP",enabled:true},{code:"BTC",name:"Bitcoin",symbol:"₿",scale:8,assetType:"crypto" as const,usdRate:"65000",rateProvider:"manual",externalCode:"BTC",enabled:true},{code:"ETH",name:"Ethereum",symbol:"Ξ",scale:8,assetType:"crypto" as const,usdRate:"3500",rateProvider:"manual",externalCode:"ETH",enabled:true}];
+export async function listCurrencies(){const db=await getDb();if(!db)throw new Error("Database is not available");let rows=await db.select().from(currencyRegistry).where(eq(currencyRegistry.enabled,true));if(!rows.length){for(const c of defaultCurrencies)await db.insert(currencyRegistry).values(c).onDuplicateKeyUpdate({set:{name:c.name,symbol:c.symbol,scale:c.scale,usdRate:c.usdRate}});rows=await db.select().from(currencyRegistry).where(eq(currencyRegistry.enabled,true));}return rows;}
+export async function upsertCurrency(input:{code:string;name:string;symbol:string;scale:number;assetType:"fiat"|"crypto"|"token";usdRate:string;rateProvider:string;externalCode?:string;enabled?:boolean}){const db=await getDb();if(!db)throw new Error("Database is not available");const code=input.code.trim().toUpperCase();if(!/^[A-Z0-9._-]{2,32}$/.test(code))throw new Error("Currency code must be 2-32 letters or numbers");if(!/^[0-9]+(\\.[0-9]+)?$/.test(input.usdRate)||Number(input.usdRate)<=0)throw new Error("USD rate must be a positive decimal");await db.insert(currencyRegistry).values({...input,code,enabled:input.enabled??true}).onDuplicateKeyUpdate({set:{name:input.name.trim(),symbol:input.symbol.trim(),scale:input.scale,assetType:input.assetType,usdRate:input.usdRate,rateProvider:input.rateProvider.trim(),externalCode:input.externalCode||null,enabled:input.enabled??true}});return (await db.select().from(currencyRegistry).where(eq(currencyRegistry.code,code)).limit(1))[0];}
+export async function listBalances(userId:number){const db=await getDb();if(!db)throw new Error("Database is not available");const currencies=await listCurrencies();const existing=await db.select().from(customerBalances).where(eq(customerBalances.userId,userId));const byCode=new Map(existing.map(x=>[x.currency,x]));return currencies.map(c=>byCode.get(c.code)||{id:0,userId,currency:c.code,availableMinor:0,lockedMinor:0,promotionalMinor:0,earnedMinor:0,updatedAt:null});}
+export async function getCustomerBalanceSummary(userId:number){const currencies=await listCurrencies();const balances=await listBalances(userId);const byCode=new Map(balances.map(x=>[x.currency,x]));let availableUsd=0,lockedUsd=0,promotionalUsd=0,earnedUsd=0;for(const c of currencies){const b=byCode.get(c.code);const factor=Math.pow(10,c.scale);const rate=Number(c.usdRate)||0;availableUsd+=(Number(b?.availableMinor||0)/factor)*rate;lockedUsd+=(Number(b?.lockedMinor||0)/factor)*rate;promotionalUsd+=(Number(b?.promotionalMinor||0)/factor)*rate;earnedUsd+=(Number(b?.earnedMinor||0)/factor)*rate;}return {balances,currencies,summary:{availableUsd,lockedUsd,promotionalUsd,earnedUsd,totalUsd:availableUsd+lockedUsd}};}
+/** Return only the authenticated customer's persisted wallet ledger history. */
+export async function listCustomerWalletLedger(userId: number, limit = 50) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(100, limit)) : 50;
+  return db.select({
+    id: balanceLedger.id,
+    currency: balanceLedger.currency,
+    amountMinor: balanceLedger.amountMinor,
+    entryType: balanceLedger.entryType,
+    createdAt: balanceLedger.createdAt,
+  }).from(balanceLedger)
+    .where(eq(balanceLedger.userId, userId))
+    .orderBy(desc(balanceLedger.createdAt), desc(balanceLedger.id))
+    .limit(safeLimit);
+}
+
+
+const PAYOUT_ASSET_CODES = new Set(["USD", "EUR", "GBP", "BTC", "ETH", "USDT"]);
+
+function parseTotpRecoveryHashes(serialized: string | null | undefined): string[] | null {
+  if (!serialized) return null;
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    if (!Array.isArray(parsed) || parsed.length > 10) return null;
+    if (!parsed.every((hash) => typeof hash === "string" && /^[a-f0-9]{64}$/i.test(hash))) return null;
+    if (new Set(parsed).size !== parsed.length) return null;
+    return parsed as string[];
+  } catch {
+    return null;
+  }
+}
+
+function createTotpRecoveryCodeSet() {
+  const codes = generateTotpRecoveryCodes();
+  const hashes = codes.map((code) => hashTotpRecoveryCode(code));
+  if (hashes.some((hash) => hash === null)) throw new Error("Could not generate valid authenticator recovery codes.");
+  return { codes, hashes: hashes as string[] };
+}
+
+export async function getCustomerAuthenticatorStatus(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const row = (await db.select({
+    confirmedAt: customerTotpAuthenticators.confirmedAt,
+    pendingExpiresAt: customerTotpAuthenticators.pendingExpiresAt,
+    recoveryCodesHash: customerTotpAuthenticators.recoveryCodesHash,
+  }).from(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, userId)).limit(1))[0];
+  const pendingIsActive = Boolean(row?.pendingExpiresAt && new Date(row.pendingExpiresAt).getTime() > Date.now());
+  return {
+    enabled: Boolean(row?.confirmedAt),
+    enrollmentPending: pendingIsActive && !row?.confirmedAt,
+    replacementPending: pendingIsActive && Boolean(row?.confirmedAt),
+    recoveryCodesRemaining: parseTotpRecoveryHashes(row?.recoveryCodesHash)?.length ?? 0,
+  };
+}
+
+export async function startCustomerAuthenticatorEnrollment(userId: number) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+
+  return db.transaction(async (tx) => {
+    // Serialize enrollment starts for the account before reading or creating its
+    // authenticator row. This also makes repeated requests safe under double-clicks.
+    const user = (await tx.select({ id: users.id, role: users.role, email: users.email })
+      .from(users).where(eq(users.id, userId)).limit(1).for("update"))[0];
+    if (!user || user.role !== "user") throw new Error("Customer account was not found.");
+
+    const existing = (await tx.select().from(customerTotpAuthenticators)
+      .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (existing?.confirmedAt) {
+      throw new Error("An authenticator is already enabled. Contact support for the verified account-recovery process.");
+    }
+
+    const now = Date.now();
+    const existingExpiry = existing?.pendingExpiresAt ? new Date(existing.pendingExpiresAt).getTime() : 0;
+    if (existing?.pendingSecretCiphertext && existingExpiry > now) {
+      // Keep the same credential during the active setup window so concurrent tabs
+      // cannot invalidate one another's QR code or provisioning URI.
+      const secret = decryptTotpSecret(existing.pendingSecretCiphertext);
+      return {
+        secret,
+        provisioningUri: totpProvisioningUri(secret, user.email || `customer-${userId}`),
+        expiresAt: existing.pendingExpiresAt!,
+      };
+    }
+
+    const secret = generateTotpSecret();
+    const pendingExpiresAt = new Date((Math.floor(now / 1000) + 10 * 60) * 1000);
+    const pendingSecretCiphertext = encryptTotpSecret(secret);
+    if (existing) {
+      await tx.update(customerTotpAuthenticators).set({ pendingSecretCiphertext, pendingExpiresAt, updatedAt: new Date(now) })
+        .where(eq(customerTotpAuthenticators.userId, userId));
+    } else {
+      await tx.insert(customerTotpAuthenticators).values({ userId, pendingSecretCiphertext, pendingExpiresAt, lastUsedStep: -1 });
+    }
+    return {
+      secret,
+      provisioningUri: totpProvisioningUri(secret, user.email || `customer-${userId}`),
+      expiresAt: pendingExpiresAt,
+    };
+  });
+}
+
+export async function confirmCustomerAuthenticatorEnrollment(userId: number, code: string) {
+  if (!/^\d{6}$/.test(code)) throw new Error("Enter the six-digit code from your authenticator app.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async (tx) => {
+    const row = (await tx.select().from(customerTotpAuthenticators)
+      .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (!row?.pendingSecretCiphertext || !row.pendingExpiresAt || new Date(row.pendingExpiresAt).getTime() <= Date.now()) {
+      throw new Error("Authenticator setup has expired. Start setup again.");
+    }
+    if (row.confirmedAt) throw new Error("An authenticator is already enabled.");
+    const secret = decryptTotpSecret(row.pendingSecretCiphertext);
+    const step = verifyTotpCode(secret, code, Date.now(), -1);
+    if (step === null) throw new Error("The authenticator code is invalid or expired. Check your device time and try again.");
+    const recovery = createTotpRecoveryCodeSet();
+    await tx.update(customerTotpAuthenticators).set({
+      secretCiphertext: row.pendingSecretCiphertext,
+      pendingSecretCiphertext: null,
+      pendingExpiresAt: null,
+      confirmedAt: new Date(),
+      lastUsedStep: step,
+      recoveryCodesHash: JSON.stringify(recovery.hashes),
+      updatedAt: new Date(),
+    }).where(eq(customerTotpAuthenticators.userId, userId));
+    return { enabled: true, recoveryCodes: recovery.codes };
+  });
+}
+
+export async function generateCustomerAuthenticatorRecoveryCodes(userId: number, currentCode: string) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async (tx) => {
+    const user = (await tx.select({ id: users.id, role: users.role })
+      .from(users).where(eq(users.id, userId)).limit(1).for("update"))[0];
+    if (!user || user.role !== "user") throw new Error("Customer account was not found.");
+    const row = (await tx.select().from(customerTotpAuthenticators)
+      .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (!row?.confirmedAt || !row.secretCiphertext) throw new Error("Set up and confirm an authenticator before generating recovery codes.");
+    const step = verifyTotpCode(decryptTotpSecret(row.secretCiphertext), currentCode, Date.now(), Number(row.lastUsedStep ?? -1));
+    if (step === null) throw new Error("The current authenticator code is invalid, expired, or has already been used.");
+    const recovery = createTotpRecoveryCodeSet();
+    await tx.update(customerTotpAuthenticators).set({
+      lastUsedStep: step,
+      recoveryCodesHash: JSON.stringify(recovery.hashes),
+      updatedAt: new Date(),
+    }).where(eq(customerTotpAuthenticators.userId, userId));
+    return { recoveryCodes: recovery.codes };
+  });
+}
+
+export async function startCustomerAuthenticatorRecoveryReplacement(userId: number, recoveryCode: string) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async (tx) => {
+    const user = (await tx.select({ id: users.id, role: users.role, email: users.email })
+      .from(users).where(eq(users.id, userId)).limit(1).for("update"))[0];
+    if (!user || user.role !== "user") throw new Error("Customer account was not found.");
+    const row = (await tx.select().from(customerTotpAuthenticators)
+      .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (!row?.confirmedAt || !row.secretCiphertext) throw new Error("No enabled authenticator is available to recover.");
+    const storedHashes = parseTotpRecoveryHashes(row.recoveryCodesHash);
+    const remainingHashes = consumeTotpRecoveryCode(recoveryCode, storedHashes);
+    if (!remainingHashes) throw new Error("The recovery code is invalid or has already been used. Use a saved unused recovery code.");
+    const secret = generateTotpSecret();
+    const pendingExpiresAt = new Date((Math.floor(Date.now() / 1000) + 10 * 60) * 1000);
+    await tx.update(customerTotpAuthenticators).set({
+      pendingSecretCiphertext: encryptTotpSecret(secret),
+      pendingExpiresAt,
+      recoveryCodesHash: JSON.stringify(remainingHashes),
+      updatedAt: new Date(),
+    }).where(eq(customerTotpAuthenticators.userId, userId));
+    return {
+      secret,
+      provisioningUri: totpProvisioningUri(secret, user.email || `customer-${userId}`),
+      expiresAt: pendingExpiresAt,
+    };
+  });
+}
+
+export async function startCustomerAuthenticatorReplacement(userId: number, currentCode: string) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+
+  return db.transaction(async (tx) => {
+    const user = (await tx.select({ id: users.id, role: users.role, email: users.email })
+      .from(users).where(eq(users.id, userId)).limit(1).for("update"))[0];
+    if (!user || user.role !== "user") throw new Error("Customer account was not found.");
+    const row = (await tx.select().from(customerTotpAuthenticators)
+      .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (!row?.confirmedAt || !row.secretCiphertext) {
+      throw new Error("Set up and confirm an authenticator before replacing it.");
+    }
+
+    const currentSecret = decryptTotpSecret(row.secretCiphertext);
+    const usedStep = verifyTotpCode(currentSecret, currentCode, Date.now(), Number(row.lastUsedStep ?? -1));
+    if (usedStep === null) throw new Error("The current authenticator code is invalid, expired, or has already been used.");
+
+    const secret = generateTotpSecret();
+    const pendingExpiresAt = new Date((Math.floor(Date.now() / 1000) + 10 * 60) * 1000);
+    await tx.update(customerTotpAuthenticators).set({
+      lastUsedStep: usedStep,
+      pendingSecretCiphertext: encryptTotpSecret(secret),
+      pendingExpiresAt,
+      updatedAt: new Date(),
+    }).where(eq(customerTotpAuthenticators.userId, userId));
+
+    return {
+      secret,
+      provisioningUri: totpProvisioningUri(secret, user.email || `customer-${userId}`),
+      expiresAt: pendingExpiresAt,
+    };
+  });
+}
+
+export async function confirmCustomerAuthenticatorReplacement(userId: number, code: string) {
+  if (!/^\d{6}$/.test(code)) throw new Error("Enter the six-digit code from your new authenticator app.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+
+  return db.transaction(async (tx) => {
+    const row = (await tx.select().from(customerTotpAuthenticators)
+      .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (!row?.confirmedAt || !row.secretCiphertext) {
+      throw new Error("No enabled authenticator is available to replace.");
+    }
+    if (!row.pendingSecretCiphertext || !row.pendingExpiresAt || new Date(row.pendingExpiresAt).getTime() <= Date.now()) {
+      throw new Error("Authenticator replacement has expired. Start replacement again.");
+    }
+
+    const newSecret = decryptTotpSecret(row.pendingSecretCiphertext);
+    // The pending key is a new credential, so its confirmation counter is independent
+    // of counters previously consumed by the old authenticator.
+    const step = verifyTotpCode(newSecret, code, Date.now(), -1);
+    if (step === null) throw new Error("The new authenticator code is invalid or expired. Check your device time and try again.");
+
+    await tx.update(customerTotpAuthenticators).set({
+      secretCiphertext: row.pendingSecretCiphertext,
+      pendingSecretCiphertext: null,
+      pendingExpiresAt: null,
+      confirmedAt: new Date(),
+      lastUsedStep: step,
+      updatedAt: new Date(),
+    }).where(eq(customerTotpAuthenticators.userId, userId));
+    return { enabled: true };
+  });
+}
+
+async function consumePayoutAuthenticatorCode(tx: any, userId: number, code: string | undefined) {
+  const row = (await tx.select().from(customerTotpAuthenticators)
+    .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+  if (!row?.confirmedAt || !row.secretCiphertext) {
+    throw new Error("Set up and confirm an authenticator before requesting a payout.");
+  }
+  if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
+    throw new Error("Enter the current six-digit authenticator code to request a payout.");
+  }
+  const secret = decryptTotpSecret(row.secretCiphertext);
+  const step = verifyTotpCode(secret, code, Date.now(), Number(row.lastUsedStep ?? -1));
+  if (step === null) throw new Error("The authenticator code is invalid, expired, or has already been used.");
+  await tx.update(customerTotpAuthenticators).set({ lastUsedStep: step, updatedAt: new Date() })
+    .where(eq(customerTotpAuthenticators.userId, userId));
+}
+
+type CustomerPayoutInput = {
+  currency: "USD" | "EUR" | "GBP" | "BTC" | "ETH" | "USDT";
+  amountMinor: number;
+  destinationType: "bank_transfer" | "crypto_transfer";
+  destinationDetails: string;
+  idempotencyKey: string;
+  totpCode?: string;
+};
+
+type PayoutResolutionInput = {
+  requestId: number;
+  action: "paid" | "rejected";
+  externalReference?: string;
+  note: string;
+};
+
+function normalizePayoutDestinationDetails(value: string) {
+  const normalized = String(value ?? "").replace(/\0/g, "").trim();
+  if (normalized.length < 8) throw new Error("Enter the required bank beneficiary details or public wallet address and network.");
+  if (normalized.length > 1000) throw new Error("Payout destination details must be 1,000 characters or fewer.");
+  return normalized;
+}
+
+function payoutIdempotencyKey(userId: number, rawKey: string) {
+  const value = String(rawKey ?? "").trim();
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(value)) throw new Error("A valid payout idempotency key is required.");
+  return `payout:${userId}:${crypto.createHash("sha256").update(value).digest("hex")}`;
+}
+
+async function assertPayoutPolicyAllowsRequest(tx: any, userId: number, totpCode?: string) {
+  const policyRow = (await tx.select({ settingValue: appSettings.settingValue })
+    .from(appSettings).where(eq(appSettings.settingKey, "policy.defaults")).limit(1).for("update"))[0];
+  let policy: Record<string, unknown>;
+  try {
+    if (!policyRow) throw new Error("Policy is not configured");
+    const parsed = JSON.parse(String(policyRow.settingValue || "{}"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid policy shape");
+    policy = parsed as Record<string, unknown>;
+  } catch {
+    throw new Error("Payout requests are unavailable until global withdrawal policy is explicitly configured.");
+  }
+  if (policy.withdrawals !== true) throw new Error("Withdrawals are disabled by the global policy.");
+
+  const controls = (await tx.select().from(customerControls)
+    .where(eq(customerControls.userId, userId)).limit(1).for("update"))[0];
+  if (!controls) throw new Error("Customer payout controls are not configured.");
+  if (controls.accountStatus !== "active") throw new Error("Payout requests are unavailable while the account is restricted.");
+  if (controls.withdrawalsEnabled !== true) throw new Error("Withdrawals are not enabled for this customer account.");
+
+  if (policy.twofa === true || controls.twoFactorRequired === true) {
+    // Check enrollment before asking for a code, so accounts without an authenticator
+    // receive the actionable setup reason rather than a misleading missing-code error.
+    await consumePayoutAuthenticatorCode(tx, userId, totpCode);
+  } else {
+    // The customer UI treats an enabled authenticator as a payout step-up even when
+    // two-factor enrollment is optional globally. Keep server enforcement consistent.
+    const authenticator = (await tx.select({ confirmedAt: customerTotpAuthenticators.confirmedAt })
+      .from(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
+    if (authenticator?.confirmedAt) await consumePayoutAuthenticatorCode(tx, userId, totpCode);
+  }
+
+  const kycRequired = policy.kyc === true || controls.kycRequired === true;
+  if (kycRequired) {
+    if (controls.emailVerified !== true) throw new Error("Verify the account email before requesting a payout.");
+    const profile = (await tx.select({ overallStatus: kycProfiles.overallStatus })
+      .from(kycProfiles).where(eq(kycProfiles.userId, userId)).limit(1).for("update"))[0];
+    if (profile?.overallStatus !== "VERIFIED") {
+      throw new Error("Complete the required identity verification before requesting a payout.");
+    }
+  }
+}
+
+export async function getCustomerPayoutEligibility(userId: number) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    return { allowed: false, reason: "A valid customer account is required." };
+  }
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+
+  const account = (await db.select({ id: users.id, role: users.role })
+    .from(users).where(eq(users.id, userId)).limit(1))[0];
+  if (!account || account.role !== "user") {
+    return { allowed: false, reason: "Customer account was not found." };
+  }
+
+  const policyRow = (await db.select({ settingValue: appSettings.settingValue })
+    .from(appSettings).where(eq(appSettings.settingKey, "policy.defaults")).limit(1))[0];
+  let policy: Record<string, unknown>;
+  try {
+    if (!policyRow) throw new Error("Policy is not configured");
+    const parsed = JSON.parse(String(policyRow.settingValue || "{}"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid policy shape");
+    policy = parsed as Record<string, unknown>;
+  } catch {
+    return { allowed: false, reason: "Payout requests are unavailable until global withdrawal policy is explicitly configured." };
+  }
+  if (policy.withdrawals !== true) {
+    return { allowed: false, reason: "Withdrawals are disabled by the global policy." };
+  }
+
+  const controls = (await db.select().from(customerControls)
+    .where(eq(customerControls.userId, userId)).limit(1))[0];
+  if (!controls) return { allowed: false, reason: "Customer payout controls are not configured." };
+  if (controls.accountStatus !== "active") {
+    return { allowed: false, reason: "Payout requests are unavailable while the account is restricted." };
+  }
+  if (controls.withdrawalsEnabled !== true) {
+    return { allowed: false, reason: "Withdrawals are not enabled for this customer account." };
+  }
+  if (policy.twofa === true || controls.twoFactorRequired === true) {
+    const authenticator = (await db.select({ confirmedAt: customerTotpAuthenticators.confirmedAt }).from(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, userId)).limit(1))[0];
+    if (!authenticator?.confirmedAt) {
+      return { allowed: false, reason: "Set up and confirm an authenticator before requesting a payout." };
+    }
+  }
+
+  const kycRequired = policy.kyc === true || controls.kycRequired === true;
+  if (kycRequired) {
+    if (controls.emailVerified !== true) {
+      return { allowed: false, reason: "Verify the account email before requesting a payout." };
+    }
+    const profile = (await db.select({ overallStatus: kycProfiles.overallStatus })
+      .from(kycProfiles).where(eq(kycProfiles.userId, userId)).limit(1))[0];
+    if (profile?.overallStatus !== "VERIFIED") {
+      return { allowed: false, reason: "Complete the required identity verification before requesting a payout." };
+    }
+  }
+
+  return { allowed: true, reason: null };
+}
+
+async function notifyPayoutRequest(userId: number, title: string, body: string, eventKey: string) {
+  try {
+    await createNotification(userId, title, body, {
+      eventKey,
+      category: "withdrawal",
+      priority: "normal",
+      href: "/customer",
+    });
+  } catch (error) {
+    console.error("[Notifications] Payout state notice failed after commit:", error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
+type PayoutHistoryCursor = { createdAt: string; id: number };
+export function decodePayoutHistoryCursor(value?: string): PayoutHistoryCursor | null {
+  if (value === undefined) return null;
+  try {
+    if (!/^[A-Za-z0-9_-]{1,200}$/.test(value)) throw new Error("invalid encoding");
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<PayoutHistoryCursor>;
+    const date = new Date(String(parsed.createdAt ?? ""));
+    if (!Number.isSafeInteger(parsed.id) || Number(parsed.id) < 1 || !Number.isFinite(date.getTime()) || date.toISOString() !== parsed.createdAt) throw new Error("invalid values");
+    return { createdAt: date.toISOString(), id: Number(parsed.id) };
+  } catch { throw new Error("Payout history cursor is invalid."); }
+}
+export function encodePayoutHistoryCursor(createdAt: Date, id: number) {
+  return Buffer.from(JSON.stringify({ createdAt: createdAt.toISOString(), id }), "utf8").toString("base64url");
+}
+function payoutHistoryPageSize(value?: number) {
+  const pageSize = value ?? 50;
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new Error("Payout history page size must be from 1 to 100.");
+  return pageSize;
+}
+function payoutHistoryCursorPredicate(cursor: PayoutHistoryCursor) {
+  const date = new Date(cursor.createdAt);
+  return or(lt(payoutRequests.createdAt, date), and(eq(payoutRequests.createdAt, date), lt(payoutRequests.id, cursor.id)))!;
+}
+async function listPayoutHistoryPage<T extends { createdAt: Date; id: number }>(
+  selectPage: (cursorPredicate: ReturnType<typeof payoutHistoryCursorPredicate> | null, limit: number) => Promise<T[]>,
+  input: { cursor?: string; pageSize?: number } = {},
+) {
+  const pageSize = payoutHistoryPageSize(input.pageSize);
+  const cursor = decodePayoutHistoryCursor(input.cursor);
+  const rows = await selectPage(cursor ? payoutHistoryCursorPredicate(cursor) : null, pageSize + 1);
+  const hasMore = rows.length > pageSize;
+  const items = rows.slice(0, pageSize);
+  return { items, hasMore, nextCursor: hasMore && items.length ? encodePayoutHistoryCursor(items[items.length - 1].createdAt, Number(items[items.length - 1].id)) : null };
+}
+export async function listCustomerPayoutRequests(userId: number, input: { cursor?: string; pageSize?: number } = {}) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return listPayoutHistoryPage((cursorPredicate, limit) => db.select({
+    id: payoutRequests.id, requestReference: payoutRequests.requestReference, currency: payoutRequests.currency,
+    amountMinor: payoutRequests.amountMinor, destinationType: payoutRequests.destinationType, destinationDetails: payoutRequests.destinationDetails,
+    status: payoutRequests.status, externalReference: payoutRequests.externalReference, resolutionNote: payoutRequests.resolutionNote,
+    resolvedAt: payoutRequests.resolvedAt, createdAt: payoutRequests.createdAt, updatedAt: payoutRequests.updatedAt,
+  }).from(payoutRequests).where(cursorPredicate
+    ? and(eq(payoutRequests.userId, userId), cursorPredicate)
+    : eq(payoutRequests.userId, userId))
+    .orderBy(desc(payoutRequests.createdAt), desc(payoutRequests.id)).limit(limit), input);
+}
+export async function listAdminPayoutRequests(input: { cursor?: string; pageSize?: number } = {}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return listPayoutHistoryPage((cursorPredicate, limit) => db.select({
+    id: payoutRequests.id, userId: payoutRequests.userId, customerName: users.name, customerEmail: users.email,
+    requestReference: payoutRequests.requestReference, currency: payoutRequests.currency, amountMinor: payoutRequests.amountMinor,
+    destinationType: payoutRequests.destinationType, destinationDetails: payoutRequests.destinationDetails, status: payoutRequests.status,
+    externalReference: payoutRequests.externalReference, resolutionNote: payoutRequests.resolutionNote, resolvedBy: payoutRequests.resolvedBy,
+    resolvedAt: payoutRequests.resolvedAt, createdAt: payoutRequests.createdAt, updatedAt: payoutRequests.updatedAt,
+  }).from(payoutRequests).leftJoin(users, eq(users.id, payoutRequests.userId))
+    .where(cursorPredicate || undefined).orderBy(desc(payoutRequests.createdAt), desc(payoutRequests.id)).limit(limit), input);
+}
+export async function createCustomerPayoutRequest(userId: number, input: CustomerPayoutInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  const currencyCode = String(input.currency || "").trim().toUpperCase();
+  if (!PAYOUT_ASSET_CODES.has(currencyCode)) throw new Error("Choose an eligible payout currency. CKI must be swapped before requesting a payout.");
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) throw new Error("Payout amount must be a positive safe integer in the currency's minor units.");
+  if (input.destinationType !== "bank_transfer" && input.destinationType !== "crypto_transfer") throw new Error("Choose a supported manual payout destination.");
+  const cryptoCurrency = ["BTC", "ETH", "USDT"].includes(currencyCode);
+  const expectedDestinationType = cryptoCurrency ? "crypto_transfer" : "bank_transfer";
+  if (input.destinationType !== expectedDestinationType) {
+    throw new Error(cryptoCurrency
+      ? "BTC, ETH, and USDT payouts require a crypto-wallet destination; no conversion is performed."
+      : "USD, EUR, and GBP payouts require a bank-transfer destination; no conversion is performed.");
+  }
+  const destinationDetails = normalizePayoutDestinationDetails(input.destinationDetails);
+  const persistedKey = payoutIdempotencyKey(userId, input.idempotencyKey);
+  const now = new Date();
+
+  const outcome = await db.transaction(async (tx) => {
+    const user = (await tx.select({ id: users.id, role: users.role })
+      .from(users).where(eq(users.id, userId)).limit(1).for("update"))[0];
+    if (!user || user.role !== "user") throw new Error("Customer account was not found.");
+
+    // Lock the account row first so concurrent requests with the same key serialize.
+    const prior = (await tx.select().from(payoutRequests)
+      .where(eq(payoutRequests.idempotencyKey, persistedKey)).limit(1).for("update"))[0];
+    if (prior) {
+      const matches = Number(prior.userId) === userId
+        && String(prior.currency).toUpperCase() === currencyCode
+        && Number(prior.amountMinor) === input.amountMinor
+        && prior.destinationType === input.destinationType
+        && prior.destinationDetails === destinationDetails;
+      if (!matches) throw new Error("This payout idempotency key was already used for a different request.");
+      return { request: prior, created: false };
+    }
+
+    await assertPayoutPolicyAllowsRequest(tx, userId, input.totpCode);
+    const currency = (await tx.select().from(currencyRegistry)
+      .where(and(eq(currencyRegistry.code, currencyCode), eq(currencyRegistry.enabled, true))).limit(1))[0];
+    if (!currency) throw new Error(`Payout currency ${currencyCode} is not enabled.`);
+    if (!Number.isInteger(Number(currency.scale)) || Number(currency.scale) < 0 || Number(currency.scale) > 8) {
+      throw new Error("Payout currency precision is not configured correctly.");
+    }
+
+    const wallet = (await tx.select().from(customerBalances)
+      .where(and(eq(customerBalances.userId, userId), eq(customerBalances.currency, currencyCode)))
+      .limit(1).for("update"))[0];
+    if (!wallet) throw new Error(`The ${currencyCode} wallet is not configured.`);
+    const available = Number(wallet.availableMinor);
+    const locked = Number(wallet.lockedMinor);
+    const promotional = Number(wallet.promotionalMinor);
+    if (![available, locked, promotional].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      throw new Error("Wallet balance values are inconsistent; no payout was reserved.");
+    }
+    if (promotional > available) throw new Error("The promotional balance exceeds available funds; contact support before requesting a payout.");
+    if (input.amountMinor > available - promotional) {
+      throw new Error("Payout amount exceeds the available non-promotional balance.");
+    }
+    if (!Number.isSafeInteger(locked + input.amountMinor)) throw new Error("Payout reservation exceeds the supported balance amount.");
+
+    const requestReference = `payout-${crypto.randomUUID()}`;
+    const walletUpdate = await tx.update(customerBalances).set({
+      availableMinor: sql`${customerBalances.availableMinor} - ${input.amountMinor}`,
+      lockedMinor: sql`${customerBalances.lockedMinor} + ${input.amountMinor}`,
+      updatedAt: now,
+    }).where(eq(customerBalances.id, wallet.id));
+    assertExactlyOneAffectedRow(walletUpdate, "Payout wallet reservation");
+
+    await tx.insert(balanceLedger).values({
+      userId,
+      currency: currencyCode,
+      amountMinor: -input.amountMinor,
+      entryType: "payout_reserve",
+      reference: requestReference,
+      withdrawable: false,
+    });
+    await tx.insert(payoutRequests).values({
+      userId,
+      requestReference,
+      idempotencyKey: persistedKey,
+      currency: currencyCode,
+      amountMinor: input.amountMinor,
+      destinationType: input.destinationType,
+      destinationDetails,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const request = (await tx.select().from(payoutRequests)
+      .where(eq(payoutRequests.requestReference, requestReference)).limit(1))[0];
+    if (!request) throw new Error("Payout request could not be confirmed after reservation.");
+    return { request, created: true };
+  });
+
+  if (outcome.created) {
+    await notifyPayoutRequest(
+      userId,
+      "Payout request received",
+      `Your ${currencyCode} payout request ${outcome.request.requestReference} is pending manual review. Funds have been reserved; no transfer has been sent.`,
+      `payout-request:${outcome.request.requestReference}`,
+    );
+  }
+  return outcome.request;
+}
+
+export async function cancelCustomerPayoutRequest(userId: number, requestId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(requestId) || requestId <= 0) {
+    throw new Error("A valid payout request is required.");
+  }
+  const now = new Date();
+  const result = await db.transaction(async (tx) => {
+    const request = (await tx.select().from(payoutRequests)
+      .where(and(eq(payoutRequests.id, requestId), eq(payoutRequests.userId, userId)))
+      .limit(1).for("update"))[0];
+    if (!request) throw new Error("Payout request was not found.");
+    if (request.status !== "pending") throw new Error("Only a pending payout request can be cancelled.");
+
+    const wallet = (await tx.select().from(customerBalances)
+      .where(and(eq(customerBalances.userId, userId), eq(customerBalances.currency, request.currency)))
+      .limit(1).for("update"))[0];
+    if (!wallet) throw new Error("The payout wallet could not be found.");
+    const available = Number(wallet.availableMinor);
+    const locked = Number(wallet.lockedMinor);
+    const amount = Number(request.amountMinor);
+    if (![available, locked, amount].every((value) => Number.isSafeInteger(value) && value >= 0) || amount <= 0 || locked < amount) {
+      throw new Error("The reserved payout funds could not be reconciled; the request was not cancelled.");
+    }
+    if (!Number.isSafeInteger(available + amount)) throw new Error("Releasing this payout would exceed the supported balance amount.");
+
+    const walletUpdate = await tx.update(customerBalances).set({
+      availableMinor: sql`${customerBalances.availableMinor} + ${amount}`,
+      lockedMinor: sql`${customerBalances.lockedMinor} - ${amount}`,
+      updatedAt: now,
+    }).where(eq(customerBalances.id, wallet.id));
+    assertExactlyOneAffectedRow(walletUpdate, "Payout cancellation wallet release");
+
+    await tx.insert(balanceLedger).values({
+      userId,
+      currency: request.currency,
+      amountMinor: amount,
+      entryType: "payout_release",
+      reference: `${request.requestReference}:release`,
+      withdrawable: true,
+    });
+    const stateUpdate = await tx.update(payoutRequests).set({
+      status: "cancelled",
+      resolutionNote: "Cancelled by customer",
+      resolvedBy: userId,
+      resolvedAt: now,
+      updatedAt: now,
+    }).where(and(eq(payoutRequests.id, requestId), eq(payoutRequests.status, "pending")));
+    assertExactlyOneAffectedRow(stateUpdate, "Payout cancellation state transition");
+    return (await tx.select().from(payoutRequests).where(eq(payoutRequests.id, requestId)).limit(1))[0];
+  });
+
+  await notifyPayoutRequest(
+    userId,
+    "Payout request cancelled",
+    `Your payout request ${result.requestReference} was cancelled. Reserved funds have been returned to your available balance.`,
+    `payout:${result.requestReference}:cancelled`,
+  );
+  return result;
+}
+
+export async function resolveCustomerPayoutRequest(adminId: number, input: PayoutResolutionInput) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  if (!Number.isSafeInteger(adminId) || adminId <= 0 || !Number.isSafeInteger(input.requestId) || input.requestId <= 0) {
+    throw new Error("A valid administrator and payout request are required.");
+  }
+  if (input.action !== "paid" && input.action !== "rejected") throw new Error("Choose whether to mark the request paid or reject it.");
+  const externalReference = String(input.externalReference || "").trim();
+  const note = String(input.note || "").replace(/\0/g, "").trim();
+  if (note.length < 3) throw new Error("An operator reason of at least 3 characters is required to resolve a payout request.");
+  if (input.action === "paid" && (externalReference.length < 3 || externalReference.length > 160)) {
+    throw new Error("Enter the external transfer reference before marking a payout paid.");
+  }
+  if (note.length > 1000) throw new Error("Payout resolution note must be 1,000 characters or fewer.");
+  const now = new Date();
+
+  const result = await db.transaction(async (tx) => {
+    const request = (await tx.select().from(payoutRequests)
+      .where(eq(payoutRequests.id, input.requestId)).limit(1).for("update"))[0];
+    if (!request) throw new Error("Payout request was not found.");
+    if (request.status !== "pending") throw new Error("Only a pending payout request can be resolved.");
+
+    const wallet = (await tx.select().from(customerBalances)
+      .where(and(eq(customerBalances.userId, request.userId), eq(customerBalances.currency, request.currency)))
+      .limit(1).for("update"))[0];
+    if (!wallet) throw new Error("The payout wallet could not be found.");
+    const available = Number(wallet.availableMinor);
+    const locked = Number(wallet.lockedMinor);
+    const amount = Number(request.amountMinor);
+    if (![available, locked, amount].every((value) => Number.isSafeInteger(value) && value >= 0) || amount <= 0 || locked < amount) {
+      throw new Error("The reserved payout funds could not be reconciled; the request was not resolved.");
+    }
+
+    if (input.action === "paid") {
+      const duplicateReference = (await tx.select({ id: payoutRequests.id }).from(payoutRequests)
+        .where(eq(payoutRequests.externalReference, externalReference)).limit(1))[0];
+      if (duplicateReference && Number(duplicateReference.id) !== Number(request.id)) {
+        throw new Error("This external transfer reference is already assigned to another payout.");
+      }
+      const walletUpdate = await tx.update(customerBalances).set({
+        lockedMinor: sql`${customerBalances.lockedMinor} - ${amount}`,
+        updatedAt: now,
+      }).where(eq(customerBalances.id, wallet.id));
+      assertExactlyOneAffectedRow(walletUpdate, "Payout paid wallet settlement");
+      await tx.insert(balanceLedger).values({
+        userId: request.userId,
+        currency: request.currency,
+        amountMinor: 0,
+        entryType: "payout_paid",
+        reference: `${request.requestReference}:paid`,
+        withdrawable: false,
+      });
+    } else {
+      if (!Number.isSafeInteger(available + amount)) throw new Error("Releasing this payout would exceed the supported balance amount.");
+      const walletUpdate = await tx.update(customerBalances).set({
+        availableMinor: sql`${customerBalances.availableMinor} + ${amount}`,
+        lockedMinor: sql`${customerBalances.lockedMinor} - ${amount}`,
+        updatedAt: now,
+      }).where(eq(customerBalances.id, wallet.id));
+      assertExactlyOneAffectedRow(walletUpdate, "Payout rejection wallet release");
+      await tx.insert(balanceLedger).values({
+        userId: request.userId,
+        currency: request.currency,
+        amountMinor: amount,
+        entryType: "payout_release",
+        reference: `${request.requestReference}:release`,
+        withdrawable: true,
+      });
+    }
+
+    const stateUpdate = await tx.update(payoutRequests).set({
+      status: input.action,
+      externalReference: input.action === "paid" ? externalReference : null,
+      resolutionNote: note || null,
+      resolvedBy: adminId,
+      resolvedAt: now,
+      updatedAt: now,
+    }).where(and(eq(payoutRequests.id, input.requestId), eq(payoutRequests.status, "pending")));
+    assertExactlyOneAffectedRow(stateUpdate, "Payout resolution state transition");
+    return (await tx.select().from(payoutRequests).where(eq(payoutRequests.id, input.requestId)).limit(1))[0];
+  });
+
+  if (input.action === "paid") {
+    await notifyPayoutRequest(
+      result.userId,
+      "Payout marked paid",
+      `Your ${result.currency} payout request ${result.requestReference} was marked paid by an administrator. Reference: ${result.externalReference}. This record reflects a manual confirmation; no transfer was initiated by Arbitrade.`,
+      `payout:${result.requestReference}:paid`,
+    );
+  } else {
+    await notifyPayoutRequest(
+      result.userId,
+      "Payout request rejected",
+      `Your payout request ${result.requestReference} was rejected. The reserved funds have been returned to your available balance. Reason: ${note}`,
+      `payout:${result.requestReference}:rejected`,
+    );
+  }
+  return result;
+}
+
+export async function ensureCustomerControls(userId:number){const db=await getDb();if(!db)throw new Error("Database is not available");let row=(await db.select().from(customerControls).where(eq(customerControls.userId,userId)).limit(1))[0];if(!row){await db.insert(customerControls).values({userId});row=(await db.select().from(customerControls).where(eq(customerControls.userId,userId)).limit(1))[0];}return row;}
+export async function listAdminCustomers(){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const rows=await db.select({id:users.id,name:users.name,email:users.email,role:users.role,createdAt:users.createdAt}).from(users).orderBy(desc(users.createdAt));
+  const controls=await db.select().from(customerControls); const byUser=new Map(controls.map(row=>[row.userId,row]));
+  const now=new Date();
+  const activePackages=await db.select({userId:customerPackageSubscriptions.userId,packageName:packages.name})
+    .from(customerPackageSubscriptions).innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+    .where(and(eq(customerPackageSubscriptions.status,"active"),lte(customerPackageSubscriptions.startsAt,now),
+      or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,now)),
+      eq(packages.enabled,true),or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+      or(isNull(packages.expiresAt),gt(packages.expiresAt,now))));
+  const subscriptionRows=await db.select({userId:customerPackageSubscriptions.userId,packageId:customerPackageSubscriptions.packageId,
+    packageName:packages.name,status:customerPackageSubscriptions.status,startsAt:customerPackageSubscriptions.startsAt,
+    expiresAt:customerPackageSubscriptions.expiresAt,termsVersion:customerPackageSubscriptions.packageTermsVersion,
+    qualifyingBalanceUsdMinor:customerPackageSubscriptions.qualifyingBalanceUsdMinor,activationKey:customerPackageSubscriptions.activationKey})
+    .from(customerPackageSubscriptions).innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+    .orderBy(desc(customerPackageSubscriptions.startsAt));
+  const assignedTierDetailsByUser=new Map<number,any[]>();
+  for(const subscription of subscriptionRows){
+    if(!String(subscription.activationKey||"").startsWith("auto-tier:")) continue;
+    const details=assignedTierDetailsByUser.get(subscription.userId)||[];
+    details.push({packageId:Number(subscription.packageId),packageName:subscription.packageName,status:subscription.status,
+      termsVersion:Number(subscription.termsVersion||1),qualifyingBalanceUsdMinor:Number(subscription.qualifyingBalanceUsdMinor||0),
+      qualifyingBalanceUsd:Number(subscription.qualifyingBalanceUsdMinor||0)/100,startsAt:subscription.startsAt,expiresAt:subscription.expiresAt,
+      assignmentSource:"automatic"});
+    assignedTierDetailsByUser.set(subscription.userId,details);
+  }
+  const packageByUser=new Map<number,string[]>();
+  for(const subscription of activePackages){const names=packageByUser.get(subscription.userId)||[];names.push(subscription.packageName);packageByUser.set(subscription.userId,names);}
+  // Aggregate in the database so the admin directory materializes at most one
+  // qualifying-credit summary row per customer, not every historical ledger entry.
+  const qualifyingLedgerTotals=await db.select({
+    userId:balanceLedger.userId,
+    qualifyingDepositUsdMinor:sql<number>`COALESCE(SUM(${balanceLedger.qualifyingDepositUsdMinor}),0)`,
+  }).from(balanceLedger)
+    .where(inArray(balanceLedger.entryType,["admin_manual_deposit_credit","admin_manual_deposit_reversal"]))
+    .groupBy(balanceLedger.userId);
+  const qualifyingUsdMinorByUser=new Map<number,number>();
+  for(const entry of qualifyingLedgerTotals){
+    const attributed=Number(entry.qualifyingDepositUsdMinor||0);
+    if(!Number.isSafeInteger(attributed)) continue;
+    qualifyingUsdMinorByUser.set(entry.userId,attributed);
+  }
+  return rows.filter(row=>row.role!=="admin").map(row=>{
+    const control=byUser.get(row.id);
+    const assignedTiers=[...new Set(packageByUser.get(row.id)||[])];
+    const packageLabel=assignedTiers.length?assignedTiers.join(", "):"No active tier";
+    const qualifyingUsdMinor=Math.max(0,qualifyingUsdMinorByUser.get(row.id)||0);
+    return {id:row.id,name:row.name||row.email||"Customer",email:row.email||"",package:packageLabel,group:packageLabel,
+      assignedTierDetails:assignedTierDetailsByUser.get(row.id)||[],
+      qualifyingDepositUsd:qualifyingUsdMinor/100,
+      status:control?.accountStatus||"active",accountState:control?.accountStatus||"active",opportunities:"Automatically assigned tier allowance",
+      kyc:control?.kycRequired??true,withdrawals:control?.withdrawalsEnabled??false,twofa:control?.twoFactorRequired??false,
+      facial:false,emailVerified:control?.emailVerified??false,riskTier:control?.riskTier||"standard",adminNote:control?.adminNote||"",
+      companyCountryRestrictions:normalizeCustomerCompanyCountryRestrictions(control?.companyCountryRestrictions||""),createdAt:row.createdAt};
+  });
+}
+export async function createAdminCustomer(input:{name:string;email:string;password:string}){
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const email=input.email.trim().toLowerCase();
+  if(input.password.length<10)throw new Error("Customer password must be at least 10 characters");
+  const existing=(await db.select({id:users.id}).from(users).where(eq(users.email,email)).limit(1))[0];
+  if(existing)throw new Error("A customer with this email already exists");
+  const salt=crypto.randomBytes(16).toString("hex");
+  const digest=crypto.scryptSync(input.password,salt,32).toString("hex");
+  const result=await db.insert(users).values({openId:`local:customer:${crypto.randomUUID()}`,name:input.name.trim(),email,loginMethod:"password",role:"user",passwordHash:`scrypt$${salt}$${digest}`,packageName:"No active package"});
+  const id=Number(result[0].insertId);
+  await db.insert(customerControls).values({userId:id});
+  return {id,email,name:input.name.trim(),packageName:"No active package"};
+}
+export async function updateAdminCustomer(input:{id:number;name:string;email:string}){
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const email=input.email.trim().toLowerCase();
+  const existing=(await db.select({id:users.id}).from(users).where(eq(users.email,email)).limit(1))[0];
+  if(existing&&existing.id!==input.id)throw new Error("That email is already used by another account");
+  await db.update(users).set({name:input.name.trim(),email}).where(and(eq(users.id,input.id),eq(users.role,"user")));
+  return {success:true};
+}
+export async function updateCustomerControls(adminId:number,input:{userId:number;accountStatus?:"active"|"suspended"|"restricted";withdrawalsEnabled?:boolean;kycRequired?:boolean;twoFactorRequired?:boolean;emailVerified?:boolean;riskTier?:string;adminNote?:string;companyCountryRestrictions?:string[]}){
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const values:any={};
+  for(const key of ["accountStatus","withdrawalsEnabled","kycRequired","twoFactorRequired","emailVerified","riskTier","adminNote"] as const){
+    if(input[key]!==undefined) values[key]=input[key];
+  }
+  if(input.companyCountryRestrictions!==undefined) values.companyCountryRestrictions=normalizeCustomerCompanyCountryRestrictions(input.companyCountryRestrictions)||null;
+  const existing=(await db.select().from(customerControls).where(eq(customerControls.userId,input.userId)).limit(1))[0];
+  if(existing) await db.update(customerControls).set({...values,updatedBy:adminId}).where(eq(customerControls.userId,input.userId));
+  else await db.insert(customerControls).values({userId:input.userId,updatedBy:adminId,...values});
+  return {success:true};
+}
+export type AccountClosureDecision = "approve" | "reject";
+export class AccountClosureDecisionError extends Error {
+  constructor(message: string) { super(message); this.name = "AccountClosureDecisionError"; }
+}
+
+function nonZeroWalletAmount(value: string | number | null | undefined): boolean {
+  const normalized = String(value ?? "0").trim().replace(/^[+-]/, "");
+  if (!normalized) return false;
+  if (!/^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) return true;
+  return /[1-9]/.test(normalized.split(/[eE]/)[0] ?? "0");
+}
+
+/** Refuse account closure while Mining has unsettled customer obligations. Run inside the closure transaction. */
+export async function assertNoOutstandingMiningOperations(tx: any, userId: number) {
+  const guards = [
+    {
+      query: sql`SELECT id FROM mining_customer_packages
+        WHERE userId=${userId} AND status IN ('active','replaced')
+          AND (expiresAt IS NULL OR expiresAt>UTC_TIMESTAMP(3))
+          AND (endedAt IS NULL OR endedAt>UTC_TIMESTAMP(3))
+        LIMIT 1 FOR UPDATE`,
+      message: "Resolve or let all active Mining packages expire before approving account closure.",
+    },
+    {
+      query: sql`SELECT id FROM mining_pending_boost_rewards
+        WHERE userId=${userId} AND status='pending'
+        LIMIT 1 FOR UPDATE`,
+      message: "Wait for pending Mining boost rewards to settle before approving account closure.",
+    },
+    {
+      query: sql`SELECT id FROM mining_conversion_jobs
+        WHERE userId=${userId} AND status IN ('queued','retrying')
+        LIMIT 1 FOR UPDATE`,
+      message: "Resolve queued Mining conversions before approving account closure.",
+    },
+    {
+      query: sql`SELECT id FROM mining_adjustment_requests
+        WHERE userId=${userId} AND status='pending'
+        LIMIT 1 FOR UPDATE`,
+      message: "Resolve pending Mining balance adjustments before approving account closure.",
+    },
+    {
+      query: sql`SELECT id FROM mining_ledger_transactions
+        WHERE userId=${userId} AND status='pending'
+        LIMIT 1 FOR UPDATE`,
+      message: "Resolve pending Mining ledger entries before approving account closure.",
+    },
+  ] as const;
+
+  for (const guard of guards) {
+    const [rows] = await tx.execute(guard.query) as any;
+    if (rows?.length) throw new AccountClosureDecisionError(guard.message);
+  }
+}
+
+/** An explicit, audited decision. Approval anonymizes direct identity but preserves financial/audit records. */
+export async function applyAccountClosureDecision(adminId: number, input: { ticketId: number; decision: AccountClosureDecision; reason: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  if (!ENV.cookieSecret) throw new AccountClosureDecisionError("Account closure requires the configured session-signing secret.");
+
+  return db.transaction(async (tx) => {
+    const snapshot = (await tx.select({ customerId: supportTickets.customerId })
+      .from(supportTickets).where(eq(supportTickets.id, input.ticketId)).limit(1))[0];
+    if (!snapshot) throw new AccountClosureDecisionError("The account-closure ticket was not found.");
+
+    // Use one lock order (account, then ticket) for request and decision operations.
+    const user = (await tx.select().from(users).where(eq(users.id, snapshot.customerId)).limit(1).for("update"))[0];
+    const ticket = (await tx.select().from(supportTickets).where(eq(supportTickets.id, input.ticketId)).limit(1).for("update"))[0];
+    if (!ticket || ticket.customerId !== snapshot.customerId || ticket.subject !== ACCOUNT_CLOSURE_TICKET_SUBJECT || ticket.category !== "account") {
+      throw new AccountClosureDecisionError("This ticket is not a valid account-closure request.");
+    }
+    if (!user || user.role !== "user" || user.loginMethod === "closed") {
+      throw new AccountClosureDecisionError("The customer account is no longer eligible for a closure decision.");
+    }
+    if (ticket.status !== "open" && ticket.status !== "answered") {
+      throw new AccountClosureDecisionError("This account-closure request has already been decided. Submit a new request if another review is needed.");
+    }
+
+    if (input.decision === "reject") {
+      await tx.insert(supportMessages).values({
+        ticketId: ticket.id, authorId: adminId,
+        body: `ACCOUNT CLOSURE REQUEST REJECTED\n\nAdministrator review: ${input.reason.trim()}\n\nThe customer account remains open. The customer may contact support if further clarification is needed.`,
+      });
+      await tx.update(supportTickets).set({ status: "closed" }).where(eq(supportTickets.id, ticket.id));
+      await tx.insert(v5AuditEvents).values({
+        actorUserId: adminId, action: "ACCOUNT_CLOSURE_REJECTED", entityType: "customer_account",
+        entityId: String(user.id), reason: input.reason.trim(), reference: ticket.ticketNumber,
+        metadataJson: JSON.stringify({ ticketId: ticket.id, accountChanged: false }),
+      });
+      return { success: true, decision: input.decision, ticketId: ticket.id, ticketNumber: ticket.ticketNumber, customerId: user.id };
+    }
+
+    const otherActiveSupport = (await tx.select({ id: supportTickets.id }).from(supportTickets).where(and(
+      eq(supportTickets.customerId, user.id), inArray(supportTickets.status, ["open", "answered"]),
+      sql`${supportTickets.id} <> ${ticket.id}`,
+    )).limit(1).for("update"))[0];
+    if (otherActiveSupport) throw new AccountClosureDecisionError("Resolve or close the customer's other open support cases before approving account closure.");
+
+    const pendingPayout = (await tx.select({ id: payoutRequests.id }).from(payoutRequests).where(and(
+      eq(payoutRequests.userId, user.id), eq(payoutRequests.status, "pending"),
+    )).limit(1).for("update"))[0];
+    if (pendingPayout) throw new AccountClosureDecisionError("Resolve or cancel pending payout requests before approving account closure.");
+
+    const activeTrade = (await tx.select({ id: tradePositions.id }).from(tradePositions).where(and(
+      eq(tradePositions.userId, user.id), inArray(tradePositions.status, ["pending", "confirmed"]),
+    )).limit(1).for("update"))[0];
+    if (activeTrade) throw new AccountClosureDecisionError("Resolve all pending trading positions before approving account closure.");
+
+    const activeStake = (await tx.select({ id: stakePositions.id }).from(stakePositions).where(and(
+      eq(stakePositions.userId, user.id),
+      inArray(stakePositions.status, ["PENDING", "PROCESSING", "ACTIVE", "REWARD_ACCRUING", "SETTLING"]),
+    )).limit(1).for("update"))[0];
+    if (activeStake) throw new AccountClosureDecisionError("Complete or cancel active staking positions before approving account closure.");
+
+    const activeSubscription = (await tx.select({ id: customerPackageSubscriptions.id }).from(customerPackageSubscriptions).where(and(
+      eq(customerPackageSubscriptions.userId, user.id), eq(customerPackageSubscriptions.status, "active"),
+      or(isNull(customerPackageSubscriptions.expiresAt), gt(customerPackageSubscriptions.expiresAt, new Date())),
+    )).limit(1).for("update"))[0];
+    if (activeSubscription) throw new AccountClosureDecisionError("Resolve the customer's active package subscription before approving account closure.");
+
+    await assertNoOutstandingMiningOperations(tx, user.id);
+
+    const balances = await tx.select().from(customerBalances).where(eq(customerBalances.userId, user.id)).for("update");
+    if (balances.some((balance) => [balance.availableMinor, balance.lockedMinor, balance.promotionalMinor, balance.earnedMinor].some((amount) => Number(amount) !== 0))) {
+      throw new AccountClosureDecisionError("The customer has a non-zero wallet balance. Resolve or transfer funds before approving account closure.");
+    }
+    const digitalBalances = await tx.select().from(v5Wallets).where(eq(v5Wallets.userId, user.id)).for("update");
+    if (digitalBalances.some((wallet) => [wallet.availableAmount, wallet.lockedAmount, wallet.pendingAmount].some(nonZeroWalletAmount))) {
+      throw new AccountClosureDecisionError("The customer has a non-zero digital-asset balance. Resolve or transfer funds before approving account closure.");
+    }
+
+    const tombstoneOpenId = closedAccountIdentityKey(user.openId);
+    if (!tombstoneOpenId) throw new AccountClosureDecisionError("The account cannot be safely anonymized because the identity-protection secret is unavailable.");
+
+    const existingControls = (await tx.select({ userId: customerControls.userId }).from(customerControls)
+      .where(eq(customerControls.userId, user.id)).limit(1).for("update"))[0];
+    const closedControls = {
+      accountStatus: "restricted" as const, withdrawalsEnabled: false, updatedBy: adminId,
+    };
+    if (existingControls) await tx.update(customerControls).set(closedControls).where(eq(customerControls.userId, user.id));
+    else await tx.insert(customerControls).values({ userId: user.id, ...closedControls });
+
+    await tx.insert(supportMessages).values({
+      ticketId: ticket.id, authorId: adminId,
+      body: `ACCOUNT CLOSURE APPROVED\n\nThe administrator approved this request. Authentication was revoked and direct account-identifying profile fields were anonymized. Financial ledger, transaction references, and audit records remain retained where needed for compliance and dispute resolution.\n\nAdministrative decision: ${input.reason.trim()}`,
+    });
+
+    // Waiting conversion jobs cannot execute, and executable jobs were checked above.
+    // Mark waiting jobs terminal rather than retaining an orphaned conversion queue entry.
+    await tx.execute(sql`UPDATE mining_conversion_jobs
+      SET status='failed',lastError='Cancelled because the account was closed',updatedAt=UTC_TIMESTAMP(3)
+      WHERE userId=${user.id} AND status='waiting'`);
+    await tx.execute(sql`DELETE FROM mining_conversion_preferences WHERE userId=${user.id}`);
+
+    // Remove authentication secrets, device/IP history, preferences, and customer notifications.
+    // Monetary ledgers, balances, completed transactions, KYC/compliance and audit records are retained.
+    await tx.delete(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, user.id));
+    await tx.delete(customerSessions).where(eq(customerSessions.userId, user.id));
+    await tx.delete(customerWalletPreferences).where(eq(customerWalletPreferences.userId, user.id));
+    await tx.delete(customerOpportunityRules).where(eq(customerOpportunityRules.userId, user.id));
+    await tx.delete(customerEmailPreferences).where(eq(customerEmailPreferences.userId, user.id));
+    await tx.delete(authEmailTokens).where(eq(authEmailTokens.userId, user.id));
+    await tx.delete(customerNotifications).where(eq(customerNotifications.userId, user.id));
+
+    if (user.email) {
+      await tx.update(emailOutbox).set({
+        recipient: `closed-account-${user.id}@invalid.example`,
+        encryptedPayload: "[REDACTED — ACCOUNT CLOSED]",
+        status: "FAILED", leaseUntil: null, lastError: "Cancelled and redacted after account closure",
+        providerMessageId: null, sentAt: null,
+      }).where(eq(emailOutbox.recipient, user.email));
+    }
+
+    const customerTickets = await tx.select({ id: supportTickets.id }).from(supportTickets)
+      .where(eq(supportTickets.customerId, user.id)).for("update");
+    const ticketIds = customerTickets.map((row) => row.id);
+    for (const oldTicketId of ticketIds.filter((id) => id !== ticket.id)) {
+      await tx.update(supportMessages).set({
+        body: "[Conversation content redacted following approved account closure; ticket metadata retained for audit and dispute resolution.]",
+      }).where(eq(supportMessages.ticketId, oldTicketId));
+      await tx.update(supportTickets).set({
+        subject: "Closed account support record", status: "closed", assignedAdminId: null,
+      }).where(eq(supportTickets.id, oldTicketId));
+    }
+    await tx.update(supportMessages).set({
+      body: "[Customer closure-request details redacted following approval. Decision metadata is retained in the administrative audit trail.]",
+    }).where(and(eq(supportMessages.ticketId, ticket.id), eq(supportMessages.authorId, user.id)));
+
+    await tx.update(users).set({
+      openId: tombstoneOpenId, name: null, email: null, loginMethod: "closed",
+      passwordHash: null, reportingTimezone: null, authVersion: sql`${users.authVersion} + 1`,
+    }).where(and(eq(users.id, user.id), eq(users.role, "user")));
+    await tx.update(supportTickets).set({ status: "closed" }).where(eq(supportTickets.id, ticket.id));
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: adminId, action: "ACCOUNT_CLOSURE_APPROVED", entityType: "customer_account",
+      entityId: String(user.id), reason: input.reason.trim(), reference: ticket.ticketNumber,
+      metadataJson: JSON.stringify({
+        ticketId: ticket.id, directProfileAnonymized: true, authVersionIncremented: true,
+        walletAndFinancialLedgersPreserved: true,
+        supportAttachmentObjectsRetainedForProviderSpecificReview: true,
+      }),
+    });
+    return { success: true, decision: input.decision, ticketId: ticket.id, ticketNumber: ticket.ticketNumber, customerId: user.id };
+  });
+}
+
+/**
+ * Direct administrative deletion is intentionally disabled. Customer account
+ * closure must pass through the audited approve/reject workflow, which checks
+ * financial obligations, revokes access and preserves required ledgers/audit rows.
+ */
+export async function deleteAdminCustomer(_userId: number): Promise<never> {
+  throw new AccountClosureDecisionError(
+    "Direct customer deletion is disabled. Use the customer's account-closure request and the explicit administrator decision workflow.",
+  );
+}
+export async function adjustCustomerBalance(adminId:number,input:{
+  userId:number;currency:string;amountMinor:number;mode:"credit"|"debit";
+  creditClassification?:"qualifying_deposit"|"non_qualifying_credit";
+  debitClassification?:"ordinary_debit"|"qualifying_deposit_reversal";
+  reversalLedgerId?:number;reason:string;idempotencyKey:string;
+}){
+  const db=await getDb();
+  if(!db) throw new Error("Database is not available");
+  if(!Number.isSafeInteger(input.amountMinor)||input.amountMinor<=0) throw new Error("Amount must be a positive safe integer in minor units");
+  if(input.mode==="credit"&&!input.creditClassification) throw new Error("Choose whether the manual credit is a qualifying deposit or non-qualifying credit");
+  if(input.mode==="debit"&&!input.debitClassification) throw new Error("Choose whether this debit is ordinary or reverses a qualifying deposit");
+  if(input.mode==="debit"&&input.debitClassification==="qualifying_deposit_reversal"&&!Number.isSafeInteger(input.reversalLedgerId)) throw new Error("Select the qualifying deposit being reversed");
+  const idempotencyKey=String(input.idempotencyKey??"").trim();
+  if(!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) throw new Error("A valid wallet-adjustment idempotency key is required.");
+  if(String(input.reason??"").trim().length<3) throw new Error("A clear administrator reason is required for this wallet adjustment.");
+  const normalizedRequest={
+    adminId,userId:input.userId,currency:String(input.currency).trim().toUpperCase(),amountMinor:input.amountMinor,mode:input.mode,
+    creditClassification:input.creditClassification??null,debitClassification:input.debitClassification??null,
+    reversalLedgerId:input.reversalLedgerId??null,reason:String(input.reason).trim(),
+  };
+  const requestHash=crypto.createHash("sha256").update(JSON.stringify(normalizedRequest)).digest("hex");
+  const restoreCommittedResponse=(stored:unknown)=>{
+    let replay:any;try{replay=JSON.parse(String(stored))}catch{throw new Error("The prior wallet adjustment response could not be verified; do not resubmit with a new key.")}
+    if(!replay||replay.success!==true||!Number.isSafeInteger(Number(replay.ledgerId))) throw new Error("The prior wallet adjustment response is invalid; do not resubmit with a new key.");
+    if(replay.rateUpdatedAt!=null){const updatedAt=new Date(replay.rateUpdatedAt);if(!Number.isFinite(updatedAt.getTime())) throw new Error("The prior wallet adjustment response has an invalid FX timestamp.");replay.rateUpdatedAt=updatedAt;}
+    return replay;
+  };
+  const priorRequest=(await db.select().from(adminWalletAdjustmentIdempotency).where(
+    eq(adminWalletAdjustmentIdempotency.idempotencyKey,idempotencyKey),
+  ).limit(1))[0];
+  if(priorRequest){
+    if(priorRequest.requestHash!==requestHash) throw new Error("This wallet-adjustment idempotency key was already used for a different request.");
+    if(priorRequest.responseJson==null) throw new Error("The prior wallet adjustment has an incomplete idempotency record and requires administrator review.");
+    const replay=restoreCommittedResponse(priorRequest.responseJson);
+    return {...replay,idempotentReplay:true};
+  }
+  let creditTimeRate: Awaited<ReturnType<typeof fetchCurrencyUsdRate>> | null = null;
+  let creditTimeCurrency: { code: string; scale: number; assetType: "fiat" | "crypto" | "token"; externalCode: string | null } | null = null;
+  if(input.mode==="credit"&&input.creditClassification==="qualifying_deposit"&&input.userId!==adminId){
+    const preflightUser=(await db.select({id:users.id,role:users.role}).from(users).where(eq(users.id,input.userId)).limit(1))[0];
+    if(preflightUser?.role==="user"){
+      const preflightCurrency=(await db.select().from(currencyRegistry).where(and(eq(currencyRegistry.code,input.currency.toUpperCase()),eq(currencyRegistry.enabled,true))).limit(1))[0];
+      if(!preflightCurrency) throw new Error(`Currency ${input.currency} is not enabled. Add it in Currency registry first.`);
+      const assetType=String(preflightCurrency.assetType) as "fiat"|"crypto"|"token";
+      if(!["fiat","crypto","token"].includes(assetType)) throw new Error(`Wallet ${preflightCurrency.code} has an unsupported asset type for USD conversion.`);
+      creditTimeCurrency={code:String(preflightCurrency.code).toUpperCase(),scale:Number(preflightCurrency.scale),assetType,externalCode:preflightCurrency.externalCode?String(preflightCurrency.externalCode):null};
+      creditTimeRate=await fetchCurrencyUsdRate({code:creditTimeCurrency.code,assetType,externalCode:creditTimeCurrency.externalCode});
+    }
+  }
+  const ledgerReference=`admin-${adminId}-${input.userId}-${crypto.randomUUID()}`;
+  const result=await db.transaction(async tx=>{
+    await tx.insert(adminWalletAdjustmentIdempotency).values({adminId,idempotencyKey,requestHash,responseJson:null})
+      .onDuplicateKeyUpdate({set:{requestHash:sql`${adminWalletAdjustmentIdempotency.requestHash}`}});
+    const idempotencyRecord=(await tx.select().from(adminWalletAdjustmentIdempotency).where(
+      eq(adminWalletAdjustmentIdempotency.idempotencyKey,idempotencyKey),
+    ).limit(1).for("update"))[0];
+    if(!idempotencyRecord) throw new Error("Wallet-adjustment idempotency record could not be secured.");
+    if(idempotencyRecord.requestHash!==requestHash) throw new Error("This wallet-adjustment idempotency key was already used for a different request.");
+    if(idempotencyRecord.responseJson!=null){
+      const replay=restoreCommittedResponse(idempotencyRecord.responseJson);
+      return {...replay,idempotentReplay:true};
+    }
+    const user=(await tx.select({id:users.id,role:users.role,loginMethod:users.loginMethod}).from(users)
+      .where(input.userId===adminId?eq(users.id,input.userId):and(eq(users.id,input.userId),eq(users.role,"user")))
+      .limit(1).for("update"))[0];
+    if(!user) throw new Error("Customer account not found");
+    if(user.role==="user"&&user.loginMethod==="closed") throw new Error("Cannot adjust the wallet of a closed customer account");
+    if(user.role==="admin"&&user.id!==adminId) throw new Error("Administrators may adjust only their own wallet");
+    const currency=(await tx.select().from(currencyRegistry).where(and(eq(currencyRegistry.code,input.currency.toUpperCase()),eq(currencyRegistry.enabled,true))).limit(1))[0];
+    if(!currency) throw new Error(`Currency ${input.currency} is not enabled. Add it in Currency registry first.`);
+
+    let qualifyingDepositUsdMinor:number|null=null;
+    let qualifyingDepositRate:string|null=null;
+    let qualifyingDepositRateProvider:string|null=null;
+    let qualifyingDepositRateAt:Date|null=null;
+    let qualifyingDepositReversalOfId:number|null=null;
+
+    if(input.mode==="credit"&&input.creditClassification==="qualifying_deposit"&&user.role==="user"){
+      const currencyCode=String(currency.code).toUpperCase();
+      if(!creditTimeRate||!creditTimeCurrency||creditTimeCurrency.code!==currencyCode||
+        creditTimeCurrency.scale!==Number(currency.scale)||
+        creditTimeCurrency.assetType!==String(currency.assetType)||
+        creditTimeCurrency.externalCode!==(currency.externalCode?String(currency.externalCode):null)){
+        throw new Error("A fresh API conversion rate for this exact wallet configuration is required before this qualifying credit can be committed. Retry the credit.");
+      }
+      const rate=Number(creditTimeRate.rate);
+      const provider=creditTimeRate.provider;
+      const rateAt=new Date(creditTimeRate.sourceDate);
+      if(!Number.isFinite(rate)||rate<=0||!Number.isFinite(rateAt.getTime())||rateAt.getTime()>Date.now()+60_000){
+        throw new Error("A valid, timestamped API currency-to-USD rate is required before this qualifying deposit can be credited.");
+      }
+      const usdMinor=nativeMinorToUsdMinorExact(input.amountMinor,Number(currency.scale),creditTimeRate.rate);
+      if(!Number.isSafeInteger(usdMinor)||usdMinor<=0) throw new Error("Qualifying deposit USD value is invalid or below the supported precision.");
+      qualifyingDepositUsdMinor=usdMinor;
+      qualifyingDepositRate=String(creditTimeRate.rate);
+      qualifyingDepositRateProvider=provider;
+      qualifyingDepositRateAt=rateAt;
+    }
+
+    if(input.mode==="debit"&&input.debitClassification==="qualifying_deposit_reversal"){
+      if(user.role!=="user") throw new Error("Only a customer qualifying deposit can be reversed");
+      const original=(await tx.select().from(balanceLedger).where(and(
+        eq(balanceLedger.id,Number(input.reversalLedgerId)),
+        eq(balanceLedger.userId,input.userId),
+        eq(balanceLedger.currency,currency.code),
+        eq(balanceLedger.entryType,"admin_manual_deposit_credit"),
+        isNotNull(balanceLedger.qualifyingDepositUsdMinor),
+      )).limit(1).for("update"))[0];
+      if(!original) throw new Error("The selected qualifying deposit was not found for this customer and currency");
+      const priorReversals=await tx.select({
+        amountMinor:balanceLedger.amountMinor,
+        qualifyingDepositUsdMinor:balanceLedger.qualifyingDepositUsdMinor,
+      }).from(balanceLedger).where(eq(balanceLedger.qualifyingDepositReversalOfId,original.id)).for("update");
+      const reversedNative=priorReversals.reduce((sum,row)=>sum+Math.abs(Number(row.amountMinor)),0);
+      const reversedUsd=priorReversals.reduce((sum,row)=>sum+Math.abs(Number(row.qualifyingDepositUsdMinor||0)),0);
+      const remainingNative=Number(original.amountMinor)-reversedNative;
+      const originalUsd=Number(original.qualifyingDepositUsdMinor);
+      const remainingUsd=originalUsd-reversedUsd;
+      if(!Number.isSafeInteger(remainingNative)||remainingNative<=0||input.amountMinor>remainingNative){
+        throw new Error("The reversal exceeds the unreversed amount of the selected qualifying deposit");
+      }
+      if(!Number.isSafeInteger(remainingUsd)||remainingUsd<0) throw new Error("The qualifying deposit reversal history is inconsistent");
+      const reversalUsd=input.amountMinor===remainingNative?remainingUsd:Math.min(remainingUsd,proportionalMinorAmount(originalUsd,input.amountMinor,Number(original.amountMinor)));
+      if(!Number.isSafeInteger(reversalUsd)||reversalUsd<0) throw new Error("The qualifying deposit reversal value is invalid");
+      qualifyingDepositUsdMinor=-reversalUsd;
+      qualifyingDepositRate=original.qualifyingDepositRate;
+      qualifyingDepositRateProvider=original.qualifyingDepositRateProvider;
+      qualifyingDepositRateAt=original.qualifyingDepositRateAt?new Date(original.qualifyingDepositRateAt):null;
+      qualifyingDepositReversalOfId=Number(original.id);
+    }
+
+    const balance=(await tx.select().from(customerBalances).where(and(eq(customerBalances.userId,input.userId),eq(customerBalances.currency,currency.code))).limit(1).for("update"))[0];
+    const current=balance?.availableMinor??0;
+    if(!Number.isSafeInteger(current)||current<0) throw new Error("Wallet available balance is invalid; reconcile the wallet before adjusting it");
+    const next=input.mode==="credit"?current+input.amountMinor:current-input.amountMinor;
+    if(!Number.isSafeInteger(next)) throw new Error("Wallet adjustment exceeds the safe integer range");
+    if(next<0) throw new Error("Debit exceeds available wallet balance");
+    if(balance&&input.mode==="credit"&&(!Number.isSafeInteger(balance.promotionalMinor)||balance.promotionalMinor<0||!Number.isSafeInteger(balance.promotionalMinor+input.amountMinor))) throw new Error("Wallet promotional balance is invalid or exceeds the safe integer range");
+    if(balance) await tx.update(customerBalances).set({availableMinor:next,promotionalMinor:input.mode==="credit"?balance.promotionalMinor+input.amountMinor:balance.promotionalMinor}).where(eq(customerBalances.id,balance.id));
+    else await tx.insert(customerBalances).values({userId:input.userId,currency:currency.code,availableMinor:input.amountMinor,promotionalMinor:input.mode==="credit"?input.amountMinor:0,earnedMinor:0});
+
+    if(qualifyingDepositUsdMinor!==null&&creditTimeRate){
+      await tx.insert(fxRateSnapshots).values({
+        baseAsset:currency.code,quoteAsset:"USD",rate:String(creditTimeRate.rate),
+        provider:creditTimeRate.provider,sourceDate:creditTimeRate.sourceDate,
+        rawJson:JSON.stringify({currency:currency.code,usdRate:creditTimeRate.rate,provider:creditTimeRate.provider,
+          sourceDate:creditTimeRate.sourceDate,fetchedAt:creditTimeRate.fetchedAt.toISOString(),ledgerReference}),
+      });
+    }
+    const entryType=qualifyingDepositReversalOfId!==null?"admin_manual_deposit_reversal":qualifyingDepositUsdMinor!==null?"admin_manual_deposit_credit":`admin_${input.mode}`;
+    const inserted=await tx.insert(balanceLedger).values({
+      userId:input.userId,currency:currency.code,amountMinor:input.mode==="credit"?input.amountMinor:-input.amountMinor,
+      qualifyingDepositUsdMinor,qualifyingDepositRate,qualifyingDepositRateProvider,qualifyingDepositRateAt,
+      qualifyingDepositReversalOfId,entryType,reference:ledgerReference,withdrawable:false,
+    });
+    const ledgerId=Number(inserted[0].insertId);
+    if(entryType==="admin_manual_deposit_credit"||entryType==="admin_manual_deposit_reversal"){
+      // Atomic outbox: the ledger entry and its tier-qualification job commit together.
+      // sourceLedgerId is unique, so a retry cannot enqueue the same ledger credit twice.
+      await tx.insert(tradingTierQualificationJobs).values({
+        userId:input.userId,sourceLedgerId:ledgerId,status:"pending",attempts:0,availableAt:new Date(),
+      });
+    }
+    if(entryType==="admin_manual_deposit_credit"||entryType==="admin_manual_deposit_reversal"){
+      await tx.insert(v5AuditEvents).values({
+        actorUserId:adminId,
+        action:entryType==="admin_manual_deposit_credit"?"trading_qualifying_deposit_credited":"trading_qualifying_deposit_reversed",
+        entityType:"balance_ledger",entityId:String(ledgerId),reason:input.reason,reference:ledgerReference,
+        metadataJson:JSON.stringify({ledgerId,userId:input.userId,currency:currency.code,amountMinor:input.amountMinor,entryType,qualifyingDepositUsdMinor,qualifyingDepositReversalOfId,rate:qualifyingDepositRate,rateProvider:qualifyingDepositRateProvider,rateAt:qualifyingDepositRateAt?.toISOString()}),
+      });
+    }
+    const committedResponse={
+      success:true,newAvailableMinor:next,currency:currency.code,amountMinor:input.amountMinor,ledgerReference,ledgerId,entryType,
+      qualifyingDepositUsdMinor,qualifyingDepositReversalOfId,
+      rateUsd:qualifyingDepositRate!==null?Number(qualifyingDepositRate):Number(currency.usdRate),
+      rateUpdatedAt:qualifyingDepositRateAt??currency.updatedAt,
+      amountUsd:qualifyingDepositUsdMinor!==null?Math.abs(qualifyingDepositUsdMinor)/100:nativeMinorToUsd(input.amountMinor,Number(currency.scale),Number(currency.usdRate)),
+      qualifyingDepositRateProvider,
+    };
+    const idempotencyUpdate=await tx.update(adminWalletAdjustmentIdempotency).set({responseJson:JSON.stringify(committedResponse),updatedAt:new Date()})
+      .where(eq(adminWalletAdjustmentIdempotency.id,idempotencyRecord.id));
+    if(Number((idempotencyUpdate as any)[0]?.affectedRows||0)!==1) throw new Error("Wallet-adjustment response could not be committed atomically.");
+    return {...committedResponse,idempotentReplay:false};
+  });
+
+  if(!result.idempotentReplay&&(result.entryType==="admin_manual_deposit_credit"||result.entryType==="admin_manual_deposit_reversal")){
+    try{await ensureAutomaticTradingTierEntitlements(input.userId);}
+    catch(error){console.error("[Trading] Automatic tier reconciliation deferred to scheduled worker:",error instanceof Error?error.message:"UnknownError");}
+  }
+  if(!result.idempotentReplay) try {
+    await createNotification(input.userId,`Wallet ${input.mode==="credit"?"credited":"debited"}`,`An administrator ${input.mode}ed ${input.amountMinor} native ledger units to your ${input.currency.toUpperCase()} wallet. Reason: ${input.reason}`,{eventKey:`wallet-adjustment:${result.ledgerReference}`,category:input.mode==="credit"?"ledger_credit":"ledger_debit",priority:"normal"});
+  } catch(error) {
+    console.error("[Notifications] Wallet adjustment notice failed after ledger commit:",error instanceof Error?error.name:"UnknownError");
+  }
+  if(!result.idempotentReplay) try {
+    const { enqueueWalletAdjustmentEmail } = await import("./emailQueue");
+    await enqueueWalletAdjustmentEmail(input.userId,input.mode,input.amountMinor,input.currency,`admin-ledger:${adminId}:${input.userId}:${Date.now()}`);
+  } catch(error) {
+    console.error("[Email] Wallet alert enqueue failed:",error instanceof Error?error.name:"UnknownError");
+  }
+  return result;
+}
+
+export async function listOpenOffers(){const db=await getDb();if(!db)throw new Error("Database is not available");const now=new Date();return db.select().from(opportunityOffers).where(and(isNotNull(opportunityOffers.assignedUserId),isNotNull(opportunityOffers.generationKey),eq(opportunityOffers.status,"open"),lte(opportunityOffers.opensAt,now),gt(opportunityOffers.closesAt,now))).orderBy(opportunityOffers.closesAt);}
+/**
+ * Use only values explicitly published on the opportunity. These are estimates
+ * for reservation and display; they are not evidence of a realized outcome.
+ */
+function calculateTradeTerms(_userId:number, offer:any, _amountMinor:number) {
+  const minimumMinor=Number(offer.minimumMinor);
+  const rewardBps=Number(offer.expectedRewardBps);
+  if(offer.minimumMinor==null||!Number.isSafeInteger(minimumMinor)||minimumMinor<=0) {
+    throw new Error("Published opportunity has an invalid minimum allocation");
+  }
+  if(offer.expectedRewardBps==null||!Number.isSafeInteger(rewardBps)||rewardBps<0||rewardBps>10000) {
+    throw new Error("Published opportunity has an invalid estimated reward rate");
+  }
+  return { minimumMinor, rewardBps, method:"admin-published-estimate" };
+}
+function packageUsdUnitsToNativeMinor(usdUnits:number, currency:string, currencies:any[]):number { const row=currencies.find((item:any)=>item.code===currency); if(!row) throw new Error(`Currency ${currency} is not configured`); return usdUnitsToNativeMinor(usdUnits,Number(row.scale),Number(row.usdRate)); }
+const TRADE_ALLOCATION_CONTROL_KEY = "trading.allocations.paused";
+
+export type TradeAllocationControls = {
+  allocationsPaused: boolean;
+  reason: string;
+  updatedAt: string | null;
+  updatedBy: number | null;
+};
+
+function parseTradeAllocationControls(raw: string | null | undefined): TradeAllocationControls {
+  // Permanent: allocation pause never fail-closes automatic trading.
+  if (!raw) {
+    return { allocationsPaused: false, reason: "Allocation control absent; automatic trading remains active.", updatedAt: null, updatedBy: null };
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" ||
+        typeof value.allocationsPaused !== "boolean" ||
+        typeof value.reason !== "string" ||
+        !(value.updatedAt === null || typeof value.updatedAt === "string") ||
+        !(value.updatedBy === null || (Number.isSafeInteger(value.updatedBy) && value.updatedBy > 0))) {
+      return { allocationsPaused: false, reason: "Allocation control shape invalid; automatic trading remains active.", updatedAt: null, updatedBy: null };
+    }
+    return {
+      allocationsPaused: false,
+      reason: value.allocationsPaused ? (value.reason || "Pause requested but automatic trading remains active by platform policy.") : (value.reason || ""),
+      updatedAt: value.updatedAt,
+      updatedBy: value.updatedBy,
+    };
+  } catch {
+    return { allocationsPaused: false, reason: "Allocation control unreadable; automatic trading remains active.", updatedAt: null, updatedBy: null };
+  }
+}
+
+export async function getTradeAllocationControls(): Promise<TradeAllocationControls> {
+  try {
+    const db = await getDb();
+    if (!db) throw new Error("Database is not available");
+    const row = (await db.select({ settingValue: appSettings.settingValue }).from(appSettings)
+      .where(eq(appSettings.settingKey, TRADE_ALLOCATION_CONTROL_KEY)).limit(1))[0];
+    return parseTradeAllocationControls(row?.settingValue);
+  } catch (error) {
+    const cause = error as { name?: unknown; message?: unknown; code?: unknown; errno?: unknown; sqlState?: unknown };
+    console.error("[Trading] Admin allocation safety status read failed", {
+      errorName: typeof cause?.name === "string" ? cause.name : "UnknownError",
+      errorCode: typeof cause?.code === "string" || typeof cause?.code === "number" ? cause.code : undefined,
+      errorNumber: typeof cause?.errno === "number" ? cause.errno : undefined,
+      sqlState: typeof cause?.sqlState === "string" ? cause.sqlState : undefined,
+      message: typeof cause?.message === "string" ? cause.message : "Unknown database error",
+    });
+    throw new Error("Unable to load the Trading allocation safety status. Check server logs for the underlying database error.");
+  }
+}
+
+export async function setTradeAllocationControls(updatedBy: number, input: { allocationsPaused: boolean; reason: string }) {
+  if (!Number.isSafeInteger(updatedBy) || updatedBy <= 0) throw new Error("Administrator identity is required");
+  const reason = String(input.reason ?? "").trim();
+  if (input.allocationsPaused && reason.length < 8) throw new Error("Provide a reason of at least 8 characters before pausing new allocations");
+  if (reason.length > 500) throw new Error("Pause reason must be 500 characters or fewer");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async tx => {
+    const row = (await tx.select({ settingKey: appSettings.settingKey, settingValue: appSettings.settingValue })
+      .from(appSettings).where(eq(appSettings.settingKey, TRADE_ALLOCATION_CONTROL_KEY)).limit(1).for("update"))[0];
+    if (!row && !input.allocationsPaused) {
+      throw new Error("Global allocation safety setting is missing; apply the migration before resuming new allocations");
+    }
+    const previous = parseTradeAllocationControls(row?.settingValue);
+    const next: TradeAllocationControls = {
+      allocationsPaused: input.allocationsPaused,
+      reason: input.allocationsPaused ? reason : (reason || "Resumed by administrator"),
+      updatedAt: new Date().toISOString(),
+      updatedBy,
+    };
+    const settingValue = JSON.stringify(next);
+    if (row) {
+      await tx.update(appSettings).set({ settingValue, updatedBy, updatedAt: new Date() })
+        .where(eq(appSettings.settingKey, TRADE_ALLOCATION_CONTROL_KEY));
+    } else {
+      await tx.insert(appSettings).values({ settingKey: TRADE_ALLOCATION_CONTROL_KEY, settingValue, updatedBy });
+    }
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: updatedBy,
+      action: input.allocationsPaused ? "trading_new_allocations_paused" : "trading_new_allocations_resumed",
+      entityType: "trade_allocation_controls",
+      entityId: "global",
+      reason: next.reason,
+      reference: "trade-allocation-control:" + crypto.randomUUID(),
+      metadataJson: JSON.stringify({ old: previous, new: next }),
+    });
+    return next;
+  });
+}
+
+export async function listAdminTradingPackages() {
+  try {
+    const db=await getDb();
+    if(!db) throw new Error("Database is not available");
+    return await db.select().from(packages).orderBy(packages.minimumQualifyingBalanceUsdMinor,packages.id);
+  } catch (error) {
+    // Keep database details server-side while recording enough context to diagnose
+    // missing migrations, missing tables/columns, connectivity, or permission errors.
+    const cause = error as { name?: unknown; message?: unknown; code?: unknown; errno?: unknown; sqlState?: unknown };
+    console.error("[Trading] Admin package catalogue read failed", {
+      errorName: typeof cause?.name === "string" ? cause.name : "UnknownError",
+      errorCode: typeof cause?.code === "string" || typeof cause?.code === "number" ? cause.code : undefined,
+      errorNumber: typeof cause?.errno === "number" ? cause.errno : undefined,
+      sqlState: typeof cause?.sqlState === "string" ? cause.sqlState : undefined,
+      message: typeof cause?.message === "string" ? cause.message : "Unknown database error",
+    });
+    throw new Error("Unable to load the Trading package catalogue. Check server logs for the underlying database error.");
+  }
+}
+export async function createAdminTradingPackage(createdBy:number,input:{
+  name:string; minimumQualifyingBalanceUsdMinor:number; durationMonths:number;
+  opportunitiesPerDay:number; maxPopupsPerDay:number; maxActiveInvestments:number;
+  startsAt:Date|null; expiresAt:Date|null; enabled:boolean; reason:string;
+}) {
+  const name=input.name.trim();
+  if(!name||name.length>80) throw new Error("Package name must contain 1–80 characters");
+  const auditReason=String(input.reason??"").trim();
+  if(auditReason.length<5||auditReason.length>500) throw new Error("Provide an audit reason of 5–500 characters");
+  if(!Number.isSafeInteger(input.minimumQualifyingBalanceUsdMinor)||input.minimumQualifyingBalanceUsdMinor<=0) throw new Error("Minimum qualifying balance must be a positive USD minor-unit integer");
+  if(!Number.isSafeInteger(input.durationMonths)||input.durationMonths<1||input.durationMonths>1200) throw new Error("Package duration must be 1–1200 calendar months");
+  if(!Number.isSafeInteger(input.opportunitiesPerDay)||input.opportunitiesPerDay<1||input.opportunitiesPerDay>10000) throw new Error("Daily opportunity quota must be between 1 and 10000");
+  if(!Number.isSafeInteger(input.maxPopupsPerDay)||input.maxPopupsPerDay<0||input.maxPopupsPerDay>10000) throw new Error("Package popup cap must be between 0 and 10000");
+  if(!Number.isSafeInteger(input.maxActiveInvestments)||input.maxActiveInvestments<0||input.maxActiveInvestments>10000) throw new Error("Package active-investment cap must be between 0 and 10000");
+  if(input.startsAt&&!Number.isFinite(input.startsAt.getTime())) throw new Error("Package start time is invalid");
+  if(input.expiresAt&&!Number.isFinite(input.expiresAt.getTime())) throw new Error("Package expiry time is invalid");
+  if(input.startsAt&&input.expiresAt&&input.expiresAt<=input.startsAt) throw new Error("Package expiry must be later than its start time");
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return db.transaction(async tx=>{
+    const duplicate=(await tx.select({id:packages.id}).from(packages).where(eq(packages.name,name)).limit(1).for("update"))[0];
+    if(duplicate) throw new Error("A package with this name already exists");
+    const policyConflict=(await tx.select({id:opportunityPackagePolicies.id}).from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,name)).limit(1).for("update"))[0];
+    if(policyConflict) throw new Error("A tier policy with this name already exists; reconcile the orphan policy before creating the tier.");
+    const inserted=await tx.insert(packages).values({
+      name,minimumQualifyingBalanceUsdMinor:input.minimumQualifyingBalanceUsdMinor,
+      durationMonths:input.durationMonths,opportunitiesPerDay:input.opportunitiesPerDay,
+      maxPopupsPerDay:input.maxPopupsPerDay,maxActiveInvestments:input.maxActiveInvestments,
+      startsAt:input.startsAt,expiresAt:input.expiresAt,enabled:input.enabled,termsVersion:1,
+    });
+    const id=Number(inserted[0].insertId);
+    await tx.insert(opportunityPackagePolicies).values({packageName:name,updatedBy:createdBy,...DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY});
+    await tx.insert(v5AuditEvents).values({
+      actorUserId:createdBy,action:"trading_package_created",entityType:"trading_package",entityId:String(id),
+      reason:auditReason,
+      reference:"trading-package-created:"+id+":1",
+      metadataJson:JSON.stringify({id,...input,name,termsVersion:1}),
+    });
+    return {id,name,minimumQualifyingBalanceUsdMinor:input.minimumQualifyingBalanceUsdMinor,durationMonths:input.durationMonths,opportunitiesPerDay:input.opportunitiesPerDay,maxPopupsPerDay:input.maxPopupsPerDay,maxActiveInvestments:input.maxActiveInvestments,startsAt:input.startsAt,expiresAt:input.expiresAt,enabled:input.enabled,termsVersion:1};
+  });
+}
+
+export class TradingPackageTermsVersionConflictError extends Error {
+  constructor() { super("This package changed in another session. Refresh the saved terms before retrying."); this.name="TradingPackageTermsVersionConflictError"; }
+}
+export async function updateAdminTradingPackage(updatedBy:number,input:{
+  id:number; expectedTermsVersion:number; name:string; minimumQualifyingBalanceUsdMinor:number; durationMonths:number;
+  opportunitiesPerDay:number; maxPopupsPerDay:number; maxActiveInvestments:number;
+  startsAt:Date|null; expiresAt:Date|null; enabled:boolean; reason:string;
+}) {
+  const auditReason=String(input.reason??"").trim();
+  if(auditReason.length<5||auditReason.length>500) throw new Error("Provide an audit reason of 5–500 characters");
+  if(!Number.isSafeInteger(input.id)||input.id<=0) throw new Error("Package ID is invalid");
+  if(!Number.isSafeInteger(input.expectedTermsVersion)||input.expectedTermsVersion<1) throw new Error("A valid saved package terms version is required.");
+  if(!input.name.trim()||input.name.trim().length>80) throw new Error("Package name must contain 1–80 characters");
+  if(!Number.isSafeInteger(input.minimumQualifyingBalanceUsdMinor)||input.minimumQualifyingBalanceUsdMinor<=0) throw new Error("Minimum qualifying balance must be a positive USD minor-unit integer");
+  if(!Number.isSafeInteger(input.durationMonths)||input.durationMonths<1||input.durationMonths>1200) throw new Error("Package duration must be 1–1200 calendar months");
+  if(!Number.isSafeInteger(input.opportunitiesPerDay)||input.opportunitiesPerDay<1||input.opportunitiesPerDay>10000) throw new Error("Daily opportunity quota must be between 1 and 10000");
+  if(!Number.isSafeInteger(input.maxPopupsPerDay)||input.maxPopupsPerDay<0||input.maxPopupsPerDay>10000) throw new Error("Package popup cap must be between 0 and 10000; zero means use the admin policy cap");
+  if(!Number.isSafeInteger(input.maxActiveInvestments)||input.maxActiveInvestments<0||input.maxActiveInvestments>10000) throw new Error("Package active-investment cap must be between 0 and 10000; zero means no tier-specific cap");
+  if(input.startsAt&&!Number.isFinite(input.startsAt.getTime())) throw new Error("Package start time is invalid");
+  if(input.expiresAt&&!Number.isFinite(input.expiresAt.getTime())) throw new Error("Package expiry time is invalid");
+  if(input.startsAt&&input.expiresAt&&input.expiresAt<=input.startsAt) throw new Error("Package expiry must be later than its start time");
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return db.transaction(async tx=>{
+    const current=(await tx.select().from(packages).where(eq(packages.id,input.id)).limit(1).for("update"))[0];
+    if(!current) throw new Error("Trading package not found");
+    if(Number(current.termsVersion||1)!==input.expectedTermsVersion) throw new TradingPackageTermsVersionConflictError();
+    const nextName=input.name.trim();
+    const conflicting=(await tx.select({id:packages.id}).from(packages).where(eq(packages.name,nextName)).limit(1))[0];
+    if(conflicting&&conflicting.id!==input.id) throw new Error("A tier with this name already exists");
+    if(current.name!==nextName){
+      const currentPolicy=(await tx.select().from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,current.name)).limit(1).for("update"))[0];
+      const targetPolicy=(await tx.select({id:opportunityPackagePolicies.id}).from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,nextName)).limit(1).for("update"))[0];
+      if(!currentPolicy) throw new Error("Saved Trading policy is missing for "+current.name+"; reconcile it explicitly before renaming this tier.");
+      if(targetPolicy&&targetPolicy.id!==currentPolicy.id) throw new Error("A tier policy with the new name already exists; reconcile it before renaming this tier.");
+      const nextPolicyVersion=Number(currentPolicy.policyVersion||0)+1;
+      if(!Number.isSafeInteger(nextPolicyVersion)) throw new Error("Tier policy version has reached its limit");
+      await tx.update(opportunityPackagePolicies).set({packageName:nextName,updatedBy,policyVersion:nextPolicyVersion,updatedAt:new Date()}).where(eq(opportunityPackagePolicies.id,currentPolicy.id));
+    }
+    const activationPolicy=(await tx.select().from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,nextName)).limit(1).for("update"))[0];
+    if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&(
+      !activationPolicy||
+      Number(activationPolicy.policyVersion)<1||
+      !Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))||
+      !Number.isSafeInteger(Number(activationPolicy.maximumPayoutRateBps))||
+      Number(activationPolicy.minimumPayoutRateBps)<0||
+      Number(activationPolicy.maximumPayoutRateBps)<Number(activationPolicy.minimumPayoutRateBps)||
+      !Number.isSafeInteger(Number(activationPolicy.minimumTradeDurationSeconds))||
+      !Number.isSafeInteger(Number(activationPolicy.maximumTradeDurationSeconds))||
+      Number(activationPolicy.minimumTradeDurationSeconds)<10||
+      Number(activationPolicy.maximumTradeDurationSeconds)<Number(activationPolicy.minimumTradeDurationSeconds)||
+      Number(activationPolicy.maximumTradeDurationSeconds)>86400
+    )) {
+      throw new Error("Save and enable a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier. Automatic financial execution is a separate control and is not required for customer pop-up eligibility.");
+    }
+    const nextVersion=Number(current.termsVersion||1)+1;
+    if(!Number.isSafeInteger(nextVersion)) throw new Error("Package terms version has reached its limit");
+    await tx.update(packages).set({
+      name:input.name.trim(),
+      minimumQualifyingBalanceUsdMinor:input.minimumQualifyingBalanceUsdMinor,
+      durationMonths:input.durationMonths,
+      opportunitiesPerDay:input.opportunitiesPerDay,
+      maxPopupsPerDay:input.maxPopupsPerDay,
+      maxActiveInvestments:input.maxActiveInvestments,
+      startsAt:input.startsAt,
+      expiresAt:input.expiresAt,
+      enabled:input.enabled,
+      termsVersion:nextVersion,
+    }).where(eq(packages.id,input.id));
+    await tx.insert(v5AuditEvents).values({
+      actorUserId:updatedBy,action:"trading_package_terms_updated",
+      entityType:"trading_package",entityId:String(input.id),
+      reason:auditReason,
+      reference:"trading-package-terms:"+input.id+":"+nextVersion,
+      metadataJson:JSON.stringify({old:{name:current.name,minimumQualifyingBalanceUsdMinor:Number(current.minimumQualifyingBalanceUsdMinor),durationMonths:current.durationMonths,opportunitiesPerDay:current.opportunitiesPerDay,maxPopupsPerDay:current.maxPopupsPerDay,maxActiveInvestments:current.maxActiveInvestments,startsAt:current.startsAt,expiresAt:current.expiresAt,enabled:current.enabled,termsVersion:current.termsVersion},new:{...input,name:input.name.trim(),termsVersion:nextVersion}}),
+    });
+    return {id:input.id,name:input.name.trim(),minimumQualifyingBalanceUsdMinor:input.minimumQualifyingBalanceUsdMinor,durationMonths:input.durationMonths,opportunitiesPerDay:input.opportunitiesPerDay,maxPopupsPerDay:input.maxPopupsPerDay,maxActiveInvestments:input.maxActiveInvestments,startsAt:input.startsAt,expiresAt:input.expiresAt,enabled:input.enabled,termsVersion:nextVersion};
+  });
+}
+
+/**
+ * Customer-safe, read-only progressive eligibility summary. Returns only the
+ * current automatically assigned tier and at most one next milestone with the
+ * qualification progress and allowance fields permitted by the canonical spec;
+ * never returns a full catalogue or customer activation/management controls.
+ */
+/**
+ * Reconcile automatic tier entitlements from persisted qualifying-deposit
+ * attribution. Called by the scheduled worker so tier start dates and admin
+ * configuration changes do not depend on a customer visit or another deposit.
+ */
+export async function ensureAutomaticTradingTierEntitlements(userId:number):Promise<boolean> {
+  const db=await getDb();
+  if(!db) throw new Error("Trading eligibility is temporarily unavailable.");
+  return db.transaction(async tx=>{
+    const globalSetting=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+      .where(eq(appSettings.settingKey,TRADE_GLOBAL_CONTROL_SETTINGS_KEY)).limit(1).for("update"))[0];
+    const globalPolicy=parseTradeGlobalControlPolicy(globalSetting?.settingValue);
+    if(!globalPolicy?.tierPolicyMasterEnabled) return false;
+    const user=(await tx.select({id:users.id,role:users.role,loginMethod:users.loginMethod})
+      .from(users).where(eq(users.id,userId)).limit(1).for("update"))[0];
+    if(!user||user.role!=="user"||user.loginMethod==="closed") return true;
+    const creditedRows=await tx.select({amount:balanceLedger.qualifyingDepositUsdMinor})
+      .from(balanceLedger).where(and(
+        eq(balanceLedger.userId,userId),
+        inArray(balanceLedger.entryType,["admin_manual_deposit_credit","admin_manual_deposit_reversal"]),
+        isNotNull(balanceLedger.qualifyingDepositUsdMinor),
+      ));
+    const qualifyingTotal=creditedRows.reduce((sum,row)=>sum+Number(row.amount||0),0);
+    if(!Number.isSafeInteger(qualifyingTotal)||qualifyingTotal<0) throw new Error("Cumulative qualifying deposit total is invalid.");
+    const now=new Date();
+    const tiers=await tx.select().from(packages)
+      .orderBy(packages.minimumQualifyingBalanceUsdMinor,packages.id).for("update");
+    const history=await tx.select().from(customerPackageSubscriptions)
+      .where(eq(customerPackageSubscriptions.userId,userId))
+      .orderBy(desc(customerPackageSubscriptions.activatedAt)).for("update");
+
+    for(const tier of tiers){
+      const threshold=Number(tier.minimumQualifyingBalanceUsdMinor);
+      const tierHistory=history.filter(row=>Number(row.packageId)===Number(tier.id)&&String(row.activationKey||"").startsWith("auto-tier:"));
+      const activeRows=tierHistory.filter(row=>row.status==="active"&&(!row.expiresAt||new Date(row.expiresAt)>now));
+
+      const belowSnapshotThreshold=activeRows.filter(entitlement=>{
+        try {
+          const snapshot=JSON.parse(String(entitlement.termsSnapshotJson||"{}"));
+          const assignedThreshold=Number(snapshot.minimumQualifyingBalanceUsdMinor??threshold);
+          return !Number.isSafeInteger(assignedThreshold)||assignedThreshold<=0||qualifyingTotal<assignedThreshold;
+        } catch {
+          return qualifyingTotal<threshold;
+        }
+      });
+      for(const entitlement of belowSnapshotThreshold){
+        let assignedThreshold=threshold;
+        try {
+          const snapshot=JSON.parse(String(entitlement.termsSnapshotJson||"{}"));
+          assignedThreshold=Number(snapshot.minimumQualifyingBalanceUsdMinor??threshold);
+        } catch {}
+        await tx.update(customerPackageSubscriptions).set({status:"expired"})
+          .where(and(eq(customerPackageSubscriptions.id,entitlement.id),eq(customerPackageSubscriptions.status,"active")));
+        await tx.insert(v5AuditEvents).values({
+          actorUserId:null,action:"trading_tier_auto_disqualified",entityType:"customer_package_subscription",entityId:String(entitlement.id),
+          reason:"A qualifying deposit reversal reduced cumulative qualifying deposits below the threshold recorded in this entitlement's terms snapshot.",
+          reference:"trading-tier-revoked:"+userId+":"+tier.id+":"+now.getTime()+":"+crypto.randomUUID().slice(0,8),
+          metadataJson:JSON.stringify({userId,packageId:Number(tier.id),subscriptionId:Number(entitlement.id),qualifyingDepositUsdMinor:qualifyingTotal,thresholdUsdMinor:assignedThreshold,configuredThresholdUsdMinor:threshold,termsVersion:Number(tier.termsVersion),source:"scheduled_worker_reconciliation"}),
+        });
+      }
+      const stillActive=activeRows.length>belowSnapshotThreshold.length;
+      if(stillActive) continue;
+      if(qualifyingTotal<threshold) continue;
+
+      const tierAvailable=Boolean(tier.enabled)&&(!tier.startsAt||new Date(tier.startsAt)<=now)&&(!tier.expiresAt||new Date(tier.expiresAt)>now);
+      if(!tierAvailable) continue;
+      const latest=tierHistory[0];
+      // Do not silently renew an expired entitlement every worker tick. A new
+      // qualifying credit or a new administrator terms version can re-assign it.
+      if(latest&&Number(latest.qualifyingBalanceUsdMinor)>=qualifyingTotal&&Number(latest.packageTermsVersion)===Number(tier.termsVersion)) continue;
+
+      const expiresAt=addCalendarMonths(now,Number(tier.durationMonths));
+      const activationKey="auto-tier:"+userId+":"+tier.id+":"+now.getTime()+":"+crypto.randomUUID().slice(0,8);
+      const snapshot={id:Number(tier.id),name:tier.name,minimumQualifyingBalanceUsdMinor:threshold,durationMonths:Number(tier.durationMonths),opportunitiesPerDay:Number(tier.opportunitiesPerDay),maxPopupsPerDay:Number(tier.maxPopupsPerDay||0),maxActiveInvestments:Number(tier.maxActiveInvestments||0),startsAt:tier.startsAt?new Date(tier.startsAt).toISOString():null,expiresAt:tier.expiresAt?new Date(tier.expiresAt).toISOString():null,termsVersion:Number(tier.termsVersion),qualificationSource:"cumulative_authorized_admin_manual_deposit_credits",qualifyingDepositUsdMinor:qualifyingTotal};
+      const inserted=await tx.insert(customerPackageSubscriptions).values({
+        userId,packageId:Number(tier.id),startsAt:now,expiresAt,status:"active",activationKey,
+        termsSnapshotJson:JSON.stringify(snapshot),qualifyingBalanceUsdMinor:qualifyingTotal,
+        packageTermsVersion:Number(tier.termsVersion),activatedAt:now,createdAt:now,
+      });
+      const subscriptionId=Number(inserted[0].insertId);
+      await tx.insert(v5AuditEvents).values({
+        actorUserId:null,action:"trading_tier_auto_qualified",entityType:"customer_package_subscription",entityId:String(subscriptionId),
+        reason:"Scheduled worker reconciled tier eligibility from cumulative qualifying administrator manual deposit credits.",
+        reference:"trading-auto-tier:"+userId+":"+tier.id+":"+now.getTime()+":"+crypto.randomUUID().slice(0,8),
+        metadataJson:JSON.stringify({subscriptionId,userId,packageId:Number(tier.id),qualifyingDepositUsdMinor:qualifyingTotal,thresholdUsdMinor:threshold,dailyQuota:Number(tier.opportunitiesPerDay),termsVersion:Number(tier.termsVersion),expiresAt:expiresAt.toISOString(),source:"scheduled_worker"}),
+      });
+      history.unshift({id:subscriptionId,userId,packageId:Number(tier.id),startsAt:now,expiresAt,status:"active",activationKey,termsSnapshotJson:JSON.stringify(snapshot),qualifyingBalanceUsdMinor:qualifyingTotal,packageTermsVersion:Number(tier.termsVersion),activatedAt:now,createdAt:now} as typeof history[number]);
+    }
+    return true;
+  });
+}
+
+/**
+ * Process durable qualification jobs created atomically with administrator
+ * qualifying-credit/reversal ledger entries. Idle cycles perform only one
+ * indexed queue lookup; no full customer scan is required.
+ */
+export async function runTradingTierQualificationWorkerCycle(options?: { batchSize?: number }) {
+  const db=await getDb();
+  if(!db) throw new Error("Trading qualification worker database is unavailable.");
+  const globalPolicy=await getTradeGlobalControls();
+  if(!globalPolicy.available||!globalPolicy.tierPolicyMasterEnabled) return {claimed:0,completed:0,retrying:0,dead:0,pausedByGlobalPolicy:true};
+  const batchSize=Math.max(1,Math.min(50,Math.floor(options?.batchSize??20)));
+  // MySQL TIMESTAMP has second precision here; use a stable persisted lease token.
+  // Eligibility keeps full precision; a just-requeued TIMESTAMP may round into the next second.
+  // Persist only second-aligned lease tokens for compare-and-set fencing.
+  const eligibilityNow=new Date();
+  const leaseNow=new Date(Math.floor(eligibilityNow.getTime()/1000)*1000);
+  const staleLeaseBefore=new Date(leaseNow.getTime()-5*60_000);
+  const jobs=await db.transaction(async tx=>{
+    const eligible=await tx.select({
+      id:tradingTierQualificationJobs.id,
+      userId:tradingTierQualificationJobs.userId,
+      sourceLedgerId:tradingTierQualificationJobs.sourceLedgerId,
+      attempts:tradingTierQualificationJobs.attempts,
+    }).from(tradingTierQualificationJobs).where(or(
+      and(eq(tradingTierQualificationJobs.status,"pending"),lte(tradingTierQualificationJobs.availableAt,eligibilityNow)),
+      and(eq(tradingTierQualificationJobs.status,"processing"),lt(tradingTierQualificationJobs.lockedAt,staleLeaseBefore)),
+    )).orderBy(tradingTierQualificationJobs.id).limit(batchSize).for("update");
+    for(const job of eligible){
+      await tx.update(tradingTierQualificationJobs).set({
+        status:"processing",attempts:Number(job.attempts||0)+1,lockedAt:leaseNow,updatedAt:leaseNow,
+      }).where(eq(tradingTierQualificationJobs.id,job.id));
+    }
+    return eligible.map(job=>({...job,attempts:Number(job.attempts||0)+1,lockedAt:leaseNow}));
+  });
+  let completed=0,retrying=0,dead=0;
+  for(const job of jobs){
+    try{
+      const reconciled=await ensureAutomaticTradingTierEntitlements(Number(job.userId));
+      if(!reconciled){
+        await db.update(tradingTierQualificationJobs).set({status:"pending",availableAt:new Date(Date.now()+30_000),lockedAt:null,lastError:"Global tier policy is OFF; the qualification job was retained for later review.",updatedAt:new Date()})
+          .where(and(eq(tradingTierQualificationJobs.id,job.id),eq(tradingTierQualificationJobs.status,"processing"),eq(tradingTierQualificationJobs.lockedAt,job.lockedAt)));
+        retrying++;
+        continue;
+      }
+      await db.update(tradingTierQualificationJobs).set({
+        status:"completed",lockedAt:null,lastError:null,updatedAt:new Date(),
+      }).where(and(
+        eq(tradingTierQualificationJobs.id,job.id),
+        eq(tradingTierQualificationJobs.status,"processing"),
+        eq(tradingTierQualificationJobs.lockedAt,job.lockedAt),
+      ));
+      completed++;
+    }catch(error){
+      const message=(error instanceof Error?error.message:"Unknown qualification worker error").slice(0,950);
+      const exhausted=job.attempts>=8;
+      const delayMs=Math.min(5*60_000,1000*2**Math.min(job.attempts,8));
+      await db.update(tradingTierQualificationJobs).set({
+        status:exhausted?"dead":"pending",
+        availableAt:new Date(Date.now()+delayMs),
+        lockedAt:null,lastError:message,updatedAt:new Date(),
+      }).where(and(
+        eq(tradingTierQualificationJobs.id,job.id),
+        eq(tradingTierQualificationJobs.status,"processing"),
+        eq(tradingTierQualificationJobs.lockedAt,job.lockedAt),
+      ));
+      if(exhausted) dead++; else retrying++;
+      console.error("[TradingTierWorker] qualification job failed",{
+        jobId:job.id,userId:job.userId,sourceLedgerId:job.sourceLedgerId,
+        attempt:job.attempts,terminal:exhausted,error:message,
+      });
+    }
+  }
+  return {claimed:jobs.length,completed,retrying,dead};
+}
+
+export async function getCustomerTradingEligibility(userId:number) {
+  const db=await getDb();
+  if(!db) throw new Error("Trading eligibility is temporarily unavailable.");
+  const globalPolicy=await getTradeGlobalControls();
+  const tierMasterEnabled=globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled;
+  const now=new Date();
+  const rows=await db.select({
+    activationKey:customerPackageSubscriptions.activationKey,
+    packageId:customerPackageSubscriptions.packageId,
+    termsSnapshotJson:customerPackageSubscriptions.termsSnapshotJson,
+    dailyQuota:packages.opportunitiesPerDay,
+    packageName:packages.name,
+    minimumQualifyingBalanceUsdMinor:packages.minimumQualifyingBalanceUsdMinor,
+    durationMonths:packages.durationMonths,
+  }).from(customerPackageSubscriptions).innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+    .where(and(
+      eq(customerPackageSubscriptions.userId,userId),
+      eq(customerPackageSubscriptions.status,"active"),
+      lte(customerPackageSubscriptions.startsAt,now),
+      or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,now)),
+      eq(packages.enabled,true),
+      or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+      or(isNull(packages.expiresAt),gt(packages.expiresAt,now)),
+    ));
+  const eligibleRows=rows.filter(row=>String(row.activationKey||"").startsWith("auto-tier:"));
+  const snapshotFor=(row:typeof rows[number])=>{
+    try { return JSON.parse(String(row.termsSnapshotJson||"{}")); } catch { return {}; }
+  };
+  const dailyOpportunityAllowance=tierMasterEnabled?eligibleRows.reduce((total,row)=>{
+    const quota=resolveCurrentPackageEntitlementQuota(snapshotFor(row),row.dailyQuota);
+    return total+(Number.isSafeInteger(quota)&&quota>=0?quota:0);
+  },0):0;
+  if(!Number.isSafeInteger(dailyOpportunityAllowance)||dailyOpportunityAllowance<0) throw new Error("Trading eligibility quota is invalid.");
+
+  // The customer receives only their highest active tier and the single next threshold,
+  // never the full administrator-managed catalogue.
+  const activePackages=eligibleRows.map(row=>{
+    const snapshot=snapshotFor(row);
+    return {
+      id:Number(row.packageId),
+      name:String(row.packageName),
+      minimumQualifyingBalanceUsdMinor:Number(snapshot.minimumQualifyingBalanceUsdMinor??row.minimumQualifyingBalanceUsdMinor),
+      durationMonths:Number(snapshot.durationMonths??row.durationMonths),
+      opportunitiesPerDay:resolveCurrentPackageEntitlementQuota(snapshot,row.dailyQuota),
+    };
+  }).filter(tier=>Number.isSafeInteger(tier.minimumQualifyingBalanceUsdMinor)&&tier.minimumQualifyingBalanceUsdMinor>0)
+    .sort((a,b)=>b.minimumQualifyingBalanceUsdMinor-a.minimumQualifyingBalanceUsdMinor);
+  const qualifyingRows=await db.select({
+    qualifyingDepositUsdMinor:balanceLedger.qualifyingDepositUsdMinor,
+  }).from(balanceLedger).where(and(
+    eq(balanceLedger.userId,userId),
+    inArray(balanceLedger.entryType,["admin_manual_deposit_credit","admin_manual_deposit_reversal"]),
+  ));
+  const qualifyingUsdMinor=qualifyingRows.reduce((total,row)=>{
+    const amount=Number(row.qualifyingDepositUsdMinor||0);
+    return Number.isSafeInteger(amount)?total+amount:total;
+  },0);
+  if(!Number.isSafeInteger(qualifyingUsdMinor)) throw new Error("Trading qualifying-deposit total is invalid.");
+  const qualifyingDepositUsdMinor=Math.max(0,qualifyingUsdMinor);
+  const tiers=await db.select({
+    name:packages.name,
+    minimumQualifyingBalanceUsdMinor:packages.minimumQualifyingBalanceUsdMinor,
+    durationMonths:packages.durationMonths,
+    opportunitiesPerDay:packages.opportunitiesPerDay,
+  }).from(packages).where(and(
+    eq(packages.enabled,true),
+    or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+    or(isNull(packages.expiresAt),gt(packages.expiresAt,now)),
+  ));
+  tiers.sort((a,b)=>Number(a.minimumQualifyingBalanceUsdMinor)-Number(b.minimumQualifyingBalanceUsdMinor));
+  const nextTier=tiers.find(tier=>Number(tier.minimumQualifyingBalanceUsdMinor)>qualifyingDepositUsdMinor);
+  const currentPackage=activePackages[0]||null;
+  const nextPackage=tierMasterEnabled&&nextTier?{
+    name:nextTier.name,
+    minimumQualifyingBalanceUsdMinor:Number(nextTier.minimumQualifyingBalanceUsdMinor),
+    amountNeededUsdMinor:Math.max(0,Number(nextTier.minimumQualifyingBalanceUsdMinor)-qualifyingDepositUsdMinor),
+    durationMonths:Number(nextTier.durationMonths),
+    additionalDailyOpportunities:Number(nextTier.opportunitiesPerDay),
+  }:null;
+  return {
+    eligible:tierMasterEnabled&&eligibleRows.length>0,
+    dailyOpportunityAllowance,
+    status:tierMasterEnabled&&eligibleRows.length>0?"eligible":"not_eligible",
+    globalTierPolicyEnabled:tierMasterEnabled,
+    qualifyingDepositUsdMinor,
+    currentPackage,
+    nextPackage,
+  };
+}
+
+
+export async function previewNextCustomerCompanySpotlight(userId:number) {
+  const globalPolicy=await getTradeGlobalControls();
+  if(!globalPolicy.available||!globalPolicy.tierPolicyMasterEnabled||!globalPolicy.companyRotationEnabled) return null;
+  const eligibility=await getCustomerTradingEligibility(userId);
+  const packageName=String(eligibility.currentPackage?.name||"").trim();
+  const packageId=Number(eligibility.currentPackage?.id);
+  if(!eligibility.eligible||!packageName||!Number.isSafeInteger(packageId)||packageId<=0) throw new Error("An active automatically assigned Trading tier is required for company spotlight preview.");
+  const policies=await listPersistedOpportunityPackagePolicies();
+  const policy=policies.find(row=>row.packageName===packageName);
+  if(!policy) throw new Error("The active Trading tier has no saved company rotation policy.");
+  const db=await getDb();
+  if(!db) throw new Error("Company spotlight preview is temporarily unavailable.");
+  const catalogueRow=(await db.select({settingValue:appSettings.settingValue})
+    .from(appSettings).where(eq(appSettings.settingKey,"trade.companyCatalogue.adminState")).limit(1))[0];
+  const catalogueState=parseCompanyCatalogueAdminState(catalogueRow?.settingValue??"{}");
+  const customerControls=await ensureCustomerControls(userId);
+  const pool=buildCompanySpotlightPool(intersectCompanyCountryFilters(String(policy.companyRotationCountryNames||""),customerControls.companyCountryRestrictions||""),catalogueState);
+  if(!pool.length) return null;
+  const stateKey="trading.companyRotation."+userId+"."+packageId;
+  if(stateKey.length>120) throw new Error("Company rotation scope key exceeds the storage limit.");
+
+  // Preview reads the next approved candidate but never creates a cursor row or advances
+  // production state. The worker assigns the company inside the opportunity transaction.
+  const row=(await db.select({settingValue:appSettings.settingValue})
+    .from(appSettings).where(eq(appSettings.settingKey,stateKey)).limit(1))[0];
+  const legacyStateKey="trading.companyRotation."+userId+"."+packageName;
+  const legacyRow=!row?.settingValue&&legacyStateKey!==stateKey
+    ? (await db.select({settingValue:appSettings.settingValue}).from(appSettings).where(eq(appSettings.settingKey,legacyStateKey)).limit(1))[0]
+    : undefined;
+  let priorState:CompanySpotlightState|null=null;
+  try { const parsed=JSON.parse(String(row?.settingValue||legacyRow?.settingValue||"")); if(parsed&&typeof parsed==="object") priorState=parsed as CompanySpotlightState; } catch {}
+  const repeatPolicy=String(policy.companyRotationRepeatPolicy||"avoid_until_exhausted") as "avoid_until_exhausted"|"allow_repeats";
+  const result=nextCompanySpotlight(pool,priorState,userId,String(packageId),repeatPolicy);
+  return {...result.company,adminCatalogueStatus:"verified" as const,referenceOnly:true as const,rotationCycle:result.rotationCycle,rotationSequence:result.rotationSequence,poolFingerprint:result.poolFingerprint,packageName,previewOnly:true as const};
+}
+
+/** Runtime reads never create policy rows from schema defaults; tiers without saved policy are ineligible. */
+function hasConfiguredTradingOfferPolicy(policy:any):boolean {
+  // Permanent: missing or partial ranges never block automatic allocation.
+  if(!policy) return false;
+  return true;
+}
+
+/** Normalize policy rate/duration with platform defaults for allocation math. */
+function resolveTradingOfferPolicyRanges(policy:any){
+  const minRateRaw=policy?.minimumPayoutRateBps==null?100:Number(policy.minimumPayoutRateBps);
+  const maxRateRaw=policy?.maximumPayoutRateBps==null?Math.max(minRateRaw,500):Number(policy.maximumPayoutRateBps);
+  const minDurationRaw=policy?.minimumTradeDurationSeconds==null?60:Number(policy.minimumTradeDurationSeconds);
+  const maxDurationRaw=policy?.maximumTradeDurationSeconds==null?Math.max(minDurationRaw,3600):Number(policy.maximumTradeDurationSeconds);
+  const minRate=Number.isSafeInteger(minRateRaw)&&minRateRaw>=1?minRateRaw:100;
+  const maxRate=Number.isSafeInteger(maxRateRaw)&&maxRateRaw>=minRate&&maxRateRaw<=5000?maxRateRaw:Math.max(minRate,500);
+  const minDuration=Number.isSafeInteger(minDurationRaw)&&minDurationRaw>=10?minDurationRaw:60;
+  const maxDuration=Number.isSafeInteger(maxDurationRaw)&&maxDurationRaw>=minDuration&&maxDurationRaw<=86400?maxDurationRaw:Math.max(minDuration,3600);
+  return {minimumPayoutRateBps:minRate,maximumPayoutRateBps:maxRate,minimumTradeDurationSeconds:minDuration,maximumTradeDurationSeconds:maxDuration};
+}
+
+type AutomaticOpportunityGenerationInput={
+  userId:number;batchId:string;now:Date;quotaWindowStart:Date;
+  eligibleSubscriptions:Array<{subscriptionId:number;packageId:number;packageName:string}>;
+  companyRotationEnabled:boolean;
+  customerCompanyCountryRestrictions?:string;
+};
+type AutomaticOpportunityGenerationOutcome={offerId:number|null;skipReason:string|null;skipDetail?:Record<string,number>};
+
+/**
+ * Creates at most one open customer-specific opportunity per active entitlement.
+ * Company rotation, template/version, package terms, offer and assignment commit
+ * together; retries reuse the persisted open offer and never reroll its terms.
+ */
+async function generateAutomaticCustomerOpportunity(input:AutomaticOpportunityGenerationInput):Promise<AutomaticOpportunityGenerationOutcome>{
+  const skipped=(skipReason:string,skipDetail?:Record<string,number>):AutomaticOpportunityGenerationOutcome=>({offerId:null,skipReason,...(skipDetail?{skipDetail}:{})});
+  if(!Number.isSafeInteger(input.userId)||input.userId<1||!input.batchId||input.batchId.length>64) return skipped("INVALID_CUSTOMER_OR_BATCH_INPUT");
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const activeSubscriptionIds=input.eligibleSubscriptions.map(row=>row.subscriptionId).filter(id=>Number.isSafeInteger(id)&&id>0);
+  if(!activeSubscriptionIds.length)return skipped("NO_ACTIVE_AUTOMATIC_SUBSCRIPTION");
+  for(let attempt=0;attempt<4;attempt++){
+    try{
+      return await db.transaction(async tx=>{
+    const generationLockKey=`trading.opportunityGenerator.${input.userId}`;
+    await tx.insert(appSettings).values({settingKey:generationLockKey,settingValue:"",updatedBy:input.userId})
+      .onDuplicateKeyUpdate({set:{settingKey:generationLockKey}});
+    await tx.select({id:appSettings.id}).from(appSettings).where(eq(appSettings.settingKey,generationLockKey)).limit(1).for("update");
+    const generationControlRow=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+      .where(eq(appSettings.settingKey,OPPORTUNITY_GENERATION_CONTROL_KEY)).limit(1).for("update"))[0];
+    let control:any=null;
+    try{control=JSON.parse(String(generationControlRow?.settingValue||""));}catch{return skipped("GENERATION_CONTROL_MISSING_OR_MALFORMED");}
+    if(!control||typeof control.enabled!=="boolean"||!Number.isSafeInteger(control.version)||Number(control.version)<1)return skipped("GENERATION_CONTROL_MISSING_OR_MALFORMED");
+    if(control.enabled!==true)return skipped("GENERATION_CONTROL_PAUSED");
+
+    const obsolete=(await tx.select({id:opportunityOffers.id,subscriptionId:opportunityOffers.assignedPackageSubscriptionId})
+      .from(opportunityOffers).where(and(eq(opportunityOffers.assignedUserId,input.userId),eq(opportunityOffers.status,"open"),gt(opportunityOffers.closesAt,input.now)))
+      .limit(100).for("update")).filter(row=>row.subscriptionId==null||!activeSubscriptionIds.includes(Number(row.subscriptionId)));
+    const obsoleteOfferIds=obsolete.map(row=>Number(row.id));
+    if(obsoleteOfferIds.length){
+      await tx.update(opportunityOffers).set({status:"cancelled"}).where(inArray(opportunityOffers.id,obsoleteOfferIds));
+      await tx.update(opportunityGenerationAssignments).set({status:"cancelled",failureReason:"PACKAGE_REASSIGNED",updatedAt:input.now})
+        .where(and(eq(opportunityGenerationAssignments.userId,input.userId),inArray(opportunityGenerationAssignments.offerId,obsoleteOfferIds),eq(opportunityGenerationAssignments.status,"generated")));
+    }
+    const reusable=(await tx.select({id:opportunityOffers.id}).from(opportunityOffers)
+      .innerJoin(opportunityGenerationAssignments,and(
+        eq(opportunityGenerationAssignments.offerId,opportunityOffers.id),
+        eq(opportunityGenerationAssignments.userId,input.userId),
+        inArray(opportunityGenerationAssignments.status,["generated","delivered"]),
+      ))
+      .where(and(eq(opportunityOffers.assignedUserId,input.userId),eq(opportunityOffers.status,"open"),gt(opportunityOffers.closesAt,input.now),inArray(opportunityOffers.assignedPackageSubscriptionId,activeSubscriptionIds),
+        sql`NOT EXISTS (SELECT 1 FROM ${opportunityPopupEvents} WHERE ${opportunityPopupEvents.userId} = ${input.userId} AND ${opportunityPopupEvents.offerId} = ${opportunityOffers.id} AND ${opportunityPopupEvents.balanceStatus} = 'insufficient')`))
+      .limit(1).for("update"))[0];
+    if(reusable)return {offerId:Number(reusable.id),skipReason:null};
+
+    let selectedSubscription:any=null;
+    let selectedPolicy:any=null;
+    let policyRowsFound=0;
+    let invalidPolicyRows=0;
+    let zeroQuotaRows=0;
+    let customerQuotaExhausted=0;
+    let packageQuotaExhausted=0;
+    // Global administrator controls are the single owner of tier delivery and
+    // company-rotation switches. Legacy per-package boolean mirrors are not gates.
+    for(const candidate of input.eligibleSubscriptions){
+      const row=(await tx.select({
+        subscriptionId:customerPackageSubscriptions.id,packageId:packages.id,packageName:packages.name,
+        activationKey:customerPackageSubscriptions.activationKey,subscriptionStatus:customerPackageSubscriptions.status,
+        startsAt:customerPackageSubscriptions.startsAt,expiresAt:customerPackageSubscriptions.expiresAt,
+        termsSnapshotJson:customerPackageSubscriptions.termsSnapshotJson,
+        packageDailyOpportunityQuota:packages.opportunitiesPerDay,packageMaxPopupsPerDay:packages.maxPopupsPerDay,
+        packageEnabled:packages.enabled,packageStartsAt:packages.startsAt,packageExpiresAt:packages.expiresAt,
+        policyId:opportunityPackagePolicies.id,policyVersion:opportunityPackagePolicies.policyVersion,
+        policyDailyOpportunityQuota:opportunityPackagePolicies.maxPopupsPerDay,dailyPopupTarget:opportunityPackagePolicies.dailyPopupTarget,
+        schedulingPeriod:opportunityPackagePolicies.schedulingPeriod,
+        minimumTradeUnits:opportunityPackagePolicies.minimumTradeUnits,maximumTradeUnits:opportunityPackagePolicies.maximumTradeUnits,
+        minimumPayoutRateBps:opportunityPackagePolicies.minimumPayoutRateBps,maximumPayoutRateBps:opportunityPackagePolicies.maximumPayoutRateBps,
+        minimumTradeDurationSeconds:opportunityPackagePolicies.minimumTradeDurationSeconds,maximumTradeDurationSeconds:opportunityPackagePolicies.maximumTradeDurationSeconds,
+        completionDisplaySeconds:opportunityPackagePolicies.completionDisplaySeconds,maxPendingDeliveries:opportunityPackagePolicies.maxPendingDeliveries,
+        companyRotationCountryNames:opportunityPackagePolicies.companyRotationCountryNames,
+        companyRotationRepeatPolicy:opportunityPackagePolicies.companyRotationRepeatPolicy,badgeLabel:opportunityPackagePolicies.badgeLabel,
+      }).from(customerPackageSubscriptions).innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+        .innerJoin(opportunityPackagePolicies,sql`LOWER(${opportunityPackagePolicies.packageName}) = LOWER(${packages.name})`)
+        .where(and(eq(customerPackageSubscriptions.id,candidate.subscriptionId),eq(customerPackageSubscriptions.userId,input.userId),
+          eq(customerPackageSubscriptions.status,"active"),sql`${customerPackageSubscriptions.activationKey} LIKE 'auto-tier:%'`,
+          lte(customerPackageSubscriptions.startsAt,input.now),or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,input.now)),
+          eq(packages.enabled,true),or(isNull(packages.startsAt),lte(packages.startsAt,input.now)),or(isNull(packages.expiresAt),gt(packages.expiresAt,input.now)))).limit(1).for("update"))[0];
+      if(!row)continue;
+      policyRowsFound++;
+      if(!hasConfiguredTradingOfferPolicy(row)){invalidPolicyRows++;continue;}
+      {
+        let entitlementSnapshot:any={};
+        try{entitlementSnapshot=JSON.parse(String(row.termsSnapshotJson||"{}"));}catch{entitlementSnapshot={};}
+        const packageDailyQuota=Number(row.packageDailyOpportunityQuota);
+        const customerDailyQuota=resolveCurrentPackageEntitlementQuota(entitlementSnapshot,packageDailyQuota);
+        const policyDailyQuota=Math.max(0,Math.trunc(Number(row.policyDailyOpportunityQuota)||0));
+        const packagePopupQuotaValue=Number(entitlementSnapshot.maxPopupsPerDay??row.packageMaxPopupsPerDay);
+        const packagePopupQuota=Math.max(0,Math.trunc(Number.isFinite(packagePopupQuotaValue)?packagePopupQuotaValue:0));
+        const dailyTarget=Math.max(0,Math.trunc(Number(row.dailyPopupTarget)||0));
+        // The current administrator-configured package quota governs every
+        // active subscription; delivery policy caps may further reduce it.
+        const effectiveDailyQuota=calculateEffectiveEntitlementQuota({
+          savedEntitlementQuota:customerDailyQuota,
+          policyDailyCap:policyDailyQuota,
+          packagePopupCap:packagePopupQuota,
+          dailyTargetCap:dailyTarget,
+        });
+        if(customerDailyQuota<=0||effectiveDailyQuota<=0){zeroQuotaRows++;continue;}
+        const candidateQuotaWindow=resolveTradingQuotaWindow(input.now,
+          row.schedulingPeriod==="rolling_24h"?"rolling_24h":"calendar_day");
+        const usageResetBoundary=await getOpportunityUsageResetBoundary(tx,input.userId);
+        const effectiveQuotaStart=usageResetBoundary&&usageResetBoundary.resetAt>candidateQuotaWindow.start?usageResetBoundary.resetAt:candidateQuotaWindow.start;
+        // The customer generation lock serializes worker cycles. Count this
+        // subscription's entitlement and its package-wide cap before choosing
+        // the candidate, so an exhausted earlier package cannot starve a later one.
+        const subscriptionUsageRows=await tx.select({used:count()}).from(opportunityGenerationAssignments).where(and(
+          eq(opportunityGenerationAssignments.userId,input.userId),
+          eq(opportunityGenerationAssignments.packageSubscriptionId,Number(row.subscriptionId)),
+          gte(opportunityGenerationAssignments.generatedAt,effectiveQuotaStart),
+          gt(opportunityGenerationAssignments.id,usageResetBoundary?.generationAssignmentMaxId??0)));
+        const packageUsageRows=await tx.select({used:count()}).from(opportunityGenerationAssignments).where(and(
+          eq(opportunityGenerationAssignments.userId,input.userId),
+          eq(opportunityGenerationAssignments.packageId,Number(row.packageId)),
+          gte(opportunityGenerationAssignments.generatedAt,effectiveQuotaStart),
+          gt(opportunityGenerationAssignments.id,usageResetBoundary?.generationAssignmentMaxId??0)));
+        const subscriptionUsed=Number(subscriptionUsageRows[0]?.used||0);
+        const packageUsed=Number(packageUsageRows[0]?.used||0);
+        if(subscriptionUsed>=customerDailyQuota){customerQuotaExhausted++;continue;}
+        if(packageUsed>=effectiveDailyQuota){packageQuotaExhausted++;continue;}
+        selectedSubscription={...row,customerDailyQuota,effectiveDailyQuota,quotaWindowStart:candidateQuotaWindow.start};
+        selectedPolicy=row;
+        break;
+      }
+    }
+    if(!selectedSubscription||!selectedPolicy){
+      const skipReason=policyRowsFound===0?"ACTIVE_SUBSCRIPTION_POLICY_ROW_NOT_FOUND"
+        :invalidPolicyRows===policyRowsFound?"PACKAGE_POLICY_INVALID"
+        :zeroQuotaRows>0?"PACKAGE_OR_ENTITLEMENT_QUOTA_ZERO"
+        :customerQuotaExhausted>0&&packageQuotaExhausted===0?"CUSTOMER_PACKAGE_ENTITLEMENT_EXHAUSTED"
+        :packageQuotaExhausted>0?"PACKAGE_DAILY_CAP_EXHAUSTED":"NO_PACKAGE_ELIGIBLE_FOR_GENERATION";
+      return skipped(skipReason,{policyRowsFound,invalidPolicyRows,zeroQuotaRows,customerQuotaExhausted,packageQuotaExhausted});
+    }
+
+    const maxPending=Math.max(0,Number(selectedPolicy.maxPendingDeliveries||0));
+    if(maxPending<=0)return skipped("MAX_PENDING_DELIVERIES_ZERO");
+    // Pending capacity is for deliveries that can still be shown to the customer.
+    // Old queued rows whose source offer has already been closed/expired must not
+    // permanently consume capacity; insufficient-balance rows are terminal too.
+    const pending=(await tx.select({id:opportunityPopupEvents.id}).from(opportunityPopupEvents)
+      .innerJoin(opportunityOffers,eq(opportunityPopupEvents.offerId,opportunityOffers.id))
+      .where(and(eq(opportunityPopupEvents.userId,input.userId),eq(opportunityPopupEvents.packageId,Number(selectedSubscription.packageId)),
+        eq(opportunityOffers.assignedUserId,input.userId),eq(opportunityOffers.assignedPackageId,Number(selectedSubscription.packageId)),
+        eq(opportunityOffers.status,"open"),gt(opportunityOffers.closesAt,input.now),
+        inArray(opportunityPopupEvents.deliveryStatus,["queued","in_progress","retry_wait"]),
+        sql`(${opportunityPopupEvents.balanceStatus} IS NULL OR ${opportunityPopupEvents.balanceStatus} <> 'insufficient')`,
+        notInArray(opportunityPopupEvents.eventStatus,["TRADED","SETTLED","WITHDRAWN","DISMISSED"]))).limit(maxPending+1)).length;
+    if(pending>=maxPending)return skipped("PENDING_DELIVERY_CAPACITY_FULL",{pending,maxPending});
+
+    const catalogueSetting=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+      .where(eq(appSettings.settingKey,"trade.companyCatalogue.adminState")).limit(1).for("update"))[0];
+    const catalogueState=parseCompanyCatalogueAdminState(String(catalogueSetting?.settingValue||"{}"));
+    // The existing brand catalogue is the generation source. Templates are optional
+    // display-term overrides and must never shrink or gate the company rotation pool.
+    const approvedPool=buildCompanySpotlightPool(intersectCompanyCountryFilters(String(selectedPolicy.companyRotationCountryNames||""),input.customerCompanyCountryRestrictions||""),catalogueState);
+    if(!approvedPool.length)return skipped("NO_APPROVED_COMPANIES_FOR_COUNTRY_FILTER");
+
+    let company:any;
+    let rotationCycle:number|null=null;
+    let rotationSequence:number|null=null;
+    let poolFingerprint:string|null=null;
+    let rotationStateKey:string|null=null;
+    let nextRotationState:CompanySpotlightState|null=null;
+    if(input.companyRotationEnabled){
+      const stateKey=`trading.companyRotation.${input.userId}.${Number(selectedSubscription.packageId)}`;
+      await tx.insert(appSettings).values({settingKey:stateKey,settingValue:"",updatedBy:input.userId})
+        .onDuplicateKeyUpdate({set:{settingKey:stateKey}});
+      const priorRow=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+        .where(eq(appSettings.settingKey,stateKey)).limit(1).for("update"))[0];
+      let priorState:CompanySpotlightState|null=null;
+      try{const parsed=JSON.parse(String(priorRow?.settingValue||""));if(parsed&&typeof parsed==="object")priorState=parsed as CompanySpotlightState;}catch{priorState=null;}
+      const selection=nextCompanySpotlight(approvedPool,priorState,input.userId,String(selectedSubscription.packageId),
+        selectedPolicy.companyRotationRepeatPolicy==="allow_repeats"?"allow_repeats":"avoid_until_exhausted");
+      company=selection.company;rotationCycle=selection.rotationCycle;rotationSequence=selection.rotationSequence;poolFingerprint=selection.poolFingerprint;
+      // Keep the row locked, but defer consuming this rotation position until
+      // every remaining generation step has succeeded inside this transaction.
+      rotationStateKey=stateKey;
+      nextRotationState=selection.state;
+    }else{
+      company=approvedPool[crypto.randomInt(0,approvedPool.length)];
+    }
+    // Load at most one override for the already-selected company. Do not lock or scan
+    // every approved template for every customer in a large generation batch.
+    const template=(await tx.select().from(opportunityGenerationTemplates)
+      .where(and(eq(opportunityGenerationTemplates.status,"approved"),eq(opportunityGenerationTemplates.companyReferenceId,company.id)))
+      .orderBy(opportunityGenerationTemplates.id).limit(1).for("update"))[0]||null;
+    // Approved templates are optional display-term overrides. Without one, build
+    // terms directly from the catalogue name/logo identity; no ticker or exchange is needed.
+    const currencyCode=template?String(template.currency):"USD";
+    const currencyRows=await tx.select({code:currencyRegistry.code,scale:currencyRegistry.scale,usdRate:currencyRegistry.usdRate,updatedAt:currencyRegistry.updatedAt})
+      .from(currencyRegistry).where(and(eq(currencyRegistry.enabled,true),eq(currencyRegistry.code,currencyCode))).limit(1);
+    const currencyRow=currencyRows[0];if(!currencyRow)return skipped("NO_ENABLED_CURRENCY_FOR_PACKAGE");
+    const packageMinimum=packageUsdUnitsToNativeMinor(Number(selectedPolicy.minimumTradeUnits),currencyCode,[currencyRow]);
+    const packageMaximum=packageUsdUnitsToNativeMinor(Number(selectedPolicy.maximumTradeUnits),currencyCode,[currencyRow]);
+    if(!Number.isSafeInteger(packageMinimum)||packageMinimum<=0||!Number.isSafeInteger(packageMaximum)||packageMaximum<packageMinimum)
+      throw new Error("The active package's saved capital bounds are invalid.");
+    const normalized=template?validateOpportunityGenerationTemplate({
+      templateName:template.templateName,companyReferenceId:template.companyReferenceId,symbol:template.symbol,
+      venueFrom:template.venueFrom,venueTo:template.venueTo,currency:template.currency,minimumMinor:packageMinimum,
+      sourceReference:template.sourceReference,reviewNotes:template.reviewNotes,
+    }):createCatalogueIdentityOpportunityTemplate(company,packageMinimum,"USD");
+    const terms=selectOpportunityGenerationTerms(normalized,{
+      minimumPayoutRateBps:selectedPolicy.minimumPayoutRateBps==null?null:Number(selectedPolicy.minimumPayoutRateBps),
+      maximumPayoutRateBps:selectedPolicy.maximumPayoutRateBps==null?null:Number(selectedPolicy.maximumPayoutRateBps),
+      minimumTradeDurationSeconds:selectedPolicy.minimumTradeDurationSeconds==null?null:Number(selectedPolicy.minimumTradeDurationSeconds),
+      maximumTradeDurationSeconds:selectedPolicy.maximumTradeDurationSeconds==null?null:Number(selectedPolicy.maximumTradeDurationSeconds),
+    });
+    const configuredMinimumDuration=Number(selectedPolicy.minimumTradeDurationSeconds);
+    const configuredMaximumDuration=Number(selectedPolicy.maximumTradeDurationSeconds);
+    if(!isOpportunityDurationWithinBounds(configuredMinimumDuration,configuredMaximumDuration,terms.tradeDurationSeconds))
+      throw new Error(`Selected opportunity duration is outside the saved tier range for ${selectedPolicy.packageName}`);
+    const minimumMinor=packageMinimum;
+    const completionDisplaySeconds=Number(selectedPolicy.completionDisplaySeconds??8);
+    if(!Number.isSafeInteger(completionDisplaySeconds)||completionDisplaySeconds<1||completionDisplaySeconds>3600) throw new Error(`Completion display delay is invalid for ${selectedPolicy.packageName}`);
+    // Persist all opportunity timing at the database's whole-second precision.
+    // The selected duration is measured from this immutable generatedAt instant.
+    const opportunityStartedAt=new Date(Math.floor(input.now.getTime()/1000)*1000);
+    if(!Number.isSafeInteger(opportunityStartedAt.getTime())) throw new Error(`Opportunity start time is invalid for ${selectedPolicy.packageName}`);
+    const rewardAt=new Date(opportunityStartedAt.getTime()+terms.tradeDurationSeconds*1000);
+    // One cryptographically selected package duration governs the opportunity/trade countdown.
+    // The popup expiry adds only the configured short post-completion display grace period.
+    const closesAt=new Date(rewardAt.getTime()+completionDisplaySeconds*1000);
+    const displaySeconds=terms.tradeDurationSeconds+completionDisplaySeconds;
+    if(!Number.isSafeInteger(displaySeconds)||displaySeconds<=terms.tradeDurationSeconds||
+      rewardAt.getTime()!==opportunityStartedAt.getTime()+terms.tradeDurationSeconds*1000||
+      closesAt.getTime()!==opportunityStartedAt.getTime()+displaySeconds*1000)
+      throw new Error(`Generated opportunity timing is inconsistent for ${selectedPolicy.packageName}`);
+    const companyMetadata={
+      rotationStateVersion:1,rotationCycle,rotationSequence,poolFingerprint,
+      repeatPolicy:selectedPolicy.companyRotationRepeatPolicy,
+      ticker:company.ticker,symbol:company.symbol,exchangeCode:company.exchangeCode,
+      tickerResearchStatus:company.tickerResearchStatus,tickerSource:company.tickerSource,
+      parentTicker:company.parentTicker,whyNoRealTicker:company.whyNoRealTicker,
+      tickerClassification:company.tickerClassification,countryCode:company.countryCode,
+      countryName:company.countryName,domain:company.domain,logoSourceName:company.logoSourceName,
+      logoSourceUrl:company.logoSourceUrl,listingStatus:company.listingStatus,lastVerifiedAt:company.lastVerifiedAt,
+      requiresManualVerification:company.requiresManualVerification,sourceConfidence:company.sourceConfidence,
+      sector:company.sector,headquartersCountry:company.headquartersCountry,instrumentType:company.instrumentType,
+      recordCompleteness:company.recordCompleteness,adminCatalogueStatus:"verified",referenceOnly:true,
+    };
+    const snapshot={
+      packageId:Number(selectedSubscription.packageId),packageSubscriptionId:Number(selectedSubscription.subscriptionId),
+      packageName:String(selectedSubscription.packageName),policyVersion:Number(selectedPolicy.policyVersion||1),
+      minimumTradeUnits:Number(selectedPolicy.minimumTradeUnits),maximumTradeUnits:Number(selectedPolicy.maximumTradeUnits),
+      minimumPayoutRateBps:Number(selectedPolicy.minimumPayoutRateBps),maximumPayoutRateBps:Number(selectedPolicy.maximumPayoutRateBps),
+      minimumTradeDurationSeconds:Number(selectedPolicy.minimumTradeDurationSeconds),maximumTradeDurationSeconds:Number(selectedPolicy.maximumTradeDurationSeconds),
+      packageMinimumMinor:packageMinimum,packageMaximumMinor:packageMaximum,
+      configuredProfitRateBps:terms.configuredPayoutRateBps,configuredDurationSeconds:terms.tradeDurationSeconds,minimumMinor,
+      symbol:terms.symbol,venueFrom:terms.venueFrom,venueTo:terms.venueTo,currency:terms.currency,
+      currencyRateUsd:Number(currencyRow.usdRate),currencyRateUpdatedAt:currencyRow.updatedAt?new Date(currencyRow.updatedAt).toISOString():null,
+      popupDisplayTargetSeconds:displaySeconds,completionDisplaySeconds,badgeLabel:selectedPolicy.badgeLabel??null,
+      badgeStyle:["neutral","blue","purple","gold","green"].includes(String((selectedPolicy as any).badgeStyle))?String((selectedPolicy as any).badgeStyle):"neutral",
+      companyRotationEnabled:Boolean(input.companyRotationEnabled),companyRotationCountryNames:String(selectedPolicy.companyRotationCountryNames||""),
+      companyRotationRepeatPolicy:selectedPolicy.companyRotationRepeatPolicy==="allow_repeats"?"allow_repeats":"avoid_until_exhausted",
+      maxPendingDeliveries:Number(selectedPolicy.maxPendingDeliveries||0),
+      customerDailyQuota:Number(selectedSubscription.customerDailyQuota),
+      packageDailyOpportunityQuota:Number(selectedSubscription.effectiveDailyQuota),
+      quotaWindowStart:selectedSubscription.quotaWindowStart.toISOString(),
+      configuredPayout:true,payoutSemantics:terms.payoutSemantics,templateId:template?Number(template.id):null,templateVersion:template?Number(template.version):null,
+      sourceReference:terms.sourceReference,reviewNotes:terms.reviewNotes,companyReferenceId:company.id,companyRotation:companyMetadata,
+      generatedAt:opportunityStartedAt.toISOString(),generationBatchId:input.batchId,
+    };
+    const priorAssignmentRows=await tx.select({value:count()}).from(opportunityGenerationAssignments)
+      .where(and(eq(opportunityGenerationAssignments.userId,input.userId),eq(opportunityGenerationAssignments.packageSubscriptionId,Number(selectedSubscription.subscriptionId)),
+        gte(opportunityGenerationAssignments.generatedAt,selectedSubscription.quotaWindowStart)));
+    const sequence=Number(priorAssignmentRows[0]?.value||0)+1;
+    const generationKey=`auto:${input.userId}:${Number(selectedSubscription.subscriptionId)}:${selectedSubscription.quotaWindowStart.getTime()}:${sequence}`;
+    if(generationKey.length>180)throw new Error("Automatic opportunity generation key exceeds the supported limit.");
+    const offerInsert=await tx.insert(opportunityOffers).values({
+      assignedUserId:input.userId,assignedPackageId:Number(selectedSubscription.packageId),
+      assignedPackageSubscriptionId:Number(selectedSubscription.subscriptionId),generationTemplateId:template?Number(template.id):null,generationKey,
+      companyReferenceId:company.id,companyDisplayName:company.name,companyLogoUrl:String(company.logoUrl||"").slice(0,500),
+      companyReferenceMetadataJson:JSON.stringify(companyMetadata),configuredProfitRateBps:terms.configuredPayoutRateBps,
+      configuredDurationSeconds:terms.tradeDurationSeconds,packagePolicyVersionSnapshot:Number(selectedPolicy.policyVersion||1),
+      symbol:terms.symbol,venueFrom:terms.venueFrom,venueTo:terms.venueTo,currency:terms.currency,minimumMinor,
+      expectedRewardBps:terms.configuredPayoutRateBps,durationSeconds:terms.tradeDurationSeconds,
+      // TIMESTAMP columns have second precision in MySQL/MariaDB. Floor the
+      // opening instant so MySQL rounding cannot move it into the future and make
+      // the same worker cycle miss the row it just generated.
+      opensAt:opportunityStartedAt,closesAt,rewardAt,status:"open",
+    });
+    const offerId=Number(offerInsert[0].insertId);
+    if(!Number.isSafeInteger(offerId)||offerId<1)throw new Error("Generated opportunity ID was not persisted.");
+    await tx.insert(opportunityGenerationAssignments).values({
+      generationKey,batchId:input.batchId,userId:input.userId,offerId,templateId:template?Number(template.id):null,templateVersion:template?Number(template.version):null,
+      packageId:Number(selectedSubscription.packageId),packageSubscriptionId:Number(selectedSubscription.subscriptionId),packageName:String(selectedSubscription.packageName),
+      packagePolicyVersion:Number(selectedPolicy.policyVersion||1),companyReferenceId:company.id,
+      configuredProfitRateBps:terms.configuredPayoutRateBps,configuredDurationSeconds:terms.tradeDurationSeconds,
+      packageSnapshotJson:JSON.stringify(snapshot),status:"generated",generatedAt:opportunityStartedAt,assignedAt:input.now,expiresAt:closesAt,
+    });
+    try {
+      await tx.execute(sql`INSERT INTO opportunity_delivery_history (userId,offerId,eventKey,eventType,observedStatus,attemptNumber,occurredAt)
+        VALUES (${input.userId},${offerId},'generation_persisted','generated',NULL,NULL,${opportunityStartedAt}) ON DUPLICATE KEY UPDATE id=id`);
+      await tx.execute(sql`INSERT INTO opportunity_delivery_history (userId,offerId,eventKey,eventType,observedStatus,attemptNumber,occurredAt)
+        VALUES (${input.userId},${offerId},'assignment_persisted','assigned',NULL,NULL,${input.now}) ON DUPLICATE KEY UPDATE id=id`);
+    } catch {
+      // Operational history is fail-soft and must not alter generation availability.
+    }
+    if(rotationStateKey&&nextRotationState){
+      await tx.update(appSettings).set({settingValue:JSON.stringify(nextRotationState),updatedBy:input.userId,updatedAt:input.now})
+        .where(eq(appSettings.settingKey,rotationStateKey));
+    }
+    return {offerId,skipReason:null};
+      });
+    }catch(error){
+      const failure=error as {code?:string;errno?:number;cause?:{code?:string;errno?:number}};
+      const code=failure.code||failure.cause?.code;
+      const errno=Number(failure.errno??failure.cause?.errno??0);
+      const retryable=code==="ER_LOCK_DEADLOCK"||code==="ER_LOCK_WAIT_TIMEOUT"||errno===1213||errno===1205;
+      if(!retryable||attempt===3)throw error;
+      // The complete transaction has rolled back before retrying. Rotation is
+      // still only written after the offer and assignment inserts succeed.
+      await new Promise(resolve=>setTimeout(resolve,20*(attempt+1)+crypto.randomInt(0,25)));
+    }
+  }
+  return skipped("GENERATION_RETRY_LOOP_EXHAUSTED");
+}
+
+const OPPORTUNITY_GENERATION_CONTROL_KEY="trade.opportunityGeneration.control";
+export class OpportunityGenerationControlVersionConflictError extends Error {}
+
+export async function getOpportunityGenerationControl(){
+  const raw=await getAppSetting(OPPORTUNITY_GENERATION_CONTROL_KEY);
+  try{
+    const parsed=JSON.parse(String(raw||""));
+    if(!parsed||typeof parsed!=="object"||typeof parsed.enabled!=="boolean"||!Number.isSafeInteger(parsed.version)||Number(parsed.version)<1)throw new Error("invalid");
+    return {available:true,enabled:parsed.enabled,version:Number(parsed.version),updatedBy:Number.isSafeInteger(parsed.updatedBy)?Number(parsed.updatedBy):null,
+      updatedAt:typeof parsed.updatedAt==="string"?parsed.updatedAt:null,reason:typeof parsed.reason==="string"?parsed.reason:null};
+  }catch{return {available:false,enabled:false,version:0,updatedBy:null,updatedAt:null,reason:null};}
+}
+
+export async function setOpportunityGenerationControl(input:{enabled:boolean;reason:string;expectedVersion:number},adminId:number){
+  if(!Number.isSafeInteger(adminId)||adminId<1)throw new Error("Authenticated administrator identity is required.");
+  const reason=String(input.reason||"").trim();if(reason.length<5||reason.length>500)throw new Error("Enter a generation-control reason of 5–500 characters.");
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const changed=await db.transaction(async tx=>{
+    await tx.insert(appSettings).values({settingKey:OPPORTUNITY_GENERATION_CONTROL_KEY,settingValue:"",updatedBy:adminId})
+      .onDuplicateKeyUpdate({set:{settingKey:OPPORTUNITY_GENERATION_CONTROL_KEY}});
+    const row=(await tx.select().from(appSettings).where(eq(appSettings.settingKey,OPPORTUNITY_GENERATION_CONTROL_KEY)).limit(1).for("update"))[0];
+    let current:any={enabled:false,version:0};
+    try{const parsed=JSON.parse(String(row?.settingValue||""));if(parsed&&typeof parsed==="object"&&typeof parsed.enabled==="boolean"&&Number.isSafeInteger(parsed.version))current=parsed;}catch{current={enabled:false,version:0};}
+    if(Number(input.expectedVersion)!==Number(current.version))throw new OpportunityGenerationControlVersionConflictError("Generation control changed since it was loaded; refresh before saving.");
+    const nextVersion=Number(current.version)+1;
+    if(!Number.isSafeInteger(nextVersion)||nextVersion<1)throw new Error("Generation control version is invalid.");
+    const now=new Date();
+    const next={enabled:input.enabled,version:nextVersion,updatedBy:adminId,updatedAt:now.toISOString(),reason};
+    await tx.update(appSettings).set({settingValue:JSON.stringify(next),updatedBy:adminId,updatedAt:now}).where(eq(appSettings.settingKey,OPPORTUNITY_GENERATION_CONTROL_KEY));
+    await tx.insert(v5AuditEvents).values({actorUserId:adminId,action:"automatic_opportunity_generation_control_updated",entityType:"opportunity_generation_control",entityId:OPPORTUNITY_GENERATION_CONTROL_KEY,
+      reason,reference:`opportunity-generation-control:v${nextVersion}`,metadataJson:JSON.stringify({old:{enabled:Boolean(current.enabled),version:Number(current.version)},new:next})});
+    return next;
+  });
+  const verified=await getOpportunityGenerationControl();
+  if(!verified.available||verified.version!==changed.version||verified.enabled!==changed.enabled)throw new Error("Generation control was not verified by a fresh persisted read.");
+  return verified;
+}
+
+export async function listOpportunityGenerationTemplates(){
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const rows=await db.select().from(opportunityGenerationTemplates).orderBy(desc(opportunityGenerationTemplates.updatedAt),desc(opportunityGenerationTemplates.id)).limit(1000);
+  const setting=(await db.select({settingValue:appSettings.settingValue}).from(appSettings).where(eq(appSettings.settingKey,"trade.companyCatalogue.adminState")).limit(1))[0];
+  const state=parseCompanyCatalogueAdminState(String(setting?.settingValue||"{}"));
+  return rows.map(row=>({ ...row,minimumMinor:Number(row.minimumMinor),company:getCompanyReferenceById(row.companyReferenceId)||null,
+    companyCurrentlyApproved:isCompanySpotlightDisplayAllowed(row.companyReferenceId,state) }));
+}
+
+export async function saveOpportunityGenerationTemplate(adminId:number,input:{id?:number;expectedVersion?:number;action:"draft"|"approve"|"disable"|"archive";template:unknown;reason:string}){
+  if(!Number.isSafeInteger(adminId)||adminId<1)throw new Error("Authenticated administrator identity is required.");
+  const reason=String(input.reason||"").trim();if(reason.length<5||reason.length>500)throw new Error("Enter an audit reason of 5–500 characters.");
+  const template=validateOpportunityGenerationTemplate(input.template);
+  if(!getCompanyReferenceById(template.companyReferenceId))throw new Error("Template company Logo ID does not exist in the source catalogue.");
+  if(input.id!==undefined&&(!Number.isSafeInteger(input.id)||input.id<1))throw new Error("Template ID is invalid.");
+  if(input.id!==undefined&&(!Number.isSafeInteger(input.expectedVersion)||Number(input.expectedVersion)<1))throw new Error("An expected template version is required when editing an existing template.");
+  if(input.id===undefined&&["disable","archive"].includes(input.action))throw new Error("A new template can only be saved as draft or approved.");
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const id=await db.transaction(async tx=>{
+    const current=input.id===undefined?null:(await tx.select().from(opportunityGenerationTemplates).where(eq(opportunityGenerationTemplates.id,input.id)).limit(1).for("update"))[0]||null;
+    if(input.id!==undefined&&!current)throw new Error("Opportunity generation template was not found.");
+    if(current&&Number(current.version)!==Number(input.expectedVersion))throw new Error("Template changed since it was loaded; refresh before saving.");
+    if(input.action==="approve"){
+      const stateRow=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings).where(eq(appSettings.settingKey,"trade.companyCatalogue.adminState")).limit(1).for("update"))[0];
+      const state=parseCompanyCatalogueAdminState(String(stateRow?.settingValue||"{}"));
+      if(!isCompanySpotlightDisplayAllowed(template.companyReferenceId,state))throw new Error("Only currently verified, enabled, non-archived catalogue companies can be approved for opportunity generation.");
+    }
+    const nextStatus=input.action==="approve"?"approved":input.action==="disable"?"disabled":input.action==="archive"?"archived":"draft";
+    const now=new Date();
+    let templateId:number;
+    if(!current){
+      const result=await tx.insert(opportunityGenerationTemplates).values({
+        templateName:template.templateName,companyReferenceId:template.companyReferenceId,symbol:template.symbol,venueFrom:template.venueFrom,venueTo:template.venueTo,
+        currency:template.currency,minimumMinor:template.minimumMinor,sourceReference:template.sourceReference,reviewNotes:template.reviewNotes,status:nextStatus,version:1,
+        createdBy:adminId,updatedBy:adminId,approvedBy:input.action==="approve"?adminId:null,approvedAt:input.action==="approve"?now:null,
+      });
+      templateId=Number(result[0].insertId);
+    }else{
+      templateId=Number(current.id);
+      const update=await tx.update(opportunityGenerationTemplates).set({
+        templateName:template.templateName,companyReferenceId:template.companyReferenceId,symbol:template.symbol,venueFrom:template.venueFrom,venueTo:template.venueTo,
+        currency:template.currency,minimumMinor:template.minimumMinor,sourceReference:template.sourceReference,reviewNotes:template.reviewNotes,status:nextStatus,
+        version:Number(current.version)+1,updatedBy:adminId,approvedBy:input.action==="approve"?adminId:input.action==="draft"?null:current.approvedBy,
+        approvedAt:input.action==="approve"?now:input.action==="draft"?null:current.approvedAt,updatedAt:now,
+      }).where(and(eq(opportunityGenerationTemplates.id,templateId),eq(opportunityGenerationTemplates.version,Number(input.expectedVersion))));
+      if(Number((update as any)[0]?.affectedRows||0)!==1)throw new Error("Template update conflicted with a concurrent administrator edit.");
+    }
+    if(!Number.isSafeInteger(templateId)||templateId<1)throw new Error("Template persistence did not return an identifier.");
+    await tx.insert(v5AuditEvents).values({actorUserId:adminId,action:current?"automatic_opportunity_template_updated":"automatic_opportunity_template_created",
+      entityType:"opportunity_generation_template",entityId:String(templateId),reason,reference:`opportunity-generation-template:${templateId}:v${Number(current?.version||0)+1}`,
+      metadataJson:JSON.stringify({old:current?{status:current.status,version:current.version,companyReferenceId:current.companyReferenceId}:null,
+        new:{...template,status:nextStatus,version:Number(current?.version||0)+1,approvedBy:input.action==="approve"?adminId:null},action:input.action,reason})});
+    return templateId;
+  });
+  const persisted=(await db.select().from(opportunityGenerationTemplates).where(eq(opportunityGenerationTemplates.id,id)).limit(1))[0];
+  if(!persisted||persisted.status!==(input.action==="approve"?"approved":input.action==="disable"?"disabled":input.action==="archive"?"archived":"draft"))throw new Error("Template save was not verified by a fresh persisted read.");
+  return {...persisted,minimumMinor:Number(persisted.minimumMinor),company:getCompanyReferenceById(persisted.companyReferenceId)||null};
+}
+
+export async function getOpportunityGenerationMonitor(){
+  const db=await getDb();if(!db)return {available:false,control:await getOpportunityGenerationControl(),batches:[],today:{generated:0,delivered:0,failed:0},packageBreakdown:[],recentAssignments:[]};
+  const control=await getOpportunityGenerationControl();
+  const globalPolicy=await getTradeGlobalControls();
+  const dayStart=new Date();dayStart.setUTCHours(0,0,0,0);
+  const [batches,assignments,todayGroups,todayBatchFailures,todayPackageGroups,policies]=await Promise.all([
+    db.select().from(opportunityGenerationBatches).orderBy(desc(opportunityGenerationBatches.startedAt)).limit(20),
+    db.select().from(opportunityGenerationAssignments).orderBy(desc(opportunityGenerationAssignments.generatedAt)).limit(100),
+    db.select({status:opportunityGenerationAssignments.status,total:count()}).from(opportunityGenerationAssignments)
+      .where(gte(opportunityGenerationAssignments.generatedAt,dayStart)).groupBy(opportunityGenerationAssignments.status),
+    db.select({total:sql<number>`COALESCE(SUM(${opportunityGenerationBatches.failures}),0)`}).from(opportunityGenerationBatches)
+      .where(gte(opportunityGenerationBatches.startedAt,dayStart)),
+    db.select({packageName:opportunityGenerationAssignments.packageName,status:opportunityGenerationAssignments.status,total:count()})
+      .from(opportunityGenerationAssignments).where(gte(opportunityGenerationAssignments.generatedAt,dayStart))
+      .groupBy(opportunityGenerationAssignments.packageName,opportunityGenerationAssignments.status),
+    db.select({packageName:opportunityPackagePolicies.packageName,enabled:opportunityPackagePolicies.enabled,automaticDelivery:opportunityPackagePolicies.automaticDelivery,
+      packageEnabled:packages.enabled,dailyOpportunityAllowance:packages.opportunitiesPerDay,
+      minimumPayoutRateBps:opportunityPackagePolicies.minimumPayoutRateBps,maximumPayoutRateBps:opportunityPackagePolicies.maximumPayoutRateBps,
+      minimumTradeDurationSeconds:opportunityPackagePolicies.minimumTradeDurationSeconds,maximumTradeDurationSeconds:opportunityPackagePolicies.maximumTradeDurationSeconds,
+      maxPopupsPerDay:opportunityPackagePolicies.maxPopupsPerDay,maxVisibleOffers:opportunityPackagePolicies.maxVisibleOffers,maxPendingDeliveries:opportunityPackagePolicies.maxPendingDeliveries,
+      minimumTradeUnits:opportunityPackagePolicies.minimumTradeUnits,maximumTradeUnits:opportunityPackagePolicies.maximumTradeUnits})
+      .from(opportunityPackagePolicies).innerJoin(packages,eq(packages.name,opportunityPackagePolicies.packageName)),
+  ]);
+  const todayByStatus=new Map(todayGroups.map(row=>[row.status,Number(row.total||0)]));
+  const todayGenerated=[...todayByStatus.values()].reduce((sum,value)=>sum+value,0);
+  const packageCounts=new Map<string,{generated:number;delivered:number;failed:number}>();
+  for(const row of todayPackageGroups){const countRow=packageCounts.get(row.packageName)||{generated:0,delivered:0,failed:0};const total=Number(row.total||0);countRow.generated+=total;if(row.status==="delivered")countRow.delivered+=total;if(row.status==="failed")countRow.failed+=total;packageCounts.set(row.packageName,countRow);}
+  return {available:true,control,batches,today:{generated:todayGenerated,delivered:todayByStatus.get("delivered")||0,failed:Number(todayBatchFailures[0]?.total||0)+(todayByStatus.get("failed")||0)},
+    packageBreakdown:policies.map(policy=>({packageName:policy.packageName,packageEnabled:Boolean(policy.packageEnabled),dailyOpportunityAllowance:policy.dailyOpportunityAllowance,
+      policyEnabled:Boolean(globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled),
+      automaticDelivery:Boolean(globalPolicy.available&&globalPolicy.informationalPopupDeliveryEnabled),
+      minimumPayoutRateBps:policy.minimumPayoutRateBps,maximumPayoutRateBps:policy.maximumPayoutRateBps,
+      minimumTradeDurationSeconds:policy.minimumTradeDurationSeconds,maximumTradeDurationSeconds:policy.maximumTradeDurationSeconds,
+      maxPopupsPerDay:policy.maxPopupsPerDay,maxVisibleOffers:policy.maxVisibleOffers,maxPendingDeliveries:policy.maxPendingDeliveries,
+      minimumTradeUnits:policy.minimumTradeUnits,maximumTradeUnits:policy.maximumTradeUnits,
+      ...(packageCounts.get(policy.packageName)||{generated:0,delivered:0,failed:0})})),
+    recentAssignments:assignments.map(row=>({...row,company:getCompanyReferenceById(row.companyReferenceId)||null}))};
+}
+
+export async function listOpportunityPackagePolicies() {
+  const db=await getDb();
+  if(!db) throw new Error("Database is not available");
+  const [tiers,rows]=await Promise.all([
+    db.select({name:packages.name}).from(packages),
+    db.select().from(opportunityPackagePolicies),
+  ]);
+  const tierNames=new Set(tiers.map(tier=>tier.name));
+  return rows.filter(row=>tierNames.has(row.packageName));
+}
+
+/** Read-only policy snapshot; missing rows fail closed until admin/worker reconciliation creates them. */
+export async function listPersistedOpportunityPackagePolicies() {
+  const db=await getDb();
+  if(!db) throw new Error("Database is not available");
+  const [tiers,rows]=await Promise.all([
+    db.select({name:packages.name}).from(packages),
+    db.select().from(opportunityPackagePolicies),
+  ]);
+  const tierNames=new Set(tiers.map(tier=>tier.name));
+  const matchingRows=rows.filter(row=>tierNames.has(row.packageName));
+  const policyNames=new Set(matchingRows.map(row=>row.packageName));
+  const missing=tiers.filter(tier=>!policyNames.has(tier.name)).map(tier=>tier.name);
+  if(missing.length) throw new Error("Trading tier opportunity policy is missing for: "+missing.join(", "));
+  return matchingRows;
+}
+const TRADING_TIER_POLICY_PATCH_KEYS = new Set<string>(PACKAGE_OPPORTUNITY_POLICY_PATCH_KEYS);
+export async function updateOpportunityPackagePolicies(updatedBy:number, policies:PackageOpportunityPolicyPatch[], reason:string) {
+  const auditReason=String(reason??"").trim();
+  if(auditReason.length<5||auditReason.length>500) throw new Error("Provide an audit reason of 5–500 characters");
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const tiers=await db.select({name:packages.name}).from(packages);
+  const tierNames=new Set(tiers.map(tier=>tier.name));
+  const seenTierNames=new Set<string>();
+  const requested=policies.map(policy=>{
+    if(typeof policy.packageName!=="string"||!tierNames.has(policy.packageName)) throw new Error("Opportunity policy references an unknown Trading tier");
+    if(seenTierNames.has(policy.packageName)) throw new Error("Each Trading tier may appear only once in a policy update.");
+    seenTierNames.add(policy.packageName);
+    const unsupported=Object.keys(policy).filter(key=>key!=="packageName"&&!TRADING_TIER_POLICY_PATCH_KEYS.has(key));
+    if(unsupported.length) throw new Error(`Per-tier Trading policy cannot update global or unknown fields: ${unsupported.join(", ")}`);
+    return policy;
+  });
+  if(requested.some(policy=>(policy as Record<string,unknown>).automaticTradingEnabled===true)) {
+    throw new Error("Automatic financial execution is disabled for all Trading package policies.");
+  }
+  await db.transaction(async tx=>{
+    // Lock before merging so concurrent partial saves cannot overwrite fields
+    // omitted from the other administrator's request.
+    for(const policy of requested){
+      const current=(await tx.select().from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,policy.packageName)).limit(1).for("update"))[0];
+      const supplied:any={};
+      for(const [key,value] of Object.entries(policy)){
+        if(value!==undefined&&!['id','updatedAt','policyVersion','updatedBy'].includes(key)) supplied[key]=value;
+      }
+      const effective:any=resolveEffectivePackageOpportunityPolicy(policy.packageName,current,supplied,updatedBy);
+      if(effective.minHourlyTarget>effective.normalHourlyTarget) throw new Error(`Minimum hourly target cannot exceed normal target for ${policy.packageName}`);
+      if(effective.normalHourlyTarget*24>effective.maxPopupsPerDay&&effective.maxPopupsPerDay>0) throw new Error(`Normal hourly target exceeds daily quota for ${policy.packageName}`);
+      if(!Number.isSafeInteger(effective.minimumTradeUnits)||!Number.isSafeInteger(effective.maximumTradeUnits)||effective.minimumTradeUnits<1||effective.maximumTradeUnits<effective.minimumTradeUnits) throw new Error(`Trade amount bounds are invalid for ${policy.packageName}`);
+      const badgeLabel=effective.badgeLabel==null||String(effective.badgeLabel).trim()===""?null:String(effective.badgeLabel).trim();
+      const badgeStyle=String(effective.badgeStyle??"neutral");
+      if(badgeLabel!==null&&badgeLabel.length>40) throw new Error(`Badge label must be at most 40 characters for ${policy.packageName}`);
+      if(!["neutral","blue","purple","gold","green"].includes(badgeStyle)) throw new Error(`Badge style is not allowed for ${policy.packageName}`);
+      const minimumPayoutRateBps=effective.minimumPayoutRateBps==null?null:Number(effective.minimumPayoutRateBps);
+      const maximumPayoutRateBps=effective.maximumPayoutRateBps==null?null:Number(effective.maximumPayoutRateBps);
+      if((minimumPayoutRateBps===null)!==(maximumPayoutRateBps===null)) throw new Error(`Set both published reward-rate bounds or leave both blank for ${policy.packageName}`);
+      if(minimumPayoutRateBps!==null&&(maximumPayoutRateBps===null||!Number.isSafeInteger(minimumPayoutRateBps)||!Number.isSafeInteger(maximumPayoutRateBps)||minimumPayoutRateBps<0||maximumPayoutRateBps<minimumPayoutRateBps||maximumPayoutRateBps>5000)) throw new Error(`Published reward-rate bounds must satisfy 0 ≤ minimum ≤ maximum ≤ 5000 bps for ${policy.packageName}`);
+      const companyRotationEnabled=effective.companyRotationEnabled==null?false:Boolean(effective.companyRotationEnabled);
+      const normalizedCompanyRotationCountryNames=normalizeCompanyRotationCountryNames(effective.companyRotationCountryNames??"");
+      const companyRotationCountryNames=normalizedCompanyRotationCountryNames||null;
+      const companyRotationRepeatPolicy=String(effective.companyRotationRepeatPolicy??"avoid_until_exhausted");
+      if(!["avoid_until_exhausted","allow_repeats"].includes(companyRotationRepeatPolicy)) throw new Error(`Company rotation repeat policy is invalid for ${policy.packageName}`);
+      // The approved pool is customer/admin state, so validate only the country-folder syntax here.
+      // A package may legitimately have no currently verified company; delivery then omits the company identity.
+      const minimumTradeDurationSeconds=effective.minimumTradeDurationSeconds==null?null:Number(effective.minimumTradeDurationSeconds);
+      const maximumTradeDurationSeconds=effective.maximumTradeDurationSeconds==null?null:Number(effective.maximumTradeDurationSeconds);
+      if((minimumTradeDurationSeconds===null)!==(maximumTradeDurationSeconds===null)) throw new Error(`Set both published duration bounds or leave both blank for ${policy.packageName}`);
+      if(minimumTradeDurationSeconds!==null&&(maximumTradeDurationSeconds===null||!Number.isSafeInteger(minimumTradeDurationSeconds)||!Number.isSafeInteger(maximumTradeDurationSeconds)||minimumTradeDurationSeconds<10||maximumTradeDurationSeconds<minimumTradeDurationSeconds||maximumTradeDurationSeconds>86400)) throw new Error(`Published duration bounds must satisfy 10 ≤ minimum ≤ maximum ≤ 86400 seconds for ${policy.packageName}`);
+      if(typeof effective.enabled!=="boolean"||typeof effective.automaticDelivery!=="boolean"||typeof effective.automaticTradingEnabled!=="boolean") throw new Error(`Policy and automation switches must be explicitly set for ${policy.packageName}`);
+      const automation={
+        packageName:policy.packageName,
+        enabled:effective.enabled,
+        automaticDelivery:effective.automaticDelivery,
+        dailyPopupTarget:effective.dailyPopupTarget,
+        schedulingPeriod:effective.schedulingPeriod,
+        minIntervalSeconds:effective.minIntervalSeconds,
+        maxIntervalSeconds:effective.maxIntervalSeconds,
+        randomizationEnabled:effective.randomizationEnabled,
+        completionDisplaySeconds:effective.completionDisplaySeconds,
+        postCompletionIntervalSeconds:effective.postCompletionIntervalSeconds,
+        maxPendingDeliveries:effective.maxPendingDeliveries,
+        maxDeliveryAttempts:effective.maxDeliveryAttempts,
+        automaticTradingEnabled:effective.automaticTradingEnabled,
+        maxTradeAttemptsPerDay:effective.maxTradeAttemptsPerDay,
+        tradeRetryDelaySeconds:effective.tradeRetryDelaySeconds,
+        maxSuccessfulTradesPerDay:effective.maxSuccessfulTradesPerDay,
+        maxConcurrentActiveTrades:effective.maxConcurrentActiveTrades,
+        requirePreviousSettlement:effective.requirePreviousSettlement,
+        minSettlementDelaySeconds:effective.minSettlementDelaySeconds,
+        maxSettlementDelaySeconds:effective.maxSettlementDelaySeconds,
+        minimumRewardBps:effective.minimumRewardBps,
+        maxDailyRewardMinor:effective.maxDailyRewardMinor,
+        maxRewardPerTradeMinor:effective.maxRewardPerTradeMinor,
+        closePolicy:effective.closePolicy,
+      };
+      const requiresConfiguredOfferTerms=automation.enabled&&automation.automaticDelivery;
+      if(requiresConfiguredOfferTerms&&(minimumPayoutRateBps===null||maximumPayoutRateBps===null||minimumPayoutRateBps<1||minimumTradeDurationSeconds===null||maximumTradeDurationSeconds===null)) throw new Error(`Set valid published reward-rate and duration bounds before enabling delivery for ${policy.packageName}`);
+      if(automation.automaticTradingEnabled&&(!automation.enabled||!automation.automaticDelivery)) throw new Error(`Automatic trading requires an enabled delivery policy for ${policy.packageName}`);
+      validatePackageAutomationPolicy(automation);
+      if(automation.minIntervalSeconds>automation.maxIntervalSeconds) throw new Error(`Delivery interval minimum exceeds maximum for ${policy.packageName}`);
+      if(automation.minSettlementDelaySeconds>automation.maxSettlementDelaySeconds) throw new Error(`Settlement delay minimum exceeds maximum for ${policy.packageName}`);
+      const values:any={...effective,...automation,badgeLabel,badgeStyle,minimumPayoutRateBps,maximumPayoutRateBps,minimumTradeDurationSeconds,maximumTradeDurationSeconds,companyRotationEnabled,companyRotationCountryNames,companyRotationRepeatPolicy,updatedBy};
+      delete values.id; delete values.updatedAt; delete values.policyVersion;
+      const currentVersion=Number(current?.policyVersion||0);
+      const nextVersion=current?currentVersion+1:1;
+      if(!Number.isSafeInteger(nextVersion)||nextVersion<1) throw new Error(`Trading policy version is invalid for ${policy.packageName}`);
+      const next={...values,policyVersion:nextVersion,updatedAt:new Date()};
+      if(current){
+        await tx.update(opportunityPackagePolicies).set(next).where(eq(opportunityPackagePolicies.id,current.id));
+      }else{
+        await tx.insert(opportunityPackagePolicies).values(next);
+      }
+      await tx.insert(v5AuditEvents).values({
+        actorUserId:updatedBy,action:"trading_delivery_policy_updated",
+        entityType:"opportunity_package_policy",entityId:String(current?.id??policy.packageName),
+        reason:auditReason,
+        reference:"trading-delivery-policy:"+policy.packageName+":"+nextVersion,
+        metadataJson:JSON.stringify({packageName:policy.packageName,previousVersion:currentVersion||null,nextVersion,oldPolicy:current||null,newPolicy:next}),
+      });
+    }
+  });
+  return listOpportunityPackagePolicies();
+}
+async function listMissedOpportunities(userId:number){const db=await getDb();if(!db)throw new Error("Database is not available");return db.select().from(missedOpportunities).where(and(eq(missedOpportunities.userId,userId),eq(missedOpportunities.status,"MISSED"))).orderBy(desc(missedOpportunities.createdAt)).limit(50);}
+async function markMissedOpportunity(userId:number,offer:any,amountMinor:number,reason:string){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const terms=calculateTradeTerms(userId,offer,amountMinor);
+  const potentialRewardMinor=Math.floor(amountMinor*terms.rewardBps/10000);
+  const balance=(await listBalances(userId)).find(row=>String(row.currency).toUpperCase()===String(offer.currency).toUpperCase());
+  const availableMinorAtOpportunity=Math.max(0,Number(balance?.availableMinor||0));
+  const shortfallMinor=Math.max(0,amountMinor-availableMinorAtOpportunity);
+  await db.insert(missedOpportunities).values({
+    userId,offerId:offer.id,symbol:offer.symbol,currency:offer.currency,amountMinor,
+    availableMinorAtOpportunity,shortfallMinor,potentialRewardMinor,expectedRewardBps:terms.rewardBps,
+    reason,status:"MISSED",
+  }).onDuplicateKeyUpdate({set:{updatedAt:new Date(),potentialRewardMinor,availableMinorAtOpportunity,shortfallMinor,reason}});
+}
+async function markOpportunityExecuted(userId:number,offerId:number,executionLeaseToken:string){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  await db.update(missedOpportunities).set({status:"EXECUTED",updatedAt:new Date()})
+    .where(and(eq(missedOpportunities.userId,userId),eq(missedOpportunities.offerId,offerId)));
+  await db.update(opportunityPopupEvents).set({executionStatus:"SUCCEEDED",executionRetryAfter:null,executionLastErrorCode:null,updatedAt:new Date()})
+    .where(and(eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.offerId,offerId),eq(opportunityPopupEvents.eventStatus,"TRADED"),eq(opportunityPopupEvents.executionLeaseToken,executionLeaseToken)));
+}
+export async function claimOpportunityExecutionAttempt(userId:number, offer:any){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return db.transaction(async tx=>{
+    // Match createTrade's customer-first lock order and serialize all claims for
+    // this customer, including claims on different opportunity events.
+    const userLock=await tx.execute(sql`SELECT id FROM users WHERE id=${userId} FOR UPDATE`) as any;
+    if(!userLock?.[0]?.[0]?.id) return {claimed:false,reason:"customer-unavailable"};
+    const event=(await tx.select({
+      id:opportunityPopupEvents.id,eventStatus:opportunityPopupEvents.eventStatus,tradeId:opportunityPopupEvents.tradeId,
+      packageName:opportunityPopupEvents.packageName,
+      executionStatus:opportunityPopupEvents.executionStatus,executionAttemptCount:opportunityPopupEvents.executionAttemptCount,executionLeaseToken:opportunityPopupEvents.executionLeaseToken,
+      executionRetryAfter:opportunityPopupEvents.executionRetryAfter,executionRetryDay:opportunityPopupEvents.executionRetryDay,executionDailyAttemptCount:opportunityPopupEvents.executionDailyAttemptCount,executionDailyAttemptDay:opportunityPopupEvents.executionDailyAttemptDay,executionLastErrorCode:opportunityPopupEvents.executionLastErrorCode,
+    }).from(opportunityPopupEvents).where(and(eq(opportunityPopupEvents.id,Number(offer.deliveryEventId)),eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.offerId,Number(offer.offerId)))).limit(1).for("update"))[0];
+    if(!event||event.tradeId||["TRADED","SETTLED"].includes(String(event.eventStatus))||String(event.executionStatus)==="SUCCEEDED") return {claimed:false,reason:"terminal"};
+    if(String(event.executionStatus)==="FAILED") return {claimed:false,reason:"failed",errorCode:String((event as any).executionLastErrorCode||"TEMPORARY_EXECUTION_RETRIES_EXHAUSTED")};
+    const now=new Date();
+    const day=now.toISOString().slice(0,10);
+    const attempts=Number(event.executionAttemptCount||0);
+    if(attempts>0&&event.executionRetryDay&&String(event.executionRetryDay)!==day){
+      await tx.update(opportunityPopupEvents).set({executionStatus:"FAILED",executionRetryAfter:null,executionLastErrorCode:"TEMPORARY_EXECUTION_RETRY_WINDOW_EXPIRED",updatedAt:now}).where(eq(opportunityPopupEvents.id,event.id));
+      return {claimed:false,reason:"retry-window-expired"};
+    }
+    if(event.executionRetryAfter&&new Date(event.executionRetryAfter).getTime()>now.getTime()) return {claimed:false,reason:"waiting"};
+    // Lifetime claims are diagnostic only. The daily event counter is the
+    // bounded per-opportunity retry window and also contributes to the
+    // customer-wide daily budget below, including after a worker crash.
+    const transientAttempts=String(event.executionDailyAttemptDay||"")===day
+      ?Number(event.executionDailyAttemptCount||0):0;
+    if(!Number.isSafeInteger(transientAttempts)||transientAttempts<0) return {claimed:false,reason:"attempt-count-invalid"};
+    if(transientAttempts>=MAX_TRANSIENT_ATTEMPTS_PER_OPPORTUNITY){
+      await tx.update(opportunityPopupEvents).set({
+        executionStatus:"FAILED",executionRetryAfter:null,
+        executionLastErrorCode:"TEMPORARY_EXECUTION_RETRIES_EXHAUSTED",updatedAt:now,
+      }).where(eq(opportunityPopupEvents.id,event.id));
+      return {claimed:false,reason:"attempts-exhausted"};
+    }
+    const policy=(await tx.select({maxTradeAttemptsPerDay:opportunityPackagePolicies.maxTradeAttemptsPerDay})
+      .from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,String(event.packageName||""))).limit(1).for("update"))[0];
+    if(!policy) return {claimed:false,reason:"policy-unavailable"};
+    const dailyAttemptLimit=Number(policy.maxTradeAttemptsPerDay);
+    if(!Number.isSafeInteger(dailyAttemptLimit)||dailyAttemptLimit<0) return {claimed:false,reason:"policy-invalid"};
+    if(dailyAttemptLimit>0){
+      const usedRows=await tx.execute(sql`SELECT COALESCE(SUM(executionDailyAttemptCount),0) AS count
+        FROM opportunity_popup_events WHERE userId=${userId} AND executionDailyAttemptDay=${day}`) as any;
+      const usedAttempts=Number(usedRows?.[0]?.[0]?.count||0);
+      if(usedAttempts>=dailyAttemptLimit){
+        const nextDayStart=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));
+        await tx.update(opportunityPopupEvents).set({
+          executionStatus:"RETRYING",executionRetryAfter:nextDayStart,
+          executionLastErrorCode:"DAILY_TRADE_ATTEMPT_LIMIT_REACHED",updatedAt:now,
+        }).where(eq(opportunityPopupEvents.id,event.id));
+        return {claimed:false,reason:"daily-attempt-limit",usedAttempts,dailyAttemptLimit};
+      }
+    }
+    const executionLeaseToken=crypto.randomUUID();
+    const transientAttemptNumber=transientAttempts+1;
+    await tx.update(opportunityPopupEvents).set({
+      executionStatus:"RUNNING",executionAttemptCount:attempts+1,executionLeaseToken,
+      executionDailyAttemptCount:transientAttemptNumber,
+      executionDailyAttemptDay:day,
+      executionRetryAfter:new Date(now.getTime()+Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30))*1000),executionRetryDay:day,updatedAt:now,
+    }).where(eq(opportunityPopupEvents.id,event.id));
+    return {claimed:true,attemptNumber:attempts+1,transientAttemptNumber,eventId:Number(event.id),executionLeaseToken};
+  });
+}
+export async function recordOpportunityExecutionFailure(userId:number,eventId:number, state:{status:"RETRYING"|"FAILED";retryAt?:Date;errorCode:string;attemptNumber?:number;releaseAttempt?:boolean;executionLeaseToken:string}){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const now=new Date();
+  const set:any={executionStatus:state.status,executionRetryAfter:state.retryAt||null,executionLastErrorCode:state.errorCode,updatedAt:now};
+  if(state.releaseAttempt) {
+    if(Number.isSafeInteger(state.attemptNumber)) set.executionAttemptCount=Math.max(0,Number(state.attemptNumber)-1);
+    // A claim released before allocation must not consume either retry budget.
+    set.executionDailyAttemptCount=sql`GREATEST(${opportunityPopupEvents.executionDailyAttemptCount}-1,0)`;
+  }
+  if(state.status==="RETRYING") set.executionRetryDay=now.toISOString().slice(0,10);
+  await db.update(opportunityPopupEvents).set(set).where(and(eq(opportunityPopupEvents.id,eventId),eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.executionLeaseToken,state.executionLeaseToken),notInArray(opportunityPopupEvents.eventStatus,["TRADED","SETTLED"])));
+}
+// Financial execution is server-owned and requires the real-market-result stage
+// below before any wallet credit can occur.
+const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;
+async function autoTradeOpenOpportunities(userId:number,offers:any[],controls:any){
+  const executed:any[]=[];
+  if(controls.accountStatus!=="active") return {executed,missed:await listMissedOpportunities(userId)};
+  const existingTrades:any[]=await listTrades(userId);
+  const existingMisses=await listMissedOpportunities(userId);
+  const missedOfferIds=new Set(existingMisses.map((row:any)=>Number(row.offerId)));
+  for(const offer of offers){
+    // A pending/retrying card is not a delivered opportunity and must never trigger
+    // a trade. Only authoritative DELIVERED/NOTICED popup states are eligible.
+    if(offer.executionEligible!==true) continue;
+    if(existingTrades.some((trade:any)=>Number(trade.offerId)===Number(offer.id))||missedOfferIds.has(Number(offer.id))) continue;
+    const offerMinimum=Number(offer.minimumMinor);
+    const packageMinimum=Number(offer.packageMinimumTradeMinor||0);
+    const packageMaximum=Number(offer.packageMaximumTradeMinor??Number.MAX_SAFE_INTEGER);
+    // Sample once per opportunity from the intersection of the offer and saved
+    // package range. Trade creation persists this selected amount for retries.
+    const amountMinimum=Math.max(offerMinimum,packageMinimum);
+    const sampledAmount=chooseSecureTradeAmount({
+      minimumTradeMinor:amountMinimum,
+      maximumTradeMinor:packageMaximum,
+      offerMinimumMinor:offerMinimum,
+    });
+    const requestedAmount=sampledAmount??amountMinimum;
+    if(!Number.isSafeInteger(requestedAmount)||requestedAmount<=0||requestedAmount>packageMaximum){
+      await markMissedOpportunity(userId,offer,Math.max(1,Number.isFinite(requestedAmount)?requestedAmount:offerMinimum),"PACKAGE_TRADE_LIMIT_UNSATISFIABLE");
+      missedOfferIds.add(Number(offer.id));
+      continue;
+    }
+    // Do not reject on the target-currency wallet alone. createTrade owns the
+    // authoritative, fresh-FX, all-or-nothing cross-wallet funding check inside
+    // its transaction; prechecking one wallet here incorrectly misses customers
+    // whose combined spendable balances cover the required capital.
+    const claim=await claimOpportunityExecutionAttempt(userId,offer);
+    if(!claim.claimed){
+      if(claim.reason==="retry-window-expired"||claim.reason==="attempts-exhausted"||claim.reason==="failed"){
+        const reason=claim.reason==="retry-window-expired"?"TEMPORARY_EXECUTION_RETRY_WINDOW_EXPIRED":claim.reason==="failed"?String((claim as any).errorCode||"TEMPORARY_EXECUTION_RETRIES_EXHAUSTED"):"TEMPORARY_EXECUTION_RETRIES_EXHAUSTED";
+        await markMissedOpportunity(userId,offer,requestedAmount,reason);
+        missedOfferIds.add(Number(offer.id));
+      }
+      continue;
+    }
+    const executionLeaseToken=claim.executionLeaseToken;
+    if(!executionLeaseToken) continue;
+    try{
+      const result=await createTrade(userId,{
+        offerId:offer.id,amountMinor:requestedAmount,executionLeaseToken,
+        deliveryEventId:offer.deliveryEventId ? Number(offer.deliveryEventId) : undefined,
+        packageSubscriptionId:Number(offer.packageSubscriptionId||0)||undefined,
+        packageId:Number(offer.packageId||0)||undefined,
+      });
+      await markOpportunityExecuted(userId,offer.id,executionLeaseToken);
+      executed.push({...result,offerId:offer.id,symbol:offer.symbol,amountMinor:requestedAmount,rewardBps:Number(result.rewardBps),calculationMethod:String(result.calculationMethod||"saved-tier-policy")});
+      existingTrades.push({offerId:offer.id,confirmedAt:new Date()});
+      break;
+    }catch(error){
+      const message=error instanceof Error?error.message:"AUTO_TRADE_REJECTED";
+      // A reclaimed event belongs to the newer lease owner. The stale worker must
+      // not convert that event into a missed opportunity or overwrite retry state.
+      if(/execution lease was lost/i.test(message)) continue;
+      if(/already been allocated|duplicate/i.test(message)) continue;
+      // A pause must not consume the configured retry budget; release the claim
+      // and wait briefly so the durable worker can resume after the administrator unpauses.
+      if(/new trading allocations are paused by an administrator/i.test(message)){
+        await recordOpportunityExecutionFailure(userId,Number(claim.eventId),{status:"RETRYING",retryAt:new Date(Date.now()+Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30))*1000),errorCode:"ALLOCATION_PAUSED",attemptNumber:claim.attemptNumber,releaseAttempt:true,executionLeaseToken});
+        continue;
+      }
+      // A previous-settlement gate is temporary business state, not a failed
+      // opportunity. Defer it and release both attempt budgets until settlement.
+      if(/previous trade settlement is still pending/i.test(message)){
+        await recordOpportunityExecutionFailure(userId,Number(claim.eventId),{status:"RETRYING",retryAt:new Date(Date.now()+Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30))*1000),errorCode:"PREVIOUS_SETTLEMENT_PENDING",attemptNumber:claim.attemptNumber,releaseAttempt:true,executionLeaseToken});
+        continue;
+      }
+      const decision=decideTradeExecutionRetry(error,Number(claim.transientAttemptNumber),MAX_TRANSIENT_ATTEMPTS_PER_OPPORTUNITY,new Date(),Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30)));
+      if(decision.kind==="retry"){
+        await recordOpportunityExecutionFailure(userId,Number(claim.eventId),{status:"RETRYING",retryAt:decision.retryAt,errorCode:decision.errorCode,executionLeaseToken});
+        continue;
+      }
+      await recordOpportunityExecutionFailure(userId,Number(claim.eventId),{status:"FAILED",errorCode:decision.errorCode,executionLeaseToken:claim.executionLeaseToken});
+      await markMissedOpportunity(userId,offer,requestedAmount,decision.errorCode);
+      missedOfferIds.add(Number(offer.id));
+    }
+  }
+  return {executed,missed:await listMissedOpportunities(userId)};
+}
+function projectPopupBalance(minimumMinorValue:unknown, availableMinorValue:unknown, reportedStatus:unknown){
+  const minimumMinor=Number(minimumMinorValue);
+  const availableMinor=Number(availableMinorValue);
+  const status=String(reportedStatus||"unknown").toLowerCase();
+  if(status==="unknown"||!Number.isSafeInteger(minimumMinor)||minimumMinor<0||!Number.isSafeInteger(availableMinor)||availableMinor<0){
+    return {availableMinor:Number.isSafeInteger(availableMinor)&&availableMinor>=0?availableMinor:0,balanceStatus:"unknown" as const,shortfallMinor:0};
+  }
+  const balanceStatus=availableMinor>=minimumMinor?"sufficient" as const:"insufficient" as const;
+  return {availableMinor,balanceStatus,shortfallMinor:balanceStatus==="insufficient"?minimumMinor-availableMinor:0};
+}
+
+export async function listCustomerOpportunities(userId:number, options:{consumeDelivery?:boolean;workerCycle?:boolean;allowAutomaticExecution?:boolean;customerSessionExecution?:boolean;generationBatchId?:string;automaticGenerationEnabled?:boolean}={}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const globalPolicy=await getTradeGlobalControls();
+  const now=new Date();
+  const quotaDay=now.toISOString().slice(0,10);
+  const settled:Array<{tradeId:number;rewardMinor:number;currency:string;totalMinor:number}>=[];
+  const controls=await ensureCustomerControls(userId);
+  const emptyResult=async (delivery:any,reason:string,counts:Record<string,number>={})=>({serverTime:new Date().toISOString(),offers:[],missed:await listMissedOpportunities(userId),autoTrades:[],settled,generatedOpportunityId:null,delivery,
+    generationDiagnostics:{attempted:false,reason,generationControlEnabled:options.automaticGenerationEnabled===true,
+      globalControlsAvailable:globalPolicy.available,tierPolicyMasterEnabled:globalPolicy.tierPolicyMasterEnabled,
+      popupDeliveryMasterEnabled:globalPolicy.informationalPopupDeliveryEnabled,...counts},
+    deliveryDiagnostics:{enabled:false,openAssignedOffers:0,generatedAssignments:0,popupEventsPersistedThisCycle:0,activePopupEvents:0,remainingQuota:0}});
+  if(controls.accountStatus!=="active") return emptyResult({packageName:"",maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,accountInactive:true,popupPolicy:{}},"CUSTOMER_ACCOUNT_INACTIVE");
+  const subscriptions=(await db.select({
+    subscriptionId:customerPackageSubscriptions.id,packageId:packages.id,packageName:packages.name,
+    activationKey:customerPackageSubscriptions.activationKey,
+    packageQuota:packages.opportunitiesPerDay,packageMaxPopupsPerDay:packages.maxPopupsPerDay,termsVersion:packages.termsVersion,termsSnapshotJson:customerPackageSubscriptions.termsSnapshotJson,
+    expiresAt:customerPackageSubscriptions.expiresAt,startsAt:customerPackageSubscriptions.startsAt,
+  }).from(customerPackageSubscriptions).innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+    .where(and(eq(customerPackageSubscriptions.userId,userId),eq(customerPackageSubscriptions.status,"active"),
+      lte(customerPackageSubscriptions.startsAt,now),or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,now)),
+      eq(packages.enabled,true),or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+      or(isNull(packages.expiresAt),gt(packages.expiresAt,now)))).orderBy(customerPackageSubscriptions.expiresAt))
+    .filter(subscription=>String(subscription.activationKey||"").startsWith("auto-tier:"));
+  if(!subscriptions.length) return emptyResult({packageName:"",maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,noPackage:true,popupPolicy:{}},"NO_ACTIVE_AUTOMATIC_TIER");
+  const packagePolicies=await listOpportunityPackagePolicies();
+  const policyByName=indexTradingPackagePolicies(packagePolicies);
+  const packageFeePolicies=await getPackageFeePolicies();
+  const packageFeeByName=new Map(packageFeePolicies.map((row:any)=>[String(row.packageName),row]));
+  // Package lifecycle remains tier-scoped. Global delivery masters are loaded
+  // once above; legacy per-tier copies are migration inputs only, not a second
+  // editable or runtime owner.
+  const eligibleSubscriptions=subscriptions.filter(subscription=>{
+    const configured=policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName));
+    return Boolean(configured && hasConfiguredTradingOfferPolicy(configured));
+  });
+  if(!eligibleSubscriptions.length) return emptyResult({packageName:subscriptions.map(row=>row.packageName).join(", "),maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,packagePolicyPaused:true,popupPolicy:{}},"NO_PACKAGE_WITH_VALID_TRADING_POLICY",{activeAutomaticSubscriptions:subscriptions.length});
+  const quotaFor=(subscription:any)=>resolveCurrentPackageEntitlementQuota(subscription.termsSnapshotJson,subscription.packageQuota);
+  const quotaByPackage=new Map<string,number>();
+  for(const subscription of eligibleSubscriptions) quotaByPackage.set(subscription.packageName,(quotaByPackage.get(subscription.packageName)||0)+quotaFor(subscription));
+  const combinedQuota=[...quotaByPackage.values()].reduce((sum,value)=>sum+value,0);
+  if(combinedQuota<=0) return emptyResult({packageName:eligibleSubscriptions.map(row=>row.packageName).join(", "),maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,packageQuotaExhausted:true,popupPolicy:{}},"CUSTOMER_PACKAGE_ENTITLEMENT_ZERO",{activeAutomaticSubscriptions:subscriptions.length,validPolicySubscriptions:eligibleSubscriptions.length});
+  const currencyRows=await listCurrencies();
+  const configuredPolicies=eligibleSubscriptions.map(subscription=>policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName))).filter((row:any)=>Boolean(row));
+  const policy=configuredPolicies[0]||null;
+  const packageName=[...new Set(eligibleSubscriptions.map(row=>row.packageName))].join(", ");
+  const tierDeliveryCaps=eligibleSubscriptions.map(subscription=>{
+    const row=policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName));
+    let snapshot:any={};try{snapshot=JSON.parse(String(subscription.termsSnapshotJson||"{}"))}catch{snapshot={}}
+    return {
+      quota:quotaFor(subscription),policyMaxPopupsPerDay:row?.maxPopupsPerDay,
+      packageMaxPopupsPerDay:snapshot.maxPopupsPerDay??subscription.packageMaxPopupsPerDay,
+      dailyPopupTarget:row?.dailyPopupTarget,maxVisibleOffers:row?.maxVisibleOffers,
+    };
+  });
+  const {maxPopupsPerDay,maxVisibleOffers}=calculateTierDeliveryCaps(tierDeliveryCaps);
+  const effectiveSchedulingPeriod=configuredPolicies.some((row:any)=>row.schedulingPeriod==="rolling_24h")?"rolling_24h":"calendar_day";
+  const quotaWindow=resolveTradingQuotaWindow(now,effectiveSchedulingPeriod);
+  const opportunityUsageResetBoundary=await getOpportunityUsageResetBoundary(db,userId);
+  const effectiveQuotaStart=opportunityUsageResetBoundary&&opportunityUsageResetBoundary.resetAt>quotaWindow.start?opportunityUsageResetBoundary.resetAt:quotaWindow.start;
+  const popupPolicy={
+    popupMinGapSeconds:Math.max(0,Number(policy?.minIntervalSeconds||0)),
+    popupMaxPerHour:maxPopupsPerDay,
+    popupPreAlertProbabilityBps:0,popupPreAlertSeconds:0,popupWithdrawalProbabilityBps:0,
+    popupJitterSeconds:globalPolicy.randomizedTimingEnabled?Math.max(0,Number(policy?.maxIntervalSeconds||0)-Number(policy?.minIntervalSeconds||0)):0,
+  };
+  let offerRows=await db.select().from(opportunityOffers).where(and(eq(opportunityOffers.assignedUserId,userId),eq(opportunityOffers.status,"open"),lte(opportunityOffers.opensAt,now),gt(opportunityOffers.closesAt,now))).orderBy(opportunityOffers.closesAt).limit(5000);
+  let generationAssignments=offerRows.length?await db.select().from(opportunityGenerationAssignments)
+    .where(and(eq(opportunityGenerationAssignments.userId,userId),inArray(opportunityGenerationAssignments.offerId,offerRows.map(row=>Number(row.id))))):[];
+  let generationAssignmentByOffer=new Map(generationAssignments.map(row=>[Number(row.offerId),row]));
+  const tradeHistory=await listTrades(userId);
+  const tradeOfferIds=new Set(tradeHistory.map((row:any)=>Number(row.offerId)));
+  const missedHistory=await listMissedOpportunities(userId);
+  const missedOfferIds=new Set(missedHistory.map((row:any)=>Number(row.offerId)));
+  const deliveredToday=await db.select({
+    offerId:opportunityDeliveryEvents.offerId,
+    status:opportunityDeliveryEvents.status,
+    quotaDay:opportunityDeliveryEvents.quotaDay,
+  }).from(opportunityDeliveryEvents).where(and(
+    eq(opportunityDeliveryEvents.userId,userId),gte(opportunityDeliveryEvents.deliveredAt,effectiveQuotaStart),
+    gt(opportunityDeliveryEvents.id,opportunityUsageResetBoundary?.deliveryEventMaxId??0),
+    lt(opportunityDeliveryEvents.deliveredAt,quotaWindow.end),notInArray(opportunityDeliveryEvents.status,["failed"])
+  ));
+  // Package copies are separate entitlements: count allocations against each
+  // subscription's own quota window instead of pooling copies under package name.
+  const usedQuotaRows=await db.execute(sql`SELECT packageSubscriptionId,COUNT(*) AS used FROM trade_positions
+    WHERE userId=${userId} AND packageSubscriptionId IS NOT NULL
+      AND confirmedAt>=${effectiveQuotaStart} AND confirmedAt<${quotaWindow.end}
+      AND id>${opportunityUsageResetBoundary?.tradePositionMaxId??0}
+      AND status<>'cancelled'
+    GROUP BY packageSubscriptionId`) as any;
+  const usedBySubscription=new Map<number,number>();
+  for(const row of (usedQuotaRows?.[0]||[])) usedBySubscription.set(Number(row.packageSubscriptionId),Number(row.used||0));
+  const subscriptionHasQuota=(subscription:any)=>{
+    const dailyQuota=quotaFor(subscription);
+    return dailyQuota>0&&(usedBySubscription.get(Number(subscription.subscriptionId))||0)<dailyQuota;
+  };
+  const activePopupRows=await db.select({
+    eventId:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,packageId:opportunityPopupEvents.packageId,packageName:opportunityPopupEvents.packageName,
+    policyVersion:opportunityPopupEvents.policyVersion,
+    symbol:opportunityPopupEvents.symbol,currency:opportunityPopupEvents.currency,popupMinimumMinor:opportunityPopupEvents.minimumMinor,
+    expectedRewardBps:opportunityPopupEvents.expectedRewardBps,balanceAvailableMinor:opportunityPopupEvents.balanceAvailableMinor,
+    balanceStatus:opportunityPopupEvents.balanceStatus,eventStatus:opportunityPopupEvents.eventStatus,deliveryStatus:opportunityPopupEvents.deliveryStatus,expiredAt:opportunityPopupEvents.expiredAt,quotaDay:opportunityPopupEvents.quotaDay,
+    deliveredAt:opportunityPopupEvents.deliveredAt,venueFrom:opportunityOffers.venueFrom,venueTo:opportunityOffers.venueTo,
+    offerStatus:opportunityOffers.status,offerMinimumMinor:opportunityOffers.minimumMinor,opensAt:opportunityOffers.opensAt,
+    closesAt:opportunityOffers.closesAt,rewardAt:opportunityOffers.rewardAt,durationSeconds:opportunityOffers.durationSeconds,
+    marketObservedAt:opportunityOffers.marketObservedAt,marketSnapshotId:opportunityOffers.marketSnapshotId,
+    sector:opportunityOffers.sector,industry:opportunityOffers.industry,listingStatus:opportunityOffers.listingStatus,
+  }).from(opportunityPopupEvents).leftJoin(opportunityOffers,eq(opportunityPopupEvents.offerId,opportunityOffers.id))
+    .where(and(eq(opportunityPopupEvents.userId,userId),notInArray(opportunityPopupEvents.eventStatus,["TRADED","SETTLED","WITHDRAWN"])))
+    .orderBy(desc(opportunityPopupEvents.deliveredAt));
+  const durableDeliveryKeys=await db.select({offerId:opportunityDeliveryIdempotency.offerId}).from(opportunityDeliveryIdempotency).where(eq(opportunityDeliveryIdempotency.userId,userId));
+  const activePopupOfferIds=new Set([...activePopupRows.map(row=>Number(row.offerId)),...durableDeliveryKeys.map(row=>Number(row.offerId))]);
+  // Repair interrupted writes before calculating quota: some older workers wrote
+  // the quota row before persisting its visible popup, while a crash in the new
+  // order can leave a popup row without its quota ledger entry.
+  let effectiveDeliveredToday:Array<{offerId:number;status:"pending"|"delivered"|"expired"|"failed";quotaDay?:string}>=deliveredToday.map(row=>({...row}));
+  if(options.workerCycle===true){
+    const ledgerOfferIds=[...new Set(effectiveDeliveredToday.map(row=>Number(row.offerId)).filter(id=>Number.isSafeInteger(id)&&id>0))];
+    const persistedPopupEvents=ledgerOfferIds.length
+      ?await db.select({offerId:opportunityPopupEvents.offerId}).from(opportunityPopupEvents)
+        .where(and(eq(opportunityPopupEvents.userId,userId),inArray(opportunityPopupEvents.offerId,ledgerOfferIds)))
+      :[];
+    const persistedPopupOfferIds=new Set(persistedPopupEvents.map(row=>Number(row.offerId)));
+    const orphanedLedgerOfferIds=[...new Set(effectiveDeliveredToday
+      .filter(row=>row.status!=="failed"&&!persistedPopupOfferIds.has(Number(row.offerId))&&
+        !tradeOfferIds.has(Number(row.offerId))&&!missedOfferIds.has(Number(row.offerId)))
+      .map(row=>Number(row.offerId)))];
+    if(orphanedLedgerOfferIds.length){
+      await db.update(opportunityDeliveryEvents).set({status:"failed",lastErrorCode:"POPUP_EVENT_MISSING"})
+        .where(and(eq(opportunityDeliveryEvents.userId,userId),inArray(opportunityDeliveryEvents.offerId,orphanedLedgerOfferIds),
+          notInArray(opportunityDeliveryEvents.status,["failed"])));
+      const orphaned=new Set(orphanedLedgerOfferIds);
+      effectiveDeliveredToday=effectiveDeliveredToday.map(row=>orphaned.has(Number(row.offerId))?{...row,status:"failed"}:row);
+    }
+    const windowStart=quotaWindow.start.getTime();
+    const windowEnd=quotaWindow.end.getTime();
+    const ledgerKeys=new Set(effectiveDeliveredToday.map(row=>String(row.offerId)+":"+String((row as any).quotaDay??"")));
+    const popupRowsMissingLedger=activePopupRows.filter(row=>{
+      const deliveredAt=new Date(row.deliveredAt as any).getTime();
+      const key=String(row.offerId)+":"+String(row.quotaDay);
+      return Number.isFinite(deliveredAt)&&deliveredAt>=windowStart&&deliveredAt<windowEnd&&!ledgerKeys.has(key);
+    });
+    if(popupRowsMissingLedger.length){
+      await db.insert(opportunityDeliveryEvents).values(popupRowsMissingLedger.map(row=>({
+        userId,offerId:Number(row.offerId),quotaDay:String(row.quotaDay),
+        deliveredAt:row.deliveredAt||now,status:"delivered" as const,
+        policyVersion:Number(row.policyVersion||1),
+      }))).onDuplicateKeyUpdate({set:{status:"delivered",lastErrorCode:null}});
+      effectiveDeliveredToday=[...effectiveDeliveredToday,...popupRowsMissingLedger.map(row=>({
+        offerId:Number(row.offerId),status:"delivered" as const,quotaDay:String(row.quotaDay),
+      }))];
+    }
+  }
+  const deliveredOfferIds=new Set(effectiveDeliveredToday.filter(row=>row.status!=="failed").map(row=>Number(row.offerId)));
+  const deliveredOfferCount=countConsumedDeliveryOffers(effectiveDeliveredToday);
+  const activeVisibleCount=countActiveVisiblePopupEvents(activePopupRows,now);
+  const packageNames=[...new Set(eligibleSubscriptions.map(subscription=>String(subscription.packageName)))];
+  const schedulePolicyEnabled=packageNames.some(packageName=>{
+    const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(packageName));
+    return Number(packagePolicy?.minIntervalSeconds||0)>0||Number(packagePolicy?.maxIntervalSeconds||0)>0||Number(packagePolicy?.postCompletionIntervalSeconds||0)>0;
+  });
+  const packageDeliveryRows=schedulePolicyEnabled?await db.select({
+    packageName:opportunityPopupEvents.packageName,id:opportunityDeliveryEvents.id,
+    deliveredAt:opportunityDeliveryEvents.deliveredAt,policyVersion:opportunityDeliveryEvents.policyVersion,
+  }).from(opportunityDeliveryEvents).innerJoin(opportunityPopupEvents,and(
+    eq(opportunityDeliveryEvents.userId,opportunityPopupEvents.userId),
+    eq(opportunityDeliveryEvents.offerId,opportunityPopupEvents.offerId),
+  )).where(and(
+    eq(opportunityDeliveryEvents.userId,userId),
+    gt(opportunityDeliveryEvents.id,opportunityUsageResetBoundary?.deliveryEventMaxId??0),
+    notInArray(opportunityDeliveryEvents.status,["failed"]),
+  )).orderBy(desc(opportunityDeliveryEvents.deliveredAt)):[];
+  const lastDeliveryByPackage=new Map<string,typeof packageDeliveryRows[number]>();
+  for(const row of packageDeliveryRows){
+    if(row.packageName&&!lastDeliveryByPackage.has(String(row.packageName)))lastDeliveryByPackage.set(String(row.packageName),row);
+  }
+  const packageCompletionRows=packageNames.length?await db.select({
+    packageName:packages.name,completionAt:tradePositions.completionAt,
+  }).from(tradePositions).innerJoin(customerPackageSubscriptions,eq(tradePositions.packageSubscriptionId,customerPackageSubscriptions.id))
+    .innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id)).where(and(
+      eq(tradePositions.userId,userId),eq(tradePositions.status,"settled"),isNotNull(tradePositions.completionAt),
+      gte(tradePositions.completionAt,opportunityUsageResetBoundary?.resetAt??new Date(0)),
+    )).orderBy(desc(tradePositions.completionAt)):[];
+  const lastCompletedTradeByPackage=new Map<string,typeof packageCompletionRows[number]>();
+  for(const row of packageCompletionRows){
+    if(row.packageName&&!lastCompletedTradeByPackage.has(String(row.packageName)))lastCompletedTradeByPackage.set(String(row.packageName),row);
+  }
+  const packageSchedules=new Map<string,{deliveryReadyAt:Date|null;postCompletionReadyAt:Date|null;readyAt:Date|null;cooling:boolean}>();
+  for(const packageName of packageNames){
+    const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(packageName));
+    const lastDelivery=lastDeliveryByPackage.get(packageName);
+    const deliverySchedule=resolveTradingDeliverySchedule({
+      lastDeliveredAt:lastDelivery?.deliveredAt??null,deliveryEventId:Number(lastDelivery?.id||0),userId,
+      policyVersion:Number(lastDelivery?.policyVersion||0),
+      minIntervalSeconds:Math.max(0,Number(packagePolicy?.minIntervalSeconds||0)),
+      maxIntervalSeconds:Math.max(0,Number(packagePolicy?.maxIntervalSeconds||0)),
+      randomizationEnabled:globalPolicy.randomizedTimingEnabled,
+    });
+    const postCompletionIntervalSeconds=Math.max(0,Number(packagePolicy?.postCompletionIntervalSeconds||0));
+    const lastCompletedTrade=lastCompletedTradeByPackage.get(packageName);
+    const postCompletionReadyAt=lastCompletedTrade?.completionAt
+      ?new Date(new Date(lastCompletedTrade.completionAt).getTime()+postCompletionIntervalSeconds*1000):null;
+    const readyDeadlines=[deliverySchedule.readyAt,postCompletionReadyAt].filter((value):value is Date=>value instanceof Date);
+    const readyAt=readyDeadlines.length?new Date(Math.max(...readyDeadlines.map(value=>value.getTime()))):null;
+    packageSchedules.set(packageName,{deliveryReadyAt:deliverySchedule.readyAt,postCompletionReadyAt,readyAt,
+      cooling:Boolean(readyAt&&readyAt.getTime()>now.getTime())});
+  }
+  const futureReadyAt=[...packageSchedules.values()].map(schedule=>schedule.readyAt)
+    .filter((value):value is Date=>Boolean(value&&value.getTime()>now.getTime()));
+  const formulaReadyAt=futureReadyAt.length?new Date(Math.min(...futureReadyAt.map(value=>value.getTime()))):null;
+  const formulaCooling=packageNames.length>0&&packageNames.every(packageName=>packageSchedules.get(packageName)?.cooling===true);
+  const dailyCap=maxPopupsPerDay;
+  const deliveryCapacity=calculateTradingDeliveryCapacity({dailyCap,deliveredOfferCount,maxVisibleOffers,activeVisibleCount});
+  let remainingQuota=deliveryCapacity.remainingQuota;
+  const balancesSnapshot=await listBalances(userId);
+  let newlyEligible:any[]=[];
+  let generatedOpportunityId:number|null=null;
+  // Preserve the entitlement selected for newly created popups during this cycle,
+  // so the later automatic-trade pass does not count that same quota slot twice.
+  const assignedSubscriptionByOffer=new Map<number,any>();
+  const activeSubscriptionIds=eligibleSubscriptions.map(subscription=>Number(subscription.subscriptionId));
+  // An informational popup that has already been classified as insufficient
+  // balance is a terminal outcome for that offer, not a usable pending offer.
+  // Keep its popup/offer history intact, but do not let its still-open source offer
+  // hold the customer's generation gate forever.
+  const insufficientBalanceOfferIds=new Set<number>();
+  if(offerRows.length){
+    const insufficientRows=await db.select({offerId:opportunityPopupEvents.offerId}).from(opportunityPopupEvents)
+      .where(and(eq(opportunityPopupEvents.userId,userId),inArray(opportunityPopupEvents.offerId,offerRows.map(offer=>Number(offer.id))),
+        eq(opportunityPopupEvents.balanceStatus,"insufficient")));
+    for(const row of insufficientRows) insufficientBalanceOfferIds.add(Number(row.offerId));
+  }
+  const hasUsableAssignedOffer=offerRows.some(offer=>{
+    const offerId=Number(offer.id);
+    if(insufficientBalanceOfferIds.has(offerId)) return false;
+    const assignmentStatus=String(generationAssignmentByOffer.get(offerId)?.status||"");
+    const assignedSubscription=eligibleSubscriptions.find(subscription=>Number(subscription.subscriptionId)===Number(offer.assignedPackageSubscriptionId));
+    const assignedPackageCooling=Boolean(assignedSubscription&&packageSchedules.get(String(assignedSubscription.packageName))?.cooling===true);
+    return activeSubscriptionIds.includes(Number(offer.assignedPackageSubscriptionId))&&!assignedPackageCooling&&["generated","delivered"].includes(assignmentStatus);
+  });
+  const generationGateReason=options.workerCycle!==true?"NOT_WORKER_CYCLE"
+    :options.automaticGenerationEnabled!==true?"GENERATION_CONTROL_DISABLED_OR_UNAVAILABLE"
+    :!options.generationBatchId?"GENERATION_BATCH_ID_MISSING"
+    :!globalPolicy.available?"GLOBAL_TRADE_CONTROLS_UNAVAILABLE"
+    :!globalPolicy.tierPolicyMasterEnabled?"TIER_POLICY_MASTER_DISABLED"
+    :!globalPolicy.informationalPopupDeliveryEnabled?"POPUP_DELIVERY_MASTER_DISABLED"
+    :formulaCooling?"DELIVERY_SCHEDULE_COOLDOWN"
+    :remainingQuota<=0?"DELIVERY_QUOTA_OR_VISIBLE_CAPACITY_EXHAUSTED"
+    :hasUsableAssignedOffer?"OPEN_GENERATED_OPPORTUNITY_ALREADY_EXISTS":null;
+  let generationAttempted=false;
+  let generationSkipReason:string|null=generationGateReason;
+  let generationSkipDetail:Record<string,number>|undefined;
+  if(generationGateReason===null){
+    generationAttempted=true;
+    const outcome=await generateAutomaticCustomerOpportunity({
+      userId,batchId:options.generationBatchId!,now,quotaWindowStart:quotaWindow.start,
+      eligibleSubscriptions:eligibleSubscriptions.filter(subscription=>packageSchedules.get(String(subscription.packageName))?.cooling!==true)
+        .map(subscription=>({subscriptionId:Number(subscription.subscriptionId),packageId:Number(subscription.packageId),packageName:String(subscription.packageName)})),
+      companyRotationEnabled:Boolean(globalPolicy.companyRotationEnabled),
+      customerCompanyCountryRestrictions:normalizeCustomerCompanyCountryRestrictions(controls.companyCountryRestrictions||""),
+    });
+    generatedOpportunityId=outcome.offerId;
+    generationSkipReason=outcome.skipReason;
+    generationSkipDetail=outcome.skipDetail;
+    if(generatedOpportunityId){
+      offerRows=await db.select().from(opportunityOffers).where(and(eq(opportunityOffers.assignedUserId,userId),eq(opportunityOffers.status,"open"),lte(opportunityOffers.opensAt,now),gt(opportunityOffers.closesAt,now)))
+        .orderBy(opportunityOffers.closesAt).limit(5000);
+      generationAssignments=offerRows.length?await db.select().from(opportunityGenerationAssignments)
+        .where(and(eq(opportunityGenerationAssignments.userId,userId),inArray(opportunityGenerationAssignments.offerId,offerRows.map(row=>Number(row.id))))):[];
+      generationAssignmentByOffer=new Map(generationAssignments.map(row=>[Number(row.offerId),row]));
+    }
+  }
+  if(options.workerCycle===true&&globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled&&!formulaCooling&&remainingQuota>0){
+    for(const offer of offerRows){
+      if(remainingQuota<=0) break;
+      const offerId=Number(offer.id);
+      if(deliveredOfferIds.has(offerId)||activePopupOfferIds.has(offerId)||tradeOfferIds.has(offerId)||missedOfferIds.has(offerId)) continue;
+      const generationAssignment=generationAssignmentByOffer.get(offerId);
+      const generatedOffer=Number(offer.assignedUserId)===userId&&Boolean(generationAssignment);
+      let generationSnapshot:any=null;
+      if(generatedOffer){
+        if(!generationAssignment||!["generated","delivered"].includes(String(generationAssignment.status)))continue;
+        try{generationSnapshot=JSON.parse(String(generationAssignment.packageSnapshotJson||"{}"));}catch{continue;}
+        const minRate=Number(generationSnapshot.minimumPayoutRateBps),maxRate=Number(generationSnapshot.maximumPayoutRateBps);
+        const minDuration=Number(generationSnapshot.minimumTradeDurationSeconds),maxDuration=Number(generationSnapshot.maximumTradeDurationSeconds);
+        const savedPackageVersion=Number(generationSnapshot.policyVersion),savedPackageMinimum=Number(generationSnapshot.packageMinimumMinor),savedPackageMaximum=Number(generationSnapshot.packageMaximumMinor);
+        const savedDurationSeconds=Number(generationSnapshot.configuredDurationSeconds),savedCurrencyRate=Number(generationSnapshot.currencyRateUsd);
+        const savedTiming=validateOpportunityDurationSnapshot(generationSnapshot,{
+          opensAt:offer.opensAt,rewardAt:offer.rewardAt,closesAt:offer.closesAt,
+          offerDurationSeconds:offer.durationSeconds,eventDurationSeconds:generationSnapshot.configuredDurationSeconds,
+          eventPopupDisplaySeconds:Number(generationSnapshot.configuredDurationSeconds)+Number(generationSnapshot.completionDisplaySeconds),
+        });
+        if(!Number.isSafeInteger(minRate)||!Number.isSafeInteger(maxRate)||!Number.isSafeInteger(minDuration)||!Number.isSafeInteger(maxDuration)||
+          !Number.isSafeInteger(savedPackageVersion)||savedPackageVersion<1||!Number.isSafeInteger(savedPackageMinimum)||savedPackageMinimum<=0||
+          !Number.isSafeInteger(savedPackageMaximum)||savedPackageMaximum<savedPackageMinimum||!Number.isSafeInteger(savedDurationSeconds)||savedDurationSeconds<minDuration||savedDurationSeconds>maxDuration||
+          !Number.isFinite(savedCurrencyRate)||savedCurrencyRate<=0||generationSnapshot.currency!==offer.currency||generationSnapshot.symbol!==offer.symbol||
+          generationSnapshot.companyReferenceId!==offer.companyReferenceId||
+          !savedTiming||
+          Number(offer.expectedRewardBps)!==Number(generationAssignment.configuredProfitRateBps)||Number(offer.durationSeconds)!==Number(generationAssignment.configuredDurationSeconds)||
+          Number(offer.expectedRewardBps)<minRate||Number(offer.expectedRewardBps)>maxRate||Number(offer.durationSeconds)<minDuration||Number(offer.durationSeconds)>maxDuration||
+          Number(offer.minimumMinor)!==Number(generationSnapshot.minimumMinor))continue;
+      }
+      const currencyRow=currencyRows.find((row:any)=>String(row.code).toUpperCase()===String(offer.currency).toUpperCase());
+      if(!currencyRow) continue;
+      // The administrator's rate/duration bounds filter published opportunities.
+      // They never synthesize a reward rate or reroll a duration.
+      const publishedRewardBps=Number(offer.expectedRewardBps);
+      const publishedDurationSeconds=Number(offer.durationSeconds);
+      if(!Number.isSafeInteger(publishedRewardBps)||publishedRewardBps<0||publishedRewardBps>10000||
+         !Number.isSafeInteger(publishedDurationSeconds)||publishedDurationSeconds<10||publishedDurationSeconds>86400) continue;
+      let selected:any=null;
+      for(const candidate of eligibleSubscriptions){
+        if(Number(offer.assignedPackageSubscriptionId)!==Number(candidate.subscriptionId)||Number(offer.assignedPackageId)!==Number(candidate.packageId)) continue;
+        if(!subscriptionHasQuota(candidate)) continue;
+        // A cooling entitlement must not delay an opportunity for another ready package.
+        if(packageSchedules.get(String(candidate.packageName))?.cooling===true) continue;
+        const candidatePolicy=policyByName.get(normalizeTradingPackagePolicyKey(candidate.packageName));
+        const configuredMinimum=generatedOffer?Number(generationSnapshot.packageMinimumMinor):candidatePolicy?packageUsdUnitsToNativeMinor(Number(candidatePolicy.minimumTradeUnits),String(offer.currency),currencyRows):Number(offer.minimumMinor);
+        const configuredMaximum=generatedOffer?Number(generationSnapshot.packageMaximumMinor):candidatePolicy?Math.max(configuredMinimum,packageUsdUnitsToNativeMinor(Number(candidatePolicy.maximumTradeUnits),String(offer.currency),currencyRows)):Number.MAX_SAFE_INTEGER;
+        const terms=calculateTradeTerms(userId,offer,Math.max(Number(offer.minimumMinor),configuredMinimum));
+        const minimumMinor=Math.max(Number(offer.minimumMinor),Number(terms.minimumMinor||0),configuredMinimum);
+        if(!Number.isSafeInteger(minimumMinor)||minimumMinor<=0||minimumMinor>configuredMaximum) continue;
+        selected={subscription:candidate,configured:candidatePolicy,configuredMinimum,configuredMaximum,minimumMinor,terms};
+        break;
+      }
+      if(!selected) continue;
+      const subscription=selected.subscription;
+      const configured=selected.configured;
+      if(!configured||!hasConfiguredTradingOfferPolicy(configured)) continue;
+      if(newlyEligible.length>=resolveTradingBurstLimit({burstEnabled:globalPolicy.burstDeliveryEnabled,maxBurstSize:Number(configured.maxBurstSize||0)})) break;
+      // Select one administrator-configured rate and duration exactly once. The
+      // selection is persisted with the popup and reused by retries/trade allocation.
+      const configuredProfitRateBps=generatedOffer?Number(offer.configuredProfitRateBps):chooseInclusiveInteger(Number(configured.minimumPayoutRateBps),Number(configured.maximumPayoutRateBps));
+      const configuredDurationSeconds=generatedOffer?Number(offer.configuredDurationSeconds):chooseInclusiveInteger(Number(configured.minimumTradeDurationSeconds),Number(configured.maximumTradeDurationSeconds));
+      const savedBounds=generatedOffer?generationSnapshot:{minimumPayoutRateBps:configured.minimumPayoutRateBps,maximumPayoutRateBps:configured.maximumPayoutRateBps,minimumTradeDurationSeconds:configured.minimumTradeDurationSeconds,maximumTradeDurationSeconds:configured.maximumTradeDurationSeconds};
+      if(!Number.isSafeInteger(configuredProfitRateBps)||configuredProfitRateBps<Number(savedBounds.minimumPayoutRateBps)||configuredProfitRateBps>Number(savedBounds.maximumPayoutRateBps)||
+        !Number.isSafeInteger(configuredDurationSeconds)||configuredDurationSeconds<Number(savedBounds.minimumTradeDurationSeconds)||configuredDurationSeconds>Number(savedBounds.maximumTradeDurationSeconds)) continue;
+      const completionDisplaySeconds=generatedOffer?Number(generationSnapshot.completionDisplaySeconds??8):Number(configured.completionDisplaySeconds??8);
+      if(!Number.isSafeInteger(completionDisplaySeconds)||completionDisplaySeconds<1||completionDisplaySeconds>3600) continue;
+      const configuredPopupDisplaySeconds=configuredDurationSeconds+completionDisplaySeconds;
+      newlyEligible.push({...offer,packageId:Number(subscription.packageId),packageName:subscription.packageName,packageSubscriptionId:Number(subscription.subscriptionId),
+        minimumMinor:selected.minimumMinor,packageMinimumTradeMinor:selected.configuredMinimum,packageMaximumTradeMinor:selected.configuredMaximum,
+        currencyRateUsd:Number(currencyRow.usdRate||0),currencyRateUpdatedAt:currencyRow.updatedAt||null,
+        expectedRewardBps:configuredProfitRateBps,configuredProfitRateBps,configuredDurationSeconds,configuredPopupDisplaySeconds,
+        durationSeconds:configuredDurationSeconds,policyVersion:generatedOffer?Number(generationSnapshot.policyVersion):Number(configured.policyVersion||1),
+        packagePolicyVersionSnapshot:generatedOffer?Number(generationSnapshot.policyVersion):Number(configured.policyVersion||1),
+        badgeLabel:(generatedOffer?generationSnapshot.badgeLabel:configured.badgeLabel)==null?null:String(generatedOffer?generationSnapshot.badgeLabel:configured.badgeLabel),
+        packageBadgeLabel:(generatedOffer?generationSnapshot.badgeLabel:configured.badgeLabel)==null?null:String(generatedOffer?generationSnapshot.badgeLabel:configured.badgeLabel),
+        badgeStyle:generatedOffer&&["neutral","blue","purple","gold","green"].includes(String(generationSnapshot.badgeStyle))?String(generationSnapshot.badgeStyle):["neutral","blue","purple","gold","green"].includes(String(configured.badgeStyle))?String(configured.badgeStyle):"neutral",
+        companyRotationEnabled:generatedOffer?Boolean(generationSnapshot.companyRotationEnabled):globalPolicy.companyRotationEnabled,
+        companyRotationCountryNames:generatedOffer?String(generationSnapshot.companyRotationCountryNames||""):String(configured.companyRotationCountryNames||""),
+        companyRotationRepeatPolicy:generatedOffer?generationSnapshot.companyRotationRepeatPolicy:configured.companyRotationRepeatPolicy==="allow_repeats"?"allow_repeats":"avoid_until_exhausted",
+        companyReferenceId:offer.companyReferenceId??null,companyDisplayName:offer.companyDisplayName??null,companyLogoUrl:offer.companyLogoUrl??null,companyReferenceMetadataJson:offer.companyReferenceMetadataJson??null});
+      assignedSubscriptionByOffer.set(Number(offer.id),subscription);
+      usedBySubscription.set(Number(subscription.subscriptionId),(usedBySubscription.get(Number(subscription.subscriptionId))||0)+1);
+      remainingQuota--;
+    }
+  }
+  if(newlyEligible.length){
+    // Snapshot the combined spendable balance in each offer's currency. Only enabled
+    // wallet currencies with positive available funds need FX quotes; if any such
+    // quote is unavailable, report the balance as unknown rather than understating it.
+    const combinedBalanceSnapshots=await Promise.all(newlyEligible.map(async offer=>{
+      const targetCurrency=String(offer.currency).toUpperCase();
+      const configs=new Map(currencyRows.map((row:any)=>[String(row.code).toUpperCase(),row]));
+      const positiveForeignWallets=balancesSnapshot.filter((wallet:any)=>
+        String(wallet.currency).toUpperCase()!==targetCurrency&&Number(wallet.availableMinor)>0);
+      const rateCodes=[...new Set([...(positiveForeignWallets.length?[targetCurrency]:[]),...positiveForeignWallets.map((wallet:any)=>String(wallet.currency).toUpperCase())])];
+      const rateResults=await Promise.all(rateCodes.map(async code=>{
+        const config:any=configs.get(code);
+        if(!config)return [code,null] as const;
+        try{return [code,await getFreshTradingFxRate({code,scale:Number(config.scale),assetType:config.assetType,externalCode:config.externalCode?String(config.externalCode):null})] as const;}
+        catch{return [code,null] as const;}
+      }));
+      const rates=new Map<string,FxRateSnapshot|null>(rateResults);
+      if(!configs.has(targetCurrency)||positiveForeignWallets.some((wallet:any)=>!rates.get(String(wallet.currency).toUpperCase())))
+        return {availableMinor:0,balanceStatus:"unknown" as const};
+      try{
+        const availableMinor=calculateCombinedAvailableTargetMinor({
+          targetCurrency,targetRate:rates.get(targetCurrency)||null,
+          wallets:balancesSnapshot.map((wallet:any)=>{
+            const code=String(wallet.currency).toUpperCase();
+            const config:any=configs.get(code);
+            return {currency:code,scale:Number(config?.scale??2),availableMinor:Number(wallet.availableMinor||0),rate:rates.get(code)||null};
+          }),
+        });
+        return {availableMinor,balanceStatus:availableMinor>=Number(offer.minimumMinor)?"sufficient" as const:"insufficient" as const,shortfallMinor:Math.max(0,Number(offer.minimumMinor)-availableMinor)};
+      }catch{return {availableMinor:0,balanceStatus:"unknown" as const,shortfallMinor:0};}
+    }));
+    // Persist the visible popup first. Only write the quota-consumption ledger after
+    // every popup row is confirmed; an insert failure must not consume a quota slot.
+    const lifecycleIds=await ensurePopupDeliveries(newlyEligible.map((offer,index)=>{
+      const balance=combinedBalanceSnapshots[index]||{availableMinor:0,balanceStatus:"unknown" as const,shortfallMinor:0};
+      return {userId,offerId:offer.id,quotaDay,packageId:Number(offer.packageId),packageName:offer.packageName,maxPendingDeliveries:Math.max(0,Number(policyByName.get(normalizeTradingPackagePolicyKey(offer.packageName))?.maxPendingDeliveries??0)),symbol:offer.symbol,currency:offer.currency,minimumMinor:Number(offer.minimumMinor),
+        expectedRewardBps:Number(offer.expectedRewardBps),configuredProfitRateBps:Number(offer.configuredProfitRateBps),
+        configuredDurationSeconds:Number(offer.configuredDurationSeconds),configuredPopupDisplaySeconds:Number(offer.configuredPopupDisplaySeconds),
+        policyVersion:Number(offer.policyVersion||1),packagePolicyVersionSnapshot:Number(offer.packagePolicyVersionSnapshot||offer.policyVersion||1),
+        durationSeconds:Number(offer.configuredDurationSeconds),badgeLabel:offer.badgeLabel??null,packageBadgeLabel:offer.packageBadgeLabel??null,badgeStyle:offer.badgeStyle||"neutral",
+        companyRotationEnabled:Boolean(offer.companyRotationEnabled),companyRotationCountryNames:String(offer.companyRotationCountryNames||""),
+        companyRotationRepeatPolicy:offer.companyRotationRepeatPolicy==="allow_repeats"?"allow_repeats":"avoid_until_exhausted",
+        companyReferenceId:offer.companyReferenceId??null,companyDisplayName:offer.companyDisplayName??null,companyLogoUrl:offer.companyLogoUrl??null,companyReferenceMetadataJson:offer.companyReferenceMetadataJson??null,
+        balanceAvailableMinor:balance.availableMinor,balanceStatus:balance.balanceStatus,
+        marketObservedAt:offer.marketObservedAt,marketSnapshotJson:JSON.stringify({symbol:offer.symbol,venueFrom:offer.venueFrom,venueTo:offer.venueTo,marketValueUsd:offer.marketValueUsd,sector:offer.sector,industry:offer.industry,listingStatus:offer.listingStatus,observedAt:offer.marketObservedAt,publishedExpectedRewardBps:Number(offer.expectedRewardBps),publishedDurationSeconds:Number(offer.durationSeconds),configuredProfitRateBps:Number(offer.configuredProfitRateBps),configuredDurationSeconds:Number(offer.configuredDurationSeconds)})};
+    }));
+    const missingLifecycleIds=newlyEligible.filter(offer=>!lifecycleIds.has(userId+":"+offer.id));
+    if(missingLifecycleIds.length) throw new Error("Popup persistence did not return delivery IDs for every eligible opportunity");
+    await db.insert(opportunityDeliveryEvents).values(newlyEligible.map(offer=>({
+      userId,offerId:offer.id,quotaDay,status:"pending" as const,policyVersion:Number(policyByName.get(normalizeTradingPackagePolicyKey(offer.packageName))?.policyVersion||1),
+    }))).onDuplicateKeyUpdate({set:{deliveredAt:new Date(),status:"delivered",lastErrorCode:null}});
+    for(const offer of newlyEligible){
+      offer.deliveryEventId=lifecycleIds.get(userId+":"+offer.id)||null;
+      deliveredOfferIds.add(Number(offer.id));
+    }
+  }
+  const popupRows=await db.select({
+    eventId:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,packageId:opportunityPopupEvents.packageId,packageName:opportunityPopupEvents.packageName,
+    executionStatus:opportunityPopupEvents.executionStatus,executionAttemptCount:opportunityPopupEvents.executionAttemptCount,executionRetryAfter:opportunityPopupEvents.executionRetryAfter,executionRetryDay:opportunityPopupEvents.executionRetryDay,executionLastErrorCode:opportunityPopupEvents.executionLastErrorCode,
+    symbol:opportunityPopupEvents.symbol,currency:opportunityPopupEvents.currency,popupMinimumMinor:opportunityPopupEvents.minimumMinor,
+    expectedRewardBps:opportunityPopupEvents.expectedRewardBps,policyVersion:opportunityPopupEvents.policyVersion,
+    configuredProfitRateBps:opportunityPopupEvents.configuredProfitRateBps,configuredDurationSeconds:opportunityPopupEvents.configuredDurationSeconds,
+    configuredPopupDisplaySeconds:opportunityPopupEvents.configuredPopupDisplaySeconds,packagePolicyVersionSnapshot:opportunityPopupEvents.packagePolicyVersionSnapshot,
+    packageBadgeLabel:opportunityPopupEvents.packageBadgeLabel,companyReferenceId:opportunityPopupEvents.companyReferenceId,
+    companyDisplayName:opportunityPopupEvents.companyDisplayName,companyLogoUrl:opportunityPopupEvents.companyLogoUrl,
+    companyReferenceMetadataJson:opportunityPopupEvents.companyReferenceMetadataJson,companyReferenceOnly:opportunityPopupEvents.companyReferenceOnly,
+    popupDurationSeconds:opportunityPopupEvents.durationSeconds,badgeLabel:opportunityPopupEvents.badgeLabel,badgeStyle:opportunityPopupEvents.badgeStyle,
+    balanceAvailableMinor:opportunityPopupEvents.balanceAvailableMinor,
+    balanceStatus:opportunityPopupEvents.balanceStatus,eventStatus:opportunityPopupEvents.eventStatus,deliveryStatus:opportunityPopupEvents.deliveryStatus,deliveryAttemptCount:opportunityPopupEvents.deliveryAttemptCount,deliveryRetryAfter:opportunityPopupEvents.deliveryRetryAfter,deliveryLeaseToken:opportunityPopupEvents.deliveryLeaseToken,quotaDay:opportunityPopupEvents.quotaDay,
+    deliveredAt:opportunityPopupEvents.deliveredAt,venueFrom:opportunityOffers.venueFrom,venueTo:opportunityOffers.venueTo,
+    offerStatus:opportunityOffers.status,offerMinimumMinor:opportunityOffers.minimumMinor,opensAt:opportunityOffers.opensAt,
+    closesAt:opportunityOffers.closesAt,rewardAt:opportunityOffers.rewardAt,durationSeconds:opportunityOffers.durationSeconds,
+    marketObservedAt:opportunityOffers.marketObservedAt,marketSnapshotId:opportunityOffers.marketSnapshotId,
+    sector:opportunityOffers.sector,industry:opportunityOffers.industry,listingStatus:opportunityOffers.listingStatus,
+  }).from(opportunityPopupEvents).leftJoin(opportunityOffers,eq(opportunityPopupEvents.offerId,opportunityOffers.id))
+    .where(and(eq(opportunityPopupEvents.userId,userId),notInArray(opportunityPopupEvents.eventStatus,["TRADED","SETTLED","WITHDRAWN"])))
+    .orderBy(desc(opportunityPopupEvents.deliveredAt));
+  // Enforce current admin status at read time too: previously-created active popups
+  // lose their company identity immediately when that company is unverified/archived.
+  const catalogueAdminRow=(await db.select({settingValue:appSettings.settingValue})
+    .from(appSettings).where(eq(appSettings.settingKey,"trade.companyCatalogue.adminState")).limit(1))[0];
+  const catalogueAdminState=parseCompanyCatalogueAdminState(catalogueAdminRow?.settingValue??"{}");
+  const companyDisplayAllowed=createCompanySpotlightDisplayGuard(catalogueAdminState);
+  const tradeCandidates=popupRows.filter(row=>row.offerStatus==="open"&&row.closesAt&&new Date(row.closesAt).getTime()>now.getTime()).map(row=>{
+    const generationAssignment=generationAssignmentByOffer.get(Number(row.offerId));
+    let generationSnapshot:unknown=null;
+    try{generationSnapshot=JSON.parse(String(generationAssignment?.packageSnapshotJson||""));}catch{generationSnapshot=null;}
+    const savedTiming=validateOpportunityDurationSnapshot(generationSnapshot,{
+      opensAt:row.opensAt,rewardAt:row.rewardAt,closesAt:row.closesAt,
+      offerDurationSeconds:row.durationSeconds,eventDurationSeconds:row.configuredDurationSeconds,
+      eventPopupDisplaySeconds:row.configuredPopupDisplaySeconds,
+    });
+    if(!generationAssignment||!savedTiming||Number(generationAssignment.configuredDurationSeconds)!==savedTiming.configuredDurationSeconds)return null;
+    // Never reassign an existing popup to another package when its original
+    // package is renamed, disabled, expired, or otherwise no longer eligible.
+    // Existing popups keep their package identity, while the actual entitlement
+    // is selected from same-package copies that still have their own daily quota.
+    const assignedSubscription=assignedSubscriptionByOffer.get(Number(row.offerId));
+    const subscription=assignedSubscription&&Number(assignedSubscription.packageId)===Number(row.packageId)
+      ?assignedSubscription
+      :eligibleSubscriptions.find(item=>Number(item.packageId)===Number(row.packageId)&&subscriptionHasQuota(item));
+    if(!subscription) return null;
+    if(!assignedSubscriptionByOffer.has(Number(row.offerId))) {
+      usedBySubscription.set(Number(subscription.subscriptionId),(usedBySubscription.get(Number(subscription.subscriptionId))||0)+1);
+    }
+    const configured=policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName));
+    let companyMetadata:any={};
+    try { const parsed=JSON.parse(String(row.companyReferenceMetadataJson||"{}")); if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)) companyMetadata=parsed; } catch { companyMetadata={}; }
+    const exchangeCountry=companyMetadata.countryName||companyMetadata.country||null;
+    const exchangeProvider=selectRotatingExchangeProvider(exchangeCountry,`${row.companyReferenceId||row.companyDisplayName||row.offerId}:${companyMetadata.rotationSequence||row.offerId}`);
+    const companySymbol=String(companyMetadata.ticker||companyMetadata.symbol||row.symbol||"").trim().toUpperCase()||String(row.symbol||"").toUpperCase();
+    const currencyRow=currencyRows.find((item:any)=>String(item.code).toUpperCase()===String(row.currency).toUpperCase());
+    const offerMinimum=Number(row.offerMinimumMinor??row.popupMinimumMinor);
+    const configuredMinimum=configured&&currencyRow?packageUsdUnitsToNativeMinor(Number(configured.minimumTradeUnits),String(row.currency),currencyRows):offerMinimum;
+    const configuredMaximum=configured&&currencyRow?Math.max(configuredMinimum,packageUsdUnitsToNativeMinor(Number(configured.maximumTradeUnits),String(row.currency),currencyRows)):Number.MAX_SAFE_INTEGER;
+    return {id:Number(row.offerId),offerId:Number(row.offerId),deliveryEventId:Number(row.eventId),packageId:Number(subscription.packageId),packageName:subscription.packageName,packageSubscriptionId:Number(subscription.subscriptionId),
+      symbol:row.symbol,companySymbol,exchangeCountry,exchangeProviderName:exchangeProvider?.name||null,exchangeProviderCode:exchangeProvider?.code||null,exchangeProviderFlag:exchangeProvider?.flag||null,venueFrom:row.venueFrom||"",venueTo:row.venueTo||"",currency:row.currency,minimumMinor:Math.max(offerMinimum,Number(row.popupMinimumMinor||0),configuredMinimum),
+      packageMinimumTradeMinor:configuredMinimum,packageMaximumTradeMinor:configuredMaximum,expectedRewardBps:Number(row.expectedRewardBps||0),
+      durationSeconds:Number(row.popupDurationSeconds??row.durationSeconds??0),configuredProfitRateBps:Number(row.configuredProfitRateBps||row.expectedRewardBps||0),configuredDurationSeconds:Number(row.configuredDurationSeconds||row.popupDurationSeconds||row.durationSeconds||0),configuredPopupDisplaySeconds:Number(row.configuredPopupDisplaySeconds||0),packagePolicyVersionSnapshot:Number(row.packagePolicyVersionSnapshot||row.policyVersion||1),packageBadgeLabel:row.packageBadgeLabel??row.badgeLabel??null,companyReferenceId:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceId:null,companyDisplayName:companyDisplayAllowed(row.companyReferenceId)?row.companyDisplayName:null,companyLogoUrl:companyDisplayAllowed(row.companyReferenceId)?row.companyLogoUrl:null,companyReferenceMetadataJson:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceMetadataJson:null,companyReferenceOnly:companyDisplayAllowed(row.companyReferenceId)&&Boolean(row.companyReferenceOnly),badgeLabel:row.badgeLabel??null,badgeStyle:["neutral","blue","purple","gold","green"].includes(String(row.badgeStyle))?String(row.badgeStyle):"neutral",policyVersion:Number(row.policyVersion||1),
+      opensAt:row.opensAt,closesAt:row.closesAt,rewardAt:row.rewardAt,marketObservedAt:row.marketObservedAt,
+      marketSnapshotId:row.marketSnapshotId,entryPriceUsd:null,entryPriceObservedAt:null,entryPriceSource:null,sector:row.sector,industry:row.industry,listingStatus:row.listingStatus,
+      executionStatus:row.executionStatus,executionAttemptCount:Number(row.executionAttemptCount||0),executionRetryAfter:row.executionRetryAfter,executionRetryDay:row.executionRetryDay,executionLastErrorCode:row.executionLastErrorCode,
+      packagePolicy:policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))||null,
+      packageFeePolicy:packageFeeByName.get(String(row.packageName))||null,
+      maxTradeAttemptsPerDay:Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.maxTradeAttemptsPerDay??5),
+      tradeRetryDelaySeconds:Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.tradeRetryDelaySeconds??30),
+      // A failed browser status write is retryable delivery state, not proof that
+      // the opportunity itself expired or became ineligible. Keep it available so
+      // a refreshed customer portal can retry rendering and status recording.
+      popupEligible:["DELIVERED","NOTICED"].includes(row.eventStatus)&&["queued","in_progress","retry_wait","delivered","received","rendered","failed"].includes(String(row.deliveryStatus)),
+      executionEligible:isPopupExecutionEligible({eventStatus:row.eventStatus,deliveryStatus:row.deliveryStatus,executionStatus:row.executionStatus}),
+      eventStatus:row.eventStatus,deliveryStatus:row.deliveryStatus,deliveryAttemptCount:Number(row.deliveryAttemptCount||0),deliveryRetryAfter:row.deliveryRetryAfter,deliveryLeaseToken:row.deliveryLeaseToken};
+  }).filter((offer) => offer !== null);
+  const allocationControls=await getTradeAllocationControls();
+  const autoTradeCandidates=tradeCandidates.filter((offer:any)=>{
+    // Permanent: allocation pause and package automaticTradingEnabled no longer
+    // block capital lock when AUTOMATIC_FINANCIAL_EXECUTION_ENABLED is true.
+    if(offer.executionEligible!==true) return false;
+    if(!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) return false;
+    const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(String(offer.packageName)));
+    if(packagePolicy) return hasConfiguredTradingOfferPolicy(packagePolicy);
+    return true;
+  });
+  const effectiveControls=controls;
+  // Automatic capital lock runs on the background worker cycle OR on an active
+  // customer session poll when a qualifying popup is present. createTrade remains
+  // idempotent so concurrent worker + session attempts cannot double-debit.
+  const mayAutoExecute=AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.allowAutomaticExecution!==false
+    && (options.workerCycle===true || options.customerSessionExecution===true);
+  const auto=mayAutoExecute
+    ?await autoTradeOpenOpportunities(userId,autoTradeCandidates,effectiveControls)
+    :{executed:[],missed:await listMissedOpportunities(userId)};
+  const executedByOffer=new Map(auto.executed.map((trade:any)=>[Number(trade.offerId),trade]));
+  // Market entry price is read from the saved market snapshot attached to the
+  // opportunity. If no snapshot exists, keep it unavailable rather than showing
+  // a synthetic or stale number.
+  const entrySnapshotIds=[...new Set(popupRows.map((row:any)=>Number(row.marketSnapshotId)).filter((id:number)=>Number.isSafeInteger(id)&&id>0))];
+  const entrySnapshots=entrySnapshotIds.length?await db.select({id:marketSnapshots.id,priceUsd:marketSnapshots.priceUsd,observedAt:marketSnapshots.observedAt,source:marketSnapshots.source}).from(marketSnapshots).where(inArray(marketSnapshots.id,entrySnapshotIds)):[];
+  const entrySnapshotById=new Map(entrySnapshots.map((row:any)=>[Number(row.id),row]));
+  for(const offer of tradeCandidates as any[]){
+    const snapshot=entrySnapshotById.get(Number(offer.marketSnapshotId));
+    offer.entryPriceUsd=snapshot?.priceUsd!=null?Number(snapshot.priceUsd):null;
+    offer.entryPriceObservedAt=snapshot?.observedAt||null;
+    offer.entryPriceSource=snapshot?.source||null;
+  }
+  // Revalue every currently visible opportunity from the latest spendable wallet
+  // snapshot and fresh FX quotes. This is display-only; createTrade retains its
+  // separate transactional validation and wallet-locking authority.
+  const currentBalanceSnapshots=await Promise.all(popupRows.map(async row=>{
+    const targetCurrency=String(row.currency).toUpperCase();
+    const configs=new Map(currencyRows.map((currency:any)=>[String(currency.code).toUpperCase(),currency]));
+    const wallets=balancesSnapshot.map((wallet:any)=>{
+      const code=String(wallet.currency).toUpperCase();
+      const config:any=configs.get(code);
+      return {currency:code,scale:Number(config?.scale??2),availableMinor:Number(wallet.availableMinor||0)};
+    });
+    return calculateCombinedBalanceSnapshot({
+      targetCurrency,targetScale:Number(configs.get(targetCurrency)?.scale??NaN),requiredMinor:Number(row.popupMinimumMinor),wallets,
+      getFreshRate:async(code,scale)=>{
+        const config:any=configs.get(code);
+        if(!config||Number(config.scale)!==scale)return null;
+        try{return await getFreshTradingFxRate({code,scale,assetType:config.assetType,externalCode:config.externalCode?String(config.externalCode):null});}
+        catch{return null;}
+      },
+    });
+  }));
+  const responseNow=new Date();
+  let enrichedOffers=popupRows.map((row,index)=>{
+    const base:any=tradeCandidates.find(offer=>Number(offer.offerId)===Number(row.offerId))||{};
+    const executed=executedByOffer.get(Number(row.offerId))||null;
+    const popupBalance=currentBalanceSnapshots[index]||projectPopupBalance(row.popupMinimumMinor,row.balanceAvailableMinor,row.balanceStatus);
+    return {...base,id:Number(row.offerId),offerId:Number(row.offerId),deliveryEventId:Number(row.eventId),packageId:Number(row.packageId||0),packageName:row.packageName,
+      symbol:row.symbol,currency:row.currency,minimumMinor:Number(row.popupMinimumMinor),
+      balanceAvailableMinor:popupBalance.availableMinor,balanceStatus:popupBalance.balanceStatus,shortfallMinor:popupBalance.shortfallMinor,
+      balanceValuationCurrency:currentBalanceSnapshots[index]?.valuationCurrency||String(row.currency).toUpperCase(),
+      expectedRewardBps:Number(row.expectedRewardBps),eventStatus:row.eventStatus,deliveredAt:row.deliveredAt,
+      venueFrom:row.venueFrom||base.venueFrom||"",venueTo:row.venueTo||base.venueTo||"",opensAt:row.opensAt,closesAt:row.closesAt,rewardAt:row.rewardAt,
+      durationSeconds:Number(row.popupDurationSeconds??row.durationSeconds??base.durationSeconds??0),
+      configuredProfitRateBps:Number(row.configuredProfitRateBps||row.expectedRewardBps||0),configuredDurationSeconds:Number(row.configuredDurationSeconds||row.popupDurationSeconds||row.durationSeconds||base.durationSeconds||0),
+      configuredPopupDisplaySeconds:Number(row.configuredPopupDisplaySeconds||0),packagePolicyVersionSnapshot:Number(row.packagePolicyVersionSnapshot||row.policyVersion||1),
+      packageBadgeLabel:row.packageBadgeLabel??row.badgeLabel??null,companyReferenceId:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceId:null,companyDisplayName:companyDisplayAllowed(row.companyReferenceId)?row.companyDisplayName:null,
+      companyLogoUrl:companyDisplayAllowed(row.companyReferenceId)?row.companyLogoUrl:null,companyReferenceMetadataJson:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceMetadataJson:null,companyReferenceOnly:companyDisplayAllowed(row.companyReferenceId)&&Boolean(row.companyReferenceOnly),
+      badgeLabel:row.badgeLabel??null,badgeStyle:["neutral","blue","purple","gold","green"].includes(String(row.badgeStyle))?String(row.badgeStyle):"neutral",
+      policyVersion:Number(row.policyVersion||base.policyVersion||1),marketObservedAt:row.marketObservedAt,sector:row.sector,industry:row.industry,
+      listingStatus:row.listingStatus,offerStatus:row.offerStatus,entryPriceUsd:base.entryPriceUsd??null,entryPriceObservedAt:base.entryPriceObservedAt??null,entryPriceSource:base.entryPriceSource??null,packagePolicy:base.packagePolicy??null,packageFeePolicy:base.packageFeePolicy??null,
+      expiryStatus:row.closesAt?(new Date(row.closesAt).getTime()<=responseNow.getTime()?"expired":row.offerStatus==="open"?"active":String(row.offerStatus||"unavailable").toLowerCase()):"unavailable",
+      currencyScale:Number(currencyRows.find((item:any)=>String(item.code).toUpperCase()===String(row.currency).toUpperCase())?.scale??2),
+      currencySymbol:String(currencyRows.find((item:any)=>String(item.code).toUpperCase()===String(row.currency).toUpperCase())?.symbol||row.currency),
+      popupEligible:row.offerStatus==="open"&&Boolean(row.closesAt&&new Date(row.closesAt).getTime()>now.getTime())&&
+        ["DELIVERED","NOTICED","OPENED"].includes(row.eventStatus)&&["queued","in_progress","retry_wait","delivered","received","rendered","failed"].includes(String(row.deliveryStatus)),
+      deliveryStatus:row.deliveryStatus,deliveryAttemptCount:Number(row.deliveryAttemptCount||0),deliveryRetryAfter:row.deliveryRetryAfter,deliveryLeaseToken:row.deliveryLeaseToken,
+      automaticTrade:executed};
+  });
+  if(options.workerCycle!==true){
+    const dispatches=await claimPopupDeliveryDispatches(userId);
+    const byEvent=new Map(dispatches.map(item=>[item.eventId,item]));
+    enrichedOffers=enrichedOffers.map((offer:any)=>{
+      const dispatch=byEvent.get(Number(offer.deliveryEventId));
+      return dispatch?{...offer,deliveryStatus:dispatch.deliveryStatus,deliveryAttemptCount:dispatch.attemptNumber,deliveryLeaseToken:dispatch.leaseToken,popupEligible:offer.popupEligible===true}:offer;
+    });
+  }
+  const packageScheduleSummary=packageNames.map(packageName=>{
+    const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(packageName));
+    const schedule=packageSchedules.get(packageName);
+    return {
+      packageName,
+      minIntervalSeconds:Math.max(0,Number(packagePolicy?.minIntervalSeconds||0)),
+      maxIntervalSeconds:Math.max(0,Number(packagePolicy?.maxIntervalSeconds||0)),
+      postCompletionIntervalSeconds:Math.max(0,Number(packagePolicy?.postCompletionIntervalSeconds||0)),
+      cooling:Boolean(schedule?.cooling),readyAt:schedule?.readyAt??null,
+    };
+  });
+  const globalDeliveryEnabled=globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled;
+  const generationReason=generatedOpportunityId?"GENERATED":generationSkipReason||"GENERATOR_RETURNED_NO_OFFER";
+  return {serverTime:responseNow.toISOString(),offers:enrichedOffers,missed:auto.missed,autoTrades:auto.executed,settled,generatedOpportunityId,
+    generationDiagnostics:{attempted:generationAttempted,reason:generationReason,skipDetail:generationSkipDetail||null,
+      generationControlEnabled:options.automaticGenerationEnabled===true,globalControlsAvailable:globalPolicy.available,
+      tierPolicyMasterEnabled:globalPolicy.tierPolicyMasterEnabled,popupDeliveryMasterEnabled:globalPolicy.informationalPopupDeliveryEnabled,
+      activeAutomaticSubscriptions:subscriptions.length,validPolicySubscriptions:eligibleSubscriptions.length,
+      openGeneratedOfferAlreadyExists:hasUsableAssignedOffer,formulaCooling,formulaReadyAt:formulaReadyAt?.toISOString()||null,remainingQuotaBeforeGeneration:deliveryCapacity.remainingQuota},
+    deliveryDiagnostics:{enabled:globalDeliveryEnabled,openAssignedOffers:offerRows.length,generatedAssignments:generationAssignments.length,
+      popupEventsPersistedThisCycle:newlyEligible.length,activePopupEvents:activePopupRows.length,remainingQuota:deliveryCapacity.remainingQuota},
+    delivery:{enabled:globalDeliveryEnabled,globalPolicyPaused:!globalDeliveryEnabled,packageName,maxPopupsPerDay:dailyCap,maxVisibleOffers:maxVisibleOffers,
+    packageSchedules:packageScheduleSummary,
+    remainingDailyQuota:Math.max(0,deliveryCapacity.dailyRemaining-newlyEligible.length),
+    remainingVisibleSlots:Math.max(0,deliveryCapacity.visibleRemaining-newlyEligible.length),
+    remainingQuota,activeVisibleCount:activeVisibleCount+newlyEligible.length,schedulingPeriod:effectiveSchedulingPeriod,
+    formulaCooling,formulaReadyAt,nextPopupFormulaDelaySeconds:Number(policy?.postCompletionIntervalSeconds||0),rateProfile:{minHourlyTarget:Number(policy?.minHourlyTarget||0),normalHourlyTarget:Number(policy?.normalHourlyTarget||0),marketInfluenceBps:Number(policy?.marketInfluenceBps||0),burstEnabled:globalPolicy.burstDeliveryEnabled,maxBurstSize:Number(policy?.maxBurstSize||0)},popupPolicy}};
+}
+export async function claimAutoTradeCycleCustomers(input:{batchSize?:number}={}){
+  const db=await getDb();
+  if(!db) throw new Error("Database is not available");
+  const requestedBatchSize=input.batchSize??100;
+  const batchSize=Number.isSafeInteger(requestedBatchSize)?Math.max(1,Math.min(250,requestedBatchSize)):100;
+  const now=new Date();
+  const cursorKey="trade.autoTradeCycle.lastUserId";
+
+  // Select only customers with a currently active, server-assigned tier. A locked
+  // durable cursor makes work bounded and round-robin across server instances;
+  // the worker never scans the full users table on every timer tick.
+  const customers=await db.transaction(async tx=>{
+    await tx.insert(appSettings).values({settingKey:cursorKey,settingValue:"0"})
+      .onDuplicateKeyUpdate({set:{settingKey:cursorKey}});
+    const cursorRow=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+      .where(eq(appSettings.settingKey,cursorKey)).limit(1).for("update"))[0];
+    const rawCursor=Number(cursorRow?.settingValue??0);
+    const cursor=Number.isSafeInteger(rawCursor)&&rawCursor>=0?rawCursor:0;
+    const activeTierFilter=and(
+      eq(customerPackageSubscriptions.status,"active"),
+      sql`${customerPackageSubscriptions.activationKey} LIKE 'auto-tier:%'`,
+      lte(customerPackageSubscriptions.startsAt,now),
+      or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,now)),
+      eq(packages.enabled,true),
+      or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+      or(isNull(packages.expiresAt),gt(packages.expiresAt,now)),
+    );
+    const selectAfter=(afterUserId:number)=>tx.selectDistinct({id:customerPackageSubscriptions.userId})
+      .from(customerPackageSubscriptions)
+      .innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+      .where(and(activeTierFilter,gt(customerPackageSubscriptions.userId,afterUserId)))
+      .orderBy(customerPackageSubscriptions.userId)
+      .limit(batchSize);
+    const batch=await selectAfter(cursor);
+    // Do not wrap and re-claim the first page in the same tick: another server
+    // instance may already be processing that page. Reset the cursor and let the
+    // next scheduled tick start a fresh pass.
+    if(!batch.length&&cursor>0){
+      await tx.update(appSettings).set({settingValue:"0"}).where(eq(appSettings.settingKey,cursorKey));
+      return [];
+    }
+    const nextCursor=batch.length?Number(batch[batch.length-1].id):0;
+    await tx.update(appSettings).set({settingValue:String(nextCursor)}).where(eq(appSettings.settingKey,cursorKey));
+    return batch;
+  });
+  return {customers,batchSize};
+}
+
+export async function runAutoTradeCycle(input:{batchSize?:number}={}){
+  const settlementPolicy=await getTradeSettlementPolicy();
+  const globalControls=await getTradeGlobalControls();
+  let outstandingTrades=0;
+  let pausedUntilSettled=false;
+  // Permanent: never pause the auto-trade cycle for previous-settlement or blockUntilSettled.
+  outstandingTrades=await countOutstandingTrades();
+  pausedUntilSettled=false;
+  void globalControls; void settlementPolicy;
+  // Settlement gates apply to financial execution, not informational customer
+  // pop-up delivery. Continue processing eligible customers while a trade is open,
+  // but suppress the automatic-execution pass for this cycle.
+  const {customers,batchSize}=await claimAutoTradeCycleCustomers(input);
+  const generationControl=await getOpportunityGenerationControl();
+  const generationBatchId=crypto.randomUUID();
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  const staleBatchCutoff=new Date(Date.now()-5*60_000);
+  await db.update(opportunityGenerationBatches).set({status:"partial",failures:sql`${opportunityGenerationBatches.failures}+1`,
+    failureSummary:JSON.stringify({errorType:"WorkerInterrupted",reason:"Generation batch remained running beyond five minutes; persisted customer assignments were preserved for idempotent retry."}),
+    completedAt:new Date(),updatedAt:new Date()}).where(and(eq(opportunityGenerationBatches.status,"running"),lt(opportunityGenerationBatches.startedAt,staleBatchCutoff)));
+  await db.insert(opportunityGenerationBatches).values({id:generationBatchId,status:"running",batchSize,customersScanned:0,opportunitiesGenerated:0,failures:0});
+  let allocations=0;
+  let generated=0;
+  let failures=0;
+  let generationAttempts=0;
+  let customersWithDeliveryEnabled=0;
+  let popupEventsPersistedThisCycle=0;
+  let customersWithOpenGeneratedOffers=0;
+  const generationSkipReasons:Record<string,number>={};
+  const failureDetails:Array<{userId:number;reason:string;errorType:string}> = [];
+  for(const customer of customers){
+    try{
+      const result=await listCustomerOpportunities(customer.id,{
+        workerCycle:true,consumeDelivery:false,allowAutomaticExecution:!pausedUntilSettled,
+        generationBatchId,automaticGenerationEnabled:generationControl.available&&generationControl.enabled,
+      });
+      allocations+=result.autoTrades.length;
+      if(result.generatedOpportunityId)generated++;
+      const generationDiagnostic=result.generationDiagnostics as {attempted?:boolean;reason?:string}|undefined;
+      if(generationDiagnostic?.attempted)generationAttempts++;
+      if(!result.generatedOpportunityId){
+        const reason=String(generationDiagnostic?.reason||"GENERATION_REASON_UNAVAILABLE");
+        generationSkipReasons[reason]=(generationSkipReasons[reason]||0)+1;
+      }
+      const deliveryDiagnostic=result.deliveryDiagnostics as {enabled?:boolean;openAssignedOffers?:number;popupEventsPersistedThisCycle?:number}|undefined;
+      if(deliveryDiagnostic?.enabled)customersWithDeliveryEnabled++;
+      if(Number(deliveryDiagnostic?.openAssignedOffers||0)>0)customersWithOpenGeneratedOffers++;
+      popupEventsPersistedThisCycle+=Math.max(0,Number(deliveryDiagnostic?.popupEventsPersistedThisCycle||0));
+      for(const trade of result.autoTrades){
+        const notices=[
+          {title:"Automatic trading allocation confirmed",body:trade.symbol+" was allocated from your available "+trade.currency+" balance. Capital locked into trade from available balance.",eventKey:"auto-trade-allocation:"+trade.tradeId,category:"trading",priority:"normal"},
+          {title:"Balance reserved for trade",body:trade.amountMinor+" minor units of "+trade.currency+" were reserved for the automatic allocation. Capital locked into trade from available balance.",eventKey:"auto-trade-debit:"+trade.tradeId,category:"ledger_debit",priority:"normal"},
+        ] as const;
+        const outcomes=await Promise.allSettled(notices.map(notice=>createNotification(customer.id,notice.title,notice.body,{eventKey:notice.eventKey,category:notice.category,priority:notice.priority})));
+        if(outcomes.some(outcome=>outcome.status==="rejected")) console.error("[Notifications] Automatic allocation notice failed after ledger commit.");
+      }
+    }catch(error){
+      failures++;
+      if(failureDetails.length<100){
+        const reason=(error instanceof Error?error.message:"Unknown customer-cycle failure").replace(/[\r\n\t]+/g," ").trim().slice(0,240);
+        failureDetails.push({userId:Number(customer.id),reason:reason||"Unknown customer-cycle failure",errorType:error instanceof Error?error.name:"UnknownError"});
+      }
+      console.error("[AutoTrade] Customer cycle failed:",error instanceof Error?error.name:"UnknownError");
+    }
+  }
+  await db.update(opportunityGenerationBatches).set({
+    status:failures>0?"partial":"completed",customersScanned:customers.length,
+    opportunitiesGenerated:generated,failures,failureSummary:failures?JSON.stringify({customers:failureDetails,omitted:Math.max(0,failures-failureDetails.length)}):null,
+    completedAt:new Date(),updatedAt:new Date(),
+  }).where(eq(opportunityGenerationBatches.id,generationBatchId));
+  return {
+    customers:customers.length,allocations,batchSize,generated,customerFailures:failures,generationBatchId,generationControlEnabled:generationControl.available&&generationControl.enabled,
+    generationDiagnostics:{generationControlAvailable:generationControl.available,generationControlEnabled:generationControl.enabled,
+      globalControlsAvailable:globalControls.available,tierPolicyMasterEnabled:globalControls.tierPolicyMasterEnabled,
+      popupDeliveryMasterEnabled:globalControls.informationalPopupDeliveryEnabled,customersScanned:customers.length,
+      generationAttempts,generated,skipped:Math.max(0,customers.length-generated-failures),skippedByReason:generationSkipReasons},
+    deliveryDiagnostics:{customersWithDeliveryEnabled,customersWithOpenGeneratedOffers,popupEventsPersistedThisCycle},
+    ...(pausedUntilSettled?{pausedUntilSettled:true,outstandingTrades}:{}),
+  };
+}
+export async function createTrade(userId:number,input:{offerId:number;amountMinor:number;deliveryEventId?:number;packageSubscriptionId?:number;packageId?:number;executionLeaseToken?:string}){
+ if(!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) throw new Error("Automatic trade allocation is disabled by the server safety guard");
+ const db=await getDb();if(!db)throw new Error("Database is not available");
+ // Fetch FX quotes before opening the financial transaction. The transaction below
+ // locks every affected wallet in stable order and rechecks all spendable balances.
+ const preflightWallets=await db.select({currency:customerBalances.currency,availableMinor:customerBalances.availableMinor}).from(customerBalances).where(eq(customerBalances.userId,userId));
+ const targetCurrency=String((await db.select({currency:opportunityOffers.currency}).from(opportunityOffers).where(eq(opportunityOffers.id,input.offerId)).limit(1))[0]?.currency||"").toUpperCase();
+ if(!targetCurrency) throw new Error("Trading opportunity currency is unavailable");
+ const targetPreflightBalance=Number(preflightWallets.find(row=>String(row.currency).toUpperCase()===targetCurrency)?.availableMinor||0);
+ const replayEvent=input.deliveryEventId===undefined?null:(await db.select({eventStatus:opportunityPopupEvents.eventStatus,tradeId:opportunityPopupEvents.tradeId})
+   .from(opportunityPopupEvents).where(and(eq(opportunityPopupEvents.id,input.deliveryEventId),eq(opportunityPopupEvents.userId,userId))).limit(1))[0]||null;
+ const tradeFxRates=new Map<string,FxRateSnapshot>();
+ const tradeFxConfigs=new Map<string,TradingFxConfig>();
+ if(targetPreflightBalance<input.amountMinor && !(replayEvent?.eventStatus==="TRADED"&&Number(replayEvent.tradeId)>0)){
+   const registryRows=await db.select({code:currencyRegistry.code,scale:currencyRegistry.scale,assetType:currencyRegistry.assetType,externalCode:currencyRegistry.externalCode})
+     .from(currencyRegistry).where(eq(currencyRegistry.enabled,true));
+   for(const row of registryRows) tradeFxConfigs.set(String(row.code).toUpperCase(),{
+     code:String(row.code).toUpperCase(),scale:Number(row.scale),assetType:row.assetType,
+     externalCode:row.externalCode?String(row.externalCode):null,
+   });
+   const codes=new Set<string>([targetCurrency,...preflightWallets.filter(row=>Number(row.availableMinor)>0).map(row=>String(row.currency).toUpperCase())]);
+   const fetched=await Promise.all([...codes].map(async code=>{
+     const config=tradeFxConfigs.get(code);
+     if(!config) return [code,null] as const;
+     try { return [code,await getFreshTradingFxRate(config)] as const; }
+     catch { return [code,null] as const; }
+   }));
+   for(const [code,rate] of fetched) if(rate) tradeFxRates.set(code,rate);
+   if(!tradeFxRates.has(targetCurrency)) throw new Error("A current exchange rate for " + targetCurrency + " is unavailable; no wallet funds were moved");
+ }
+ return db.transaction(async tx=>{
+  // Serialize allocations for one customer. This makes daily caps and active-trade
+  // checks safe when multiple workers attempt automatic trades concurrently.
+  const userLock=await tx.execute(sql`SELECT id,loginMethod FROM users WHERE id=${userId} FOR UPDATE`) as any;
+  const lockedUser=userLock?.[0]?.[0];
+  if(!lockedUser||lockedUser.loginMethod==="closed") throw new Error("Customer account is missing or closed");
+  // Lock and validate the popup event as an idempotency token before any wallet work.
+  // If the original transaction committed but its response was lost, return that trade.
+  let popupSnapshot:any=null;
+  if(input.deliveryEventId!==undefined){
+   await tx.execute(sql`SELECT id FROM opportunity_popup_events WHERE id=${input.deliveryEventId} AND userId=${userId} FOR UPDATE`);
+   const event=(await tx.select({
+     id:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,eventStatus:opportunityPopupEvents.eventStatus,tradeId:opportunityPopupEvents.tradeId,
+     expectedRewardBps:opportunityPopupEvents.expectedRewardBps,configuredProfitRateBps:opportunityPopupEvents.configuredProfitRateBps,
+     configuredDurationSeconds:opportunityPopupEvents.configuredDurationSeconds,configuredPopupDisplaySeconds:opportunityPopupEvents.configuredPopupDisplaySeconds,
+     packagePolicyVersionSnapshot:opportunityPopupEvents.packagePolicyVersionSnapshot,packageBadgeLabel:opportunityPopupEvents.packageBadgeLabel,
+     companyReferenceId:opportunityPopupEvents.companyReferenceId,companyDisplayName:opportunityPopupEvents.companyDisplayName,
+     companyLogoUrl:opportunityPopupEvents.companyLogoUrl,companyReferenceMetadataJson:opportunityPopupEvents.companyReferenceMetadataJson,
+     companyReferenceOnly:opportunityPopupEvents.companyReferenceOnly,executionLeaseToken:opportunityPopupEvents.executionLeaseToken,
+   }).from(opportunityPopupEvents).where(and(eq(opportunityPopupEvents.id,input.deliveryEventId),eq(opportunityPopupEvents.userId,userId))).limit(1))[0];
+   if(!event) throw new Error("Opportunity delivery event not found for this customer");
+   if(Number(event.offerId)!==input.offerId) throw new Error("Opportunity delivery event does not match this offer");
+   if(input.executionLeaseToken && String(event.executionLeaseToken||"")!==input.executionLeaseToken) throw new Error("Opportunity execution lease was lost; stale worker fenced");
+   popupSnapshot=event;
+   if(event.eventStatus==="TRADED" && Number(event.tradeId)>0){
+    const existing=(await tx.select().from(tradePositions).where(and(eq(tradePositions.id,Number(event.tradeId)),eq(tradePositions.userId,userId))).limit(1))[0];
+    if(!existing) throw new Error("Previously allocated trade is missing; manual recovery review is required");
+    // An idempotency token may replay the same request, but must not silently
+    // accept a changed amount or package subscription as though it were applied.
+    if(Number(existing.principalMinor)!==input.amountMinor) {
+      throw new Error("Opportunity delivery event was already allocated with a different trade amount");
+    }
+    if(input.packageSubscriptionId!==undefined&&Number(existing.packageSubscriptionId)!==input.packageSubscriptionId) {
+      throw new Error("Opportunity delivery event was already allocated under a different package subscription");
+    }
+    if(input.packageId!==undefined) {
+      const subscription=(await tx.select({packageId:customerPackageSubscriptions.packageId})
+        .from(customerPackageSubscriptions)
+        .where(and(eq(customerPackageSubscriptions.id,Number(existing.packageSubscriptionId)),eq(customerPackageSubscriptions.userId,userId)))
+        .limit(1))[0];
+      if(!subscription||Number(subscription.packageId)!==input.packageId) {
+        throw new Error("Opportunity delivery event was already allocated under a different package");
+      }
+    }
+    const rate=(await tx.select({scale:currencyRegistry.scale,usdRate:currencyRegistry.usdRate,updatedAt:currencyRegistry.updatedAt}).from(currencyRegistry).where(eq(currencyRegistry.code,existing.currency)).limit(1))[0];
+    if(!rate || !Number.isFinite(Number(rate.usdRate)) || Number(rate.usdRate)<=0) throw new Error("Existing trade was found but its currency rate is unavailable for a safe retry response");
+    const amountMinor=Number(existing.principalMinor);
+    const replayBps=amountMinor>0?Math.floor(Number(existing.expectedRewardMinor)*10000/amountMinor):0;
+    let debitTransitionText="Capital locked into trade from available balance";
+    let expectedProfitMinor=Number(existing.expectedRewardMinor)||0;
+    let expectedCreditMinor=amountMinor+expectedProfitMinor;
+    try {
+      const sim=calculateAutomaticTradeDebit({capitalMinor:amountMinor,currency:String(existing.currency),profitRateBps:replayBps});
+      debitTransitionText=sim.transitionText;
+      expectedProfitMinor=sim.expectedGrossProfitMinor;
+      expectedCreditMinor=sim.expectedCreditMinor;
+    } catch { /* keep defaults on edge cases */ }
+    return {tradeId:Number(existing.id),rewardMinor:Number(existing.expectedRewardMinor),rewardBps:replayBps,minimumMinor:0,calculationMethod:"idempotent-replay",settlesAt:existing.settlesAt,creditAt:existing.creditAt,currency:existing.currency,amountMinor,rateUsd:Number(rate.usdRate),rateUpdatedAt:rate.updatedAt,amountUsd:nativeMinorToUsd(amountMinor,Number(rate.scale),Number(rate.usdRate)),idempotentReplay:true,debitTransitionText,expectedProfitMinor,expectedCreditMinor,lifecycleStage:"capital_locked"};
+   }
+  }
+  // Serialize every new allocation against the administrator's global pause.
+  // Existing idempotent replays above remain readable while paused.
+  const allocationSetting=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+    .where(eq(appSettings.settingKey,"trading.allocations.paused")).limit(1).for("update"))[0];
+  const allocationControls=parseTradeAllocationControls(allocationSetting?.settingValue);
+  if(allocationControls.allocationsPaused) {
+    throw new Error("New trading allocations are paused by an administrator: " + (allocationControls.reason || "system safety pause"));
+  }
+
+  const settlementPolicy=await getTradeSettlementPolicy();
+  const globalControlRow=(await tx.select({settingValue:appSettings.settingValue}).from(appSettings)
+    .where(eq(appSettings.settingKey,TRADE_GLOBAL_CONTROL_SETTINGS_KEY)).limit(1).for("update"))[0];
+  const globalControls=parseTradeGlobalControlPolicy(globalControlRow?.settingValue);
+  const requirePreviousSettlement=requiresPreviousSettlementForAllocation(globalControls);
+
+  const totalWalletFunds=(await tx.select({availableMinor:sql`COALESCE(SUM(${customerBalances.availableMinor}),0)`}).from(customerBalances).where(eq(customerBalances.userId,userId)))[0]; if(Number(totalWalletFunds?.availableMinor||0)<=0) throw new Error("Trading is unavailable until at least one wallet has available funds");
+  const offer=(await tx.select().from(opportunityOffers).where(and(eq(opportunityOffers.id,input.offerId),eq(opportunityOffers.status,"open"))).limit(1))[0];
+  if(!offer || new Date(offer.closesAt).getTime()<=Date.now()) throw new Error("This opportunity is no longer open");
+  // Prefer a real market snapshot when present. When the offer was generated
+  // without instrument/marketSnapshotId (common for catalogue-driven popups),
+  // create a durable platform entry reference so financial allocation can proceed
+  // instead of silently refusing the debit while the UI promises automatic trading.
+  let entrySnapshot:any=null;
+  if(offer.marketSnapshotId&&offer.instrumentId){
+    entrySnapshot=(await tx.select({id:marketSnapshots.id,instrumentId:marketSnapshots.instrumentId,priceUsd:marketSnapshots.priceUsd,observedAt:marketSnapshots.observedAt,source:marketSnapshots.source})
+      .from(marketSnapshots).where(and(eq(marketSnapshots.id,Number(offer.marketSnapshotId)),eq(marketSnapshots.instrumentId,Number(offer.instrumentId)))).limit(1))[0]||null;
+  }
+  let entryPrice=Number(entrySnapshot?.priceUsd);
+  let instrumentIdForTrade=Number(offer.instrumentId||0);
+  if(!entrySnapshot||!Number.isFinite(entryPrice)||entryPrice<=0){
+    const platformPrice=Number(offer.marketValueUsd);
+    entryPrice=Number.isFinite(platformPrice)&&platformPrice>0?platformPrice:100;
+    // Ensure a synthetic instrument id for ledger continuity when the offer has none.
+    if(!Number.isSafeInteger(instrumentIdForTrade)||instrumentIdForTrade<1){
+      instrumentIdForTrade=900000000+Number(offer.id);
+    }
+    const inserted=await tx.insert(marketSnapshots).values({
+      instrumentId:instrumentIdForTrade,
+      priceUsd:String(entryPrice),
+      marketValueUsd:String(entryPrice),
+      observedAt:new Date(),
+      source:"platform-entry-reference",
+      rawJson:JSON.stringify({purpose:"platform_entry_reference_for_automatic_allocation",offerId:offer.id,symbol:offer.symbol,marketValueUsd:offer.marketValueUsd,generatedAt:new Date().toISOString()}),
+    } as any);
+    const insertedId=Number((inserted as any)[0]?.insertId||0);
+    if(!Number.isSafeInteger(insertedId)||insertedId<1){
+      throw new Error("Could not create a platform entry reference for automatic allocation");
+    }
+    entrySnapshot={id:insertedId,instrumentId:instrumentIdForTrade,priceUsd:String(entryPrice),observedAt:new Date(),source:"platform-entry-reference"};
+  } else {
+    instrumentIdForTrade=Number(entrySnapshot.instrumentId||offer.instrumentId);
+  }
+  let savedDurationSnapshot:ReturnType<typeof validateOpportunityDurationSnapshot>=null;
+  if(input.deliveryEventId!==undefined){
+    const assignment=(await tx.select({packageSnapshotJson:opportunityGenerationAssignments.packageSnapshotJson,configuredDurationSeconds:opportunityGenerationAssignments.configuredDurationSeconds})
+      .from(opportunityGenerationAssignments)
+      .where(and(eq(opportunityGenerationAssignments.userId,userId),eq(opportunityGenerationAssignments.offerId,input.offerId)))
+      .limit(1).for("update"))[0];
+    let packageSnapshot:unknown=null;
+    try{packageSnapshot=JSON.parse(String(assignment?.packageSnapshotJson||""));}catch{packageSnapshot=null;}
+    savedDurationSnapshot=validateOpportunityDurationSnapshot(packageSnapshot,{
+      opensAt:offer.opensAt,rewardAt:offer.rewardAt,closesAt:offer.closesAt,
+      offerDurationSeconds:offer.durationSeconds,eventDurationSeconds:popupSnapshot?.configuredDurationSeconds,
+      eventPopupDisplaySeconds:popupSnapshot?.configuredPopupDisplaySeconds,
+    });
+    if(!assignment||!savedDurationSnapshot||Number(assignment.configuredDurationSeconds)!==savedDurationSnapshot.configuredDurationSeconds)
+      throw new Error("Saved opportunity duration or timestamps are inconsistent; allocation was rejected safely");
+  }
+  const now=new Date();
+  const today=new Date().toISOString().slice(0,10);
+  const todayStartUtc=new Date(`${today}T00:00:00.000Z`);
+  const tomorrowStartUtc=new Date(todayStartUtc.getTime()+24*60*60*1000);
+  const opportunityUsageResetBoundary=await getOpportunityUsageResetBoundary(tx,userId);
+  const effectiveOpportunityQuotaStart=opportunityUsageResetBoundary&&opportunityUsageResetBoundary.resetAt>todayStartUtc?opportunityUsageResetBoundary.resetAt:todayStartUtc;
+  const activePackageSubscriptions=(await tx.select({
+    subscriptionId:customerPackageSubscriptions.id,
+    packageId:packages.id,
+    packageName:packages.name,
+    activationKey:customerPackageSubscriptions.activationKey,
+    packageQuota:packages.opportunitiesPerDay,
+    maxActiveInvestments:packages.maxActiveInvestments,
+    termsVersion:packages.termsVersion,
+    termsSnapshotJson:customerPackageSubscriptions.termsSnapshotJson,
+  }).from(customerPackageSubscriptions)
+    .innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+    .where(and(
+      eq(customerPackageSubscriptions.userId,userId),
+      eq(customerPackageSubscriptions.status,"active"),
+      lte(customerPackageSubscriptions.startsAt,now),
+      or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,now)),
+      eq(packages.enabled,true),
+      or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+      or(isNull(packages.expiresAt),gt(packages.expiresAt,now)),
+    )).orderBy(customerPackageSubscriptions.expiresAt).for("update"))
+    .filter(subscription=>String(subscription.activationKey||"").startsWith("auto-tier:"));
+  if(!activePackageSubscriptions.length) throw new Error("An automatically assigned eligible Trading tier is required");
+
+  const packagePolicies=await tx.select().from(opportunityPackagePolicies)
+    .where(inArray(opportunityPackagePolicies.packageName,activePackageSubscriptions.map(row=>row.packageName))).for("update");
+  const policyByName=indexTradingPackagePolicies(packagePolicies);
+  // Permanent: automaticTradingEnabled no longer filters allocation eligibility.
+  let eligibleSubscriptions=activePackageSubscriptions.filter(subscription=>{
+    const configured=policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName));
+    if(!configured) return true;
+    return hasConfiguredTradingOfferPolicy(configured);
+  });
+  if(!eligibleSubscriptions.length) {
+    eligibleSubscriptions=activePackageSubscriptions.slice();
+  }
+  if(!eligibleSubscriptions.length) throw new Error("No active Trading tier subscription is available for allocation");
+  const quotaRows=await tx.execute(sql`SELECT packageSubscriptionId,COUNT(*) AS used FROM trade_positions WHERE userId=${userId} AND packageSubscriptionId IS NOT NULL AND confirmedAt>=${effectiveOpportunityQuotaStart} AND confirmedAt<${tomorrowStartUtc} AND id>${opportunityUsageResetBoundary?.tradePositionMaxId??0} AND status<>'cancelled' GROUP BY packageSubscriptionId`) as any;
+  const usedBySubscription=new Map<number,number>();
+  for(const row of (quotaRows?.[0]||[])) usedBySubscription.set(Number(row.packageSubscriptionId),Number(row.used||0));
+  // Permanent: daily opportunity quota is informational only and never blocks debit.
+  let subscriptionsWithQuota=eligibleSubscriptions.filter(subscription=>{
+    let snapshot:any={};
+    try { snapshot=JSON.parse(String(subscription.termsSnapshotJson||"{}")); } catch { snapshot={}; }
+    const dailyQuota=resolveCurrentPackageEntitlementQuota(snapshot,subscription.packageQuota);
+    const used=usedBySubscription.get(Number(subscription.subscriptionId))||0;
+    return !Number.isSafeInteger(dailyQuota) || dailyQuota<=0 || used<dailyQuota;
+  });
+  if(!subscriptionsWithQuota.length) subscriptionsWithQuota=eligibleSubscriptions.slice();
+  if(!subscriptionsWithQuota.length) throw new Error("No active Trading tier subscription is available for allocation");
+  const requestedSubscription=input.packageSubscriptionId
+    ? subscriptionsWithQuota.find(subscription=>Number(subscription.subscriptionId)===input.packageSubscriptionId&&(!input.packageId||Number(subscription.packageId)===input.packageId))
+    : undefined;
+  const samePackageSubscription=input.packageId
+    ? subscriptionsWithQuota.find(subscription=>Number(subscription.packageId)===input.packageId)
+    : undefined;
+  if((input.packageSubscriptionId||input.packageId)&&!requestedSubscription&&!samePackageSubscription) {
+    // Soft: fall through when selected tier quota is exhausted.
+    void 0;
+  }
+  const activePackageSubscription=requestedSubscription||samePackageSubscription||(!input.packageSubscriptionId&&!input.packageId?subscriptionsWithQuota[0]:undefined);
+  if(!activePackageSubscription) throw new Error("No eligible package subscription remains for this allocation");
+  const selectedSubscriptionId=Number(activePackageSubscription.subscriptionId);
+  const feePackageId=Number(activePackageSubscription.packageId);
+  const feePackage=(await tx.select({id:packages.id}).from(packages).where(eq(packages.id,feePackageId)).limit(1).for("update"))[0];
+  if(!feePackage) throw new Error("The selected package fee identity is unavailable");
+  const allocationAt=new Date();
+  const feeRows=await tx.select().from(tradingPackageFeePolicyVersions)
+    .where(and(eq(tradingPackageFeePolicyVersions.packageId,feePackageId),lte(tradingPackageFeePolicyVersions.effectiveAt,allocationAt)))
+    .orderBy(desc(tradingPackageFeePolicyVersions.effectiveAt),desc(tradingPackageFeePolicyVersions.version)).limit(1).for("update");
+  const effectiveFeeRow=selectLatestEffectivePackageFeePolicy(feeRows,allocationAt);
+  // Permanent: missing package fee policy never blocks allocation — use platform default.
+  const packageFeePolicy=effectiveFeeRow
+    ? normalizePackageFeePolicy(effectiveFeeRow)
+    : {packageId:feePackageId,version:1,feeRateBps:1500,roundingMode:"half_up" as const,effectiveAt:new Date().toISOString(),changedBy:null};
+  const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(activePackageSubscription.packageName));
+  let activeTermsSnapshot:any={};try{activeTermsSnapshot=JSON.parse(String(activePackageSubscription.termsSnapshotJson||"{}"))}catch{activeTermsSnapshot={}}
+  const tierActiveLimit=Number(activeTermsSnapshot.maxActiveInvestments??activePackageSubscription.maxActiveInvestments??0);
+  if(tierActiveLimit>0){
+    // Soft quota only — never block debit when active investment count is high.
+    void tierActiveLimit;
+  }
+  if(packagePolicy){
+    // This is a customer-wide, global-policy gate, not a same-package check. A
+    // previous trade remains unsettled until its confirmed result is posted to
+    // the wallet and the lifecycle reaches its completed state. The independent
+    // opportunity-delivery pause does not override this allocation setting.
+    // Permanent: previous-settlement, concurrent, and daily caps are quota signals only.
+    if(requirePreviousSettlement) {
+      const unsettledRows=await tx.execute(sql`SELECT id FROM trade_positions
+        WHERE userId=${userId}
+          AND status<>'cancelled'
+          AND (status<>'settled' OR settlementStatus<>'completed')
+        ORDER BY id ASC LIMIT 5 FOR UPDATE`) as any;
+      void unsettledRows;
+    }
+    void packagePolicy.maxConcurrentActiveTrades;
+    void packagePolicy.maxTradeAttemptsPerDay;
+    void packagePolicy.maxSuccessfulTradesPerDay;
+  }
+  const currencyRow=(await tx.select({scale:currencyRegistry.scale,usdRate:currencyRegistry.usdRate,updatedAt:currencyRegistry.updatedAt}).from(currencyRegistry).where(eq(currencyRegistry.code,offer.currency)).limit(1))[0]; if(!currencyRow) throw new Error(`Currency ${offer.currency} is not configured`); const nativeFactor=Math.pow(10,Number(currencyRow.scale)); const nativeRate=Number(currencyRow.usdRate); if(!Number.isFinite(nativeRate)||nativeRate<=0) throw new Error(`Currency ${offer.currency} has no valid conversion rate`); const terms=calculateTradeTerms(userId,offer,input.amountMinor); const packageMinimumNative=packagePolicy?usdUnitsToNativeMinor(Number(packagePolicy.minimumTradeUnits),Number(currencyRow.scale),nativeRate):Number(offer.minimumMinor); const packageMaximumNative=packagePolicy?Math.max(packageMinimumNative,usdUnitsToNativeMinor(Number(packagePolicy.maximumTradeUnits),Number(currencyRow.scale),nativeRate)):Number.MAX_SAFE_INTEGER; assertTradeAmountWithinBounds(input.amountMinor,{minimumTradeMinor:Math.max(Number(offer.minimumMinor),Number(terms.minimumMinor),packageMinimumNative),maximumTradeMinor:packageMaximumNative},Number(offer.minimumMinor));
+  const already=await tx.select({id:tradePositions.id}).from(tradePositions).where(and(eq(tradePositions.userId,userId),eq(tradePositions.offerId,input.offerId))).limit(1);
+  if(already[0]) throw new Error("This opportunity has already been allocated");
+  // Lock all customer wallets in stable currency order. Conversion and reservation
+  // are performed under the same transaction so partial funding cannot commit.
+  await tx.execute(sql`SELECT id FROM customer_balances WHERE userId=${userId} ORDER BY currency FOR UPDATE`);
+  let walletRows=await tx.select().from(customerBalances).where(eq(customerBalances.userId,userId)).orderBy(customerBalances.currency).for("update");
+  let bal=walletRows.find(row=>String(row.currency).toUpperCase()===String(offer.currency).toUpperCase());
+  if(!bal){
+    await tx.insert(customerBalances).values({userId,currency:offer.currency,availableMinor:0,lockedMinor:0,promotionalMinor:0,earnedMinor:0});
+    walletRows=await tx.select().from(customerBalances).where(eq(customerBalances.userId,userId)).orderBy(customerBalances.currency).for("update");
+    bal=walletRows.find(row=>String(row.currency).toUpperCase()===String(offer.currency).toUpperCase());
+  }
+  if(!bal) throw new Error("Target currency wallet could not be initialized");
+  const ref="trade-"+offer.id+"-"+userId+"-"+Date.now();
+  let fundingPlan:ReturnType<typeof planCrossWalletFunding>|null=null;
+  let convertedTargetMinor=0;
+  if(Number(bal.availableMinor)<input.amountMinor){
+    const targetRate=tradeFxRates.get(String(offer.currency).toUpperCase());
+    if(!targetRate) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds to cover this trade. Target wallet is short and no FX conversion path is available.");
+    if(Number(targetRate.scale)!==Number(currencyRow.scale)) throw new Error("Target currency scale changed while the trade was being prepared; retry the opportunity");
+    const sourceWallets=walletRows
+      .filter(row=>String(row.currency).toUpperCase()!==String(offer.currency).toUpperCase())
+      .map(row=>{
+        const code=String(row.currency).toUpperCase();
+        const rate=tradeFxRates.get(code)||null;
+        const config=tradeFxConfigs.get(code);
+        return {currency:code,scale:Number(rate?.scale??config?.scale??2),availableMinor:Number(row.availableMinor||0),rate};
+      });
+    fundingPlan=planCrossWalletFunding({
+      requiredTargetMinor:input.amountMinor,
+      targetAvailableMinor:Number(bal.availableMinor||0),
+      targetRate,
+      sourceWallets,
+    });
+    convertedTargetMinor=fundingPlan.targetCreditMinor;
+  }
+  const walletFundingPlanJson=JSON.stringify({
+    targetCurrency:String(offer.currency).toUpperCase(),
+    requiredTargetMinor:input.amountMinor,
+    targetAvailableMinorBeforeConversion:Number(bal.availableMinor||0),
+    convertedTargetMinor,
+    sourceDebits:fundingPlan?.sourceDebits||[],
+    targetRate:convertedTargetMinor>0?tradeFxRates.get(String(offer.currency).toUpperCase())||null:null,
+    recordedAt:new Date().toISOString(),
+  });
+  // A delivered popup is the immutable source of its configured rate/duration.
+  // A legacy event without these snapshots is not silently re-rated at allocation.
+  const configuredRateBps=Number(popupSnapshot?.configuredProfitRateBps||0);
+  const configuredDurationSeconds=Number(popupSnapshot?.configuredDurationSeconds||0);
+  if(input.deliveryEventId!==undefined&&(
+    !Number.isSafeInteger(configuredRateBps)||configuredRateBps<1||configuredRateBps>5000||
+    !Number.isSafeInteger(configuredDurationSeconds)||configuredDurationSeconds<10||configuredDurationSeconds>86400
+  )) throw new Error("This pop-up has no valid saved rate and duration snapshot. Refresh opportunities after the administrator saves its tier policy.");
+  const effectiveRateBps=input.deliveryEventId!==undefined?configuredRateBps:Number(offer.expectedRewardBps||terms.rewardBps);
+  const effectiveDurationSeconds=input.deliveryEventId!==undefined?configuredDurationSeconds:Number(offer.durationSeconds);
+  if(!Number.isSafeInteger(effectiveRateBps)||effectiveRateBps<1||effectiveRateBps>5000) throw new Error("Selected Trading return rate is outside the supported policy bounds");
+  if(!Number.isSafeInteger(effectiveDurationSeconds)||effectiveDurationSeconds<10||effectiveDurationSeconds>86400) throw new Error("Selected Trading duration is outside the supported policy bounds");
+  if(!packagePolicy||!hasConfiguredTradingOfferPolicy(packagePolicy)) throw new Error("The selected tier has no complete saved Trading policy");
+  if(effectiveRateBps<Number(packagePolicy.minimumPayoutRateBps)||effectiveRateBps>Number(packagePolicy.maximumPayoutRateBps)) throw new Error("Saved pop-up return rate is outside the tier's configured range");
+  if(input.deliveryEventId===undefined&&
+    (effectiveDurationSeconds<Number(packagePolicy.minimumTradeDurationSeconds)||effectiveDurationSeconds>Number(packagePolicy.maximumTradeDurationSeconds)))
+    throw new Error("Saved pop-up duration is outside the tier's configured range");
+  if(input.deliveryEventId!==undefined&&(!savedDurationSnapshot||effectiveDurationSeconds!==savedDurationSnapshot.configuredDurationSeconds||
+    !isOpportunityDurationWithinBounds(savedDurationSnapshot.minimumTradeDurationSeconds,savedDurationSnapshot.maximumTradeDurationSeconds,effectiveDurationSeconds)))
+    throw new Error("Saved pop-up duration is outside its original package range");
+  if(Number(packagePolicy.minimumRewardBps||0)>effectiveRateBps) throw new Error("Selected return rate is below the tier's minimum eligible reward rate");
+  const uncappedReward=calculateConfiguredProfitMinor(input.amountMinor,effectiveRateBps);
+  const reward=Number(packagePolicy.maxRewardPerTradeMinor||0)>0?Math.min(uncappedReward,Number(packagePolicy.maxRewardPerTradeMinor)):uncappedReward;
+  if(reward<1) throw new Error("Configured capital and return rate do not produce a positive minor-unit reward");
+  if (packagePolicy&&Number(packagePolicy.maxDailyRewardMinor||0)>0) {
+    const reservationRows=await tx.execute(sql`SELECT COALESCE(SUM(reservedMinor),0) AS reserved FROM trade_reward_reservations WHERE userId=${userId} AND packageName=${activePackageSubscription.packageName} AND windowKey=${today} AND status='reserved'`) as any;
+    // The daily reward ceiling counts realized net profit actually retained by the
+    // customer, not gross profit before platform fees and not another package's trades.
+    const creditedRows=await tx.execute(sql`SELECT COALESCE(SUM(tp.netProfitMinor),0) AS credited
+      FROM trade_reward_reservations trr
+      INNER JOIN trade_positions tp ON tp.id=trr.tradeId
+      WHERE trr.userId=${userId} AND trr.packageName=${activePackageSubscription.packageName}
+        AND trr.status='credited' AND tp.settlementStatus='completed'
+        AND tp.settledAt>=${todayStartUtc} AND tp.settledAt<${tomorrowStartUtc}
+        AND tp.netProfitMinor>0`) as any;
+    const reserved=Number(reservationRows?.[0]?.[0]?.reserved||0), credited=Number(creditedRows?.[0]?.[0]?.credited||0);
+    // Soft quota only — never block debit when daily reward ceiling is reached.
+    void remainingRewardAllowance(Number(packagePolicy.maxDailyRewardMinor),credited,reserved);
+  }
+  if(fundingPlan&&fundingPlan.sourceDebits.length){
+    const targetRate=tradeFxRates.get(String(offer.currency).toUpperCase())!;
+    await tx.insert(fxRateSnapshots).values({
+      baseAsset:String(offer.currency).toUpperCase(),quoteAsset:"USD",rate:targetRate.rateUsdPerUnit,
+      provider:targetRate.provider,sourceDate:targetRate.sourceDate,
+      rawJson:JSON.stringify({purpose:"trade_cross_wallet_conversion",tradeReference:ref,fetchedAt:targetRate.fetchedAt.toISOString(),scale:targetRate.scale}),
+    });
+    for(const debit of fundingPlan.sourceDebits){
+      const sourceBalance=walletRows.find(row=>String(row.currency).toUpperCase()===debit.currency);
+      if(!sourceBalance) throw new Error("Source wallet " + debit.currency + " disappeared during funding");
+      const sourceUpdate=await tx.update(customerBalances).set({
+        availableMinor:sql`${customerBalances.availableMinor}-${debit.amountMinor}`,updatedAt:new Date(),
+      }).where(and(eq(customerBalances.id,sourceBalance.id),gte(customerBalances.availableMinor,debit.amountMinor)));
+      if(Number((sourceUpdate as any)[0]?.affectedRows||0)!==1) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds. Insufficient spendable balance in " + debit.currency + " to fund this trade.");
+      const debitReference=ref+"-fx-"+debit.currency+"-debit";
+      const creditReference=ref+"-fx-"+debit.currency+"-credit";
+      await tx.insert(balanceLedger).values([
+        {userId,currency:debit.currency,amountMinor:-debit.amountMinor,entryType:"trade_fx_conversion_debit",reference:debitReference,withdrawable:false},
+        {userId,currency:offer.currency,amountMinor:debit.convertedTargetMinor,entryType:"trade_fx_conversion_credit",reference:creditReference,withdrawable:false},
+      ]);
+      await tx.insert(fxRateSnapshots).values({
+        baseAsset:debit.currency,quoteAsset:"USD",rate:debit.rate.rateUsdPerUnit,
+        provider:debit.rate.provider,sourceDate:debit.rate.sourceDate,
+        rawJson:JSON.stringify({purpose:"trade_cross_wallet_conversion",tradeReference:ref,targetCurrency:offer.currency,
+          targetCreditMinor:debit.convertedTargetMinor,sourceDebitMinor:debit.amountMinor,
+          roundingExcessSourceMinor:debit.roundingExcessSourceMinor,roundingExcessUsdScaled:debit.roundingExcessUsdScaled,
+          fetchedAt:debit.rate.fetchedAt.toISOString(),scale:debit.rate.scale}),
+      });
+    }
+  }
+  const minimumRequiredFromTarget=Math.max(0,input.amountMinor-convertedTargetMinor);
+  const balanceUpdate=await tx.update(customerBalances).set({
+    availableMinor:sql`${customerBalances.availableMinor}+${convertedTargetMinor}-${input.amountMinor}`,
+    lockedMinor:sql`${customerBalances.lockedMinor}+${input.amountMinor}`,updatedAt:new Date(),
+  }).where(and(eq(customerBalances.id,bal.id),gte(customerBalances.availableMinor,minimumRequiredFromTarget)));
+  if(Number((balanceUpdate as any)[0]?.affectedRows||0)!==1) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds. Available balance is insufficient after FX conversion for this trade amount.");
+  await tx.insert(balanceLedger).values({userId,currency:offer.currency,amountMinor:-input.amountMinor,entryType:"trade_reservation",reference:ref,withdrawable:false});
+  const settlementDelaySeconds=Math.max(Number(packagePolicy.minSettlementDelaySeconds||0),Math.min(Number(packagePolicy.maxSettlementDelaySeconds||settlementPolicy.delaySeconds),settlementPolicy.delaySeconds));
+  const tradeStartedAt=new Date();
+  const settlesAt=new Date(tradeStartedAt.getTime()+effectiveDurationSeconds*1000);
+  const settlementReviewAt=new Date(settlesAt.getTime()+settlementDelaySeconds*1000);
+  const creditAt=new Date(settlementReviewAt.getTime()+settlementPolicy.creditDelaySeconds*1000);
+  const snapshotVersion=Number(popupSnapshot?.packagePolicyVersionSnapshot||packagePolicy.policyVersion||activePackageSubscription.termsVersion||1);
+  const result=await tx.insert(tradePositions).values({userId,offerId:offer.id,packageSubscriptionId:selectedSubscriptionId,currency:offer.currency,principalMinor:input.amountMinor,expectedRewardMinor:reward,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,companyLogoUrl:popupSnapshot?.companyLogoUrl||null,companyReferenceMetadataJson:popupSnapshot?.companyReferenceMetadataJson||null,companyReferenceOnly:Boolean(popupSnapshot?.companyReferenceOnly??false),walletFundingPlanJson,instrumentIdSnapshot:Number(instrumentIdForTrade),entryMarketSnapshotId:Number(entrySnapshot.id),entryPriceUsd:String(entryPrice),settlementResultSource:null,settlementProvider:null,settlementObservedAt:null,packageIdSnapshot:feePackageId,packageFeeRateBpsSnapshot:packageFeePolicy.feeRateBps,packageFeeRoundingModeSnapshot:packageFeePolicy.roundingMode,packageFeePolicyVersionSnapshot:packageFeePolicy.version,packageFeeEffectiveAtSnapshot:new Date(packageFeePolicy.effectiveAt),feePolicyVersion:packageFeePolicy.version,platformFeeRateBps:packageFeePolicy.feeRateBps,platformFeeRoundingMode:packageFeePolicy.roundingMode,transactionReference:ref,rewardReservedMinor:reward,settlesAt,settlementReviewAt,creditAt,lifecycleStage:"Trade Allocated",settlementStatus:"pending",policyVersion:snapshotVersion} as any);
+  const tradeId=Number(result[0].insertId);
+  // Simulated popup-trade mathematics: debit side (amount deducted while popup / trade is live)
+  const automaticDebit = calculateAutomaticTradeDebit({
+    capitalMinor: input.amountMinor,
+    currency: offer.currency,
+    profitRateBps: effectiveRateBps,
+  });
+  await tx.insert(tradeLifecycleEvents).values({tradeId,userId,eventType:"trade_allocated",stage:"Trade Allocated",payloadJson:JSON.stringify({amountMinor:input.amountMinor,currency:offer.currency,packageSubscriptionId:selectedSubscriptionId,packageId:Number(activePackageSubscription.packageId),termsVersion:Number(activePackageSubscription.termsVersion||1),policyVersion:snapshotVersion,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,debitTransitionText:automaticDebit.transitionText,expectedProfitMinor:automaticDebit.expectedGrossProfitMinor,lifecycleStage:automaticDebit.stage})});
+  if(input.deliveryEventId!==undefined) await tx.update(opportunityPopupEvents).set({tradeId,eventStatus:"TRADED",executionStatus:"SUCCEEDED",executionRetryAfter:null,executionLastErrorCode:null,tradedAt:new Date(),updatedAt:new Date()}).where(and(eq(opportunityPopupEvents.id,input.deliveryEventId),eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.offerId,offer.id)));
+  else await tx.execute(sql`UPDATE opportunity_popup_events SET tradeId=${tradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
+  await tx.insert(tradeRewardReservations).values({userId,tradeId,packageName:activePackageSubscription.packageName,windowKey:today,currency:offer.currency,reservedMinor:reward,status:"reserved"});
+  return {tradeId,rewardMinor:reward,rewardBps:effectiveRateBps,minimumMinor:terms.minimumMinor,calculationMethod:"saved-tier-policy",configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,settlesAt,settlementReviewAt,creditAt,currency:offer.currency,amountMinor:input.amountMinor,rateUsd:nativeRate,rateUpdatedAt:currencyRow.updatedAt,amountUsd:nativeMinorToUsd(input.amountMinor,Number(currencyRow.scale),nativeRate),debitTransitionText:automaticDebit.transitionText,expectedProfitMinor:automaticDebit.expectedGrossProfitMinor,lifecycleStage:automaticDebit.stage,expectedCreditMinor:automaticDebit.expectedCreditMinor};
+ });
+}
+export async function listTrades(userId:number){
+  const db=await getDb();
+  if(!db)throw new Error("Database is not available");
+  const rows=await db.select({
+    id:tradePositions.id,
+    userId:tradePositions.userId,
+    offerId:tradePositions.offerId,
+    currency:tradePositions.currency,
+    principalMinor:tradePositions.principalMinor,
+    expectedRewardMinor:tradePositions.expectedRewardMinor,
+    configuredProfitRateBps:tradePositions.configuredProfitRateBps,
+    configuredDurationSeconds:tradePositions.configuredDurationSeconds,
+    packagePolicyVersionSnapshot:tradePositions.packagePolicyVersionSnapshot,
+    companyReferenceId:tradePositions.companyReferenceId,
+    companyDisplayName:tradePositions.companyDisplayName,
+    companyLogoUrl:tradePositions.companyLogoUrl,
+    companyReferenceMetadataJson:tradePositions.companyReferenceMetadataJson,
+    companyReferenceOnly:tradePositions.companyReferenceOnly,
+    rewardCreditedMinor:tradePositions.rewardCreditedMinor,
+    realizedGrossProfitMinor:tradePositions.realizedGrossProfitMinor,
+    platformFeeMinor:tradePositions.platformFeeMinor,
+    netProfitMinor:tradePositions.netProfitMinor,
+    settlementOutcome:tradePositions.settlementOutcome,
+    feePolicyVersion:tradePositions.feePolicyVersion,
+    platformFeeRateBps:tradePositions.platformFeeRateBps,
+    platformFeeRoundingMode:tradePositions.platformFeeRoundingMode,
+    settlementReference:tradePositions.settlementReference,
+    settlementConfirmedAt:tradePositions.settlementConfirmedAt,
+    status:tradePositions.status,
+    settlementStatus:tradePositions.settlementStatus,
+    lifecycleStage:tradePositions.lifecycleStage,
+    walletUpdatedAt:tradePositions.walletUpdatedAt,
+    transactionReference:tradePositions.transactionReference,
+    completionAt:tradePositions.completionAt,
+    confirmedAt:tradePositions.confirmedAt,
+    settlesAt:tradePositions.settlesAt,
+    settlementReviewAt:tradePositions.settlementReviewAt,
+    creditAt:tradePositions.creditAt,
+    settledAt:tradePositions.settledAt,
+    symbol:opportunityOffers.symbol,
+    venueFrom:opportunityOffers.venueFrom,
+    venueTo:opportunityOffers.venueTo,
+  }).from(tradePositions)
+    .leftJoin(opportunityOffers,eq(opportunityOffers.id,tradePositions.offerId))
+    .where(eq(tradePositions.userId,userId))
+    .orderBy(desc(tradePositions.confirmedAt));
+  return rows.map(row=>{
+    const settled=row.status==="settled";
+    const pending=row.status==="pending";
+    const hasActualBreakdown=Boolean(row.settlementConfirmedAt)&&row.settlementOutcome!=="legacy_unrecorded";
+    const stage=settled?"Trade Completed":row.lifecycleStage||(pending?"Trade Allocated":new Date(row.settlesAt).getTime()<=Date.now()?"Awaiting Settlement Confirmation":"Trade Executing");
+    return {
+      ...row,
+      tradeReference:`trade-${row.id}`,
+      opportunityReference:`opportunity-${row.offerId}`,
+      stage,
+      settlementStatus:row.settlementStatus,
+      rewardCredited:Boolean(row.walletUpdatedAt),
+      creditedRewardMinor:hasActualBreakdown&&row.walletUpdatedAt?Math.max(0,Number(row.netProfitMinor||0)):null,
+      walletUpdated:Boolean(row.walletUpdatedAt),
+      completionAt:row.completionAt,
+      transactionReference:row.transactionReference,
+      hasActualBreakdown,
+    };
+  });
+}
+export type AdminTradingHistoryFilters = {
+  beforeTradeId?: number;
+  userId?: number;
+  status?: "pending" | "confirmed" | "settled" | "cancelled";
+  settlementStatus?: "pending" | "confirmed_awaiting_credit" | "completed";
+  fromDate?: string;
+  toDate?: string;
+  scanLimit: number;
+};
+export function projectAdminTradingHistoryResult<T extends {
+  settlementConfirmedAt: Date | null;
+  settlementConfirmedBy: number | null;
+  settlementReference: string | null;
+  settlementOutcome: string;
+  realizedGrossProfitMinor: number;
+  platformFeeMinor: number;
+  netProfitMinor: number;
+}>(row: T) {
+  const { settlementConfirmedBy, ...publicRow } = row;
+  const actualResultAvailable = Boolean(
+    row.settlementConfirmedAt && settlementConfirmedBy && row.settlementReference?.trim() &&
+    ["profit", "zero_profit", "loss"].includes(row.settlementOutcome),
+  );
+  return {
+    ...publicRow,
+    actualResultAvailable,
+    settlementConfirmedAt: actualResultAvailable ? row.settlementConfirmedAt : null,
+    settlementReference: actualResultAvailable ? row.settlementReference : null,
+    settlementOutcome: actualResultAvailable ? row.settlementOutcome : null,
+    realizedGrossProfitMinor: actualResultAvailable ? row.realizedGrossProfitMinor : null,
+    platformFeeMinor: actualResultAvailable ? row.platformFeeMinor : null,
+    netProfitMinor: actualResultAvailable ? row.netProfitMinor : null,
+  };
+}
+/**
+ * Read-only bounded history scan over the existing trade primary key. Filters
+ * are applied only to the bounded ID window so sparse filters cannot force an
+ * unbounded database scan or imply that one window covers all matching rows.
+ */
+export async function listAdminTradingHistory(filters: AdminTradingHistoryFilters) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const scanLimit = Math.max(25, Math.min(250, Number.isSafeInteger(filters.scanLimit) ? filters.scanLimit : 100));
+  const candidates = await db.select({
+    id: tradePositions.id,
+    userId: tradePositions.userId,
+    currency: tradePositions.currency,
+    principalMinor: tradePositions.principalMinor,
+    status: tradePositions.status,
+    settlementStatus: tradePositions.settlementStatus,
+    lifecycleStage: tradePositions.lifecycleStage,
+    confirmedAt: tradePositions.confirmedAt,
+    completionAt: tradePositions.completionAt,
+    settledAt: tradePositions.settledAt,
+    settlementConfirmedAt: tradePositions.settlementConfirmedAt,
+    settlementConfirmedBy: tradePositions.settlementConfirmedBy,
+    settlementReference: tradePositions.settlementReference,
+    settlementOutcome: tradePositions.settlementOutcome,
+    realizedGrossProfitMinor: tradePositions.realizedGrossProfitMinor,
+    platformFeeMinor: tradePositions.platformFeeMinor,
+    netProfitMinor: tradePositions.netProfitMinor,
+    walletUpdatedAt: tradePositions.walletUpdatedAt,
+  }).from(tradePositions)
+    .where(filters.beforeTradeId === undefined ? undefined : lt(tradePositions.id, filters.beforeTradeId))
+    .orderBy(desc(tradePositions.id))
+    .limit(scanLimit + 1);
+  const hasMore = candidates.length > scanLimit;
+  const scanned = candidates.slice(0, scanLimit);
+  const fromInclusive = filters.fromDate ? Date.parse(`${filters.fromDate}T00:00:00.000Z`) : undefined;
+  const toExclusive = filters.toDate ? Date.parse(`${filters.toDate}T00:00:00.000Z`) + 86_400_000 : undefined;
+  const rows = scanned.filter((row) => {
+    if (filters.userId !== undefined && row.userId !== filters.userId) return false;
+    if (filters.status !== undefined && row.status !== filters.status) return false;
+    if (filters.settlementStatus !== undefined && row.settlementStatus !== filters.settlementStatus) return false;
+    if (fromInclusive !== undefined || toExclusive !== undefined) {
+      const confirmedAt = row.confirmedAt instanceof Date ? row.confirmedAt.getTime() : new Date(row.confirmedAt).getTime();
+      if (!Number.isFinite(confirmedAt) || (fromInclusive !== undefined && confirmedAt < fromInclusive) || (toExclusive !== undefined && confirmedAt >= toExclusive)) return false;
+    }
+    return true;
+  });
+  const projectedRows = rows.map(projectAdminTradingHistoryResult);
+  return {
+    rows: projectedRows,
+    scannedCount: scanned.length,
+    hasMore,
+    nextBeforeTradeId: hasMore ? scanned[scanned.length - 1]?.id ?? null : null,
+    scanLimit,
+  };
+}
+export async function processAutomaticMarketSettlements(input?: { limit?: number }) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const limit=Math.max(1,Math.min(250,Number.isSafeInteger(input?.limit)?Number(input?.limit):100));
+  const now=new Date();
+  const due=await db.select({id:tradePositions.id}).from(tradePositions).where(and(
+    eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending"),
+    or(lte(tradePositions.settlementReviewAt,now),and(isNull(tradePositions.settlementReviewAt),lte(tradePositions.settlesAt,now))),
+  )).orderBy(tradePositions.settlementReviewAt,tradePositions.settlesAt).limit(limit);
+  let settled=0, waitingForMarket=0, skipped=0;
+  for(const item of due){
+    const result=await db.transaction(async tx=>{
+      const trade=(await tx.select().from(tradePositions).where(eq(tradePositions.id,item.id)).limit(1).for("update"))[0];
+      if(!trade||trade.status!=="confirmed"||trade.settlementStatus!=="pending") return "skipped" as const;
+      const dueAt=trade.settlementReviewAt||trade.settlesAt;
+      if(!dueAt||new Date(dueAt).getTime()>now.getTime()) return "skipped" as const;
+      // Prefer live market exit when available. Otherwise settle using the
+      // configured package profit rate so capital is never stuck locked forever
+      // when offers were allocated without continuous market data feeds.
+      const entryPrice=Number(trade.entryPriceUsd||0);
+      const exit=(trade.instrumentIdSnapshot
+        ?(await tx.select({id:marketSnapshots.id,priceUsd:marketSnapshots.priceUsd,observedAt:marketSnapshots.observedAt,source:marketSnapshots.source})
+          .from(marketSnapshots).where(and(eq(marketSnapshots.instrumentId,Number(trade.instrumentIdSnapshot)),gt(marketSnapshots.observedAt,new Date(trade.confirmedAt||trade.settlesAt||now)))).orderBy(desc(marketSnapshots.observedAt),desc(marketSnapshots.id)).limit(1))[0]
+        : null);
+      const exitPrice=Number(exit?.priceUsd);
+      const hasMarketExit=Boolean(exit)&&Number.isFinite(entryPrice)&&entryPrice>0&&Number.isFinite(exitPrice)&&exitPrice>0;
+      let grossProfitMinor:number;
+      let settlementResultSource:string;
+      let settlementProvider:string;
+      let exitMarketSnapshotId:number|null=null;
+      let exitPriceUsd:string|null=null;
+      let settlementObservedAt:Date|null=null;
+      let settlementNotes:string;
+      if(hasMarketExit){
+        grossProfitMinor=Math.round(Number(trade.principalMinor)*((exitPrice-entryPrice)/entryPrice));
+        if(!Number.isSafeInteger(grossProfitMinor)||grossProfitMinor<-Number(trade.principalMinor)){
+          // fall through to configured rate
+          grossProfitMinor=Number(trade.expectedRewardMinor||0);
+          settlementResultSource="configured_profit_rate";
+          settlementProvider="platform-configured-rate";
+          settlementNotes="Market exit produced an out-of-bounds result; settled using the configured package profit rate.";
+        } else {
+          settlementResultSource="recorded_market_snapshot";
+          settlementProvider=String(exit.source||"market-sync");
+          exitMarketSnapshotId=Number(exit.id);
+          exitPriceUsd=String(exitPrice);
+          settlementObservedAt=exit.observedAt;
+          settlementNotes="Automatically resolved from a newer recorded market snapshot.";
+        }
+      } else {
+        const configured=Number(trade.expectedRewardMinor||0);
+        const rateBps=Number(trade.configuredProfitRateBps||0);
+        if(Number.isSafeInteger(configured)&&configured>=0){
+          grossProfitMinor=configured;
+        } else if(Number.isSafeInteger(rateBps)&&rateBps>=0){
+          grossProfitMinor=Number((BigInt(trade.principalMinor)*BigInt(rateBps)+5000n)/10000n);
+        } else {
+          grossProfitMinor=0;
+        }
+        if(!Number.isSafeInteger(grossProfitMinor)||grossProfitMinor<0) grossProfitMinor=0;
+        settlementResultSource="configured_profit_rate";
+        settlementProvider="platform-configured-rate";
+        settlementNotes="No exit market snapshot was available at settlement time; principal and configured profit were settled automatically.";
+      }
+      let feePolicy:{feeRateBps:number;roundingMode:FeeRoundingMode;policyVersion:number};
+      if(trade.packageIdSnapshot!==null&&trade.packageFeeRateBpsSnapshot!==null&&trade.packageFeeRoundingModeSnapshot!==null&&trade.packageFeePolicyVersionSnapshot!==null){
+        const saved=normalizePackageFeePolicy({packageId:trade.packageIdSnapshot,version:trade.packageFeePolicyVersionSnapshot,feeRateBps:trade.packageFeeRateBpsSnapshot,roundingMode:trade.packageFeeRoundingModeSnapshot,effectiveAt:trade.packageFeeEffectiveAtSnapshot||trade.confirmedAt,changedAt:trade.confirmedAt});
+        feePolicy={feeRateBps:saved.feeRateBps,roundingMode:saved.roundingMode,policyVersion:saved.version};
+      } else feePolicy=normalizeImmutableTradeFeeSnapshot({feeRateBps:trade.platformFeeRateBps,roundingMode:trade.platformFeeRoundingMode,policyVersion:trade.feePolicyVersion});
+      const accounting=calculateRealizedProfitSettlement({principalMinor:Number(trade.principalMinor),grossProfitMinor,feeRateBps:feePolicy.feeRateBps,roundingMode:feePolicy.roundingMode});
+      const reference=`auto-settle-${trade.id}-${exitMarketSnapshotId||"cfg"}-${now.getTime()}`;
+      try { await tx.insert(tradeSettlementReferenceClaims).values({settlementReference:reference,tradeId:trade.id}); }
+      catch(error){ const code=error&&typeof error==='object'&&'code' in error?String((error as {code:unknown}).code):""; if(code==="ER_DUP_ENTRY") return "skipped" as const; throw error; }
+      const stateUpdate=await tx.update(tradePositions).set({
+        lifecycleStage:"Settlement Confirmed — Awaiting Wallet Credit",settlementStatus:"confirmed_awaiting_credit",
+        realizedGrossProfitMinor:accounting.grossProfitMinor,platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,
+        rewardCreditedMinor:0,feePolicyVersion:feePolicy.policyVersion,platformFeeRateBps:feePolicy.feeRateBps,platformFeeRoundingMode:feePolicy.roundingMode,
+        settlementOutcome:accounting.outcome,transactionReference:reference,settlementReference:reference,settlementConfirmedAt:now,settlementConfirmedBy:-1,
+        settlementNotes,
+        exitMarketSnapshotId,exitPriceUsd,settlementResultSource,settlementProvider,settlementObservedAt,
+      }).where(and(eq(tradePositions.id,trade.id),eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending")));
+      assertExactlyOneAffectedRow(stateUpdate,"Automatic market settlement transition");
+      await tx.insert(tradeLifecycleEvents).values({tradeId:trade.id,userId:trade.userId,eventType:"automatic_market_settlement_confirmed",stage:"Settlement Confirmed — Awaiting Wallet Credit",payloadJson:JSON.stringify({reference,entryMarketSnapshotId:trade.entryMarketSnapshotId,entryPriceUsd:entryPrice,exitMarketSnapshotId,exitPriceUsd,grossProfitMinor,platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,provider:settlementProvider,observedAt:settlementObservedAt,settlementResultSource})});
+      return "settled" as const;
+    });
+    if(result==="settled") settled++; else if(result==="waiting") waitingForMarket++; else skipped++;
+  }
+  return {scanned:due.length,settled,waitingForMarket,skipped,limit,asOf:now.toISOString()};
+}
+
+export async function markDueTradesAwaitingConfirmation(userId:number){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const now=new Date();
+  const due=await db.select({id:tradePositions.id}).from(tradePositions).where(and(
+    eq(tradePositions.userId,userId),eq(tradePositions.status,"confirmed"),
+    eq(tradePositions.settlementStatus,"pending"),or(lte(tradePositions.settlementReviewAt,now),and(isNull(tradePositions.settlementReviewAt),or(lte(tradePositions.creditAt,now),and(isNull(tradePositions.creditAt),lte(tradePositions.settlesAt,now))))),
+  )).orderBy(tradePositions.settlementReviewAt,tradePositions.settlesAt);
+  let marked=0;
+  for(const item of due){
+    const markedOne=await db.transaction(async tx=>{
+      const trade=(await tx.select().from(tradePositions).where(and(eq(tradePositions.id,item.id),eq(tradePositions.userId,userId))).limit(1).for("update"))[0];
+      if(!trade||trade.status!=="confirmed"||trade.settlementStatus!=="pending") return false;
+      const dueAt=trade.settlementReviewAt||trade.creditAt||trade.settlesAt;
+      if(!dueAt||new Date(dueAt).getTime()>now.getTime()) return false;
+      if(trade.lifecycleStage==="Awaiting Settlement Confirmation") return false;
+
+      // Elapsed time is not execution evidence. Record only a lifecycle status;
+      // principal, earnings, fees and losses stay untouched until actual settlement is confirmed.
+      const stateUpdate=await tx.update(tradePositions).set({
+        lifecycleStage:"Awaiting Settlement Confirmation",
+      }).where(and(eq(tradePositions.id,trade.id),eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending")));
+      assertExactlyOneAffectedRow(stateUpdate,"Due trade awaiting-confirmation transition");
+      await tx.insert(tradeLifecycleEvents).values({
+        tradeId:trade.id,
+        userId,
+        eventType:"settlement_due_waiting_for_confirmation",
+        stage:"Awaiting Settlement Confirmation",
+        payloadJson:JSON.stringify({dueAt:new Date(dueAt).toISOString(),reason:"Scheduled time elapsed; actual settlement confirmation is still required."}),
+      });
+      return true;
+    });
+    if(markedOne) marked++;
+  }
+  return marked;
+}
+export async function reconcileAllDueTradesAwaitingConfirmation(){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const now=new Date();
+  const due=await db.select({id:tradePositions.id}).from(tradePositions).where(and(
+    eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending"),
+    or(isNull(tradePositions.lifecycleStage),notInArray(tradePositions.lifecycleStage,["Awaiting Settlement Confirmation"])),
+    or(lte(tradePositions.settlementReviewAt,now),and(isNull(tradePositions.settlementReviewAt),or(lte(tradePositions.creditAt,now),and(isNull(tradePositions.creditAt),lte(tradePositions.settlesAt,now))))),
+  )).orderBy(tradePositions.settlementReviewAt,tradePositions.settlesAt).limit(1000);
+  let marked=0;
+  for(const item of due){
+    const markedOne=await db.transaction(async tx=>{
+      const trade=(await tx.select().from(tradePositions).where(eq(tradePositions.id,item.id)).limit(1).for("update"))[0];
+      if(!trade||trade.status!=="confirmed"||trade.settlementStatus!=="pending") return false;
+      const dueAt=trade.settlementReviewAt||trade.creditAt||trade.settlesAt;
+      if(!dueAt||new Date(dueAt).getTime()>now.getTime()) return false;
+      if(trade.lifecycleStage==="Awaiting Settlement Confirmation") return false;
+      const stateUpdate=await tx.update(tradePositions).set({
+        lifecycleStage:"Awaiting Settlement Confirmation",
+      }).where(and(eq(tradePositions.id,trade.id),eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending")));
+      assertExactlyOneAffectedRow(stateUpdate,"Global due-trade awaiting-confirmation transition");
+      await tx.insert(tradeLifecycleEvents).values({
+        tradeId:trade.id,
+        userId:trade.userId,
+        eventType:"settlement_due_waiting_for_confirmation",
+        stage:"Awaiting Settlement Confirmation",
+        payloadJson:JSON.stringify({dueAt:new Date(dueAt).toISOString(),reason:"Global reconciliation sweep found the scheduled time elapsed; actual settlement confirmation is still required."}),
+      });
+      return true;
+    });
+    if(markedOne) marked++;
+  }
+  return {scanned:due.length,marked,limit:1000,asOf:now.toISOString()};
+}
+export async function listSettlementEvidence(tradeId: number) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return db.select({
+    id:settlementEvidenceRecords.id, tradeId:settlementEvidenceRecords.tradeId, evidenceReference:settlementEvidenceRecords.evidenceReference,
+    evidenceType:settlementEvidenceRecords.evidenceType, originalFilename:settlementEvidenceRecords.originalFilename,
+    mimeType:settlementEvidenceRecords.mimeType, sizeBytes:settlementEvidenceRecords.sizeBytes, sha256:settlementEvidenceRecords.sha256,
+    storageKey:settlementEvidenceRecords.storageKey, submittedBy:settlementEvidenceRecords.submittedBy, submittedAt:settlementEvidenceRecords.submittedAt,
+    verificationStatus:settlementEvidenceRecords.verificationStatus, verifiedBy:settlementEvidenceRecords.verifiedBy,
+    verifiedAt:settlementEvidenceRecords.verifiedAt, verificationNotes:settlementEvidenceRecords.verificationNotes,
+    createdAt:settlementEvidenceRecords.createdAt, updatedAt:settlementEvidenceRecords.updatedAt,
+  }).from(settlementEvidenceRecords).where(eq(settlementEvidenceRecords.tradeId,tradeId)).orderBy(desc(settlementEvidenceRecords.id));
+}
+
+export async function getSettlementEvidenceUploadTarget(tradeId:number) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return (await db.select({id:tradePositions.id,status:tradePositions.status,settlementStatus:tradePositions.settlementStatus}).from(tradePositions).where(eq(tradePositions.id,tradeId)).limit(1))[0] ?? null;
+}
+
+export async function getSettlementEvidenceAccess(storageKey:string) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return (await db.select({id:settlementEvidenceRecords.id,tradeId:settlementEvidenceRecords.tradeId}).from(settlementEvidenceRecords).where(eq(settlementEvidenceRecords.storageKey,storageKey)).limit(1))[0] ?? null;
+}
+
+export async function submitSettlementEvidence(adminId:number,input:{tradeId:number;evidenceReference:string;evidenceType:SettlementEvidenceType;originalFilename?:string;mimeType?:string;sizeBytes?:number;sha256?:string;storageKey?:string;notes?:string}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const reference=input.evidenceReference.trim();
+  if(!isValidSettlementEvidenceReference(reference)) throw new Error("Evidence reference must use 3-160 safe characters");
+  if(input.storageKey&&!isValidSettlementEvidenceStorageKey(input.storageKey,input.tradeId)) throw new Error("Invalid settlement evidence storage key");
+  if(input.notes!==undefined&&input.notes.trim().length>2000) throw new Error("Evidence notes must not exceed 2000 characters");
+  return db.transaction(async tx=>{
+    const trade=(await tx.select({id:tradePositions.id,status:tradePositions.status,settlementStatus:tradePositions.settlementStatus}).from(tradePositions).where(eq(tradePositions.id,input.tradeId)).limit(1))[0];
+    if(!trade) throw new Error("Trade not found");
+    if(trade.status!=="confirmed"||!(["pending","confirmed_awaiting_credit"] as string[]).includes(String(trade.settlementStatus))) throw new Error("Evidence can only be attached to an active settlement record");
+    const inserted=await tx.insert(settlementEvidenceRecords).values({tradeId:input.tradeId,evidenceReference:reference,evidenceType:input.evidenceType,originalFilename:input.originalFilename?.trim().slice(0,255)||null,mimeType:input.mimeType?.trim().slice(0,160)||null,sizeBytes:input.sizeBytes??null,sha256:input.sha256?.trim().toLowerCase()||null,storageKey:input.storageKey||null,submittedBy:adminId,verificationStatus:"submitted",verificationNotes:input.notes?.trim()||null});
+    const evidenceId=Number(inserted[0].insertId);
+    await tx.insert(settlementEvidenceAuditEvents).values({evidenceId,tradeId:input.tradeId,action:"submitted",fromStatus:null,toStatus:"submitted",actorUserId:adminId,notes:input.notes?.trim()||null});
+    return {id:evidenceId,tradeId:input.tradeId,evidenceReference:reference,verificationStatus:"submitted" as const};
+  });
+}
+
+export async function reviewSettlementEvidence(adminId:number,input:{evidenceId:number;decision:"approve"|"reject";notes:string}) {
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  const notes=input.notes.trim();
+  if(notes.length<5||notes.length>2000) throw new Error("Evidence review notes must contain 5-2000 characters");
+  return db.transaction(async tx=>{
+    const evidence=(await tx.select().from(settlementEvidenceRecords).where(eq(settlementEvidenceRecords.id,input.evidenceId)).limit(1).for("update"))[0];
+    if(!evidence) throw new Error("Settlement evidence not found");
+    if(evidence.verificationStatus==="approved") throw new Error("Approved evidence is immutable");
+    if(evidence.verificationStatus==="rejected"&&input.decision==="reject") throw new Error("Evidence is already rejected");
+    if(input.decision==="approve"&&Number(evidence.submittedBy)===adminId) throw new Error("A second administrator must review submitted evidence");
+    const next=input.decision==="approve"?"approved":"rejected";
+    await tx.update(settlementEvidenceRecords).set({verificationStatus:next,verifiedBy:adminId,verifiedAt:new Date(),verificationNotes:notes}).where(eq(settlementEvidenceRecords.id,input.evidenceId));
+    await tx.insert(settlementEvidenceAuditEvents).values({evidenceId:evidence.id,tradeId:evidence.tradeId,action:input.decision==="approve"?"approved":"rejected",fromStatus:evidence.verificationStatus,toStatus:next,actorUserId:adminId,notes});
+    return {id:evidence.id,tradeId:evidence.tradeId,verificationStatus:next};
+  });
+}
+
+export async function listPendingSettlements(){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  return db.select({
+    id:tradePositions.id, userId:tradePositions.userId, offerId:tradePositions.offerId,
+    packageSubscriptionId:tradePositions.packageSubscriptionId,
+    currency:tradePositions.currency, principalMinor:tradePositions.principalMinor,
+    expectedRewardMinor:tradePositions.expectedRewardMinor, rewardReservedMinor:tradePositions.rewardReservedMinor,
+    status:tradePositions.status, settlementStatus:tradePositions.settlementStatus,
+    lifecycleStage:tradePositions.lifecycleStage,
+    confirmedAt:tradePositions.confirmedAt, settlesAt:tradePositions.settlesAt, settlementReviewAt:tradePositions.settlementReviewAt, creditAt:tradePositions.creditAt,
+    settlementConfirmedAt:tradePositions.settlementConfirmedAt, settlementConfirmedBy:tradePositions.settlementConfirmedBy,
+    settlementReference:tradePositions.settlementReference, walletUpdatedAt:tradePositions.walletUpdatedAt,
+    settlementOutcome:tradePositions.settlementOutcome, realizedGrossProfitMinor:tradePositions.realizedGrossProfitMinor,
+    platformFeeMinor:tradePositions.platformFeeMinor, netProfitMinor:tradePositions.netProfitMinor,
+    platformFeeRateBps:tradePositions.platformFeeRateBps, platformFeeRoundingMode:tradePositions.platformFeeRoundingMode,
+    feePolicyVersion:tradePositions.feePolicyVersion, packageIdSnapshot:tradePositions.packageIdSnapshot,
+    reservationStatus:tradeRewardReservations.status,
+    reservationPackageName:tradeRewardReservations.packageName,
+    reservationAmountMinor:tradeRewardReservations.reservedMinor,
+    symbol:opportunityOffers.symbol, packageName:users.packageName, customerName:users.name, customerEmail:users.email
+  }).from(tradePositions)
+    .leftJoin(opportunityOffers,eq(opportunityOffers.id,tradePositions.offerId))
+    .leftJoin(users,eq(users.id,tradePositions.userId))
+    .leftJoin(tradeRewardReservations,eq(tradeRewardReservations.tradeId,tradePositions.id))
+    .where(and(eq(tradePositions.status,"confirmed"),or(eq(tradePositions.settlementStatus,"pending"),eq(tradePositions.settlementStatus,"confirmed_awaiting_credit")))).orderBy(desc(tradePositions.confirmedAt)).then((rows) => rows.map((row) => ({
+      ...row,
+      feeSnapshotStatus: row.packageIdSnapshot !== null
+        ? "snapshotted" as const
+        : classifyTradeFeeSnapshot({ feeRateBps: row.platformFeeRateBps, roundingMode: row.platformFeeRoundingMode, policyVersion: row.feePolicyVersion }),
+    })));
+}
+/**
+ * Read-only reconciliation queue for settlement records whose persisted state
+ * cannot be trusted without a human financial review. This function never
+ * changes wallet, ledger, trade, or reservation state.
+ */
+export async function listTradeSettlementIntegrityIssues(input?: { limit?: number; beforeTradeId?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const safeLimit = Math.max(1, Math.min(1000, Number.isSafeInteger(input?.limit) ? Number(input?.limit) : 250));
+  const statusIssues = or(
+    and(eq(tradePositions.status, "settled"), eq(tradePositions.settlementOutcome, "legacy_unrecorded")),
+    and(eq(tradePositions.status, "settled"), isNull(tradePositions.settlementReference)),
+    and(eq(tradePositions.status, "settled"), isNull(tradeSettlementReferenceClaims.tradeId)),
+    and(eq(tradePositions.status, "settled"), isNotNull(tradePositions.settlementReference), isNotNull(tradeSettlementReferenceClaims.settlementReference), sql`${tradePositions.settlementReference} <> ${tradeSettlementReferenceClaims.settlementReference}`),
+    and(eq(tradePositions.status, "settled"), sql`${tradePositions.settlementStatus} <> 'completed'`),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "pending"), isNull(tradeRewardReservations.id), gt(tradePositions.rewardReservedMinor, 0)),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "pending"), eq(tradeRewardReservations.status, "credited")),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "pending"), eq(tradeRewardReservations.status, "released")),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNull(tradePositions.settlementReference)),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNull(tradeSettlementReferenceClaims.tradeId)),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNull(tradePositions.settlementConfirmedAt)),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNotNull(tradePositions.walletUpdatedAt)),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNull(tradeRewardReservations.id), gt(tradePositions.rewardReservedMinor, 0)),
+    and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), or(eq(tradeRewardReservations.status, "credited"), eq(tradeRewardReservations.status, "released"))),
+    and(eq(tradePositions.status, "settled"), eq(tradePositions.settlementStatus, "completed"), eq(tradeRewardReservations.status, "reserved")),
+    and(isNotNull(tradeRewardReservations.id), sql`(${tradeRewardReservations.userId} <> ${tradePositions.userId} OR ${tradeRewardReservations.currency} <> ${tradePositions.currency} OR ${tradeRewardReservations.reservedMinor} <> ${tradePositions.rewardReservedMinor})`)
+  );
+  const whereClause = input?.beforeTradeId
+    ? and(statusIssues, lt(tradePositions.id, input.beforeTradeId))
+    : statusIssues;
+  const rows = await db.select({
+    tradeId: tradePositions.id,
+    userId: tradePositions.userId,
+    currency: tradePositions.currency,
+    principalMinor: tradePositions.principalMinor,
+    status: tradePositions.status,
+    settlementStatus: tradePositions.settlementStatus,
+    lifecycleStage: tradePositions.lifecycleStage,
+    settlementOutcome: tradePositions.settlementOutcome,
+    settlementReference: tradePositions.settlementReference,
+    settlementConfirmedAt: tradePositions.settlementConfirmedAt,
+    walletUpdatedAt: tradePositions.walletUpdatedAt,
+    realizedGrossProfitMinor: tradePositions.realizedGrossProfitMinor,
+    platformFeeMinor: tradePositions.platformFeeMinor,
+    netProfitMinor: tradePositions.netProfitMinor,
+    rewardReservedMinor: tradePositions.rewardReservedMinor,
+    rewardCreditedMinor: tradePositions.rewardCreditedMinor,
+    settledAt: tradePositions.settledAt,
+    reservationId: tradeRewardReservations.id,
+    reservationUserId: tradeRewardReservations.userId,
+    reservationCurrency: tradeRewardReservations.currency,
+    reservationAmountMinor: tradeRewardReservations.reservedMinor,
+    reservationStatus: tradeRewardReservations.status,
+    claimReference: tradeSettlementReferenceClaims.settlementReference,
+    claimTradeId: tradeSettlementReferenceClaims.tradeId,
+  }).from(tradePositions)
+    .leftJoin(tradeRewardReservations, eq(tradeRewardReservations.tradeId, tradePositions.id))
+    .leftJoin(tradeSettlementReferenceClaims, eq(tradeSettlementReferenceClaims.tradeId, tradePositions.id))
+    .where(whereClause)
+    .orderBy(desc(tradePositions.id))
+    .limit(safeLimit + 1);
+
+  const hasMore = rows.length > safeLimit;
+  const pageRows = rows.slice(0, safeLimit);
+  const issues = pageRows.map((row) => {
+    const flags: string[] = [];
+    if (row.status === "settled" && row.settlementOutcome === "legacy_unrecorded") flags.push("historical_settlement_without_recorded_result");
+    if (row.status === "settled" && !row.settlementReference) flags.push("settled_trade_missing_reference");
+    if (row.status === "settled" && !row.claimTradeId) flags.push("settled_trade_missing_reference_claim");
+    if (row.claimTradeId !== null && row.claimTradeId !== undefined && row.claimTradeId !== row.tradeId) flags.push("settlement_reference_claim_trade_mismatch");
+    if (row.claimReference && row.settlementReference && row.claimReference !== row.settlementReference) flags.push("settlement_reference_claim_value_mismatch");
+    if (row.status === "confirmed" && row.settlementStatus === "pending" && !row.reservationId && Number(row.rewardReservedMinor) > 0) flags.push("pending_trade_missing_reward_reservation");
+    if (row.status === "confirmed" && row.settlementStatus === "pending" && (row.reservationStatus === "credited" || row.reservationStatus === "released")) flags.push("pending_trade_reservation_not_reserved");
+    if (row.status === "confirmed" && row.settlementStatus === "confirmed_awaiting_credit" && !row.settlementReference) flags.push("confirmed_trade_missing_settlement_reference");
+    if (row.status === "confirmed" && row.settlementStatus === "confirmed_awaiting_credit" && !row.claimTradeId) flags.push("confirmed_trade_missing_reference_claim");
+    if (row.status === "confirmed" && row.settlementStatus === "confirmed_awaiting_credit" && !row.settlementConfirmedAt) flags.push("confirmed_trade_missing_confirmation_timestamp");
+    if (row.status === "confirmed" && row.settlementStatus === "confirmed_awaiting_credit" && row.walletUpdatedAt) flags.push("awaiting_credit_trade_wallet_already_updated");
+    if (row.status === "confirmed" && row.settlementStatus === "confirmed_awaiting_credit" && (row.reservationStatus === "credited" || row.reservationStatus === "released")) flags.push("confirmed_trade_reservation_not_reserved");
+    if (row.status === "settled" && row.settlementStatus === "completed" && row.reservationStatus === "reserved") flags.push("settled_trade_reservation_still_reserved");
+    if (row.reservationId && (row.reservationUserId !== row.userId || row.reservationCurrency !== row.currency || Number(row.reservationAmountMinor) !== Number(row.rewardReservedMinor))) flags.push("trade_reward_reservation_identity_or_amount_mismatch");
+    if (row.status === "settled" && row.settlementStatus !== "completed") flags.push("settled_trade_status_not_completed");
+    return { ...row, issues: flags };
+  }).filter((row) => row.issues.length > 0);
+
+  return {
+    issues,
+    scan: {
+      limit: safeLimit,
+      candidatesExamined: pageRows.length,
+      hasMore,
+      nextBeforeTradeId: hasMore && pageRows.length ? Number(pageRows[pageRows.length - 1].tradeId) : null,
+    },
+  };
+}
+
+export async function listWalletLedgerReconciliation(input?: {
+  limit?: number;
+  afterUserId?: number;
+  afterCurrency?: string;
+  beforeTradeId?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async (tx) => {
+  const safeLimit = Math.max(1, Math.min(1000, Number.isSafeInteger(input?.limit) ? Number(input?.limit) : 250));
+  if ((input?.afterUserId === undefined) !== (input?.afterCurrency === undefined)) {
+    throw new Error("Wallet reconciliation cursor requires both customer ID and currency");
+  }
+  const walletCursor = input?.afterUserId === undefined ? sql`1=1` : or(
+    gt(customerBalances.userId, input.afterUserId),
+    and(eq(customerBalances.userId, input.afterUserId), gt(customerBalances.currency, input.afterCurrency!))
+  );
+  const ledgerCursor = input?.afterUserId === undefined ? sql`1=1` : or(
+    gt(balanceLedger.userId, input.afterUserId),
+    and(eq(balanceLedger.userId, input.afterUserId), gt(balanceLedger.currency, input.afterCurrency!))
+  );
+  const tradeCursor = input?.afterUserId === undefined ? sql`1=1` : or(
+    gt(tradePositions.userId, input.afterUserId),
+    and(eq(tradePositions.userId, input.afterUserId), gt(tradePositions.currency, input.afterCurrency!))
+  );
+  const payoutCursor = input?.afterUserId === undefined ? sql`1=1` : or(
+    gt(payoutRequests.userId, input.afterUserId),
+    and(eq(payoutRequests.userId, input.afterUserId), gt(payoutRequests.currency, input.afterCurrency!))
+  );
+
+  const [walletGroups, ledgerGroups, tradeGroups, payoutGroups] = await Promise.all([
+    tx.select({
+      userId: customerBalances.userId,
+      currency: customerBalances.currency,
+      walletCount: count(),
+      availableMinor: sql<string>`COALESCE(SUM(${customerBalances.availableMinor}), 0)`,
+      lockedMinor: sql<string>`COALESCE(SUM(${customerBalances.lockedMinor}), 0)`,
+    }).from(customerBalances).where(walletCursor)
+      .groupBy(customerBalances.userId, customerBalances.currency)
+      .orderBy(customerBalances.userId, customerBalances.currency).limit(safeLimit + 1),
+    tx.select({
+      userId: balanceLedger.userId,
+      currency: balanceLedger.currency,
+      ledgerEntryCount: count(),
+      ledgerNetMinor: sql<string>`COALESCE(SUM(${balanceLedger.amountMinor}), 0)`,
+    }).from(balanceLedger).where(ledgerCursor)
+      .groupBy(balanceLedger.userId, balanceLedger.currency)
+      .orderBy(balanceLedger.userId, balanceLedger.currency).limit(safeLimit + 1),
+    tx.select({
+      userId: tradePositions.userId,
+      currency: tradePositions.currency,
+      activeTradeCount: count(),
+      knownActiveTradePrincipalMinor: sql<string>`COALESCE(SUM(${tradePositions.principalMinor}), 0)`,
+    }).from(tradePositions).where(and(
+      tradeCursor,
+      inArray(tradePositions.status, ["confirmed"]),
+      eq(tradePositions.settlementStatus, "pending")
+    )).groupBy(tradePositions.userId, tradePositions.currency)
+      .orderBy(tradePositions.userId, tradePositions.currency).limit(safeLimit + 1),
+    tx.select({
+      userId: payoutRequests.userId,
+      currency: payoutRequests.currency,
+      pendingPayoutCount: count(),
+      pendingPayoutMinor: sql<string>`COALESCE(SUM(${payoutRequests.amountMinor}), 0)`,
+    }).from(payoutRequests).where(and(payoutCursor, eq(payoutRequests.status, "pending")))
+      .groupBy(payoutRequests.userId, payoutRequests.currency)
+      .orderBy(payoutRequests.userId, payoutRequests.currency).limit(safeLimit + 1),
+  ]);
+
+  const keyFor = (userId: number, currency: string) => String(userId) + "\u0000" + currency;
+  const candidateKeys = new Map<string, { userId: number; currency: string }>();
+  for (const row of [...walletGroups, ...ledgerGroups, ...tradeGroups, ...payoutGroups]) {
+    const userId = Number(row.userId);
+    const currency = String(row.currency);
+    candidateKeys.set(keyFor(userId, currency), { userId, currency });
+  }
+  const allGroups = Array.from(candidateKeys.values()).sort((a, b) => a.userId - b.userId || a.currency.localeCompare(b.currency));
+  const groups = allGroups.slice(0, safeLimit);
+  const hasMoreWalletGroups = allGroups.length > safeLimit;
+  const walletMap = new Map(walletGroups.map((row) => [keyFor(Number(row.userId), String(row.currency)), row]));
+  const ledgerMap = new Map(ledgerGroups.map((row) => [keyFor(Number(row.userId), String(row.currency)), row]));
+  const tradeMap = new Map(tradeGroups.map((row) => [keyFor(Number(row.userId), String(row.currency)), row]));
+  const payoutMap = new Map(payoutGroups.map((row) => [keyFor(Number(row.userId), String(row.currency)), row]));
+
+  const walletIssues = groups.map((group) => {
+    const key = keyFor(group.userId, group.currency);
+    const wallet = walletMap.get(key);
+    const ledger = ledgerMap.get(key);
+    const trades = tradeMap.get(key);
+    const payouts = payoutMap.get(key);
+    return inspectWalletLedgerSnapshot({
+      userId: group.userId,
+      currency: group.currency,
+      walletCount: wallet?.walletCount ?? 0,
+      availableMinor: wallet?.availableMinor ?? 0,
+      lockedMinor: wallet?.lockedMinor ?? 0,
+      ledgerEntryCount: ledger?.ledgerEntryCount ?? 0,
+      ledgerNetMinor: ledger?.ledgerNetMinor ?? 0,
+      activeTradeCount: trades?.activeTradeCount ?? 0,
+      knownActiveTradePrincipalMinor: trades?.knownActiveTradePrincipalMinor ?? 0,
+      pendingPayoutCount: payouts?.pendingPayoutCount ?? 0,
+      pendingPayoutMinor: payouts?.pendingPayoutMinor ?? 0,
+    });
+  }).filter((row) => row.issues.length > 0);
+
+  const tradeWhere = input?.beforeTradeId
+    ? and(eq(tradePositions.status, "settled"), lt(tradePositions.id, input.beforeTradeId))
+    : eq(tradePositions.status, "settled");
+  const candidateTrades = await tx.select({
+    tradeId: tradePositions.id,
+    userId: tradePositions.userId,
+    currency: tradePositions.currency,
+    principalMinor: tradePositions.principalMinor,
+    status: tradePositions.status,
+    settlementStatus: tradePositions.settlementStatus,
+    settlementOutcome: tradePositions.settlementOutcome,
+    settlementReference: tradePositions.settlementReference,
+    settlementConfirmedAt: tradePositions.settlementConfirmedAt,
+    walletUpdatedAt: tradePositions.walletUpdatedAt,
+    realizedGrossProfitMinor: tradePositions.realizedGrossProfitMinor,
+    platformFeeMinor: tradePositions.platformFeeMinor,
+    netProfitMinor: tradePositions.netProfitMinor,
+    rewardCreditedMinor: tradePositions.rewardCreditedMinor,
+    platformFeeRateBps: tradePositions.platformFeeRateBps,
+    platformFeeRoundingMode: tradePositions.platformFeeRoundingMode,
+    feePolicyVersion: tradePositions.feePolicyVersion,
+  }).from(tradePositions).where(tradeWhere)
+    .orderBy(desc(tradePositions.id)).limit(safeLimit + 1);
+  const hasMoreSettledTrades = candidateTrades.length > safeLimit;
+  const trades = candidateTrades.slice(0, safeLimit);
+  const candidateReferences = buildSettlementLedgerCandidateReferences(trades.map((trade) => ({
+    tradeId: Number(trade.tradeId),
+    settlementReference: trade.settlementReference,
+  })));
+  const ledgerEntryLimit = Math.min(10000, safeLimit * 16);
+  const candidateLedgerRows = candidateReferences.length
+    ? await tx.select({
+        id: balanceLedger.id,
+        userId: balanceLedger.userId,
+        currency: balanceLedger.currency,
+        amountMinor: balanceLedger.amountMinor,
+        entryType: balanceLedger.entryType,
+        reference: balanceLedger.reference,
+      }).from(balanceLedger).where(inArray(balanceLedger.reference, candidateReferences))
+        .orderBy(balanceLedger.id).limit(ledgerEntryLimit + 1)
+    : [];
+  const ledgerEntriesTruncated = candidateLedgerRows.length > ledgerEntryLimit;
+  const ledgerRows = candidateLedgerRows.slice(0, ledgerEntryLimit);
+  const settlementIssues = trades.map((trade) => inspectSettlementLedgerPostings({
+    ...trade,
+    tradeId: Number(trade.tradeId),
+    userId: Number(trade.userId),
+    principalMinor: trade.principalMinor,
+    realizedGrossProfitMinor: trade.realizedGrossProfitMinor,
+    platformFeeMinor: trade.platformFeeMinor,
+    netProfitMinor: trade.netProfitMinor,
+    rewardCreditedMinor: trade.rewardCreditedMinor,
+    platformFeeRateBps: trade.platformFeeRateBps,
+    feePolicyVersion: trade.feePolicyVersion,
+    platformFeeRoundingMode: trade.platformFeeRoundingMode,
+  }, ledgerRows as Array<{
+    id: number; userId: number; currency: string; amountMinor: number | string;
+    entryType: string; reference: string;
+  }>, !ledgerEntriesTruncated)).filter((row) => row.issues.length > 0);
+
+  const lastWalletGroup = groups[groups.length - 1];
+  const lastSettlementTrade = trades[trades.length - 1];
+  return {
+    generatedAt: new Date().toISOString(),
+    walletIssues,
+    walletScan: {
+      limit: safeLimit,
+      groupsExamined: groups.length,
+      hasMore: hasMoreWalletGroups,
+      nextCursor: hasMoreWalletGroups && lastWalletGroup
+        ? { afterUserId: lastWalletGroup.userId, afterCurrency: lastWalletGroup.currency }
+        : null,
+    },
+    settlementIssues,
+    settlementScan: {
+      limit: safeLimit,
+      tradesExamined: trades.length,
+      hasMore: hasMoreSettledTrades,
+      nextBeforeTradeId: hasMoreSettledTrades && lastSettlementTrade ? Number(lastSettlementTrade.tradeId) : null,
+      ledgerEntriesExamined: ledgerRows.length,
+      ledgerEntriesTruncated,
+    },
+  };
+  });
+}
+
+export async function manuallySettleTrade(tradeId:number, adminId:number, input:{grossProfitMinor:number; settlementReference:string; evidenceId:number; notes?:string}){
+  const db=await getDb(); if(!db) throw new Error("Database is not available");
+  if(!Number.isSafeInteger(input.grossProfitMinor)) throw new Error("Actual gross profit or loss must be a signed safe integer");
+  const reference=input.settlementReference.trim();
+  if(reference.length<3) throw new Error("Settlement reference must contain at least 3 characters");
+  if(reference.length>160) throw new Error("Settlement reference must not exceed 160 characters");
+  if(input.notes!==undefined&&input.notes.trim().length>2000) throw new Error("Settlement notes must not exceed 2000 characters");
+  const result=await db.transaction(async tx=>{
+    const trade=(await tx.select().from(tradePositions).where(eq(tradePositions.id,tradeId)).limit(1).for("update"))[0];
+    if(!trade) throw new Error("Trade not found");
+    const evidence=(await tx.select().from(settlementEvidenceRecords).where(and(eq(settlementEvidenceRecords.id,input.evidenceId),eq(settlementEvidenceRecords.tradeId,tradeId))).limit(1).for("update"))[0];
+    if(!evidence) throw new Error("Settlement evidence is required for this trade");
+    if(evidence.verificationStatus!=="approved") throw new Error("Settlement evidence must be approved by a second administrator before confirmation");
+    // Replaying an already committed reference/result is safe and never posts again.
+    if((trade.status==="settled"&&trade.settlementStatus==="completed"||trade.status==="confirmed"&&trade.settlementStatus==="confirmed_awaiting_credit")&&trade.settlementReference===reference){
+      if(trade.settlementOutcome==="legacy_unrecorded") throw new Error("This historical settlement has no recorded gross-profit result; replay requires manual financial review.");
+      if(Number(trade.realizedGrossProfitMinor)!==input.grossProfitMinor) throw new Error("Settlement reference was already used with a different actual result");
+      return {tradeId,userId:trade.userId,offerId:trade.offerId,currency:trade.currency,principalMinor:Number(trade.principalMinor),grossProfitMinor:Number(trade.realizedGrossProfitMinor),platformFeeMinor:Number(trade.platformFeeMinor),netProfitMinor:Number(trade.netProfitMinor),rewardMinor:Math.max(0,Number(trade.netProfitMinor)),totalMinor:Number(trade.principalMinor)+Number(trade.netProfitMinor),feeRateBps:Number(trade.platformFeeRateBps),roundingMode:String(trade.platformFeeRoundingMode) as FeeRoundingMode,feePolicyVersion:Number(trade.feePolicyVersion),outcome:String(trade.settlementOutcome),reference,legacyUnrecorded:false,walletCreditPending:trade.status!=="settled",creditAt:trade.creditAt||trade.settlementReviewAt||trade.settlesAt};
+    }
+    if(trade.status!=="confirmed"||trade.settlementStatus!=="pending") throw new Error("Trade is not pending manual settlement");
+    // The saved review timestamp includes the configured settlement delay.
+    // creditAt separately includes the wallet-credit delay after review becomes due.
+    const settlementDueAt=trade.settlementReviewAt||trade.creditAt||trade.settlesAt;
+    if(!settlementDueAt||!Number.isFinite(new Date(settlementDueAt).getTime())||new Date(settlementDueAt).getTime()>Date.now()) {
+      throw new Error("Trade is not yet due for settlement confirmation");
+    }
+
+    // A trade tied to a package subscription must still resolve to that exact owner/package.
+    // Settlement does not depend on the subscription remaining active, only on its identity.
+    let packageName:string|null=null;
+    if(trade.packageSubscriptionId!==null) {
+      const subscription=(await tx.select({userId:customerPackageSubscriptions.userId,packageId:customerPackageSubscriptions.packageId})
+        .from(customerPackageSubscriptions).where(eq(customerPackageSubscriptions.id,trade.packageSubscriptionId)).limit(1).for("update"))[0];
+      if(!subscription||subscription.userId!==trade.userId) throw new Error("Trade package subscription identity is inconsistent");
+      const packageRow=(await tx.select({name:packages.name}).from(packages).where(eq(packages.id,subscription.packageId)).limit(1))[0];
+      if(!packageRow?.name) throw new Error("Trade package identity cannot be resolved");
+      packageName=packageRow.name;
+    }
+
+    // New trades use the package snapshot; pre-migration trades may use only fee
+    // fields already saved on that trade. Never reprice an existing trade from a
+    // mutable global setting or infer missing historical evidence.
+    let feePolicy:{feeRateBps:number;roundingMode:FeeRoundingMode;policyVersion:number};
+    if(trade.packageIdSnapshot!==null) {
+      if(trade.packageFeeRateBpsSnapshot===null||trade.packageFeeRoundingModeSnapshot===null||trade.packageFeePolicyVersionSnapshot===null||trade.packageFeeEffectiveAtSnapshot===null) throw new Error("Trade package fee snapshot is incomplete");
+      if(trade.packageSubscriptionId!==null) {
+        const subscription=(await tx.select({packageId:customerPackageSubscriptions.packageId}).from(customerPackageSubscriptions).where(eq(customerPackageSubscriptions.id,trade.packageSubscriptionId)).limit(1).for("update"))[0];
+        if(!subscription||Number(subscription.packageId)!==Number(trade.packageIdSnapshot)) throw new Error("Trade package fee snapshot does not match its allocated package");
+      }
+      const saved=normalizePackageFeePolicy({packageId:trade.packageIdSnapshot,version:trade.packageFeePolicyVersionSnapshot,feeRateBps:trade.packageFeeRateBpsSnapshot,roundingMode:trade.packageFeeRoundingModeSnapshot,effectiveAt:trade.packageFeeEffectiveAtSnapshot,changedAt:trade.packageFeeEffectiveAtSnapshot});
+      feePolicy={feeRateBps:saved.feeRateBps,roundingMode:saved.roundingMode,policyVersion:saved.version};
+    } else {
+      feePolicy=normalizeImmutableTradeFeeSnapshot({
+        feeRateBps:trade.platformFeeRateBps,
+        roundingMode:trade.platformFeeRoundingMode,
+        policyVersion:trade.feePolicyVersion,
+      });
+    }
+    const principal=Number(trade.principalMinor);
+    const accounting=calculateRealizedProfitSettlement({
+      principalMinor:principal,
+      grossProfitMinor:input.grossProfitMinor,
+      feeRateBps:feePolicy.feeRateBps,
+      roundingMode:feePolicy.roundingMode,
+    });
+
+    const duplicate=(await tx.select({id:tradePositions.id}).from(tradePositions).where(eq(tradePositions.settlementReference,reference)).limit(1))[0];
+    if(duplicate) throw new Error("Settlement reference has already been used");
+    // The unique claim is acquired before ledger mutation. Same reference across
+    // different trades cannot reach the financial postings concurrently.
+    try {
+      await tx.insert(tradeSettlementReferenceClaims).values({settlementReference:reference,tradeId});
+    } catch(error) {
+      const code=error&&typeof error==="object"&&"code" in error?String((error as {code:unknown}).code):"";
+      if(code==="ER_DUP_ENTRY") throw new Error("Settlement reference has already been used");
+      throw error;
+    }
+    const reservation=(await tx.select().from(tradeRewardReservations).where(eq(tradeRewardReservations.tradeId,tradeId)).limit(1).for("update"))[0];
+    const reservedMinor=Number(trade.rewardReservedMinor||0);
+    if(reservation) {
+      if(reservation.userId!==trade.userId||reservation.currency!==trade.currency||reservation.tradeId!==trade.id) {
+        throw new Error("Trade reward reservation identity does not match the trade");
+      }
+      if(packageName!==null&&reservation.packageName!==packageName) throw new Error("Trade reward reservation package does not match the trade subscription");
+      if(reservation.status!=="reserved") throw new Error("Trade reward reservation is not pending while the trade is awaiting settlement");
+      if(!Number.isSafeInteger(reservedMinor)||reservedMinor<0||Number(reservation.reservedMinor)!==reservedMinor) {
+        throw new Error("Trade reward reservation amount is inconsistent with the trade");
+      }
+    } else if(!Number.isSafeInteger(reservedMinor)||reservedMinor!==0) {
+      throw new Error("Trade has a reserved reward amount but its reservation record is missing");
+    }
+
+    const wallet=(await tx.select().from(customerBalances).where(and(eq(customerBalances.userId,trade.userId),eq(customerBalances.currency,trade.currency))).limit(1).for("update"))[0];
+    if(!wallet) throw new Error("Customer settlement wallet is not configured");
+    const lockedMinor=Number(wallet.lockedMinor);
+    if(!Number.isSafeInteger(lockedMinor)||lockedMinor<principal) {
+      throw new Error("Settlement wallet locked balance is inconsistent with the trade principal");
+    }
+
+    const now=new Date();
+    const settlementUpdate=await tx.update(tradePositions).set({
+      lifecycleStage:"Settlement Confirmed — Awaiting Wallet Credit",
+      settlementStatus:"confirmed_awaiting_credit",
+      realizedGrossProfitMinor:accounting.grossProfitMinor,
+      platformFeeMinor:accounting.platformFeeMinor,
+      netProfitMinor:accounting.netProfitMinor,
+      feePolicyVersion:feePolicy.policyVersion,
+      platformFeeRateBps:feePolicy.feeRateBps,
+      platformFeeRoundingMode:feePolicy.roundingMode,
+      settlementOutcome:accounting.outcome,
+      transactionReference:reference.length<=120?reference:`trade-${tradeId}-${crypto.createHash("sha256").update(reference).digest("hex").slice(0,32)}`,
+      settlementReference:reference,
+      settlementConfirmedAt:now,
+      settlementConfirmedBy:adminId,
+      settlementNotes:input.notes?.trim()||null,
+    }).where(and(eq(tradePositions.id,tradeId),eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending")));
+    // Evidence-backed confirmation does not post money. Principal stays locked,
+    // and the reward reservation remains reserved until the saved creditAt.
+    assertExactlyOneAffectedRow(settlementUpdate,"Manual trade result confirmation transition");
+    await tx.insert(tradeLifecycleEvents).values({
+      tradeId,userId:trade.userId,eventType:"manual_settlement_confirmed",stage:"Settlement Confirmed — Awaiting Wallet Credit",
+      payloadJson:JSON.stringify({principalMinor:principal,grossProfitMinor:accounting.grossProfitMinor,platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,feeRateBps:feePolicy.feeRateBps,roundingMode:feePolicy.roundingMode,feePolicyVersion:feePolicy.policyVersion,outcome:accounting.outcome,reference,adminId,creditAt:trade.creditAt||trade.settlementReviewAt||trade.settlesAt}),
+    });
+    await tx.insert(settlementEvidenceAuditEvents).values({evidenceId:evidence.id,tradeId,action:"settlement_confirmed",fromStatus:evidence.verificationStatus,toStatus:evidence.verificationStatus,actorUserId:adminId,notes:`Settlement confirmation linked to evidence ${evidence.evidenceReference}`});
+    if(accounting.netProfitMinor>Number(trade.rewardReservedMinor||0)){
+      await tx.insert(tradeLifecycleEvents).values({
+        tradeId,userId:trade.userId,eventType:"realized_reward_exceeded_reservation",stage:"Settlement Reconciliation Required",
+        payloadJson:JSON.stringify({reservedMinor:Number(trade.rewardReservedMinor||0),actualNetProfitMinor:accounting.netProfitMinor,reference,reason:"Actual realized result exceeded the opportunity reward reservation; actual settlement was recorded without capping or fabricating the result."}),
+      });
+    }
+    return {
+      tradeId,userId:trade.userId,offerId:trade.offerId,currency:trade.currency,
+      principalMinor:principal,grossProfitMinor:accounting.grossProfitMinor,
+      platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,
+      rewardMinor:Math.max(0,accounting.netProfitMinor),totalMinor:accounting.totalReturnedMinor,
+      feeRateBps:feePolicy.feeRateBps,roundingMode:feePolicy.roundingMode,
+      feePolicyVersion:feePolicy.policyVersion,outcome:accounting.outcome,reference,legacyUnrecorded:false,
+      walletCreditPending:true,creditAt:trade.creditAt||trade.settlementReviewAt||trade.settlesAt,
+    };
+  });
+  // Popup completion is recorded only after the separate wallet-credit worker commits.
+  return result;
+}
+
+export async function processConfirmedTradeCredits(input?: { limit?: number }) {
+  const db=await getDb();
+  if(!db) throw new Error("Database is not available");
+  const requestedLimit=input?.limit;
+  const limit=Math.max(1,Math.min(250,Number.isSafeInteger(requestedLimit)?Number(requestedLimit):100));
+  const now=new Date();
+  const due=await db.select({id:tradePositions.id}).from(tradePositions).where(and(
+    eq(tradePositions.status,"confirmed"),
+    eq(tradePositions.settlementStatus,"confirmed_awaiting_credit"),
+    or(lte(tradePositions.creditAt,now),and(isNull(tradePositions.creditAt),or(lte(tradePositions.settlementReviewAt,now),and(isNull(tradePositions.settlementReviewAt),lte(tradePositions.settlesAt,now))))),
+  )).orderBy(tradePositions.creditAt,tradePositions.settlementReviewAt,tradePositions.settlesAt).limit(limit);
+  let credited=0;
+  let skipped=0;
+  for(const item of due){
+    const posted=await db.transaction(async tx=>{
+      const trade=(await tx.select().from(tradePositions).where(eq(tradePositions.id,item.id)).limit(1).for("update"))[0];
+      if(!trade||trade.status!=="confirmed"||trade.settlementStatus!=="confirmed_awaiting_credit"||trade.walletUpdatedAt) return null;
+      const creditDueAt=trade.creditAt||trade.settlementReviewAt||trade.settlesAt;
+      if(!creditDueAt||new Date(creditDueAt).getTime()>now.getTime()) return null;
+      const automaticMarketResult=trade.settlementResultSource==="recorded_market_snapshot"||trade.settlementResultSource==="configured_profit_rate";
+      if(!trade.settlementConfirmedAt||(!trade.settlementConfirmedBy&&!automaticMarketResult)||!trade.settlementReference||trade.settlementOutcome==="legacy_unrecorded") {
+        throw new Error("Confirmed trade is missing its evidence-backed settlement record");
+      }
+      const claim=(await tx.select().from(tradeSettlementReferenceClaims).where(eq(tradeSettlementReferenceClaims.tradeId,trade.id)).limit(1))[0];
+      if(!claim||claim.settlementReference!==trade.settlementReference) throw new Error("Confirmed trade settlement reference claim is missing or inconsistent");
+      const principal=Number(trade.principalMinor);
+      const grossProfit=Number(trade.realizedGrossProfitMinor);
+      const savedFee=Number(trade.platformFeeMinor);
+      const savedNet=Number(trade.netProfitMinor);
+      if(![principal,grossProfit,savedFee,savedNet].every(Number.isSafeInteger)||principal<=0||savedFee<0) {
+        throw new Error("Confirmed trade contains unsafe saved settlement amounts");
+      }
+      const accounting=calculateRealizedProfitSettlement({
+        principalMinor:principal,
+        grossProfitMinor:grossProfit,
+        feeRateBps:Number(trade.platformFeeRateBps),
+        roundingMode:String(trade.platformFeeRoundingMode) as FeeRoundingMode,
+      });
+      if(accounting.platformFeeMinor!==savedFee||accounting.netProfitMinor!==savedNet||accounting.outcome!==trade.settlementOutcome) {
+        throw new Error("Saved confirmed settlement amounts do not match the immutable fee-policy calculation");
+      }
+      if(!Number.isSafeInteger(accounting.totalReturnedMinor)||accounting.totalReturnedMinor<0) {
+        throw new Error("Confirmed settlement would produce an invalid wallet credit");
+      }
+      const reservation=(await tx.select().from(tradeRewardReservations).where(eq(tradeRewardReservations.tradeId,trade.id)).limit(1).for("update"))[0];
+      const reservedMinor=Number(trade.rewardReservedMinor||0);
+      if(reservation) {
+        if(reservation.userId!==trade.userId||reservation.currency!==trade.currency||reservation.tradeId!==trade.id||
+          reservation.status!=="reserved"||!Number.isSafeInteger(reservedMinor)||reservedMinor<0||Number(reservation.reservedMinor)!==reservedMinor) {
+          throw new Error("Confirmed trade reward reservation is inconsistent");
+        }
+      } else if(!Number.isSafeInteger(reservedMinor)||reservedMinor!==0) {
+        throw new Error("Confirmed trade is missing its reserved reward record");
+      }
+      const wallet=(await tx.select().from(customerBalances).where(and(eq(customerBalances.userId,trade.userId),eq(customerBalances.currency,trade.currency))).limit(1).for("update"))[0];
+      if(!wallet) throw new Error("Customer settlement wallet is not configured");
+      const lockedMinor=Number(wallet.lockedMinor);
+      if(!Number.isSafeInteger(lockedMinor)||lockedMinor<principal) {
+        throw new Error("Settlement wallet locked balance is inconsistent with the confirmed trade principal");
+      }
+      const availableMinor=Number(wallet.availableMinor);
+      const earnedMinor=Number(wallet.earnedMinor);
+      if(!Number.isSafeInteger(availableMinor)||availableMinor<0||!Number.isSafeInteger(earnedMinor)||
+        !Number.isSafeInteger(availableMinor+accounting.totalReturnedMinor)||
+        !Number.isSafeInteger(earnedMinor+accounting.netProfitMinor)) {
+        throw new Error("Settlement wallet totals are outside the safe minor-unit range");
+      }
+      const reference=trade.settlementReference;
+      const ledgerBase=reference.length<=60?reference:`trade-${trade.id}-${crypto.createHash("sha256").update(reference).digest("hex").slice(0,24)}`;
+      await tx.insert(balanceLedger).values({userId:trade.userId,currency:trade.currency,amountMinor:principal,entryType:"trade_principal_release",reference:`${ledgerBase}:principal`,withdrawable:false});
+      if(grossProfit>0) await tx.insert(balanceLedger).values({userId:trade.userId,currency:trade.currency,amountMinor:grossProfit,entryType:"trade_reward",reference:`${ledgerBase}:gross-profit`,withdrawable:false});
+      if(savedFee>0) await tx.insert(balanceLedger).values({userId:trade.userId,currency:trade.currency,amountMinor:-savedFee,entryType:"trade_platform_fee",reference:`${ledgerBase}:platform-fee`,withdrawable:false});
+      if(grossProfit<0) await tx.insert(balanceLedger).values({userId:trade.userId,currency:trade.currency,amountMinor:grossProfit,entryType:"trade_loss",reference:`${ledgerBase}:loss`,withdrawable:false});
+      const walletUpdate=await tx.update(customerBalances).set({
+        availableMinor:sql`${customerBalances.availableMinor}+${accounting.totalReturnedMinor}`,
+        lockedMinor:sql`${customerBalances.lockedMinor}-${principal}`,
+        earnedMinor:sql`${customerBalances.earnedMinor}+${accounting.netProfitMinor}`,
+        updatedAt:now,
+      }).where(and(eq(customerBalances.id,wallet.id),gte(customerBalances.lockedMinor,principal)));
+      assertExactlyOneAffectedRow(walletUpdate,"Confirmed trade wallet credit");
+      const stateUpdate=await tx.update(tradePositions).set({
+        status:"settled",
+        settledAt:now,
+        lifecycleStage:"Trade Completed",
+        settlementStatus:"completed",
+        rewardCreditedMinor:accounting.rewardCreditedMinor,
+        walletUpdatedAt:now,
+        completionAt:now,
+      }).where(and(eq(tradePositions.id,trade.id),eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"confirmed_awaiting_credit"),isNull(tradePositions.walletUpdatedAt)));
+      assertExactlyOneAffectedRow(stateUpdate,"Confirmed trade wallet-credit state transition");
+      if(reservation) {
+        const reservationUpdate=await tx.update(tradeRewardReservations).set({
+          status:accounting.netProfitMinor>0?"credited":"released",
+          updatedAt:now,
+        }).where(and(eq(tradeRewardReservations.id,reservation.id),eq(tradeRewardReservations.status,"reserved")));
+        assertExactlyOneAffectedRow(reservationUpdate,"Confirmed trade reward reservation posting");
+      }
+      // Simulated popup-trade mathematics: credit side (principal + profit returned when popup / trade ends)
+      const automaticCredit = calculateAutomaticTradeCredit({
+        capitalMinor: principal,
+        profitRateBps: Number(trade.configuredProfitRateBps || 0),
+        currency: String(trade.currency),
+        realizedNetProfitMinor: savedNet,
+      });
+      await tx.insert(tradeLifecycleEvents).values([
+        {tradeId:trade.id,userId:trade.userId,eventType:"wallet_credit_posted",stage:"Wallet Updated",payloadJson:JSON.stringify({principalMinor:principal,grossProfitMinor:grossProfit,platformFeeMinor:savedFee,netProfitMinor:savedNet,reference,confirmedAt:trade.settlementConfirmedAt,creditedAt:now.toISOString(),creditTransitionText:automaticCredit.transitionText,totalCreditedMinor:automaticCredit.totalCreditedMinor,lifecycleStage:automaticCredit.stage})},
+        {tradeId:trade.id,userId:trade.userId,eventType:"trade_completed",stage:"Trade Completed",payloadJson:JSON.stringify({reference,outcome:trade.settlementOutcome,realizedGrossProfitMinor:grossProfit,platformFeeMinor:savedFee,netProfitMinor:savedNet,creditTransitionText:automaticCredit.transitionText,lifecycleStage:automaticCredit.stage})},
+      ]);
+      return {userId:trade.userId,offerId:trade.offerId,tradeId:trade.id,currency:trade.currency,principalMinor:principal,rewardMinor:Math.max(0,accounting.netProfitMinor),grossProfitMinor:grossProfit,platformFeeMinor:savedFee,netProfitMinor:savedNet,outcome:String(trade.settlementOutcome),creditTransitionText:automaticCredit.transitionText,totalCreditedMinor:automaticCredit.totalCreditedMinor,lifecycleStage:automaticCredit.stage};
+    });
+    if(posted){
+      credited++;
+      try { await updatePopupLifecycleForOffer(posted.userId,posted.offerId,"settled"); }
+      catch(error){ console.error("[TradeCreditPosting] popup lifecycle update failed after committed wallet credit",error instanceof Error?error.message:"unknown error"); }
+      const notices=buildTradeSettlementNotices({
+        tradeId:posted.tradeId,currency:posted.currency,principalMinor:posted.principalMinor,
+        rewardMinor:posted.rewardMinor,grossProfitMinor:posted.grossProfitMinor,
+        platformFeeMinor:posted.platformFeeMinor,netProfitMinor:posted.netProfitMinor,outcome:posted.outcome,
+      });
+      const notificationResults=await Promise.allSettled(notices.map(notice=>createNotification(posted.userId,notice.title,notice.body,{
+        eventKey:notice.eventKey,category:notice.category,priority:notice.priority,
+      })));
+      if(notificationResults.some(result=>result.status==="rejected")) console.error("[Notifications] One or more trade settlement notices failed after wallet credit commit.");
+    } else skipped++;
+  }
+  return {scanned:due.length,credited,skipped,limit,asOf:now.toISOString()};
+}
+
+type PersistedOpportunityPublication = {
+  id: number;
+  publication: ReturnType<typeof validateOpportunityOfferPublication>;
+  opensAt: Date;
+  closesAt: Date;
+  rewardAt: Date;
+  compatibility: OpportunityPackageCompatibility;
+};
+function validateOpportunityPublisher(adminId: number) {
+  if (!Number.isSafeInteger(adminId) || adminId <= 0) throw new Error("Authenticated administrator identity is required to publish opportunities.");
+}
+
+function opportunityPublicationAuditEvent(adminId: number, offer: PersistedOpportunityPublication) {
+  const acceptedTerms = {
+    symbol: offer.publication.symbol,
+    venueFrom: offer.publication.venueFrom,
+    venueTo: offer.publication.venueTo,
+    currency: offer.publication.currency,
+    minimumMinor: offer.publication.minimumMinor,
+    expectedRewardBps: offer.publication.expectedRewardBps,
+    durationSeconds: offer.publication.durationSeconds,
+    opensAt: offer.opensAt.toISOString(),
+    closesAt: offer.closesAt.toISOString(),
+    rewardAt: offer.rewardAt.toISOString(),
+    status: "open",
+    packageCompatibility: offer.compatibility,
+  };
+  return {
+    actorUserId: adminId,
+    action: "trading_opportunity_published",
+    entityType: "opportunity_offer",
+    entityId: String(offer.id),
+    reason: offer.publication.reviewNotes,
+    reference: offer.publication.sourceReference,
+    metadataJson: JSON.stringify({
+      source: offer.publication.sourceReference,
+      reviewNotes: offer.publication.reviewNotes,
+      packageCompatibility: offer.compatibility,
+      new: acceptedTerms,
+      acceptedTerms,
+    }),
+  };
+}
+
+async function assessPublishedOfferPackageCompatibility(tx: any, publication: ReturnType<typeof validateOpportunityOfferPublication>) {
+  const [policyRows, currencyRows] = await Promise.all([
+    tx.select({
+      packageId: packages.id, packageName: packages.name, policyVersion: opportunityPackagePolicies.policyVersion,
+      minimumTradeUnits: opportunityPackagePolicies.minimumTradeUnits, maximumTradeUnits: opportunityPackagePolicies.maximumTradeUnits,
+      minimumPayoutRateBps: opportunityPackagePolicies.minimumPayoutRateBps, maximumPayoutRateBps: opportunityPackagePolicies.maximumPayoutRateBps,
+      minimumTradeDurationSeconds: opportunityPackagePolicies.minimumTradeDurationSeconds, maximumTradeDurationSeconds: opportunityPackagePolicies.maximumTradeDurationSeconds,
+    }).from(packages).innerJoin(opportunityPackagePolicies, eq(opportunityPackagePolicies.packageName, packages.name))
+      .where(and(eq(packages.enabled, true), eq(opportunityPackagePolicies.enabled, true))),
+    tx.select({ code: currencyRegistry.code, scale: currencyRegistry.scale, usdRate: currencyRegistry.usdRate }).from(currencyRegistry),
+  ]);
+  const rules = policyRows.map((row: any) => {
+    const minimumTradeMinor = packageUsdUnitsToNativeMinor(Number(row.minimumTradeUnits), publication.currency, currencyRows);
+    const maximumTradeMinor = packageUsdUnitsToNativeMinor(Number(row.maximumTradeUnits), publication.currency, currencyRows);
+    return { packageId: Number(row.packageId), packageName: String(row.packageName), policyVersion: Number(row.policyVersion), minimumTradeMinor, maximumTradeMinor,
+      minimumPayoutRateBps: row.minimumPayoutRateBps == null ? null : Number(row.minimumPayoutRateBps),
+      maximumPayoutRateBps: row.maximumPayoutRateBps == null ? null : Number(row.maximumPayoutRateBps),
+      minimumTradeDurationSeconds: row.minimumTradeDurationSeconds == null ? null : Number(row.minimumTradeDurationSeconds),
+      maximumTradeDurationSeconds: row.maximumTradeDurationSeconds == null ? null : Number(row.maximumTradeDurationSeconds) };
+  });
+  const compatibility = assessOpportunityPackageCompatibility(publication, rules);
+  if (compatibility.checkedPackages > 0 && compatibility.compatiblePackages.length === 0) {
+    const details = compatibility.incompatiblePackages.map(row => `${row.packageName}: ${row.reasons.join(" ")}`).join(" ");
+    throw new Error(`Published opportunity terms are incompatible with every enabled package policy. ${details}`);
+  }
+  return compatibility;
+}
+async function insertReviewedOpportunityOffer(tx: any, adminId: number, publication: ReturnType<typeof validateOpportunityOfferPublication>): Promise<PersistedOpportunityPublication> {
+  const compatibility = await assessPublishedOfferPackageCompatibility(tx, publication);
+  const now = new Date();
+  const opensAt = publication.opensAt ?? now;
+  const closesAt = publication.closesAt ?? new Date(opensAt.getTime() + publication.durationSeconds * 1000);
+  const rewardAt = publication.rewardAt ?? closesAt;
+  const validated = validateOpportunityOfferPublication({ ...publication, opensAt, closesAt, rewardAt });
+  if (closesAt.getTime() <= now.getTime()) throw new Error("Opportunity expiry must be later than the publication time.");
+  const result = await tx.insert(opportunityOffers).values({
+    symbol: validated.symbol,
+    venueFrom: validated.venueFrom,
+    venueTo: validated.venueTo,
+    currency: validated.currency,
+    minimumMinor: validated.minimumMinor,
+    expectedRewardBps: validated.expectedRewardBps,
+    durationSeconds: validated.durationSeconds,
+    opensAt,
+    closesAt,
+    rewardAt,
+    status: "open",
+  });
+  const id = Number(result[0].insertId);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Published opportunity ID could not be verified.");
+  const persisted: PersistedOpportunityPublication = { id, publication: validated, opensAt, closesAt, rewardAt, compatibility };
+  await tx.insert(v5AuditEvents).values(opportunityPublicationAuditEvent(adminId, persisted));
+  return persisted;
+}
+
+export async function createOpportunityOffer(adminId: number, input: OpportunityOfferPublicationInput) {
+  validateOpportunityPublisher(adminId);
+  const publication = validateOpportunityOfferPublication(input);
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async tx => {
+    const persisted = await insertReviewedOpportunityOffer(tx, adminId, publication);
+    return {
+      id: persisted.id,
+      symbol: publication.symbol,
+      venueFrom: publication.venueFrom,
+      venueTo: publication.venueTo,
+      currency: publication.currency,
+      minimumMinor: publication.minimumMinor,
+      expectedRewardBps: publication.expectedRewardBps,
+      durationSeconds: publication.durationSeconds,
+      opensAt: persisted.opensAt,
+      closesAt: persisted.closesAt,
+      rewardAt: persisted.rewardAt,
+      compatibility: persisted.compatibility,
+    };
+  });
+}
+
+export async function bulkCreateOpportunityOffers(adminId: number, inputs: OpportunityOfferPublicationInput[]) {
+  validateOpportunityPublisher(adminId);
+  if (!inputs.length) return { created: 0 };
+  const publications = inputs.map(validateOpportunityOfferPublication);
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async tx => {
+    const persisted = [];
+    for (const publication of publications) persisted.push(await insertReviewedOpportunityOffer(tx, adminId, publication));
+    return { created: persisted.length, compatibility: persisted.map(offer => ({ offerId: offer.id, ...offer.compatibility })) };
+  });
+}
+
+function opportunityClosureAuditEvent(adminId: number, offerId: number, reason: string) {
+  return {
+    actorUserId: adminId,
+    action: "trading_opportunity_closed",
+    entityType: "opportunity_offer",
+    entityId: String(offerId),
+    reason,
+    reference: `opportunity-offer:${offerId}:manual-close`,
+    metadataJson: JSON.stringify({ old: { status: "open" }, new: { status: "closed" }, reason }),
+  };
+}
+
+function isAuditedManualOpportunityClosure(row: typeof v5AuditEvents.$inferSelect | undefined) {
+  if (!row || row.action !== "trading_opportunity_closed" || row.entityType !== "opportunity_offer") return false;
+  const metadata = parseTradeAuditMetadata(row.metadataJson);
+  const oldState = auditRecord(metadata?.old);
+  const newState = auditRecord(metadata?.new);
+  return oldState?.status === "open" && newState?.status === "closed" && typeof row.reason === "string" && row.reason.trim().length > 0;
+}
+
+export async function closeOpportunityOffer(adminId: number, input: OpportunityOfferClosureInput) {
+  validateOpportunityPublisher(adminId);
+  const closure = validateOpportunityOfferClosure(input);
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+
+  const transactionResult = await db.transaction(async tx => {
+    const offer = (await tx.select().from(opportunityOffers)
+      .where(eq(opportunityOffers.id, closure.offerId)).limit(1).for("update"))[0];
+    if (!offer) throw new Error("Published opportunity was not found.");
+
+    if (offer.status === "closed") {
+      const priorAudit = (await tx.select().from(v5AuditEvents).where(and(
+        eq(v5AuditEvents.action, "trading_opportunity_closed"),
+        eq(v5AuditEvents.entityType, "opportunity_offer"),
+        eq(v5AuditEvents.entityId, String(closure.offerId)),
+      )).orderBy(desc(v5AuditEvents.id)).limit(1))[0];
+      if (!isAuditedManualOpportunityClosure(priorAudit)) {
+        throw new Error("This opportunity is no longer open and has no verified manual-close audit record.");
+      }
+      return { auditId: priorAudit.id, auditReason: priorAudit.reason!, idempotent: true };
+    }
+
+    if (offer.status !== "open" || offer.closesAt.getTime() <= Date.now()) {
+      throw new Error("Only a currently open, unexpired published opportunity can be manually closed.");
+    }
+
+    const changed = await tx.update(opportunityOffers).set({ status: "closed" })
+      .where(and(eq(opportunityOffers.id, closure.offerId), eq(opportunityOffers.status, "open")));
+    assertExactlyOneAffectedRow(changed, "Published opportunity manual close");
+
+    const insertedAudit = await tx.insert(v5AuditEvents).values(opportunityClosureAuditEvent(adminId, closure.offerId, closure.reason));
+    const auditId = Number(insertedAudit[0]?.insertId);
+    if (!Number.isSafeInteger(auditId) || auditId <= 0) throw new Error("Opportunity closure audit record could not be verified.");
+    return { auditId, auditReason: closure.reason, idempotent: false };
+  });
+
+  // Read both durable records after commit; a mutation response is not a success until this read-back agrees.
+  const savedOffer = (await db.select().from(opportunityOffers).where(eq(opportunityOffers.id, closure.offerId)).limit(1))[0];
+  const savedAudit = (await db.select().from(v5AuditEvents).where(eq(v5AuditEvents.id, transactionResult.auditId)).limit(1))[0];
+  if (savedOffer?.status !== "closed"
+    || !isAuditedManualOpportunityClosure(savedAudit)
+    || savedAudit?.reason !== transactionResult.auditReason
+    || savedAudit?.entityId !== String(closure.offerId)) {
+    throw new Error("Opportunity closure was not confirmed by a fresh persisted read-back.");
+  }
+  return {
+    success: true as const,
+    offerId: savedOffer.id,
+    status: savedOffer.status,
+    auditEventId: savedAudit.id,
+    idempotent: transactionResult.idempotent,
+    verified: true as const,
+  };
+}
+
+export const ADMIN_LEDGER_ACTIVITY_PAGE_SIZE = 50;
+export type AdminLedgerActivityCursor = { createdAt: Date; id: number };
+
+export function getAdminLedgerUtcDayBounds(utcDay: string) {
+  const start = new Date(`${utcDay}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(utcDay) || !Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== utcDay) {
+    throw new Error("UTC day must be a valid YYYY-MM-DD calendar date");
+  }
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+}
+
+export function encodeAdminLedgerActivityCursor(cursor: AdminLedgerActivityCursor) {
+  return Buffer.from(JSON.stringify({ createdAt: cursor.createdAt.toISOString(), id: cursor.id }), "utf8").toString("base64url");
+}
+
+export function decodeAdminLedgerActivityCursor(value: string | undefined): AdminLedgerActivityCursor | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (!decoded || typeof decoded !== "object") throw new Error();
+    const candidate = decoded as { createdAt?: unknown; id?: unknown };
+    if (typeof candidate.createdAt !== "string" || !Number.isSafeInteger(candidate.id) || Number(candidate.id) < 1) throw new Error();
+    const createdAt = new Date(candidate.createdAt);
+    if (!Number.isFinite(createdAt.getTime()) || createdAt.toISOString() !== candidate.createdAt) throw new Error();
+    return { createdAt, id: Number(candidate.id) };
+  } catch {
+    throw new Error("Ledger activity cursor is invalid");
+  }
+}
+
+export function isAdminLedgerEntryBeforeCursor(row: { createdAt: Date | string; id: number }, cursor: AdminLedgerActivityCursor) {
+  const rowTime = new Date(row.createdAt).getTime();
+  const cursorTime = cursor.createdAt.getTime();
+  return rowTime < cursorTime || (rowTime === cursorTime && row.id < cursor.id);
+}
+
+export async function listAdminRecentLedgerActivity(input: { userId: number; utcDay: string; cursor?: string }) {
+  if (!Number.isSafeInteger(input.userId) || input.userId < 1) throw new Error("Customer ID must be a positive integer");
+  const { start: dayStart, end: dayEnd } = getAdminLedgerUtcDayBounds(input.utcDay);
+  const cursor = decodeAdminLedgerActivityCursor(input.cursor);
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const rows = await db.select({
+    id: balanceLedger.id,
+    userId: balanceLedger.userId,
+    customerName: users.name,
+    customerEmail: users.email,
+    currency: balanceLedger.currency,
+    amountMinor: balanceLedger.amountMinor,
+    entryType: balanceLedger.entryType,
+    withdrawable: balanceLedger.withdrawable,
+    createdAt: balanceLedger.createdAt,
+  }).from(balanceLedger)
+    .leftJoin(users, eq(users.id, balanceLedger.userId))
+    .where(and(
+      eq(balanceLedger.userId, input.userId),
+      gte(balanceLedger.createdAt, dayStart),
+      lt(balanceLedger.createdAt, dayEnd),
+      cursor ? or(
+        lt(balanceLedger.createdAt, cursor.createdAt),
+        and(eq(balanceLedger.createdAt, cursor.createdAt), lt(balanceLedger.id, cursor.id)),
+      ) : undefined,
+    ))
+    .orderBy(desc(balanceLedger.createdAt), desc(balanceLedger.id))
+    .limit(ADMIN_LEDGER_ACTIVITY_PAGE_SIZE + 1);
+  const hasMore = rows.length > ADMIN_LEDGER_ACTIVITY_PAGE_SIZE;
+  const entries = hasMore ? rows.slice(0, ADMIN_LEDGER_ACTIVITY_PAGE_SIZE) : rows;
+  const last = entries.at(-1);
+  return {
+    entries,
+    hasMore,
+    nextCursor: hasMore && last ? encodeAdminLedgerActivityCursor({ createdAt: new Date(last.createdAt), id: last.id }) : null,
+  };
+}
+
+
+const OPPORTUNITY_USAGE_RESET_GLOBAL_KEY = "trading.opportunityUsageReset.global";
+const OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY = (userId: number) => `trading.opportunityUsageReset.customer.${userId}`;
+const OPPORTUNITY_USAGE_RESET_ACTION = "trading_opportunity_usage_reset";
+const OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS = 5000;
+const OPPORTUNITY_USAGE_RESET_MAX_ROWS = 50000;
+
+type OpportunityUsageResetScope = "customer" | "all";
+type OpportunityUsageResetSummary = {
+  scope: OpportunityUsageResetScope;
+  customerCount: number;
+  withdrawnOpportunities: number;
+  clearedPendingDeliveries: number;
+  closedOffers: number;
+  cancelledAssignments: number;
+  preservedTradePositions: number;
+  protectedOpportunities: number;
+  resetAt: string;
+  idempotentReplay?: boolean;
+};
+
+type OpportunityUsageResetBoundary = {
+  resetAt: Date;
+  generationAssignmentMaxId: number;
+  deliveryEventMaxId: number;
+  tradePositionMaxId: number;
+};
+
+function parseOpportunityUsageResetMarker(value: string | null | undefined): OpportunityUsageResetBoundary | null {
+  try {
+    const parsed = JSON.parse(String(value || ""));
+    const resetAt = new Date(String(parsed?.resetAt || ""));
+    const generationAssignmentMaxId = Number(parsed?.generationAssignmentMaxId);
+    const deliveryEventMaxId = Number(parsed?.deliveryEventMaxId);
+    const tradePositionMaxId = Number(parsed?.tradePositionMaxId);
+    if (!Number.isFinite(resetAt.getTime()) || ![generationAssignmentMaxId, deliveryEventMaxId, tradePositionMaxId].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+    return { resetAt, generationAssignmentMaxId, deliveryEventMaxId, tradePositionMaxId };
+  } catch {
+    return null;
+  }
+}
+
+async function getOpportunityUsageResetBoundary(executor: any, userId: number): Promise<OpportunityUsageResetBoundary | null> {
+  const keys = [OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY(userId)];
+  const rows = await executor.select({ settingKey: appSettings.settingKey, settingValue: appSettings.settingValue })
+    .from(appSettings).where(inArray(appSettings.settingKey, keys));
+  const boundaries: OpportunityUsageResetBoundary[] = rows.map((row: any) => parseOpportunityUsageResetMarker(row.settingValue))
+    .filter((value: OpportunityUsageResetBoundary | null): value is OpportunityUsageResetBoundary => value !== null);
+  return boundaries.sort((a: OpportunityUsageResetBoundary, b: OpportunityUsageResetBoundary) => b.resetAt.getTime() - a.resetAt.getTime())[0] ?? null;
+}
+
+async function ensureAndLockOpportunityResetKeys(executor: any, keys: string[], actorId: number) {
+  const sortedKeys = [...new Set(keys)].sort();
+  if (!sortedKeys.length) return;
+  if (sortedKeys.some(key => key.length > 120)) throw new Error("Opportunity reset lock scope is invalid.");
+  const chunkSize = 1000;
+  for (let offset = 0; offset < sortedKeys.length; offset += chunkSize) {
+    const chunk = sortedKeys.slice(offset, offset + chunkSize);
+    await executor.insert(appSettings).values(chunk.map(settingKey => ({ settingKey, settingValue: "", updatedBy: actorId })))
+      .onDuplicateKeyUpdate({ set: { updatedBy: actorId } });
+    await executor.select({ id: appSettings.id }).from(appSettings)
+      .where(inArray(appSettings.settingKey, chunk)).orderBy(appSettings.settingKey).for("update");
+  }
+}
+
+export async function resetTradeOpportunityUsage(input: {
+  scope: OpportunityUsageResetScope;
+  customerId?: number;
+  reason: string;
+  operationId: string;
+}, actorId: number): Promise<OpportunityUsageResetSummary> {
+  const reason = String(input.reason || "").trim();
+  if (!Number.isSafeInteger(actorId) || actorId < 1) throw new Error("An authenticated administrator is required.");
+  if (reason.length < 8 || reason.length > 500) throw new Error("Provide a reason between 8 and 500 characters.");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.operationId)) throw new Error("Opportunity reset request identifier is invalid.");
+  if (input.scope === "customer" && (!Number.isSafeInteger(input.customerId) || Number(input.customerId) < 1)) throw new Error("Select one valid customer or explicitly choose all customers.");
+  if (input.scope === "all" && input.customerId !== undefined) throw new Error("All-customer reset cannot include a single customer identifier.");
+
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const reference = `trade-opportunity-usage-reset:${input.operationId}`;
+  return db.transaction(async tx => {
+    const customerRows = input.scope === "all"
+      ? await tx.select({ id: users.id }).from(users).where(eq(users.role, "user"))
+        .orderBy(users.id).limit(OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS + 1).for("update")
+      : await tx.select({ id: users.id }).from(users)
+        .where(and(eq(users.id, Number(input.customerId)), eq(users.role, "user")))
+        .limit(1).for("update");
+    if (input.scope === "all" && customerRows.length > OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS) {
+      throw new Error(`All-customer reset is limited to ${OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS.toLocaleString()} customer accounts per atomic operation.`);
+    }
+    if (input.scope === "customer" && !customerRows.length) throw new Error("The selected account is not a customer account.");
+    const userIds = customerRows.map(row => Number(row.id));
+    const markerKey = input.scope === "all" ? OPPORTUNITY_USAGE_RESET_GLOBAL_KEY : OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY(Number(input.customerId));
+    const customerMarkerKeys = userIds.map(userId => OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY(userId));
+    const markerKeysToLock = input.scope === "all" ? [OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, ...customerMarkerKeys] : [OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, markerKey];
+
+    // Customer rows serialize reset against trade allocation. Generation and delivery
+    // locks below then fence their respective workers before any opportunity rows move.
+    await ensureAndLockOpportunityResetKeys(tx, markerKeysToLock, actorId);
+    await ensureAndLockOpportunityResetKeys(tx, userIds.map(userId => `trading.opportunityGenerator.${userId}`), actorId);
+
+    if (userIds.length) {
+      const subscriptionPackages = await tx.select({ userId: customerPackageSubscriptions.userId, packageId: customerPackageSubscriptions.packageId })
+        .from(customerPackageSubscriptions).where(and(inArray(customerPackageSubscriptions.userId, userIds), eq(customerPackageSubscriptions.status, "active")))
+        .limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1);
+      const openOfferPackages = await tx.select({ userId: opportunityOffers.assignedUserId, packageId: opportunityOffers.assignedPackageId })
+        .from(opportunityOffers).where(and(inArray(opportunityOffers.assignedUserId, userIds), inArray(opportunityOffers.status, ["scheduled", "open"])))
+        .limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1);
+      const activePopupPackages = await tx.select({ userId: opportunityPopupEvents.userId, packageId: opportunityPopupEvents.packageId })
+        .from(opportunityPopupEvents).where(and(inArray(opportunityPopupEvents.userId, userIds), or(
+          inArray(opportunityPopupEvents.eventStatus, ["DELIVERED", "NOTICED", "OPENED"]),
+          inArray(opportunityPopupEvents.deliveryStatus, ["queued", "in_progress", "retry_wait"]),
+        ))).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1);
+      if (subscriptionPackages.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS || openOfferPackages.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS || activePopupPackages.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS) {
+        throw new Error("Opportunity reset scope exceeds the safe atomic row limit; no changes were committed.");
+      }
+      const deliveryLocks = new Set<string>();
+      for (const row of [...subscriptionPackages, ...openOfferPackages, ...activePopupPackages]) {
+        const userId = Number(row.userId);
+        const packageId = Number(row.packageId);
+        if (Number.isSafeInteger(userId) && userIds.includes(userId) && Number.isSafeInteger(packageId) && packageId > 0) deliveryLocks.add(deliveryAdmissionLockKey(userId, packageId));
+      }
+      if (deliveryLocks.size > OPPORTUNITY_USAGE_RESET_MAX_ROWS) throw new Error("Opportunity reset requires too many delivery locks; no changes were committed.");
+      await ensureAndLockOpportunityResetKeys(tx, [...deliveryLocks], actorId);
+    }
+
+    const priorMarkerRows = await tx.select({ settingKey: appSettings.settingKey, settingValue: appSettings.settingValue })
+      .from(appSettings).where(inArray(appSettings.settingKey, markerKeysToLock));
+    const previousResetAt = priorMarkerRows.map(row => parseOpportunityUsageResetMarker(row.settingValue)?.resetAt.getTime() ?? 0)
+      .reduce((latest, value) => Math.max(latest, value), 0);
+
+    const priorOperation = (await tx.select({ action: v5AuditEvents.action, entityType: v5AuditEvents.entityType, entityId: v5AuditEvents.entityId, metadataJson: v5AuditEvents.metadataJson })
+      .from(v5AuditEvents).where(eq(v5AuditEvents.reference, reference)).limit(1))[0];
+    const expectedEntityId = input.scope === "all" ? "all" : String(input.customerId);
+    if (priorOperation) {
+      if (priorOperation.action !== OPPORTUNITY_USAGE_RESET_ACTION || priorOperation.entityType !== "opportunity_usage_reset" || priorOperation.entityId !== expectedEntityId) {
+        throw new Error("This reset request identifier was already used for a different operation.");
+      }
+      try {
+        const metadata = JSON.parse(String(priorOperation.metadataJson || "{}"));
+        if (metadata?.scope !== input.scope || !metadata?.summary) throw new Error("invalid replay metadata");
+        return { ...metadata.summary, idempotentReplay: true } as OpportunityUsageResetSummary;
+      } catch {
+        throw new Error("The prior reset request could not be safely replayed; review the audit history.");
+      }
+    }
+
+    const resetAt = new Date(Math.max(Date.now(), previousResetAt + 1));
+    const resetAtIso = resetAt.toISOString();
+    let openOffers: Array<{ id: number; assignedUserId: number | null; assignedPackageId: number | null }> = [];
+    let activeEvents: Array<{ id: number; userId: number; offerId: number; packageId: number | null; eventStatus: string; deliveryStatus: string; executionStatus: string; tradeId: number | null }> = [];
+    if (userIds.length) {
+      openOffers = await tx.select({ id: opportunityOffers.id, assignedUserId: opportunityOffers.assignedUserId, assignedPackageId: opportunityOffers.assignedPackageId })
+        .from(opportunityOffers).where(and(inArray(opportunityOffers.assignedUserId, userIds), inArray(opportunityOffers.status, ["scheduled", "open"])))
+        .orderBy(opportunityOffers.id).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1).for("update");
+      activeEvents = await tx.select({ id: opportunityPopupEvents.id, userId: opportunityPopupEvents.userId, offerId: opportunityPopupEvents.offerId,
+        packageId: opportunityPopupEvents.packageId, eventStatus: opportunityPopupEvents.eventStatus, deliveryStatus: opportunityPopupEvents.deliveryStatus,
+        executionStatus: opportunityPopupEvents.executionStatus, tradeId: opportunityPopupEvents.tradeId })
+        .from(opportunityPopupEvents).where(and(inArray(opportunityPopupEvents.userId, userIds), or(
+          inArray(opportunityPopupEvents.eventStatus, ["DELIVERED", "NOTICED", "OPENED"]),
+          inArray(opportunityPopupEvents.deliveryStatus, ["queued", "in_progress", "retry_wait"]),
+        ))).orderBy(opportunityPopupEvents.id).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1).for("update");
+      if (openOffers.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS || activeEvents.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS) {
+        throw new Error("Opportunity reset scope exceeds the safe atomic row limit; no changes were committed.");
+      }
+    }
+    const candidateOfferIds = [...new Set([...openOffers.map(row => Number(row.id)), ...activeEvents.map(row => Number(row.offerId))])]
+      .filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b);
+    if (candidateOfferIds.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS) throw new Error("Opportunity reset scope exceeds the safe atomic row limit; no changes were committed.");
+    const safetyEvents = candidateOfferIds.length
+      ? await tx.select({ id: opportunityPopupEvents.id, userId: opportunityPopupEvents.userId, offerId: opportunityPopupEvents.offerId,
+          eventStatus: opportunityPopupEvents.eventStatus, deliveryStatus: opportunityPopupEvents.deliveryStatus,
+          executionStatus: opportunityPopupEvents.executionStatus, tradeId: opportunityPopupEvents.tradeId })
+        .from(opportunityPopupEvents).where(and(inArray(opportunityPopupEvents.userId, userIds), inArray(opportunityPopupEvents.offerId, candidateOfferIds)))
+        .orderBy(opportunityPopupEvents.id).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1).for("update")
+      : [];
+    const linkedTradePositions = candidateOfferIds.length
+      ? await tx.select({ id: tradePositions.id, offerId: tradePositions.offerId })
+        .from(tradePositions).where(inArray(tradePositions.offerId, candidateOfferIds))
+        .orderBy(tradePositions.id).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1).for("update")
+      : [];
+    if (safetyEvents.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS || linkedTradePositions.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS) {
+      throw new Error("Opportunity reset scope exceeds the safe atomic row limit; no changes were committed.");
+    }
+    const protectedOfferIds = new Set<number>(linkedTradePositions.map(row => Number(row.offerId)));
+    for (const event of safetyEvents) {
+      if (Number(event.tradeId) > 0 || ["TRADED", "SETTLED"].includes(String(event.eventStatus)) || ["RUNNING", "SUCCEEDED"].includes(String(event.executionStatus))) {
+        protectedOfferIds.add(Number(event.offerId));
+      }
+    }
+    const eligibleEventRows = safetyEvents.filter(event => !protectedOfferIds.has(Number(event.offerId)) &&
+      (["DELIVERED", "NOTICED", "OPENED"].includes(String(event.eventStatus)) || ["queued", "in_progress", "retry_wait"].includes(String(event.deliveryStatus))));
+    const withdrawnRows = eligibleEventRows.filter(event => ["DELIVERED", "NOTICED", "OPENED"].includes(String(event.eventStatus)));
+    const eligibleOfferIds = [...openOffers.map(row => Number(row.id)), ...activeEvents.map(row => Number(row.offerId))]
+      .filter(id => !protectedOfferIds.has(id));
+    const uniqueEligibleOfferIds = [...new Set(eligibleOfferIds)].sort((a, b) => a - b);
+    const assignmentRows = uniqueEligibleOfferIds.length
+      ? await tx.select({ id: opportunityGenerationAssignments.id }).from(opportunityGenerationAssignments)
+        .where(and(inArray(opportunityGenerationAssignments.offerId, uniqueEligibleOfferIds), inArray(opportunityGenerationAssignments.status, ["generated", "delivered"])))
+        .orderBy(opportunityGenerationAssignments.id).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1).for("update")
+      : [];
+    if (assignmentRows.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS) throw new Error("Opportunity reset scope exceeds the safe atomic row limit; no changes were committed.");
+
+    const eligibleEventIds = eligibleEventRows.map(event => Number(event.id));
+    const eligibleDeliveryEventRows = uniqueEligibleOfferIds.length
+      ? await tx.select({ id: opportunityDeliveryEvents.id }).from(opportunityDeliveryEvents)
+        .where(and(inArray(opportunityDeliveryEvents.userId, userIds), inArray(opportunityDeliveryEvents.offerId, uniqueEligibleOfferIds), eq(opportunityDeliveryEvents.status, "pending")))
+        .orderBy(opportunityDeliveryEvents.id).limit(OPPORTUNITY_USAGE_RESET_MAX_ROWS + 1).for("update")
+      : [];
+    if (eligibleDeliveryEventRows.length > OPPORTUNITY_USAGE_RESET_MAX_ROWS) throw new Error("Opportunity reset scope exceeds the safe atomic row limit; no changes were committed.");
+    if (eligibleEventIds.length) {
+      const sharedTerminalFields = {
+        deliveryStatus: "dismissed" as const,
+        deliveryRetryAfter: null,
+        deliveryLeaseToken: null,
+        deliveryLeaseExpiresAt: null,
+        executionStatus: "FAILED" as const,
+        executionRetryAfter: null,
+        executionLeaseToken: null,
+        executionRetryDay: null,
+        executionLastErrorCode: "ADMIN_RESET_WITHDRAWN",
+        updatedAt: resetAt,
+      };
+      const withdrawnIds = withdrawnRows.map(event => Number(event.id));
+      if (withdrawnIds.length) await tx.update(opportunityPopupEvents)
+        .set({ ...sharedTerminalFields, eventStatus: "WITHDRAWN", withdrawnAt: resetAt })
+        .where(inArray(opportunityPopupEvents.id, withdrawnIds));
+      const nonWithdrawnIds = eligibleEventIds.filter(id => !withdrawnIds.includes(id));
+      if (nonWithdrawnIds.length) await tx.update(opportunityPopupEvents).set(sharedTerminalFields)
+        .where(inArray(opportunityPopupEvents.id, nonWithdrawnIds));
+    }
+    if (uniqueEligibleOfferIds.length) await tx.update(opportunityOffers).set({ status: "closed" })
+      .where(and(inArray(opportunityOffers.id, uniqueEligibleOfferIds), inArray(opportunityOffers.status, ["scheduled", "open"])));
+    if (assignmentRows.length) await tx.update(opportunityGenerationAssignments)
+      .set({ status: "cancelled", failureReason: "ADMIN_OPPORTUNITY_USAGE_RESET", updatedAt: resetAt })
+      .where(inArray(opportunityGenerationAssignments.id, assignmentRows.map(row => Number(row.id))));
+    if (eligibleDeliveryEventRows.length) await tx.update(opportunityDeliveryEvents)
+      .set({ status: "expired", lastErrorCode: "ADMIN_OPPORTUNITY_USAGE_RESET", expiresAt: resetAt })
+      .where(inArray(opportunityDeliveryEvents.id, eligibleDeliveryEventRows.map(row => Number(row.id))));
+
+    const assignmentHighWater = userIds.length
+      ? (await tx.select({ maxId: sql<number>`COALESCE(MAX(${opportunityGenerationAssignments.id}), 0)` }).from(opportunityGenerationAssignments)
+        .where(inArray(opportunityGenerationAssignments.userId, userIds)))[0]
+      : { maxId: 0 };
+    const deliveryEventHighWater = userIds.length
+      ? (await tx.select({ maxId: sql<number>`COALESCE(MAX(${opportunityDeliveryEvents.id}), 0)` }).from(opportunityDeliveryEvents)
+        .where(inArray(opportunityDeliveryEvents.userId, userIds)))[0]
+      : { maxId: 0 };
+    const tradePositionHighWater = userIds.length
+      ? (await tx.select({ maxId: sql<number>`COALESCE(MAX(${tradePositions.id}), 0)` }).from(tradePositions)
+        .where(inArray(tradePositions.userId, userIds)))[0]
+      : { maxId: 0 };
+    const summary: OpportunityUsageResetSummary = {
+      scope: input.scope,
+      customerCount: userIds.length,
+      withdrawnOpportunities: withdrawnRows.length,
+      clearedPendingDeliveries: eligibleDeliveryEventRows.length,
+      // Count offers actually eligible for closure; active popup events may
+      // still reference offers that were already closed before this reset.
+      closedOffers: openOffers.filter(row => !protectedOfferIds.has(Number(row.id))).length,
+      cancelledAssignments: assignmentRows.length,
+      preservedTradePositions: linkedTradePositions.length,
+      protectedOpportunities: protectedOfferIds.size,
+      resetAt: resetAtIso,
+    };
+    const marker = JSON.stringify({
+      version: 2,
+      scope: input.scope,
+      resetAt: resetAtIso,
+      operationId: input.operationId,
+      actorUserId: actorId,
+      generationAssignmentMaxId: Number(assignmentHighWater.maxId || 0),
+      deliveryEventMaxId: Number(deliveryEventHighWater.maxId || 0),
+      tradePositionMaxId: Number(tradePositionHighWater.maxId || 0),
+    });
+    await tx.insert(appSettings).values({ settingKey: markerKey, settingValue: marker, updatedBy: actorId, updatedAt: resetAt })
+      .onDuplicateKeyUpdate({ set: { settingValue: marker, updatedBy: actorId, updatedAt: resetAt } });
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: actorId,
+      action: OPPORTUNITY_USAGE_RESET_ACTION,
+      entityType: "opportunity_usage_reset",
+      entityId: expectedEntityId,
+      reason,
+      reference,
+      metadataJson: JSON.stringify({ scope: input.scope, operationId: input.operationId, resetAt: resetAtIso, summary }),
+      createdAt: resetAt,
+    });
+    return summary;
+  });
+}

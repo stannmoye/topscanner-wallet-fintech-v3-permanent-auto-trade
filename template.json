@@ -1,0 +1,21 @@
+{
+  "id": "web-db-user",
+  "name": "Web App (db,user)",
+  "description": "Full-stack web template with database + user flows",
+  "capabilities": [
+    "server",
+    "db",
+    "user"
+  ],
+  "files": [
+    "package.json",
+    "drizzle/schema.ts",
+    "server/db.ts",
+    "server/routers.ts",
+    "client/index.html",
+    "client/src/App.tsx",
+    "client/src/lib/trpc.ts",
+    "client/src/pages/Home.tsx",
+    "server/auth.logout.test.ts"
+  ]
+}

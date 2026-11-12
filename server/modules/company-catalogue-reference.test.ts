@@ -1,0 +1,303 @@
+import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { gzipSync } from "node:zlib";
+import {
+  COMPANY_REFERENCE_CATALOGUE,
+  loadCompanyReferenceCatalogue,
+  countCompanyReferences,
+  findCompanyReferencesBySymbol,
+  getCompanyReferenceById,
+  getCompanyReferenceAtOffset,
+  getCompanyReferenceCatalogueSize,
+  getCompanyReferenceSummary,
+  getRandomCompanyReference,
+  normalizeCompanyCatalogueActionReason,
+  searchCompanyReferences,
+  transitionCompanyCatalogueAdminState,
+} from "./company-catalogue-reference";
+
+describe("production catalogue loader with optional ticker enrichment", () => {
+  function withFixture(run: (root: string) => void) {
+    const root = mkdtempSync(resolve(tmpdir(), "company-catalogue-loader-"));
+    try { run(root); } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+
+  it("loads stable-ID brand records from the actual loader when ticker workbook files are absent", () => {
+    withFixture((root) => {
+      const mappingPath = resolve(root, "logo-mapping.csv");
+      writeFileSync(mappingPath, [
+        "company_name,domain,filename,detail_url,source_asset_url",
+        'Acme,acme.example,by-country/United States/acme.png,,',
+        'Northstar,northstar.example,by-country/Canada/northstar.png,,',
+      ].join("\n"));
+      const loaded = loadCompanyReferenceCatalogue({
+        mappingPath,
+        tickerSnapshotPath: resolve(root, "missing-ticker-snapshot.gz.b64"),
+        tickerPartsDirectory: resolve(root, "missing-ticker-parts"),
+        expectedRecordCount: 2,
+      });
+      expect(loaded).toHaveLength(2);
+      expect(loaded.map((company) => [company.id, company.name])).toEqual([
+        ["logo-brand-0001", "Acme"],
+        ["logo-brand-0002", "Northstar"],
+      ]);
+      expect(loaded.every((company) => company.ticker === "" && company.symbol === "" && company.exchangeCode === "")).toBe(true);
+      expect(loaded.every((company) => company.recordCompleteness === "brand-only")).toBe(true);
+    });
+  });
+
+  it("initializes the production module with all 1,811 records when ticker files are entirely absent", () => {
+    withFixture((root) => {
+      const mappingDirectory = resolve(root, "client/public/assets/company-logo-source");
+      mkdirSync(mappingDirectory, { recursive: true });
+      copyFileSync(
+        resolve(process.cwd(), "client/public/assets/company-logo-source/logo-mapping.csv"),
+        resolve(mappingDirectory, "logo-mapping.csv"),
+      );
+
+      const modulePath = resolve(process.cwd(), "server/modules/company-catalogue-reference.ts");
+      const loaderPath = resolve(process.cwd(), "node_modules/tsx/dist/loader.mjs");
+      const script = `const catalogue = await import(${JSON.stringify(pathToFileURL(modulePath).href)}); const first = catalogue.COMPANY_REFERENCE_CATALOGUE[0]; const last = catalogue.COMPANY_REFERENCE_CATALOGUE.at(-1); console.log(JSON.stringify({ total: catalogue.COMPANY_REFERENCE_CATALOGUE.length, first: first?.id, firstName: first?.name, firstLogo: first?.logoUrl, last: last?.id, lastName: last?.name, lastLogo: last?.logoUrl, suppliedTickers: catalogue.COMPANY_REFERENCE_CATALOGUE.filter((company) => company.ticker).length }));`;
+      const output = execFileSync(process.execPath, ["--import", loaderPath, "--input-type=module", "-e", script], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 20_000,
+      });
+      expect(JSON.parse(output.trim())).toEqual({
+        total: 1811,
+        first: "logo-brand-0001",
+        firstName: COMPANY_REFERENCE_CATALOGUE[0]?.name,
+        firstLogo: COMPANY_REFERENCE_CATALOGUE[0]?.logoUrl,
+        last: "logo-brand-1811",
+        lastName: COMPANY_REFERENCE_CATALOGUE[1810]?.name,
+        lastLogo: COMPANY_REFERENCE_CATALOGUE[1810]?.logoUrl,
+        suppliedTickers: 0,
+      });
+    });
+  });
+
+  it("keeps available ticker metadata as enrichment without requiring a complete workbook", () => {
+    withFixture((root) => {
+      const mappingPath = resolve(root, "logo-mapping.csv");
+      const dataDirectory = resolve(root, "parts");
+      mkdirSync(dataDirectory);
+      writeFileSync(mappingPath, [
+        "company_name,domain,filename,detail_url,source_asset_url",
+        'Acme,acme.example,by-country/United States/acme.png,,',
+      ].join("\n"));
+      const base = { v: 1, statuses: ["Public"], records: [[1, "ACME", "NYSE", 0]] };
+      writeFileSync(resolve(root, "ticker.gz.b64"), gzipSync(Buffer.from(JSON.stringify(base))).toString("base64"));
+      const loaded = loadCompanyReferenceCatalogue({
+        mappingPath,
+        tickerSnapshotPath: resolve(root, "ticker.gz.b64"),
+        tickerPartsDirectory: dataDirectory,
+        expectedRecordCount: 1,
+      });
+      expect(loaded[0]).toMatchObject({
+        id: "logo-brand-0001",
+        name: "Acme",
+        ticker: "ACME",
+        symbol: "ACME",
+        exchangeCode: "NYSE",
+        tickerResearchStatus: "Public",
+        tickerClassification: "public",
+      });
+    });
+  });
+
+  it("does not require ticker workbook rows to match the catalogue size or supplement count", () => {
+    withFixture((root) => {
+      const mappingPath = resolve(root, "logo-mapping.csv");
+      writeFileSync(mappingPath, [
+        "company_name,domain,filename,detail_url,source_asset_url",
+        'Brand only,brand.example,by-country/Unassigned/brand.png,,',
+      ].join("\n"));
+      const loaded = loadCompanyReferenceCatalogue({
+        mappingPath,
+        tickerSnapshotPath: resolve(root, "missing-ticker-snapshot.gz.b64"),
+        tickerPartsDirectory: resolve(root, "missing-ticker-parts"),
+        expectedRecordCount: 1,
+      });
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0]?.tickerClassification).toBe("other");
+      expect(loaded[0]?.tickerResearchStatus).toBe("Not supplied");
+    });
+  });
+});
+
+describe("Logo.dev brand-only static reference catalogue", () => {
+  it("loads all 1,811 mapped brands with unique IDs and local logo paths", () => {
+    expect(COMPANY_REFERENCE_CATALOGUE).toHaveLength(1811);
+    expect(new Set(COMPANY_REFERENCE_CATALOGUE.map((company) => company.id)).size).toBe(1811);
+    // Display names may repeat in the source brand inventory; stable IDs, not names, identify records.
+    expect(new Set(COMPANY_REFERENCE_CATALOGUE.map((company) => company.name.toLowerCase())).size).toBeLessThan(1811);
+    const googleEntries = COMPANY_REFERENCE_CATALOGUE.filter((company) => company.name.toLowerCase() === "google");
+    expect(googleEntries).toHaveLength(2);
+    expect(new Set(googleEntries.map((company) => company.id)).size).toBe(2);
+    expect(COMPANY_REFERENCE_CATALOGUE.every((company) => company.logoUrl.startsWith("/assets/company-logo-source/by-country/"))).toBe(true);
+  });
+
+  it("resolves every catalogue logo URL to an existing local image asset", () => {
+    for (const company of COMPANY_REFERENCE_CATALOGUE) {
+      const relativeAssetPath = decodeURIComponent(company.logoUrl).replace(/^\/+/, "");
+      expect(existsSync(resolve(process.cwd(), "client/public", relativeAssetPath)), company.id).toBe(true);
+    }
+  });
+
+  it("never presents brand names as verified securities or trade-eligible listings", () => {
+    expect(COMPANY_REFERENCE_CATALOGUE.every((company) =>
+      company.listingStatus === "unverified" &&
+      company.lastVerifiedAt === null &&
+      company.requiresManualVerification &&
+      company.recordCompleteness === "brand-only" &&
+      company.instrumentType === "Brand"
+    )).toBe(true);
+    expect(getCompanyReferenceSummary().incompleteRecords).toBe(1811);
+    expect(getCompanyReferenceSummary().eligibleForVerifiedTradeRotation).toBe(0);
+    const result = searchCompanyReferences({ limit: 1 })[0]!;
+    expect(result.referenceOnly).toBe(true);
+    expect(result.logoReusePermissionVerified).toBe(false);
+    expect(result.eligibleForVerifiedTradeRotation).toBe(false);
+  });
+
+  it("supports stable, bounded offsets for a durable round-robin display cursor", () => {
+    expect(getCompanyReferenceCatalogueSize()).toBe(1811);
+    expect(getCompanyReferenceAtOffset(0).id).toBe(COMPANY_REFERENCE_CATALOGUE[0]!.id);
+    expect(getCompanyReferenceAtOffset(1810).id).toBe(COMPANY_REFERENCE_CATALOGUE[1810]!.id);
+    expect(() => getCompanyReferenceAtOffset(-1)).toThrow(/offset/);
+    expect(() => getCompanyReferenceAtOffset(1811)).toThrow(/offset/);
+  });
+
+  it("supports ID lookup and bounded name/domain search without a database", () => {
+    const sample = COMPANY_REFERENCE_CATALOGUE[0]!;
+    expect(getCompanyReferenceById(sample.id)?.id).toBe(sample.id);
+    expect(searchCompanyReferences({ search: sample.name, limit: 5 }).some((company) => company.id === sample.id)).toBe(true);
+    expect(searchCompanyReferences({ search: sample.domain, limit: 5 }).length).toBeGreaterThan(0);
+    expect(searchCompanyReferences({ search: sample.id })).toEqual([expect.objectContaining({ id: sample.id })]);
+    expect(searchCompanyReferences({ search: sample.id.slice(0, -1) })).toHaveLength(0);
+    expect(searchCompanyReferences({ limit: 1000 })).toHaveLength(1000);
+    expect(COMPANY_REFERENCE_CATALOGUE.every((company) => company.countryName.length > 0)).toBe(true);
+  });
+
+  it("requires an operator-entered case-specific reason and trims its boundary whitespace", () => {
+    expect(normalizeCompanyCatalogueActionReason("  Duplicate source record: review  ")).toBe("Duplicate source record: review");
+    expect(normalizeCompanyCatalogueActionReason("12345678")).toBe("12345678");
+    for (const invalid of ["", "   ", "x", "1234567", null, 42, "x".repeat(501)]) {
+      expect(() => normalizeCompanyCatalogueActionReason(invalid)).toThrow(/reason/i);
+    }
+    expect(normalizeCompanyCatalogueActionReason("x".repeat(500))).toHaveLength(500);
+  });
+
+  it("revokes approval on archive and never re-approves on restore", () => {
+    const id = "logo-brand-0001";
+    const initial = { verifiedIds: [id], archivedIds: [], disabledIds: [] };
+    expect(transitionCompanyCatalogueAdminState(initial, [id], "disabled")).toEqual({ verifiedIds: [id], archivedIds: [], disabledIds: [id] });
+    expect(transitionCompanyCatalogueAdminState(initial, [id], "archived")).toEqual({ verifiedIds: [], archivedIds: [id], disabledIds: [] });
+    const conflicted = { verifiedIds: [id], archivedIds: [id], disabledIds: [id] };
+    expect(transitionCompanyCatalogueAdminState(conflicted, [id], "unverified")).toEqual({ verifiedIds: [], archivedIds: [id], disabledIds: [id] });
+    expect(transitionCompanyCatalogueAdminState(conflicted, [id], "enabled")).toEqual({ verifiedIds: [id], archivedIds: [id], disabledIds: [] });
+    expect(transitionCompanyCatalogueAdminState(conflicted, [id], "restored")).toEqual({ verifiedIds: [], archivedIds: [], disabledIds: [id] });
+    expect(transitionCompanyCatalogueAdminState({ verifiedIds: [], archivedIds: [id], disabledIds: [] }, [id], "verified"))
+      .toEqual({ verifiedIds: [id], archivedIds: [id], disabledIds: [] });
+    expect(transitionCompanyCatalogueAdminState({ verifiedIds: [], archivedIds: [id], disabledIds: [] }, [id], "restored"))
+      .toEqual({ verifiedIds: [], archivedIds: [], disabledIds: [] });
+  });
+
+  it("filters by the catalogue country-folder label and reports accurate country counts", () => {
+    const unitedStates = searchCompanyReferences({ countryName: "United States", limit: 1811 });
+    expect(unitedStates.length).toBeGreaterThan(0);
+    expect(unitedStates.every((company) => company.countryName === "United States")).toBe(true);
+    expect(searchCompanyReferences({ countryName: "united states", limit: 1811 })).toEqual(unitedStates);
+    expect(searchCompanyReferences({ countryName: "No Such Country", limit: 1811 })).toHaveLength(0);
+    const allFirstPage = searchCompanyReferences({ countryName: "United States", limit: 25, offset: 0 });
+    const allSecondPage = searchCompanyReferences({ countryName: "United States", limit: 25, offset: 25 });
+    expect(allFirstPage).toHaveLength(25);
+    expect(allSecondPage).toHaveLength(25);
+    expect(allSecondPage.map((company) => company.id)).not.toEqual(allFirstPage.map((company) => company.id));
+    expect(searchCompanyReferences({ countryName: "United States", limit: 25, offset: 1810 })).toHaveLength(0);
+
+    const summary = getCompanyReferenceSummary();
+    const counts = summary.countryCounts as Record<string, number>;
+    expect(Object.values(counts).reduce((sum, count) => sum + count, 0)).toBe(1811);
+    expect(counts["Unverified"]).toBeGreaterThan(0);
+    expect(Object.keys(counts)).toContain("United States");
+  });
+
+  it("counts all matching records independently of pagination", () => {
+    expect(countCompanyReferences({ countryName: "United States" })).toBeGreaterThan(100);
+    expect(countCompanyReferences({ countryName: "United States", search: "apple" })).toBe(searchCompanyReferences({ countryName: "United States", search: "apple", limit: 1811 }).length);
+    expect(countCompanyReferences({ countryName: "No Such Country" })).toBe(0);
+    expect(countCompanyReferences({ countryName: "United States", offset: 100, limit: 100 })).toBe(countCompanyReferences({ countryName: "United States" }));
+  });
+
+  it("returns a brand-only random spotlight and rejects invalid random sources", () => {
+    const sample = getRandomCompanyReference(() => 0);
+    expect(sample.id).toBe(COMPANY_REFERENCE_CATALOGUE[0]!.id);
+    expect(sample.referenceOnly).toBe(true);
+    expect(sample.recordCompleteness).toBe("brand-only");
+    expect(sample.listingStatus).toBe("unverified");
+    expect(sample.eligibleForVerifiedTradeRotation).toBe(false);
+    expect(sample.logoReusePermissionVerified).toBe(false);
+    expect(sample.logoUrl).toBe(COMPANY_REFERENCE_CATALOGUE[0]!.logoUrl);
+    expect(() => getRandomCompanyReference(() => 1)).toThrow("Random source");
+  });
+
+  it("does not repeat the previous spotlight when alternatives exist", () => {
+    const first = getRandomCompanyReference(() => 0);
+    const next = getRandomCompanyReference(() => 0, [first.id]);
+    expect(next.id).toBe(COMPANY_REFERENCE_CATALOGUE[1]!.id);
+    expect(next.id).not.toBe(first.id);
+  });
+
+  it("falls back to the full brand list only when every ID is excluded", () => {
+    const allIds = COMPANY_REFERENCE_CATALOGUE.map((company) => company.id);
+    expect(getRandomCompanyReference(() => 0, allIds).id).toBe(COMPANY_REFERENCE_CATALOGUE[0]!.id);
+  });
+
+  it("loads public ticker candidates by stable logo ID but never treats them as verified listings", () => {
+    const apple = getCompanyReferenceById("logo-brand-0001");
+    expect(apple?.name).toBe("Apple");
+    expect(apple?.ticker).toBe("AAPL");
+    expect(apple?.symbol).toBe("AAPL");
+    expect(apple?.exchangeCode).toBe("NASDAQ");
+    expect(apple?.tickerResearchStatus).toBe("Public");
+    expect(apple?.listingStatus).toBe("unverified");
+    expect(apple?.eligibleForVerifiedTradeRotation).toBe(false);
+    expect(findCompanyReferencesBySymbol("aapl").map((company) => company.id)).toContain("logo-brand-0001");
+    expect(findCompanyReferencesBySymbol("   ")).toHaveLength(0);
+    expect(getCompanyReferenceSummary().tickerCandidates).toBe(814);
+  });
+
+  it("preserves all supplied workbook values and classifications by logo ID", () => {
+    const stripe = getCompanyReferenceById("logo-brand-0016");
+    expect(stripe?.name).toBe("Stripe");
+    expect(stripe?.ticker).toBe("STRI");
+    expect(stripe?.exchangeCode).toBe("PLACEHOLDER");
+    expect(stripe?.tickerClassification).toBe("placeholder");
+    expect(stripe?.whyNoRealTicker).toBe("NO TICKER - never publicly listed");
+    expect(findCompanyReferencesBySymbol("STRI")).toHaveLength(0);
+    const slack = getCompanyReferenceById("logo-brand-0013");
+    expect(slack?.ticker).toBe("WORK");
+    expect(slack?.tickerClassification).toBe("historic");
+    const dhl = getCompanyReferenceById("logo-brand-0053");
+    expect(dhl?.ticker).toBe("DHL");
+    expect(dhl?.parentTicker).toBe("XETRA:DHL");
+    expect(dhl?.tickerClassification).toBe("parent");
+    expect(getCompanyReferenceSummary().suppliedTickerValues).toBe(1811);
+    expect(getCompanyReferenceSummary().placeholderCodes).toBe(637);
+    expect(getCompanyReferenceSummary().parentTickerReferences).toBe(265);
+    expect(getCompanyReferenceSummary().historicalTickerReferences).toBe(95);
+  });
+
+  it("keeps placeholder values visible as source data but never treats them as public ticker candidates", () => {
+    const placeholders = COMPANY_REFERENCE_CATALOGUE.filter((company) =>
+      company.tickerResearchStatus === "PLACEHOLDER - invented code, not a real ticker"
+    );
+    expect(placeholders).toHaveLength(637);
+    expect(placeholders.every((company) => company.ticker !== "" && company.exchangeCode === "PLACEHOLDER" && company.tickerClassification === "placeholder")).toBe(true);
+  });
+});
