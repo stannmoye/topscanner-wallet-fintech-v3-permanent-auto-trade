@@ -2899,20 +2899,59 @@ export async function updateAdminTradingPackage(updatedBy:number,input:{
       await tx.update(opportunityPackagePolicies).set({packageName:nextName,updatedBy,policyVersion:nextPolicyVersion,updatedAt:new Date()}).where(eq(opportunityPackagePolicies.id,currentPolicy.id));
     }
     const activationPolicy=(await tx.select().from(opportunityPackagePolicies).where(eq(opportunityPackagePolicies.packageName,nextName)).limit(1).for("update"))[0];
-    if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&(
-      !activationPolicy||
-      Number(activationPolicy.policyVersion)<1||
-      !Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))||
-      !Number.isSafeInteger(Number(activationPolicy.maximumPayoutRateBps))||
-      Number(activationPolicy.minimumPayoutRateBps)<0||
-      Number(activationPolicy.maximumPayoutRateBps)<Number(activationPolicy.minimumPayoutRateBps)||
-      !Number.isSafeInteger(Number(activationPolicy.minimumTradeDurationSeconds))||
-      !Number.isSafeInteger(Number(activationPolicy.maximumTradeDurationSeconds))||
-      Number(activationPolicy.minimumTradeDurationSeconds)<10||
-      Number(activationPolicy.maximumTradeDurationSeconds)<Number(activationPolicy.minimumTradeDurationSeconds)||
-      Number(activationPolicy.maximumTradeDurationSeconds)>86400
+    const hasValidActivationPolicy=Boolean(
+      activationPolicy&&
+      Number(activationPolicy.policyVersion)>=1&&
+      Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))&&
+      Number.isSafeInteger(Number(activationPolicy.maximumPayoutRateBps))&&
+      Number(activationPolicy.minimumPayoutRateBps)>=1&&
+      Number(activationPolicy.maximumPayoutRateBps)>=Number(activationPolicy.minimumPayoutRateBps)&&
+      Number.isSafeInteger(Number(activationPolicy.minimumTradeDurationSeconds))&&
+      Number.isSafeInteger(Number(activationPolicy.maximumTradeDurationSeconds))&&
+      Number(activationPolicy.minimumTradeDurationSeconds)>=10&&
+      Number(activationPolicy.maximumTradeDurationSeconds)>=Number(activationPolicy.minimumTradeDurationSeconds)&&
+      Number(activationPolicy.maximumTradeDurationSeconds)<=86400
+    );
+    if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&!hasValidActivationPolicy) {
+      throw new Error("Save a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier. Automatic financial execution remains disabled.");
+    }
+    // A tier ON transition also turns on its matching informational-delivery
+    // policy. Financial execution is explicitly kept OFF, so this toggle cannot
+    // reserve, debit, or lock customer funds.
+    if(input.enabled&&hasValidActivationPolicy&&activationPolicy&&(
+      !Boolean(activationPolicy.enabled)||
+      !Boolean(activationPolicy.automaticDelivery)||
+      Boolean(activationPolicy.automaticTradingEnabled)
     )) {
-      throw new Error("Save and enable a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier. Automatic financial execution is a separate control and is not required for customer pop-up eligibility.");
+      const nextPolicyVersion=Number(activationPolicy.policyVersion||0)+1;
+      if(!Number.isSafeInteger(nextPolicyVersion)||nextPolicyVersion<1) throw new Error("Trading policy version has reached its limit");
+      const policyUpdatedAt=new Date();
+      await tx.update(opportunityPackagePolicies).set({
+        enabled:true,
+        automaticDelivery:true,
+        automaticTradingEnabled:false,
+        policyVersion:nextPolicyVersion,
+        updatedBy,
+        updatedAt:policyUpdatedAt,
+      }).where(eq(opportunityPackagePolicies.id,activationPolicy.id));
+      await tx.insert(v5AuditEvents).values({
+        actorUserId:updatedBy,
+        action:"trading_tier_informational_delivery_enabled",
+        entityType:"opportunity_package_policy",
+        entityId:String(activationPolicy.id),
+        reason:auditReason,
+        reference:"trading-tier-informational-delivery:"+activationPolicy.id+":"+nextPolicyVersion,
+        metadataJson:JSON.stringify({
+          packageName:nextName,
+          previous:{
+            enabled:Boolean(activationPolicy.enabled),
+            automaticDelivery:Boolean(activationPolicy.automaticDelivery),
+            automaticTradingEnabled:Boolean(activationPolicy.automaticTradingEnabled),
+            policyVersion:Number(activationPolicy.policyVersion||0),
+          },
+          next:{enabled:true,automaticDelivery:true,automaticTradingEnabled:false,policyVersion:nextPolicyVersion},
+        }),
+      });
     }
     const nextVersion=Number(current.termsVersion||1)+1;
     if(!Number.isSafeInteger(nextVersion)) throw new Error("Package terms version has reached its limit");
