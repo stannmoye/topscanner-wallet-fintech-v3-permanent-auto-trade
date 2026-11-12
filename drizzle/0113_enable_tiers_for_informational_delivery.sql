@@ -12,12 +12,20 @@ WHERE `enabled` <> 1 OR `enabled` IS NULL;
 INSERT INTO `opportunity_package_policies` (
   `packageName`, `minimumPayoutRateBps`, `maximumPayoutRateBps`,
   `minimumTradeDurationSeconds`, `maximumTradeDurationSeconds`,
-  `dailyPopupTarget`, `enabled`, `automaticDelivery`,
-  `automaticTradingEnabled`, `policyVersion`, `updatedBy`
+  `companyRotationEnabled`, `maxPopupsPerDay`, `maxVisibleOffers`,
+  `minimumTradeUnits`, `maximumTradeUnits`, `marketInfluenceBps`,
+  `burstEnabled`, `maxBurstSize`, `dailyPopupTarget`,
+  `randomizationEnabled`, `minIntervalSeconds`, `maxIntervalSeconds`,
+  `enabled`, `automaticDelivery`, `automaticTradingEnabled`,
+  `policyVersion`, `updatedBy`
 )
 SELECT
   package.`name`, 200, 300, 300, 900,
-  GREATEST(1, package.`opportunitiesPerDay`), 1, 1, 0, 1, NULL
+  0, GREATEST(1, package.`opportunitiesPerDay`), 3,
+  1000, 100000, 0,
+  0, 3, GREATEST(1, package.`opportunitiesPerDay`),
+  0, 45, 3600,
+  1, 1, 0, 1, NULL
 FROM `packages` package
 LEFT JOIN `opportunity_package_policies` existing
   ON LOWER(existing.`packageName`) = LOWER(package.`name`)
