@@ -54,10 +54,10 @@ describe("server-side automatic Trading tier eligibility", () => {
     const implementation = source.slice(start, end);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
-    expect(implementation).toContain("Number(activationPolicy.policyVersion)<1");
-    expect(implementation).toContain("!Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))");
+    expect(implementation).toContain("Number(activationPolicy.policyVersion)>=1");
+    expect(implementation).toContain("Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))");
     expect(implementation).not.toContain("!activationPolicy.automaticTradingEnabled");
-    expect(implementation).toContain("if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&(");
+    expect(implementation).toContain("if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&!hasValidActivationPolicy)");
     expect(implementation).toContain("Automatic financial execution remains disabled");
     expect(implementation).toContain("enabled:true");
     expect(implementation).toContain("automaticDelivery:true");
