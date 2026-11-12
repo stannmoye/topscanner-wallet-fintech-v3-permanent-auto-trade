@@ -46,8 +46,17 @@ ON DUPLICATE KEY UPDATE
   `settingValue` = '{"allocationsPaused":false,"reason":"Permanent automatic trading — pause control disabled by migration 0112.","updatedAt":null,"updatedBy":null}';
 
 INSERT INTO `trading_package_fee_policy_versions`
-  (`packageId`, `version`, `feeRateBps`, `roundingMode`, `effectiveAt`, `changedBy`)
-SELECT p.`id`, 1, 1500, 'half_up', UTC_TIMESTAMP(), NULL
+  (`packageId`, `version`, `feeRateBps`, `roundingMode`, `effectiveAt`, `changedBy`, `changedAt`, `reason`, `source`)
+SELECT
+  p.`id`,
+  1,
+  1500,
+  'half_up',
+  UTC_TIMESTAMP(3),
+  'migration:0112',
+  UTC_TIMESTAMP(3),
+  'Default package fee policy seeded by permanent automatic financial execution migration 0112.',
+  'permanent_automatic_financial_execution_0112'
 FROM `packages` p
 WHERE NOT EXISTS (
   SELECT 1 FROM `trading_package_fee_policy_versions` v WHERE v.`packageId` = p.`id`
