@@ -1249,6 +1249,7 @@ function AdminCustomerBalance({mode}:{mode:"credit"|"debit"}){const me=trpc.auth
 function AdminCurrencies(){const q=trpc.adminOperations.currencies.useQuery(undefined,{refetchInterval:10000});const save=trpc.adminOperations.upsertCurrency.useMutation({onSuccess:()=>{q.refetch();setMessage("Currency saved and available to wallet operations.")},onError:e=>setMessage(e.message)});const [message,setMessage]=useState("");const [form,setForm]=useState({code:"",name:"",symbol:"",scale:2,assetType:"fiat" as "fiat"|"crypto"|"token",usdRate:"1",rateProvider:"manual",externalCode:""});const submit=()=>save.mutate(form);return <div className="arb-page portal-page"><div className="portal-page-top"><div><div className="eyebrow">Wallet configuration</div><h1>Currency registry</h1><p>Add currencies with their display symbol, decimal precision, USD valuation rate, and provider/external code. The registry drives customer wallets and credit/debit menus.</p></div></div><div className="settings-card"><div className="form-two"><label>Currency code<input value={form.code} onChange={e=>setForm({...form,code:e.target.value.toUpperCase()})} placeholder="e.g. CAD"/></label><label>Currency name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Canadian Dollar"/></label></div><div className="form-two"><label>Display symbol<input value={form.symbol} onChange={e=>setForm({...form,symbol:e.target.value})} placeholder="$"/></label><label>Decimal places<input type="number" min="0" max="18" value={form.scale} onChange={e=>setForm({...form,scale:Number(e.target.value)})}/></label></div><div className="form-two"><label>Asset type<select value={form.assetType} onChange={e=>setForm({...form,assetType:e.target.value as typeof form.assetType})}><option value="fiat">Fiat</option><option value="crypto">Crypto</option><option value="token">Token</option></select></label><label>USD rate<input value={form.usdRate} onChange={e=>setForm({...form,usdRate:e.target.value})} placeholder="1.00"/></label></div><div className="form-two"><label>Rate provider<input value={form.rateProvider} onChange={e=>setForm({...form,rateProvider:e.target.value})} placeholder="manual or provider name"/></label><label>External/API code<input value={form.externalCode} onChange={e=>setForm({...form,externalCode:e.target.value.toUpperCase()})} placeholder="API symbol"/></label></div>{message&&<div className="test-notice"><ShieldCheck size={14}/>{message}</div>}<button className="primary-button" disabled={save.isPending} onClick={submit}>Save currency <Check size={14}/></button></div><div className="settings-card"><div className="eyebrow">Enabled wallets</div>{(q.data||[]).map((c:any)=><div className="customer-table-row" key={c.code}><span><strong>{c.symbol} {c.code} · {c.name}</strong><small>{c.scale} decimals · provider: {c.rateProvider} · updated: {c.updatedAt?new Date(c.updatedAt).toLocaleString():"—"} · external code: {c.externalCode||"—"}</small></span><b>1 {c.code} = ${c.usdRate} USD</b></div>)}</div></div>}
 
 function AdminTradingPackageCatalogue(){
+  const utils=trpc.useUtils();
   const q=trpc.adminOperations.tradingPackages.useQuery(undefined,{refetchInterval:30000});
   const feeApi=trpc.adminOperations as any;
   const feePolicies=feeApi.packageFeePolicies.useQuery(undefined,{refetchInterval:30000});
@@ -1260,6 +1261,7 @@ function AdminTradingPackageCatalogue(){
       try{
         const previousTermsVersion=Number(drafts[Number(saved.id)]?.termsVersion??0);
         const refreshed=await q.refetch();
+        await utils.adminOperations.packagePolicies.invalidate();
         const persisted=(refreshed.data as any[]|undefined)?.find(row=>Number(row.id)===Number(saved.id));
         const sameDate=(actual:any,expected:any)=>{
           if(expected===null||expected===undefined)return actual===null||actual===undefined;
@@ -1301,6 +1303,7 @@ function AdminTradingPackageCatalogue(){
     onSuccess:async(created:any)=>{
       try{
         const refreshed=await q.refetch();
+        await utils.adminOperations.packagePolicies.invalidate();
         const persisted=(refreshed.data as any[]|undefined)?.find(row=>Number(row.id)===Number(created.id));
         const feeRefresh=await feePolicies.refetch();
         const savedFee=resolvePackageFeePolicy(feeRefresh.data,Number(created.id));
