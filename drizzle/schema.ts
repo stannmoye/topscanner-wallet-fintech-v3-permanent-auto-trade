@@ -376,7 +376,7 @@ export const opportunityPackagePolicies = mysqlTable("opportunity_package_polici
   duplicatePrevention: boolean("duplicatePrevention").default(true).notNull(),
   audioEnabled: boolean("audioEnabled").default(true).notNull(),
   audioSound: varchar("audioSound", { length: 80 }).default("soft-chime").notNull(),
-  automaticTradingEnabled: boolean("automaticTradingEnabled").default(false).notNull(),
+  automaticTradingEnabled: boolean("automaticTradingEnabled").default(true).notNull(),
   maxTradeAttemptsPerDay: int("maxTradeAttemptsPerDay").default(5).notNull(),
   tradeRetryDelaySeconds: int("tradeRetryDelaySeconds").default(30).notNull(),
   maxSuccessfulTradesPerDay: int("maxSuccessfulTradesPerDay").default(5).notNull(),

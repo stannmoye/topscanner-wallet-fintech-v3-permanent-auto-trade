@@ -2913,15 +2913,13 @@ export async function updateAdminTradingPackage(updatedBy:number,input:{
       Number(activationPolicy.maximumTradeDurationSeconds)<=86400
     );
     if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&!hasValidActivationPolicy) {
-      throw new Error("Save a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier. Automatic financial execution remains disabled.");
+      throw new Error("Save a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier.");
     }
-    // A tier ON transition also turns on its matching informational-delivery
-    // policy. Financial execution is explicitly kept OFF, so this toggle cannot
-    // reserve, debit, or lock customer funds.
+    // A tier ON transition turns on delivery and automatic financial execution.
     if(input.enabled&&hasValidActivationPolicy&&activationPolicy&&(
       !Boolean(activationPolicy.enabled)||
       !Boolean(activationPolicy.automaticDelivery)||
-      Boolean(activationPolicy.automaticTradingEnabled)
+      !Boolean(activationPolicy.automaticTradingEnabled)
     )) {
       const nextPolicyVersion=Number(activationPolicy.policyVersion||0)+1;
       if(!Number.isSafeInteger(nextPolicyVersion)||nextPolicyVersion<1) throw new Error("Trading policy version has reached its limit");
@@ -2929,18 +2927,18 @@ export async function updateAdminTradingPackage(updatedBy:number,input:{
       await tx.update(opportunityPackagePolicies).set({
         enabled:true,
         automaticDelivery:true,
-        automaticTradingEnabled:false,
+        automaticTradingEnabled:true,
         policyVersion:nextPolicyVersion,
         updatedBy,
         updatedAt:policyUpdatedAt,
       }).where(eq(opportunityPackagePolicies.id,activationPolicy.id));
       await tx.insert(v5AuditEvents).values({
         actorUserId:updatedBy,
-        action:"trading_tier_informational_delivery_enabled",
+        action:"trading_tier_financial_execution_enabled",
         entityType:"opportunity_package_policy",
         entityId:String(activationPolicy.id),
         reason:auditReason,
-        reference:"trading-tier-informational-delivery:"+activationPolicy.id+":"+nextPolicyVersion,
+        reference:"trading-tier-financial-execution:"+activationPolicy.id+":"+nextPolicyVersion,
         metadataJson:JSON.stringify({
           packageName:nextName,
           previous:{
@@ -2949,7 +2947,7 @@ export async function updateAdminTradingPackage(updatedBy:number,input:{
             automaticTradingEnabled:Boolean(activationPolicy.automaticTradingEnabled),
             policyVersion:Number(activationPolicy.policyVersion||0),
           },
-          next:{enabled:true,automaticDelivery:true,automaticTradingEnabled:false,policyVersion:nextPolicyVersion},
+          next:{enabled:true,automaticDelivery:true,automaticTradingEnabled:true,policyVersion:nextPolicyVersion},
         }),
       });
     }
@@ -3801,9 +3799,7 @@ export async function updateOpportunityPackagePolicies(updatedBy:number, policie
     if(unsupported.length) throw new Error(`Per-tier Trading policy cannot update global or unknown fields: ${unsupported.join(", ")}`);
     return policy;
   });
-  if(requested.some(policy=>(policy as Record<string,unknown>).automaticTradingEnabled===true)) {
-    throw new Error("Automatic financial execution is disabled for all Trading package policies.");
-  }
+  // Automatic financial execution is permitted for all Trading package policies.
   await db.transaction(async tx=>{
     // Lock before merging so concurrent partial saves cannot overwrite fields
     // omitted from the other administrator's request.

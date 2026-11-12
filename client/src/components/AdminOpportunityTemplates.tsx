@@ -109,7 +109,7 @@ export default function AdminOpportunityTemplates() {
       </button>
     </div>
     <p>The worker reads current server-assigned package entitlements and generates a separate persisted opportunity for each due customer directly from the existing 1,811-company catalogue. Each opportunity snapshots the customer's package-specific configured payout rate and duration. Approved templates are optional display-term overrides; no template is required and no manual opportunity publication or CSV import is part of this workflow.</p>
-    <div className="test-notice" role="note"><ShieldCheck size={14}/><span>Company identity uses the existing brand name and logo for a currently admin-verified, enabled, non-archived Logo ID. Brand-only records do not need a ticker, exchange, or live market feed. Optional template details are administrator-provided and are not independently verified. Configured payout is not evidence of market-earned profit, execution, or settlement; financial execution remains hard-disabled.</span></div>
+    <div className="test-notice" role="note"><ShieldCheck size={14}/><span>Company identity uses the existing brand name and logo for a currently admin-verified, enabled, non-archived Logo ID. Brand-only records do not need a ticker, exchange, or live market feed. Optional template details are administrator-provided and are not independently verified. Configured payout is not evidence of market-earned profit, execution, or settlement; financial execution is enabled.</span></div>
     <div className="opportunity-admin-grid">
       <div className="settings-card">
         <div className="eyebrow">Generation control</div><h3>{statusLabel}</h3>

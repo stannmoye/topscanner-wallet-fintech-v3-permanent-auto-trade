@@ -1234,7 +1234,7 @@ function AdminGlobalTradeControls() {
     {q.isError&&<div className="admin-trading-global-controls__notice is-error" role="alert">Global Trade policy could not be read. Controls remain unavailable; no defaults were created. {q.error.message}</div>}
     {!q.isLoading&&!q.isError&&!policy?.available&&<div className="admin-trading-global-controls__notice is-error" role="alert">The canonical global policy is not installed or is malformed. No controls can be changed until migration 0100 is applied to the intended database and verified.</div>}
     {policy?.available&&<div className="admin-trading-global-controls__grid">{controls.map(control=><article className="admin-trading-global-controls__package" key={control.key}><div><span className="eyebrow">Global · future decisions</span><h3>{control.label}</h3><p>{control.description}</p></div><button type="button" role="switch" aria-checked={Boolean(policy[control.key])} aria-label={control.label} className={"admin-trading-global-controls__switch"+(policy[control.key]?" is-on":" is-off")} disabled={save.isPending||!policy.available||reason.trim().length<5} onClick={()=>void saveControl(control.key)}><span>{control.label}</span><strong>{policy[control.key]?"ON":"OFF"}</strong></button></article>)}
-      <article className="admin-trading-global-controls__package"><div><span className="eyebrow">Backend release guard</span><h3>Automatic financial execution</h3><p>Informational delivery is independent from financial execution.</p></div><span className="admin-trading-global-controls__protected">OFF · locked</span></article>
+      <article className="admin-trading-global-controls__package"><div><span className="eyebrow">Backend release guard</span><h3>Automatic financial execution</h3><p>Informational delivery is independent from financial execution.</p></div><span className="admin-trading-global-controls__protected">ON · active</span></article>
     </div>}
     {policy?.migrationDiagnostic&&<details className="admin-policy-note"><summary>Legacy migration diagnostic</summary><pre>{JSON.stringify(policy.migrationDiagnostic,null,2)}</pre></details>}
     <label className="admin-policy-reason">Administrator reason (required, 5–500 characters)<textarea maxLength={500} rows={2} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Explain why this shared Trade policy is changing."/></label>
@@ -1470,7 +1470,7 @@ function AdminTradingPolicySettings({focus}:{focus?:"policy"|"quotas"|"delivery"
 }
 function AdminPackageConfiguration() {
   return <div className="arb-page portal-page">
-    <div className="portal-page-top"><div><div className="eyebrow">Trade Settings · single configuration owner</div><h1>Package Configuration</h1><p>Configure global eligibility and popup-delivery masters once. Per-tier terms remain in Package Settings. Enabling a tier activates informational delivery only; automatic financial execution remains OFF.</p></div></div>
+    <div className="portal-page-top"><div><div className="eyebrow">Trade Settings · single configuration owner</div><h1>Package Configuration</h1><p>Configure global eligibility and popup-delivery masters once. Per-tier terms remain in Package Settings. Enabling a tier activates delivery and automatic financial execution for qualifying customers.</p></div></div>
     <AdminGlobalTradeControls />
     <AdminTradeAllocationControl />
   </div>;

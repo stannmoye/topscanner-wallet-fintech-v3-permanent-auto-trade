@@ -26,10 +26,9 @@ export type PackageOpportunityPolicyPatch = Pick<OpportunityPackagePolicyRow, "p
 /**
  * Defaults for a newly created package's policy row.
  *
- * A newly created package is ready for informational opportunity delivery once
- * its package lifecycle is enabled. Global delivery masters remain separately
- * owned by Package Configuration. Automatic financial execution is deliberately
- * OFF; this policy must never reserve or debit customer funds by default.
+ * A newly created package is ready for opportunity delivery and automatic
+ * financial execution once its package lifecycle is enabled. Global delivery
+ * masters remain separately owned by Package Configuration.
  */
 export const DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY = {
   badgeLabel: null,
@@ -68,7 +67,7 @@ export const DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY = {
   duplicatePrevention: true,
   audioEnabled: true,
   audioSound: "soft-chime",
-  automaticTradingEnabled: false,
+  automaticTradingEnabled: true,
   maxTradeAttemptsPerDay: 0,
   tradeRetryDelaySeconds: 30,
   maxSuccessfulTradesPerDay: 0,
@@ -114,7 +113,7 @@ export function resolveEffectivePackageOpportunityPolicy(
     ...supplied,
     packageName,
     updatedBy,
-    // Financial execution is not enabled by package creation or policy editing.
-    automaticTradingEnabled: false,
+    // Financial execution is enabled by platform policy for all packages.
+    automaticTradingEnabled: true,
   };
 }
