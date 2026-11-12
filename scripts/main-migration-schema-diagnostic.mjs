@@ -57,6 +57,7 @@ const MIGRATION_PREREQUISITES = Object.freeze({
     ["opportunity_package_policies", "minimumTradeDurationSeconds"],
     ["opportunity_package_policies", "maximumTradeDurationSeconds"],
   ],
+  "0112_permanent_automatic_financial_execution": [],
   "0068_trade_realized_profit_accounting": [
     ["trade_positions", "id"],
     ["trade_positions", "status"],
