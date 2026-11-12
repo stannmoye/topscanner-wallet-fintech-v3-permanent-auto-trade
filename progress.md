@@ -1665,3 +1665,11 @@ The `89bd2bd6` installer log showed one remaining stale expectation in the secon
 - Added preview enforcement and regression coverage for normalization, intersection, persistence contracts, and customer/admin route boundaries.
 - Validation passed: `pnpm check`; 30 focused company-catalogue/restriction tests; `pnpm build:static`; `git diff --check`.
 - No merge or deployment performed.
+
+## 2026-11-12 — Tier enablement and dashboard count repair
+
+- Root cause: Control centre counted enabled rows from `opportunity_package_policies`, while the authoritative tier lifecycle switch is `packages.enabled`. The two values can legitimately differ, so the dashboard could show zero while package rows were enabled.
+- The package Save mutation already persisted `packages.enabled` transactionally and returned a versioned result. However, it did not activate the matching informational-delivery policy, so an enabled package could remain ineligible for popup delivery.
+- Fix: Control centre now reads `adminOperations.tradingPackages` and counts package rows that are enabled and not expired/archived. A valid package ON save now enables its matching informational policy and automatic delivery in the same transaction, increments the policy version, and records an audit event.
+- New package defaults are delivery-ready with valid payout/duration ranges. Migration `0113_enable_tiers_for_informational_delivery.sql` enables all package lifecycle rows, repairs missing/invalid informational policy ranges, enables informational delivery, and sets automatic financial execution OFF. The schema default for `automaticTradingEnabled` is also OFF.
+- Safety boundary: this repair enables tier eligibility and informational popup delivery only. It does not enable automated wallet debits, capital locking, trade creation, or settlement. No production SQL was executed from this connector session, and no production customer balance/trade evidence is available here. Deploy the latest `main` revision in Blitz for migration 0113 to run, then verify the package count and delivery status in the admin UI.
