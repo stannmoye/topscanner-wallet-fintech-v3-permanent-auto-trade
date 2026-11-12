@@ -360,7 +360,7 @@ async function main() {
           previousFailureCode === "ER_NO_DEFAULT_FOR_FIELD" && previousStatementIndex === 5 &&
           diagnosticMigration === "0112_permanent_automatic_financial_execution") {
         const failedSql = await readFile(resolve(root, "drizzle", "0112_permanent_automatic_financial_execution.sql"), "utf8");
-        const statements = failedSql.split(/^\s*-->\s*statement-breakpoint\s*$/m).map(statement => statement.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
+        const statements = failedSql.split(";").map(statement => statement.replace(/^(?:\s*--[^\r\n]*\r?\n)+/, "").trim()).filter(Boolean);
         const expectedColumns = ["packageId", "version", "feeRateBps", "roundingMode", "effectiveAt", "changedBy", "changedAt", "reason", "source"];
         const feeInsert = statements[4] || "";
         const columnList = feeInsert.match(/\(\s*`packageId`[\s\S]*?\)/i)?.[0] || "";
