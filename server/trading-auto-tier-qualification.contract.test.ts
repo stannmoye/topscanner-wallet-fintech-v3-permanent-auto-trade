@@ -255,8 +255,8 @@ describe("Automatic Trading tier qualification", () => {
     expect(packagePolicySource).toContain("automaticDelivery: true");
     expect(packagePolicySource).toContain("randomizationEnabled: false");
     expect(databaseSource).toContain("expiresAt:input.expiresAt,enabled:input.enabled,termsVersion:1");
-    expect(databaseSource).toContain("Save and enable a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier.");
-    expect(databaseSource).toContain("Automatic financial execution is a separate control");
+    expect(databaseSource).toContain("Save a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier.");
+    expect(databaseSource).toContain("Automatic financial execution remains disabled");
     const packagePolicyStart = routerSource.indexOf("updatePackagePolicies: adminProcedure.input");
     const packagePolicyEnd = routerSource.indexOf("createOffer: adminProcedure.input", packagePolicyStart);
     const packagePolicyRoute = routerSource.slice(packagePolicyStart, packagePolicyEnd);
