@@ -2,6 +2,9 @@
 -- This migration deliberately disables automatic financial execution for every tier.
 -- It does not reserve, debit, lock, or settle customer funds.
 --> statement-breakpoint
+ALTER TABLE `opportunity_package_policies`
+  ALTER COLUMN `automaticTradingEnabled` SET DEFAULT 0;
+--> statement-breakpoint
 UPDATE `packages`
 SET `enabled` = 1
 WHERE `enabled` <> 1 OR `enabled` IS NULL;
