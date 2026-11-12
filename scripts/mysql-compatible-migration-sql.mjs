@@ -25,7 +25,7 @@ function splitTopLevelComma(input) {
   return parts.filter(Boolean);
 }
 
-function splitStatements(sql) {
+export function splitStatements(sql) {
   const statements = [];
   let start = 0;
   let quote = null;
