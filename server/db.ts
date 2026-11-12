@@ -5021,7 +5021,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   // Permanent: missing package fee policy never blocks allocation — use platform default.
   const packageFeePolicy=effectiveFeeRow
     ? normalizePackageFeePolicy(effectiveFeeRow)
-    : {packageId:feePackageId,version:1,feeRateBps:1500,roundingMode:"half_up" as const,effectiveAt:new Date().toISOString(),changedBy:null};
+    : {packageId:feePackageId,version:1,feeRateBps:1500,roundingMode:"half_up" as const,effectiveAt:new Date().toISOString(),changedBy:"platform-default",reason:"Default fee policy used when package has no saved version",source:"runtime_default"};
   const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(activePackageSubscription.packageName));
   let activeTermsSnapshot:any={};try{activeTermsSnapshot=JSON.parse(String(activePackageSubscription.termsSnapshotJson||"{}"))}catch{activeTermsSnapshot={}}
   const tierActiveLimit=Number(activeTermsSnapshot.maxActiveInvestments??activePackageSubscription.maxActiveInvestments??0);
