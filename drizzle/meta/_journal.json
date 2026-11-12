@@ -575,6 +575,13 @@
       "when": 1794000000012,
       "tag": "0112_permanent_automatic_financial_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1794484800000,
+      "tag": "0113_enable_tiers_for_informational_delivery",
+      "breakpoints": true
     }
   ]
 }
