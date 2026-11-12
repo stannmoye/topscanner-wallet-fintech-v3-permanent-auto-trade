@@ -14,6 +14,8 @@ describe("guarded main migration failure diagnostics", () => {
     expect(source).toContain("inspectMainMigrationSchema(connection, diagnosticMigration)");
     expect(source).toContain("Read-only schema check for ");
     expect(source).toContain("Automatic retry is blocked");
+    expect(source).toContain("APPROVED NARROW RECOVERY");
+    expect(source).toContain("expectedColumns.every");
   });
 
   it("audits base columns referenced by recent package-activation and accounting migrations", async () => {

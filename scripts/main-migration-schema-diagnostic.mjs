@@ -188,7 +188,7 @@ const RENAMED_COLUMNS = Object.freeze([
  */
 export async function inspectMainMigrationSchema(connection, migrationTag) {
   const [rows] = await connection.query(
-    "SELECT table_name, column_name, is_nullable FROM information_schema.columns WHERE table_schema=DATABASE()",
+    "SELECT table_name, column_name, is_nullable, column_default, extra FROM information_schema.columns WHERE table_schema=DATABASE()",
   );
   const present = new Set(rows.map((row) => String(row.table_name) + "." + String(row.column_name)));
   const nullable = new Set(rows.filter((row) => String(row.is_nullable).toUpperCase() === "YES")
@@ -198,6 +198,26 @@ export async function inspectMainMigrationSchema(connection, migrationTag) {
 
   if (!MIGRATION_PREREQUISITES[migrationTag]) {
     diagnostics.push("No focused prerequisite list exists for migration " + String(migrationTag || "unknown") + ".");
+  }
+
+  if (migrationTag === "0112_permanent_automatic_financial_execution") {
+    const tableName = "trading_package_fee_policy_versions";
+    const insertColumns = ["packageId", "version", "feeRateBps", "roundingMode", "effectiveAt", "changedBy", "changedAt", "reason", "source"];
+    const tableColumns = rows.filter((row) => String(row.table_name) === tableName);
+    if (!tableColumns.length) diagnostics.push("Required table trading_package_fee_policy_versions is missing; migration 0112 cannot safely seed fee policies.");
+    else {
+      const actualNames = new Set(tableColumns.map((row) => String(row.column_name)));
+      for (const column of insertColumns) if (!actualNames.has(column)) diagnostics.push("Migration 0112 fee-policy INSERT requires missing column trading_package_fee_policy_versions." + column + ".");
+      for (const column of tableColumns) {
+        const name = String(column.column_name);
+        const extra = String(column.extra || "").toLowerCase();
+        if (String(column.is_nullable).toUpperCase() === "NO" &&
+            (column.column_default === null || column.column_default === undefined) &&
+            !extra.includes("auto_increment") && !extra.includes("generated") && !insertColumns.includes(name)) {
+          diagnostics.push("Migration 0112 fee-policy INSERT omits additional NOT NULL/no-default column trading_package_fee_policy_versions." + name + "; inspect the live table definition before retrying.");
+        }
+      }
+    }
   }
 
   for (const [table, column] of base) {

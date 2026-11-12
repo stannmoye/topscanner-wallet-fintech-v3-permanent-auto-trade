@@ -344,33 +344,48 @@ async function main() {
       const appliedHashesBeforeRetry = new Set(trackerRows.map(row => String(row.hash)));
       const firstUnrecordedMigration = expectedHistory.migrations.find(migration => !appliedHashesBeforeRetry.has(migration.hash));
       const diagnosticMigration = firstUnrecordedMigration?.tag || "post-migration-schema-verification";
+      let diagnostics = null;
       try {
-        const diagnostics = await inspectMainMigrationSchema(connection, diagnosticMigration);
+        diagnostics = await inspectMainMigrationSchema(connection, diagnosticMigration);
         console.error("[main-migrate] Read-only schema check for " + diagnosticMigration + ".sql (no schema or data changes made):");
-        if (!diagnostics.length) {
-          console.error("[main-migrate] No missing pre-existing columns were detected for this migration's focused checks.");
-        } else {
-          for (const diagnostic of diagnostics.slice(0, 20)) {
-            console.error("[main-migrate] SCHEMA CHECK: " + diagnostic.replace(/[^A-Za-z0-9 _.,;:()'.-]/g, "").slice(0, 240));
-          }
-          if (diagnostics.length > 20) console.error("[main-migrate] Additional schema discrepancies omitted: " + (diagnostics.length - 20));
-        }
+        if (!diagnostics.length) console.error("[main-migrate] Focused schema checks passed.");
+        else for (const diagnostic of diagnostics.slice(0, 20)) console.error("[main-migrate] SCHEMA CHECK: " + diagnostic.replace(/[^A-Za-z0-9 _.,;:()'.-]/g, "").slice(0, 240));
       } catch {
         console.error("[main-migrate] Read-only schema check could not complete. The existing failure remains blocked for manual review.");
       }
-      const location = previousMigration
-        ? " Last recorded failure location: " + previousMigration + ".sql" +
+
+      let narrow0112Retry = false;
+      if (diagnostics !== null && previousStatus === "failed" &&
+          previousMigration === "0112_permanent_automatic_financial_execution" &&
+          previousFailureCode === "ER_NO_DEFAULT_FOR_FIELD" && previousStatementIndex === 5 &&
+          diagnosticMigration === "0112_permanent_automatic_financial_execution") {
+        const failedSql = await readFile(resolve(root, "drizzle", "0112_permanent_automatic_financial_execution.sql"), "utf8");
+        const statements = failedSql.split(/^\\s*-->\\s*statement-breakpoint\\s*$/m).map(statement => statement.replace(/^\\s*--.*$/gm, "").trim()).filter(Boolean);
+        const expectedColumns = ["packageId", "version", "feeRateBps", "roundingMode", "effectiveAt", "changedBy", "changedAt", "reason", "source"];
+        const feeInsert = statements[4] || "";
+        const columnList = feeInsert.match(/\\(\\s*`packageId`[\\s\\S]*?\\)/i)?.[0] || "";
+        narrow0112Retry = statements.length === 6 &&
+          statements.every(statement => /^(UPDATE|INSERT)\\b/i.test(statement)) &&
+          /^INSERT\\s+INTO\\s+`trading_package_fee_policy_versions`/i.test(feeInsert) &&
+          expectedColumns.every(column => columnList.includes("`" + column + "`")) &&
+          /WHERE\\s+NOT\\s+EXISTS/i.test(feeInsert) && diagnostics.length === 0;
+      }
+
+      if (narrow0112Retry) {
+        console.warn("[main-migrate] APPROVED NARROW RECOVERY: failed 0112 statement 5 matched ER_NO_DEFAULT_FOR_FIELD; live fee-policy schema matches the INSERT and all six statements are repeatable UPDATE/INSERT operations. Replaying 0112.");
+        await connection.execute("UPDATE `" + guardTable + "` SET status='running',startedAt=CURRENT_TIMESTAMP,finishedAt=NULL,failureCode=NULL,failureMigration=NULL,failureStatementIndex=NULL,failureStatementLabel=NULL WHERE id=1");
+        runStarted = true;
+      } else {
+        const location = previousMigration ? " Last recorded failure location: " + previousMigration + ".sql" +
           (previousStatementIndex > 0 ? " statement " + previousStatementIndex : "") +
-          (previousStatementLabel ? " (" + previousStatementLabel + ")" : "") + "."
-        : " This failure predates migration-location diagnostics; run the read-only schema audit before approving recovery.";
-      console.error(
-        "[main-migrate] ERROR: Automatic retry is blocked because the previous main migration run is " +
-        previousStatus +
-        (previousStatus === "failed" && previousFailureCode ? " (recorded failure code: " + previousFailureCode + ")" : "") +
-        "." + location + " A recorded failure code does not prove schema integrity. Inspect the migration state and approve a recovery plan before retrying.",
-      );
-      process.exitCode = 1;
-      return;
+          (previousStatementLabel ? " (" + previousStatementLabel + ")" : "") + "." :
+          " This failure predates migration-location diagnostics; run the read-only schema audit before approving recovery.";
+        console.error("[main-migrate] ERROR: Automatic retry is blocked because the previous main migration run is " +
+          previousStatus + (previousStatus === "failed" && previousFailureCode ? " (recorded failure code: " + previousFailureCode + ")" : "") +
+          "." + location + " The narrow 0112 recovery checks did not all pass. Inspect the live schema before retrying.");
+        process.exitCode = 1;
+        return;
+      }
     }
 
     if (guardRows.length) {

@@ -6,7 +6,7 @@ function fakeConnection(columns) {
     async query(sql) {
       expect(sql).toContain("information_schema.columns");
       expect(sql).toContain("table_schema=DATABASE()");
-      return [columns.map(([table_name, column_name, is_nullable = "YES"]) => ({ table_name, column_name, is_nullable })), []];
+      return [columns.map(([table_name, column_name, is_nullable = "YES", column_default = null, extra = ""]) => ({ table_name, column_name, is_nullable, column_default, extra })), []];
     },
   };
 }
@@ -45,6 +45,14 @@ describe("read-only main migration schema diagnostics", () => {
     expect(result).toContain("Missing required pre-existing column missed_opportunities.potentialRewardMinor for 0069_trading_package_activation.sql.");
     expect(result.some(message => /Missing required/.test(message))).toBe(true);
     expect(result.some(message => /Progress hint for 0069_trading_package_activation/.test(message))).toBe(true);
+  });
+
+  it("checks 0112 fee INSERT columns and flags extra required live columns", async () => {
+    const required = ["packageId", "version", "feeRateBps", "roundingMode", "effectiveAt", "changedBy", "changedAt", "reason", "source"];
+    const compatible = await inspectMainMigrationSchema(fakeConnection(required.map(column => ["trading_package_fee_policy_versions", column, "NO", column === "changedAt" ? "CURRENT_TIMESTAMP" : null])), "0112_permanent_automatic_financial_execution");
+    expect(compatible).toEqual([]);
+    const incompatible = await inspectMainMigrationSchema(fakeConnection([...required.map(column => ["trading_package_fee_policy_versions", column, "NO", null]), ["trading_package_fee_policy_versions", "legacyRequiredFlag", "NO", null]]), "0112_permanent_automatic_financial_execution");
+    expect(incompatible).toContain("Migration 0112 fee-policy INSERT omits additional NOT NULL/no-default column trading_package_fee_policy_versions.legacyRequiredFlag; inspect the live table definition before retrying.");
   });
 
   it("detects duration bounds that remain NOT NULL after the forward correction", async () => {
