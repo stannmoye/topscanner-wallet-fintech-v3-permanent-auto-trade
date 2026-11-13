@@ -1,24 +1,55 @@
 # Agent instructions for Arbitrade Platform
 
-Before starting work, read root `progress.md` as a handoff index and verify its branch and commit SHA against GitHub. It is a status aid, not the source of truth: current code, canonical requirements, and exact-SHA CI evidence take precedence. Update it after each substantive development increment with changes, checks, and next steps.
+Before starting work, read root `progress.md` as a handoff index and verify its branch and commit SHA against GitHub. It is a status aid, not the source of truth: current code, canonical requirements, and exact-SHA CI evidence take precedence. Update it after each substantive development increment with changes, checks, and next steps. (Note: `progress.md` was not present in the repository root when this revision was written; record that gap rather than assuming its contents.)
 
 Read these files before changing the application:
 
 1. `BUILD_SOURCE.json` — canonical branch/build requirements and acceptance boundary.
 2. `BUILD_AND_RELEASE.md` — build and release process.
 3. `docs/REPOSITORY_GUIDE.md` — repository layout and source ownership.
-4. **`docs/TRADING_SYSTEM_SPECIFICATION.md` — mandatory canonical trading requirements.**
+4. **`docs/TRADING_SYSTEM_SPECIFICATION.md` — canonical trading requirements (see the owner-approved revision notice below).**
 5. The acceptance or implementation document relevant to the files being changed.
+
+## Owner-approved revision 2: pop-up internal-ledger wallet movement
+
+The platform owner has approved the following product decision. It supersedes the earlier restrictions that forbade customer-fund reservation, debit, and credit during opportunity pop-ups.
+
+**Authorized behaviour (internal ledger only):**
+
+1. When an eligible pop-up opportunity appears for a customer, the server determines the **required investment amount** from the admin-configured capital policy for that opportunity.
+2. The server places a **hold** on the required amount, first from the customer's **USD wallet** and then, if short, from other customer wallets (EUR, GBP, BTC, ETH, USDT and any other admin-enabled wallet) in the admin-configured wallet priority order. Balances are summed across wallets, converted with fresh timestamped FX evidence, and held in an all-or-none plan.
+3. If the customer's USD balance plus all other eligible wallet balances (in USD equivalent) is **insufficient**, the server records the opportunity as **Missed — insufficient balance**. No partial hold or debit is made. The customer sees that the opportunity was missed because the balance does not qualify for the trade.
+4. If the funds are sufficient, the server converts the hold into a **debit of the source wallets** and displays **Trade executing** after the pop-up has been shown. The debit, hold, and FX conversion entries are durable internal ledger entries.
+5. After the pop-up/trade duration has closed and the server's settlement step confirms the outcome, the server **credits the customer's original reserved principal plus the configured return, minus the platform fee**. The platform fee is applied only to positive net return, at the admin-configured fee rate, and the fee is recorded as its own ledger entry.
+6. Every wallet movement (hold, release, debit, FX conversion, credit, fee) is an internal ledger entry linked to the opportunity, the trade, and the source FX snapshot. Balances must always reconcile to the ledger.
+
+**Labelling and claims:**
+
+- The payout is a **configured/contractual return** defined by the admin-approved profit-percentage bounds, not market-earned profit, unless auditable external execution or result evidence exists. UI, API responses, and documents must use that label.
+- Internal-ledger processing is not execution on an external market. Do not describe it as such.
+- Opportunity estimates, countdowns, animations, and UI state are still never evidence of a completed result. Financial credit happens only through the server-side settlement record described above.
+
+**Required guardrails (unchanged and still mandatory):**
+
+- Every amount, rate, duration, fee rate, wallet priority order, and enable flag comes from the admin portal, is persisted with the opportunity once selected, is validated, and is audited. No value is hard-coded.
+- Use integer basis points and minor-unit money math. Store capital, rate, duration, FX, and fee snapshots with the trade.
+- Debits and holds are atomic and all-or-none across wallets. Use database row locks in a consistent order. Idempotency keys must prevent duplicate holds, debits, and credits on retries, restarts, or concurrent workers.
+- Fail closed: if an FX quote is missing, stale, or invalid, or if the admin configuration is missing or malformed, do not hold or debit. Record a blocked/unavailable state instead.
+- Workers must recover overdue jobs without resetting countdowns or duplicating debits or credits.
+- Customer sign-out, refresh, local clock drift, scrolling, minimizing, or maximizing must not change timing, holds, debits, or settlement.
+- Reversals, failures, and cancellations must be compensating ledger entries. Historical entries are never edited or deleted.
+
+**Documentation gate:** the canonical specification (`docs/TRADING_SYSTEM_SPECIFICATION.md` §1.7, §5, §5A, §6), the companion PDF, the pop-up admin manual (`docs/TRADING_POPUP_ADMIN_CONFIGURATION_MANUAL.md`), `AUTOMATIC_TRADE_LIFECYCLE.md`, `FINANCIAL_AUTO_TRADE_HARDENING.md`, `PERMANENT_AUTO_TRADE_UNLOCK.md`, `DATABASE_SOURCE_OF_TRUTH.md`, and `README.md` must be updated to match this revision in the same change series that implements it. Any document still saying that pop-ups cannot debit or credit wallets is out of date and must be corrected. If the PDF is absent from the repository, record that gap rather than claiming it was updated.
 
 ## Mandatory trading-system rule
 
 Before modifying the Trading page, opportunity engine, package entitlements, wallet allocation, trade lifecycle, settlement, fees, company catalogue, pop-up rotation, or related admin controls, read `docs/TRADING_SYSTEM_SPECIFICATION.md` in full and `docs/TRADING_POPUP_ADMIN_CONFIGURATION_MANUAL.md`. Treat the specification as the canonical product contract and the manual as its detailed admin-control companion. It covers administrator-managed tiers, automatic qualification exclusively from cumulative qualifying credits manually issued by an authorized administrator through the admin portal's Credit Customer / wallet-credit flow, cumulative opportunity quotas, combined customer earnings ceiling, insufficient-balance opportunity pop-ups, server-side automatic processing, 15% fee on realized positive profit, retries/carry-forward, company rotation, wallet notifications, and admin controls.
 
-Do not introduce behaviour that conflicts with the specification. If a codebase constraint or later user instruction appears to conflict, stop and document the conflict before implementing. Update the canonical specification and its companion PDF together when requirements are formally revised. If the PDF is absent from the repository, record that gap rather than claiming it was updated. Never claim a requirement is implemented without inspecting the code and validating it.
+Do not introduce behaviour that conflicts with the specification, except where it is superseded by Owner-approved revision 2 above. If a codebase constraint or other user instruction appears to conflict with the specification and is not covered by revision 2, stop and document the conflict before implementing. Update the canonical specification and its companion PDF together when requirements are formally revised. Never claim a requirement is implemented without inspecting the code and validating it.
 
 ## Canonical source
 
-- The application source of truth is `stannmoye/Arbitrade_platform` on `main`.
+- The application source of truth is `stannmoye/Arbitrade_platform` on `main`. The repository `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` is the owner's working copy used for this revision; the owner must confirm which repository is canonical before release.
 - Resolve the latest `main` SHA before starting work; pin builds and acceptance evidence to the full SHA.
 - Do not treat an old branch, cached clone, generated ZIP, or stage-only release tag as newer than current `main`.
 - Do not create a standalone stage-only application package. Keep release artifacts integrated with the full application.
@@ -45,7 +76,7 @@ Database changes should use ordered forward migrations and retry-safe server-sid
 
 - Use the documented internal-ledger trading model. Do **not** make an external broker/exchange execution provider a prerequisite for implementing or operating this internal-ledger model.
 - This decision does **not** permit simulated, fabricated, or estimated financial outcomes to be presented or credited as real. Every trade result and settlement must be genuine, recorded in durable internal trade/settlement records, supported by auditable evidence, and reconciled to the customer's ledger.
-- Opportunity estimates, countdowns, animations, ticker search results, and UI state are never evidence of execution or realized profit and must never trigger a financial credit.
+- Opportunity estimates, countdowns, animations, ticker search results, and UI state are never evidence of execution or realized profit. They never trigger a financial credit on their own. Financial movement happens only through the internal-ledger hold/debit/credit flow in revision 2.
 - Do not describe internal-ledger processing as execution on an external market. If a feature explicitly claims external-market execution, it must separately use an appropriate authorized integration and independently verifiable result references before making that claim.
 - This is the approved resolution of the prior provider-prerequisite conflict and aligns with Section 1 of `docs/TRADING_SYSTEM_SPECIFICATION.md`. If another repository document contradicts this decision, do not silently reintroduce the provider prerequisite; report the exact conflicting text and request clarification before changing the approved model.
 - Admin changes to financial policy must be permissioned and auditable. Passing build checks, source inclusion, hosted acceptance, deployment, and production certification are separate gates.
@@ -74,7 +105,7 @@ Database changes should use ordered forward migrations and retry-safe server-sid
 
 ### Trade Settings admin navigation and removal of customer trade switches
 
-- The admin portal must use **Trade Settings** as the top-level navigation group for trading configuration and operations. Follow the submenu structure in Section 12 of `docs/TRADING_SYSTEM_SPECIFICATION.md`, including packages/eligibility, quotas, opportunity schedules, duration/closing rules, wallet allocation, fees/earnings limits, retries/carry-forward, company rotation, pop-up/customer display, notifications, active/pending trades, settlement/reconciliation, system health/pause, and audit/policy versions.
+- The admin portal must use **Trade Settings** as the top-level navigation group for trading configuration and operations. Follow the submenu structure in Section 12 of `docs/TRADING_SYSTEM_SPECIFICATION.md`, including packages/eligibility, quotas, opportunity schedules, duration/closing rules, wallet allocation, fees/earnings limits, retries/carry-forward, company rotation, pop-up/customer display, notifications, active/pending trades, settlement/reconciliation, system health/pause, and audit/policy versions. Wallet allocation must include the hold/debit wallet priority order and the enable flag for pop-up internal-ledger holds.
 - Remove customer-side manual trade-engine controls such as Trading On/Off, Opportunity On/Off, Auto Trade On/Off, package catalogues, package selection, package subscriptions, package activation, and equivalent start/stop switches. Trades are automatic and server-controlled under tiers assigned from qualifying manual administrator deposit credits and admin-configured opportunity quotas, schedules, balances, and limits.
 - Automatically assigned tier entitlements and admin-configured tier opportunity counts govern eligible opportunity presentation; do not hard-code one global pop-up count for all customers. The customer portal must never show the full tier catalogue or activation controls. It may show the highest active assigned tier and only the next enabled tier, with the qualifying USD-equivalent amount needed, duration, and added daily opportunity allowance; without an active tier, show the first qualifying milestone and its benefits. Only distinct, auditable credits manually issued by an authorized administrator through the admin portal's Credit Customer / wallet-credit flow, explicitly classified as qualifying and persisted as `admin_manual_deposit_credit`, qualify. Customer/provider deposits, signup credits, imports, profits, rewards, principal returns, bonuses, transfers, swaps, conversions, generic adjustments and all other credit paths do not. Display an insufficient-balance opportunity only when an eligible opportunity actually occurs and the funds check fails.
 - Customer-side Minimize/Maximize controls are display-only and must not change trade execution, countdown, or settlement. Keep all financial and policy-changing actions server-side, authorized, validated, idempotent, and auditable.
@@ -91,20 +122,21 @@ Database changes should use ordered forward migrations and retry-safe server-sid
 
 - The canonical UI requirements are in Section 10 of `docs/TRADING_SYSTEM_SPECIFICATION.md`; read and follow that section before changing the trade pop-up.
 - Show company name, local logo, country name and country flag together with the supplied symbol/code and exchange classification. Derive the flag from country metadata; never guess a flag for an unverified country.
-- Include invested/allocated amount, gross profit, net profit, platform-fee percentage and amount, profit percentage, total amount credited/returned, trade opening and closing times, countdown, status, and available trade references. Keep principal, gross profit, fee, net profit, and total return distinct.
+- Include invested/allocated amount, held and debited amounts per wallet, gross profit, net profit, platform-fee percentage and amount, profit percentage, total amount credited/returned, trade opening and closing times, countdown, status, and available trade references. Keep principal, gross profit, fee, net profit, and total return distinct.
+- The pop-up must show exactly one of these statuses when funds are checked: **Trade executing** (funds held and debited) or **Missed — insufficient balance** (no movement made). Show the USD-equivalent shortfall for the missed case.
 - Never invent financial values or timestamps. Label estimates clearly and replace them with persisted, ledger-supported actual values after settlement.
 - The expanded pop-up must have Minimize; its fixed bottom-of-viewport dock must remain visible during scrolling and show the countdown/status plus Maximize. Minimize/maximize must not alter server-owned trade timing or accounting.
 - Do not dismiss a card solely because its expanded timeout expires or countdown reaches zero. Dismiss only after countdown completion and an authoritative terminal status; keep pending/retrying/unsettled items accessible.
-- Update the canonical specification and acceptance checklist alongside relevant implementation changes. Test country/flag fallback, scrolling persistence, minimize/maximize, multiple concurrent cards, countdown expiry, terminal dismissal, and unavailable/estimated/settled financial fields.
+- Update the canonical specification and acceptance checklist alongside relevant implementation changes. Test country/flag fallback, scrolling persistence, minimize/maximize, multiple concurrent cards, countdown expiry, terminal dismissal, insufficient-balance wording, and unavailable/estimated/settled financial fields.
 
 ### Administrator-editable package and company pop-up policy
 - Use `docs/TRADING_POPUP_ADMIN_CONFIGURATION_MANUAL.md` for the button-by-button meanings and required settings. Keep it aligned with Section 10 and Section 12 of the canonical specification.
-- Admin-editable fields include package name, package badge label/style, threshold, package duration, quota contribution, minimum/allowed capital, configured profit percentage minimum/maximum, trade-duration minimum/maximum, pop-up expanded display duration, schedule, company rotation filters/repeat avoidance, visible-card limit, earnings ceiling, retry/carry-forward settings, and authorized fee policy/version. Every setting must be persisted, validated, audited, and consumed by the runtime; do not create decorative edit buttons with no defined effect.
+- Admin-editable fields include package name, package badge label/style, threshold, package duration, quota contribution, minimum/allowed capital, configured profit percentage minimum/maximum, trade-duration minimum/maximum, pop-up expanded display duration, schedule, company rotation filters/repeat avoidance, visible-card limit, earnings ceiling, retry/carry-forward settings, authorized fee policy/version, and pop-up internal-ledger hold/debit settings (wallet priority order, enable flag, and FX-evidence freshness limit). Every setting must be persisted, validated, audited, and consumed by the runtime; do not create decorative edit buttons with no defined effect.
 - Package duration controls entitlement lifetime; trade duration controls the trade's server-owned close time; pop-up display duration controls expanded presentation only. Never conflate them.
 - Profit percentage bounds govern a per-pop-up configured payout rate; rates and durations must be selected once inside admin bounds, persisted with the opportunity, and reused after retries/restarts. Label a policy-defined payout as contractual/configured return, not market-earned profit; market-profit claims require auditable execution/result evidence. Use integer basis points and minor-unit money math, fresh timestamped FX evidence for cross-wallet funding, atomic all-or-none wallet debits, and persisted capital/rate/duration snapshots. Workers must recover overdue jobs without resetting countdowns or duplicating debits/credits.
 - Rotate the existing local 1,811-record company catalogue using stable Logo IDs and correct local image/name/country metadata. Persist rotation cursor/history and advance it transactionally with idempotent opportunity creation. Avoid repeats until the filtered pool is traversed where possible. Rotation is not proof of a listed instrument, execution, quote, or profit.
-- A preview/next-company control must be read-only and must not advance live rotation, create an opportunity, allocate capital or write a ledger entry.
-- Select configured payout rates using a cryptographically secure uniform integer basis-point value within admin bounds and durations as integer seconds within their inclusive bounds; persist all selections once. Workers must resume durable scheduled work after restarts, recover expired leases, and prevent duplicate opportunity creation, rotation advancement, allocation and settlement with database locks/fencing and idempotency. Do not depend on browser sessions or process-memory-only schedules.
+- A preview/next-company control must be read-only and must not advance live rotation, create an opportunity, place a hold, debit or credit any wallet, or write a ledger entry.
+- Select configured payout rates using a cryptographically secure uniform integer basis-point value within admin bounds and durations as integer seconds within their inclusive bounds; persist all selections once. Workers must resume durable scheduled work after restarts, recover expired leases, and prevent duplicate opportunity creation, rotation advancement, holds, debits, and settlement credits with database locks/fencing and idempotency. Do not depend on browser sessions or process-memory-only schedules.
 - If the specification/manual appears to conflict with current code or a historical guide, reconcile the docs and implementation before changing behaviour.
 
 ## Trading tier qualification — credit-time wallet FX (authoritative)
@@ -113,7 +145,7 @@ Database changes should use ordered forward migrations and retry-safe server-sid
 - For a qualifying credit in any enabled non-USD wallet, fetch and validate a live USD conversion rate from the currency-appropriate API at credit time (Frankfurter/ECB with Open ExchangeRate API fallback for supported fiat; CoinGecko for registered crypto/tokens using their configured external asset ID). Store the exact rate, provider, source timestamp, USD-minor attribution and FX snapshot evidence with the committed ledger credit. USD uses a 1:1 rate.
 - Never use a manually edited or stale currency-registry rate as a fallback. Fail closed for qualifying classification if the provider cannot price the wallet or the rate is invalid/stale. Do not silently turn a failed qualifying credit into a non-qualifying credit.
 - The administrator customer directory must show automatically assigned active Trading tiers and the customer's cumulative qualifying USD amount.
-- This qualification-only valuation must not alter ordinary wallet transfers, transfer balances, or transfer ledger semantics.
+- This qualification-only valuation must not alter ordinary wallet transfers, transfer balances, or transfer ledger semantics. Pop-up holds and debits use the FX evidence rules in revision 2 and do not change qualification classification.
 
 ## Automatic Trading tier qualification worker (mandatory)
 
