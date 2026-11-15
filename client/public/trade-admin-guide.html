@@ -99,7 +99,7 @@ a{color:#9bcaff;text-decoration:none}a:hover{text-decoration:underline}.shell{ma
 
 <section class="section anchor" id="tiers">
 <div class="eyebrow">03 · Packages & eligibility</div><h2>Tiers &amp; Eligibility: every input</h2>
-<p>This screen defines the milestones used by the automatic qualification system. Package lifecycle status is separate from the global eligibility and informational-delivery masters. Legacy per-tier master columns are inert OFF compatibility placeholders, not copies of global settings. Set global masters only through Package Configuration; qualification and informational delivery require those canonical settings to be present, valid and ON. Save reviewed, valid offer-rate and duration bounds before enabling a tier. Automatic financial execution remains hard-disabled.</p>
+<p>This screen defines the milestones used by the automatic qualification system. Package lifecycle status is separate from the global eligibility and informational-delivery masters. Legacy per-tier master columns are inert OFF compatibility placeholders, not copies of global settings. Set global masters only through Package Configuration; qualification and informational delivery require those canonical settings to be present, valid and ON. Save reviewed, valid offer-rate and duration bounds before enabling a tier. Automatic financial execution is enabled for qualifying customers through the audited internal ledger; external-market execution is not claimed.</p>
 <div class="field-list">
 <div class="field"><b>Tier name</b><span>The name administrators and the eligible customer may see, such as Starter or Growth. Use a clear unique name.</span></div>
 <div class="field"><b>Qualifying deposit threshold (USD)</b><span>The cumulative qualifying admin-credit amount needed for this tier. The server compares saved USD-minor attribution, not a customer's ordinary wallet balance.</span></div>
@@ -174,7 +174,7 @@ a{color:#9bcaff;text-decoration:none}a:hover{text-decoration:underline}.shell{ma
 <p>This editor holds offer eligibility and capital bounds for each tier. Global eligibility and pop-up delivery masters are available only in Package Configuration. Tier lifecycle status is separate; legacy per-tier master columns are inert OFF compatibility placeholders. Changes are validated, audited and versioned by the server.</p>
 <div class="callout warn"><strong>Before enabling:</strong> save both a minimum and maximum configured return rate, and both a minimum and maximum trade duration. The two bounds in each pair must be present and valid. Confirm the saved tier lifecycle status and the canonical global masters in Package Configuration; financial execution remains separately hard-disabled.</div>
 <h3>Delivery switches</h3>
-<p>Use Package Configuration to change the global Tier policy, Pop-up delivery, Company rotation, randomized timing and Burst delivery masters. This detail page does not repeat those controls. Automatic financial execution remains protected OFF.</p>
+<p>Use Package Configuration to change the global Tier policy, Pop-up delivery, Company rotation, randomized timing and Burst delivery masters. This detail page does not repeat those controls. Automatic financial execution is enabled for qualifying customers through the audited internal ledger.</p>
 <h3>Capital bounds</h3>
 <div class="field-list">
 <div class="field"><b>Minimum required capital (USD units)</b><span>Lowest configured capital amount. This legacy field uses whole USD units.</span></div>
@@ -200,7 +200,7 @@ a{color:#9bcaff;text-decoration:none}a:hover{text-decoration:underline}.shell{ma
 <div class="field"><b>Maximum concurrent active trades</b><span>How many active trades may overlap under the policy.</span></div>
 <div class="field"><b>Require previous trade settlement</b><span>If Yes, wait for the previous trade to settle before allowing another one. If No, use the configured concurrency cap.</span></div>
 <div class="field"><b>Minimum / maximum settlement delay</b><span>Lower and upper settlement timing bounds, in seconds.</span></div>
-<div class="field"><b>Financial safety boundary</b><span>Automatic trading, automatic result determination and automatic fund allocation are hard-disabled. Ledger posting is permitted only after administrator confirmation.</span></div>
+<div class="field"><b>Financial safety boundary</b><span>Automatic internal-ledger allocation, debit, configured-return determination and settlement credit are enabled for qualifying customers. Ledger posting is permitted only after administrator confirmation.</span></div>
 </div>
 <h3>Package badge</h3>
 <div class="field-list">

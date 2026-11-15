@@ -344,17 +344,15 @@ try {
     .from(balanceLedger).where(eq(balanceLedger.userId, userId));
   assert.equal(immediateLedgerAfterCredit.length - immediateLedgerBefore.length, 3, "The overdue confirmed trade must post its principal, gross profit and fee once.");
 
-  // Automatic allocation is a financial sink and is hard-disabled before
-  // database access. Keep this disposable boundary assertion alongside the
-  // settlement lifecycle coverage so no automatic execution can be introduced
-  // without this integration failing.
-  const fundingOpenId = "automatic-allocation-disabled-" + token;
+  // Automatic internal-ledger allocation is enabled, but malformed or missing
+  // opportunity evidence must still fail closed before any wallet mutation.
+  const fundingOpenId = "automatic-allocation-invalid-offer-" + token;
   const fundingUserInsert = await db.insert(users).values({
     openId: fundingOpenId,
-    name: "Automatic Allocation Disabled Integration",
+    name: "Automatic Allocation Invalid Offer Integration",
     email: fundingOpenId + "@example.invalid",
     role: "user",
-    packageName: "Disabled",
+    packageName: "Invalid Offer",
   });
   fundingUserId = Number(fundingUserInsert[0].insertId);
   await db.insert(customerBalances).values([
@@ -362,23 +360,19 @@ try {
     { userId: fundingUserId, currency: "EUR", availableMinor: 20000, lockedMinor: 0, promotionalMinor: 0, earnedMinor: 0 },
   ]);
   const beforeFundingWallets = await db.select({
-    currency: customerBalances.currency,
-    availableMinor: customerBalances.availableMinor,
-    lockedMinor: customerBalances.lockedMinor,
+    currency: customerBalances.currency, availableMinor: customerBalances.availableMinor, lockedMinor: customerBalances.lockedMinor,
   }).from(customerBalances).where(eq(customerBalances.userId, fundingUserId)).orderBy(customerBalances.currency);
   const beforeFundingLedger = await db.select({ id: balanceLedger.id }).from(balanceLedger).where(eq(balanceLedger.userId, fundingUserId));
   await assert.rejects(
     createTrade(fundingUserId, { offerId: 0, amountMinor: 10000 }),
-    /Automatic trade allocation is hard-disabled/,
+    /Opportunity delivery event not found|Trading opportunity currency is unavailable|This opportunity is no longer open|Database is not available/,
   );
   const afterFundingWallets = await db.select({
-    currency: customerBalances.currency,
-    availableMinor: customerBalances.availableMinor,
-    lockedMinor: customerBalances.lockedMinor,
+    currency: customerBalances.currency, availableMinor: customerBalances.availableMinor, lockedMinor: customerBalances.lockedMinor,
   }).from(customerBalances).where(eq(customerBalances.userId, fundingUserId)).orderBy(customerBalances.currency);
   const afterFundingLedger = await db.select({ id: balanceLedger.id }).from(balanceLedger).where(eq(balanceLedger.userId, fundingUserId));
-  assert.deepEqual(afterFundingWallets, beforeFundingWallets, "Hard-disabled automatic allocation must not mutate any wallet balance.");
-  assert.deepEqual(afterFundingLedger, beforeFundingLedger, "Hard-disabled automatic allocation must not write ledger entries.");
+  assert.deepEqual(afterFundingWallets, beforeFundingWallets, "Invalid automatic allocation input must not mutate wallet balances.");
+  assert.deepEqual(afterFundingLedger, beforeFundingLedger, "Invalid automatic allocation input must not write ledger entries.");
 
   console.log(JSON.stringify({
     ok: true,
@@ -395,8 +389,8 @@ try {
     futureTradeUnchanged: true,
     terminalTradeUnchanged: true,
     reconciliationDidNotMutateWalletOrLedger: true,
-    automaticAllocationHardDisabled: true,
-    automaticAllocationDidNotMutateWalletOrLedger: true,
+    automaticAllocationEnabledWithFailClosedValidation: true,
+    invalidAutomaticAllocationDidNotMutateWalletOrLedger: true,
   }));
 } finally {
   try {

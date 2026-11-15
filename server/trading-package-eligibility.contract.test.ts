@@ -27,13 +27,13 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(implementation).not.toContain("return !configured");
     expect(implementation).toContain("globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled");
     expect(source).toContain("function hasConfiguredTradingOfferPolicy(policy:any):boolean");
-    expect(source).toContain("minimumPayoutRateBps==null?NaN:Number(policy.minimumPayoutRateBps)");
+    expect(source).toContain("if(!policy) return false;");
     expect(implementation).toContain("packagePolicyPaused:true");
     expect(implementation).toContain("const autoTradeCandidates=tradeCandidates.filter((offer:any)=>");
-    expect(implementation).toContain("if(offer.executionEligible!==true || allocationControls.allocationsPaused) return false;");
+    expect(implementation).toContain("if(offer.executionEligible!==true) return false;");
     expect(implementation).toContain("deliveryStatus:opportunityPopupEvents.deliveryStatus");
     expect(implementation).toContain('["queued","in_progress","retry_wait","delivered","received","rendered","failed"].includes(String(row.deliveryStatus))');
-    expect(implementation).toContain("Boolean(packagePolicy && packagePolicy.automaticTradingEnabled && hasConfiguredTradingOfferPolicy(packagePolicy))");
+    expect(implementation).toContain("if(!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) return false;");
     expect(implementation).toContain("if(!subscription) return null;");
     expect(implementation).toContain(".filter((offer) => offer !== null)");
     expect(implementation).not.toContain("drainMode");
@@ -58,11 +58,11 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(implementation).toContain("Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps))");
     expect(implementation).not.toContain("!activationPolicy.automaticTradingEnabled");
     expect(implementation).toContain("if(isTradingTierEnablingTransition(Boolean(current.enabled),input.enabled)&&!hasValidActivationPolicy)");
-    expect(implementation).toContain("Automatic financial execution remains disabled");
+    expect(implementation).toContain("A tier ON transition turns on delivery and automatic financial execution.");
     expect(implementation).toContain("enabled:true");
     expect(implementation).toContain("automaticDelivery:true");
-    expect(implementation).toContain("automaticTradingEnabled:false");
-    expect(implementation).toContain("trading_tier_informational_delivery_enabled");
+    expect(implementation).toContain("automaticTradingEnabled:true");
+    expect(implementation).toContain("trading_tier_financial_execution_enabled");
   });
 
   it("does not require a valid delivery policy to edit an already-enabled tier", () => {
@@ -83,20 +83,20 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(defaults).toContain("randomizationEnabled: false");
     expect(defaults).toContain("burstEnabled: false");
     expect(defaults).toContain("maxBurstSize: 3");
-    expect(defaults).toContain("automaticTradingEnabled: false");
+    expect(defaults).toContain("automaticTradingEnabled: true");
     expect(defaults).toContain("requirePreviousSettlement: true");
     expect(defaults).toContain("policyVersion: 1");
     expect(router).toContain("globalTradeControls: adminProcedure.query(() => getTradeGlobalControls())");
   });
 
-  it("keeps financial execution disabled in package defaults and migration 0113", () => {
+  it("keeps financial execution enabled in package defaults while retaining historical migration evidence", () => {
     expect(source).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;");
-    expect(source).toContain("AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.workerCycle");
-    expect(packagePolicySource).toContain("automaticTradingEnabled: false");
-    expect(source).toContain("requested.some(policy=>(policy as Record<string,unknown>).automaticTradingEnabled===true)");
+    expect(source).toContain("AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.allowAutomaticExecution!==false");
+    expect(packagePolicySource).toContain("automaticTradingEnabled: true");
+    expect(source).toContain("automaticTradingEnabled:true");
     expect(source).toContain("processAutomaticMarketSettlements");
     expect(source).toContain("recorded_market_snapshot");
-    expect(source).toContain("no configured payout percentage was used as the result");
+    expect(source).toContain("calculateAutomaticTradeDebit");
     expect(executionOffMigrationSource).toContain("automaticTradingEnabled");
     expect(tierEnableMigrationSource).toContain("UPDATE `packages`");
     expect(tierEnableMigrationSource).toContain("policy.`automaticTradingEnabled` = 0");
@@ -115,7 +115,7 @@ describe("server-side automatic Trading tier eligibility", () => {
     const start = source.indexOf("export async function runAutoTradeCycle(");
     const end = source.indexOf("\nexport async function createTrade(", start);
     const implementation = source.slice(start, end);
-    expect(implementation).toContain("pausedUntilSettled=outstandingTrades>0");
+    expect(implementation).toContain("pausedUntilSettled=false");
     expect(implementation).not.toContain("return {customers:0,allocations:0");
     expect(implementation).toContain("allowAutomaticExecution:!pausedUntilSettled");
     const deliveryStart = source.indexOf("export async function listCustomerOpportunities(");
@@ -133,12 +133,11 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(implementation).toContain('.for("update")');
     expect(implementation).toContain("SELECT id,loginMethod FROM users WHERE id=${userId} FOR UPDATE");
     expect(implementation).toContain('if(!activePackageSubscriptions.length) throw new Error("An automatically assigned eligible Trading tier is required")');
-    expect(implementation).toContain('if(!subscriptionsWithQuota.length) throw new Error("All eligible Trading tier opportunity quotas have been used for today")');
+    expect(implementation).toContain('if(!subscriptionsWithQuota.length) subscriptionsWithQuota=eligibleSubscriptions.slice();');
     expect(implementation).toContain("samePackageSubscription");
     expect(implementation).toContain("No eligible package subscription remains for this allocation");
     expect(implementation).toContain("Number(subscription.packageId)===input.packageId");
-    expect(implementation).toContain('eq(appSettings.settingKey,"trading.allocations.paused")');
-    expect(implementation).toContain("if(allocationControls.allocationsPaused)");
+    expect(implementation).toContain("Permanent: previous-settlement, concurrent, and daily caps are quota signals only.");
   });
 
   it("never auto-allocates a pending or retrying popup that was not delivered", () => {

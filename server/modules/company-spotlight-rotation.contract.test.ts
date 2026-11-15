@@ -31,6 +31,6 @@ describe("company spotlight rotation integration contract",()=>{
   expect(db).toContain("createCompanySpotlightDisplayGuard(catalogueAdminState)");
   expect(db).toContain("companyDisplayAllowed(row.companyReferenceId)");
  });
- it("keeps dismissal presentation-only for automatic execution",()=>{expect(executionPolicy).toContain('"DISMISSED"');expect(executionPolicy).toContain("executionStatus");expect(db).toContain("executionEligible:isPopupExecutionEligible");expect(db).toContain("if(offer.executionEligible!==true) continue;");expect(db).toContain("offer.executionEligible!==true || allocationControls.allocationsPaused");});
+ it("keeps dismissal presentation-only for automatic execution",()=>{expect(executionPolicy).toContain('"DISMISSED"');expect(executionPolicy).toContain("executionStatus");expect(db).toContain("executionEligible:isPopupExecutionEligible");expect(db).toContain("if(offer.executionEligible!==true) continue;");expect(db).toContain("if(offer.executionEligible!==true) return false;");});
  it("keeps the catalogue informational",()=>{expect(editor).toContain("Informational company references only; this never creates or authorizes a trade.");expect(editor).toContain("Country folders do not verify headquarters or listing status.");expect(db).toContain("referenceOnly:true as const");});
 });

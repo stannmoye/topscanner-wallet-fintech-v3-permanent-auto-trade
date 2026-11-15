@@ -183,7 +183,7 @@ const registryEntries: readonly RegistryEntry[] = [
     readQuery: "server/db.ts AUTOMATIC_FINANCIAL_EXECUTION_ENABLED constant and server execution guard",
     auditRequirement: "Not editable; any future release requires separate safety review and release gate.",
     effectiveTime: "Not available.", runtimeConsumer: "server/db.ts automatic execution guard.",
-    customerImpact: "Informational pop-ups may still be delivered; automatic financial execution remains OFF.",
+    customerImpact: "Informational pop-ups may still be delivered; automatic financial execution is enabled for qualifying customers through the audited internal ledger.",
     risk: "locked", availability: "locked",
   },
   packageTermField({

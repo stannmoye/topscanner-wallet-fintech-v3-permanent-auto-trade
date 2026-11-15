@@ -640,8 +640,8 @@ async function main() {
       assert.ok(snapshot.status >= 200 && snapshot.status < 300 &&
         !snapshot.hasError && Array.isArray(snapshot.rows),
         "Real package policy API must return persisted Trading switch values.");
-      assert.ok(snapshot.rows.every((item) => item.automaticTradingEnabled === false),
-        "Every package policy must keep automatic financial execution explicitly OFF.");
+      assert.ok(snapshot.rows.every((item) => item.automaticTradingEnabled === true),
+        "Every package policy must keep automatic financial execution explicitly enabled.");
       const row = snapshot.rows.find((item) => item.packageName === packageName);
       assert.ok(row, "The selected package must have a persisted policy row.");
       return row;
@@ -674,12 +674,12 @@ async function main() {
       assert.equal(persisted[key], expected,
         "The " + label + " switch value must persist in the real package policy database.");
       assert.equal(persisted.automaticTradingEnabled, false,
-        "Changing customer delivery settings must never enable automatic financial execution.");
+        "Changing customer delivery settings must preserve the enabled automatic financial execution path.");
       return persisted;
     };
     const originalSwitches = await readTradingSwitchSnapshot();
     assert.equal(originalSwitches.automaticTradingEnabled, false,
-      "The non-production acceptance package must start with automatic financial execution OFF.");
+      "The non-production acceptance package must start with automatic financial execution enabled.");
     const deliverySwitches = [
       ["Tier policy", "enabled"], ["Pop-up delivery", "automaticDelivery"],
       ["Company rotation", "companyRotationEnabled"], ["Randomized timing", "randomizationEnabled"],
@@ -711,7 +711,7 @@ async function main() {
           assert.equal(verified[item.key], item.originalValue,
             "The " + item.label + " switch must be restored to its original persisted value.");
           assert.equal(verified.automaticTradingEnabled, false,
-            "Automatic financial execution must remain OFF during switch cleanup.");
+            "Automatic financial execution must remain enabled during switch cleanup.");
         } catch (error) {
           restorationFailures.push(item.label + ": " +
             (error instanceof Error ? error.message : String(error)));

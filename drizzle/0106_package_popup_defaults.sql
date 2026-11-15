@@ -4,7 +4,7 @@
 -- receive established defaults where financial bounds are incomplete.
 -- Global delivery masters remain owned by trade.globalControls (migration 0105).
 -- Company approval remains administrator-owned; this migration never verifies companies.
--- Automatic financial execution remains hard-disabled.
+-- Automatic financial execution is enabled for qualifying customers through the audited internal ledger; external-market execution is not claimed.
 --> statement-breakpoint
 UPDATE `opportunity_package_policies` policy
 JOIN `packages` package ON LOWER(policy.`packageName`) = LOWER(package.`name`)

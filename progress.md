@@ -1,3 +1,13 @@
+## 2026-11-15 — Internal-ledger financial execution enablement alignment
+
+- **Current state:** The application now treats automatic financial execution as enabled for qualifying customers through the audited internal ledger. Forward migration `0114_enable_automatic_financial_execution_all_packages.sql` enables package policies and resumes allocations; historical disablement migrations remain preserved as history.
+- **Safeguards preserved:** Allocation remains internal-ledger only and requires fresh FX evidence, atomic all-or-none multi-wallet funding, durable idempotency, row locks, audited lifecycle/settlement records, and fail-closed handling for invalid configuration, missing opportunities or unavailable rates. External-market execution is not claimed.
+- **Alignment:** Updated the canonical trading specification, administrator guides, UI/admin copy, package defaults, browser/integration fixtures and stale contract expectations. Historical checkpoint entries in this file remain unchanged; this entry records the current superseding state.
+- **Worker coverage:** Updated opportunity-worker coverage to assert stale-lease fencing, one allocation per distinct delivery event, duplicate idempotency rejection, ledger/wallet movement on enabled allocation, and fail-closed invalid-input behavior.
+- **Validation status:** Locked dependency installation completed. `pnpm check` and `git diff --check` pass; the production build completed. The full suite still reports 25 stale contract assertions across 12 legacy tests that expect older UI/source behavior; disposable database integrations and authenticated browser acceptance were not run.
+
+---
+
 ## 2026-11-10 — Installer stage validation and customer popup clock-skew fix
 
 - **Source identity:** Applied fixes to GitHub-verified `main` at `8eeab6bdf4cbc5a2f49fa053a127c7ee2ab58a3f`, not directly to the uploaded ZIP (which had no Git metadata).

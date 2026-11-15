@@ -13,7 +13,7 @@ const base: PackageAutomationPolicy = {
   postCompletionIntervalSeconds: 30,
   maxPendingDeliveries: 3,
   maxDeliveryAttempts: 3,
-  automaticTradingEnabled: false,
+  automaticTradingEnabled: true,
   maxTradeAttemptsPerDay: 5,
   tradeRetryDelaySeconds: 30,
   maxSuccessfulTradesPerDay: 5,

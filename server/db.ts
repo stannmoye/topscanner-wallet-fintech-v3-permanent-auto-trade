@@ -5412,7 +5412,7 @@ export async function processAutomaticMarketSettlements(input?: { limit?: number
       let exitPriceUsd:string|null=null;
       let settlementObservedAt:Date|null=null;
       let settlementNotes:string;
-      if(hasMarketExit){
+      if(exit&&Number.isFinite(entryPrice)&&entryPrice>0&&Number.isFinite(exitPrice)&&exitPrice>0){
         grossProfitMinor=Math.round(Number(trade.principalMinor)*((exitPrice-entryPrice)/entryPrice));
         if(!Number.isSafeInteger(grossProfitMinor)||grossProfitMinor<-Number(trade.principalMinor)){
           // fall through to configured rate
@@ -5464,7 +5464,7 @@ export async function processAutomaticMarketSettlements(input?: { limit?: number
       await tx.insert(tradeLifecycleEvents).values({tradeId:trade.id,userId:trade.userId,eventType:"automatic_market_settlement_confirmed",stage:"Settlement Confirmed — Awaiting Wallet Credit",payloadJson:JSON.stringify({reference,entryMarketSnapshotId:trade.entryMarketSnapshotId,entryPriceUsd:entryPrice,exitMarketSnapshotId,exitPriceUsd,grossProfitMinor,platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,provider:settlementProvider,observedAt:settlementObservedAt,settlementResultSource})});
       return "settled" as const;
     });
-    if(result==="settled") settled++; else if(result==="waiting") waitingForMarket++; else skipped++;
+    if(result==="settled") settled++; else skipped++;
   }
   return {scanned:due.length,settled,waitingForMarket,skipped,limit,asOf:now.toISOString()};
 }

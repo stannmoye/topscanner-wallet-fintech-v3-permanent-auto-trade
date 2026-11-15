@@ -2761,7 +2761,7 @@ async function runAdminTradingControlsInteractionCheck(browser) {
   let savedPolicy = {
     packageName: "QA Trading Tier", enabled: true, automaticDelivery: true,
     companyRotationEnabled: true, randomizationEnabled: true, burstEnabled: true,
-    automaticTradingEnabled: false, requirePreviousSettlement: true,
+    automaticTradingEnabled: true, requirePreviousSettlement: true,
     minSettlementDelaySeconds: 900, maxSettlementDelaySeconds: 900, policyVersion: 1,
   };
   let savedGlobal = {
@@ -2904,10 +2904,10 @@ async function runAdminTradingControlsInteractionCheck(browser) {
         disabledSwitches.length === 0,
         { disabledSwitches, mutationCalls });
     }
-    const financialExecutionStayedOff = savedPolicy.automaticTradingEnabled === false &&
+    const financialExecutionStayedEnabled = savedPolicy.automaticTradingEnabled === true &&
       mutationCalls.every(call => !Array.isArray(call.policies) ||
-        call.policies.every(patch => patch.automaticTradingEnabled !== true));
-    record("delivery-switches-never-enable-financial-execution", financialExecutionStayedOff, { mutationCalls, pageErrors });
+        call.policies.every(patch => patch.automaticTradingEnabled === undefined || patch.automaticTradingEnabled === true));
+    record("delivery-switches-preserve-enabled-financial-execution", financialExecutionStayedEnabled, { mutationCalls, pageErrors });
     record("admin-switches-show-save-feedback",
       enabledControlInteractions === 0 || await page.getByText("Global Trade control saved and verified from a fresh database read.").isVisible().catch(() => false),
       { controlsAvailable, enabledControlInteractions, note: enabledControlInteractions > 0 ? "Save feedback is asserted only after an enabled control interaction." : "No enabled control was clicked; no save feedback is expected." });

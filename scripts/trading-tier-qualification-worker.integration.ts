@@ -129,7 +129,7 @@ try {
     maximumTradeDurationSeconds: 900,
     enabled: true,
     automaticDelivery: true,
-    automaticTradingEnabled: false,
+    automaticTradingEnabled: true,
   })));
 
   // Exercise the actual admin wallet-credit service, not synthetic ledger rows.

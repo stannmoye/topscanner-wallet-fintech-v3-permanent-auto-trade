@@ -42,7 +42,7 @@ describe("Trade Settings standalone admin guide", () => {
     expect(guide).toContain("legacy per-tier master columns are inert OFF compatibility placeholders");
     expect(guide).toContain("Set global masters only through Package Configuration");
     expect(guide).toContain("Set the global rotation master in Package Configuration");
-    expect(guide).toContain("Automatic financial execution remains hard-disabled");
+    expect(guide).toContain("Automatic financial execution is enabled for qualifying customers through the audited internal ledger");
     expect(guide).not.toContain("persistent Trading controls panel");
     expect(guide).not.toMatch(/new tier package is enabled by default/i);
     expect(guide).not.toMatch(/initialized with valid display defaults/i);

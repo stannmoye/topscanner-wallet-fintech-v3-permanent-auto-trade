@@ -336,7 +336,7 @@ describe("Trade Settings owner route isolation", () => {
     expect(guide).toContain("does not save settings or perform operational actions");
     expect(guide).toContain("single persisted <code>trade.globalControls</code> record");
     expect(guide).toContain("Legacy per-package master columns are inert compatibility fields");
-    expect(guide).toContain("Automatic financial execution remains hard-disabled");
+    expect(guide).toContain("Automatic financial execution is enabled for qualifying customers through the audited internal ledger");
     expect(guide).not.toMatch(/<form\b|<input\b|<textarea\b|useMutation\(|\.mutate\(/);
   });
 });

@@ -6,7 +6,7 @@ import {
 } from "./modules/package-opportunity-policy";
 
 describe("canonical package opportunity policy contract", () => {
-  it("creates delivery-ready package defaults while keeping financial execution disabled", () => {
+  it("creates delivery-ready package defaults with financial execution enabled", () => {
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.minimumPayoutRateBps).toBe(200);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.maximumPayoutRateBps).toBe(300);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.minimumTradeDurationSeconds).toBe(300);
@@ -14,7 +14,7 @@ describe("canonical package opportunity policy contract", () => {
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.minIntervalSeconds).toBe(45);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.maxIntervalSeconds).toBe(3600);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.maxPendingDeliveries).toBe(3);
-    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticTradingEnabled).toBe(false);
+    expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticTradingEnabled).toBe(true);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.enabled).toBe(true);
     expect(DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticDelivery).toBe(true);
   });
@@ -38,8 +38,8 @@ describe("canonical package opportunity policy contract", () => {
     expect(beta.dailyPopupTarget).toBe(4);
     expect(beta.maxPendingDeliveries).toBe(8);
     expect(alpha.packageName).not.toBe(beta.packageName);
-    expect(alpha.automaticTradingEnabled).toBe(false);
-    expect(beta.automaticTradingEnabled).toBe(false);
+    expect(alpha.automaticTradingEnabled).toBe(true);
+    expect(beta.automaticTradingEnabled).toBe(true);
   });
 
   it("rejects a saved or submitted policy belonging to another package", () => {

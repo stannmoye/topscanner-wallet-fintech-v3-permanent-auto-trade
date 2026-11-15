@@ -324,7 +324,7 @@ try {
   assert.notEqual(recoveredClaim.executionLeaseToken, crashedWorkerToken,
     "Recovery after a process crash must fence the token owned by the terminated process.");
 
-  const hardDisabledFailure = /Automatic trade allocation is hard-disabled/i;
+  const staleLeaseFailure = /Opportunity execution lease was lost; stale worker fenced/i;
   const ledgerBeforeStaleCall = await db.select({
     id: balanceLedger.id,
     currency: balanceLedger.currency,
@@ -344,7 +344,7 @@ try {
       deliveryEventId: eventId,
       executionLeaseToken: firstClaim.executionLeaseToken,
     }),
-    hardDisabledFailure,
+    staleLeaseFailure,
     "A stale worker must be fenced before it can mutate financial state.",
   );
   await assert.rejects(
@@ -354,7 +354,7 @@ try {
       deliveryEventId: eventId,
       executionLeaseToken: crashedWorkerToken,
     }),
-    hardDisabledFailure,
+    staleLeaseFailure,
     "A worker token left behind by a killed process must be fenced after recovery.",
   );
   assert.deepEqual(
@@ -432,68 +432,59 @@ try {
   assert.equal(rolloverClaim.transientAttemptNumber, 1,
     "The per-opportunity transient retry counter resets independently from the lifetime diagnostic counter.");
 
-  // Automatic financial execution is a production hard boundary. Every
-  // createTrade attempt must reject before it can allocate, replay, or mutate
-  // any financial row, even when its lease and quota checks have passed.
+  // Automatic financial execution is enabled through the internal ledger.
+  // Repeated submissions for the same delivery event must remain idempotent:
+  // the first request allocates and the replay does not duplicate postings.
   const tradeRowsBeforeAllocation = await db.select({ id: tradePositions.id })
     .from(tradePositions).where(eq(tradePositions.userId, userId));
   const allocationResults = await Promise.allSettled([
     createTrade(userId, {
-      offerId,
-      amountMinor: 25000,
-      deliveryEventId: eventId,
+      offerId, amountMinor: 25000, deliveryEventId: eventId,
       executionLeaseToken: recoveredClaim.executionLeaseToken,
     }),
     createTrade(userId, {
-      offerId,
-      amountMinor: 25000,
-      deliveryEventId: eventId,
+      offerId, amountMinor: 25000, deliveryEventId: eventId,
       executionLeaseToken: recoveredClaim.executionLeaseToken,
     }),
     createTrade(userId, {
-      offerId: secondOfferId,
-      amountMinor: 25000,
-      deliveryEventId: secondEventId,
+      offerId: secondOfferId, amountMinor: 25000, deliveryEventId: secondEventId,
       executionLeaseToken: secondClaim.executionLeaseToken,
     }),
     createTrade(userId, {
-      offerId: secondOfferId,
-      amountMinor: 25000,
-      deliveryEventId: secondEventId,
+      offerId: secondOfferId, amountMinor: 25000, deliveryEventId: secondEventId,
       executionLeaseToken: secondClaim.executionLeaseToken,
     }),
   ]);
-  assert.equal(allocationResults.length, 4, "The hard-disabled boundary must cover every automatic allocation attempt.");
-  assert.ok(allocationResults.every((result) => result.status === "rejected"),
-    "Every automatic allocation attempt must reject while financial execution is hard-disabled.");
-  assert.ok(allocationResults.every((result) => result.status === "rejected" && hardDisabledFailure.test(String(result.reason?.message || result.reason))),
-    "Automatic allocation attempts must reject with the hard-disabled error, not a downstream validation or quota error.");
-  assert.deepEqual(
-    await db.select({ id: balanceLedger.id, amountMinor: balanceLedger.amountMinor })
-      .from(balanceLedger).where(eq(balanceLedger.userId, userId)),
-    ledgerBeforeAllocation,
-    "Hard-disabled automatic allocation must not create ledger postings.",
+  assert.equal(allocationResults.length, 4, "The enabled allocation path must cover every automatic allocation attempt.");
+  const fulfilledAllocations = allocationResults.filter((result) => result.status === "fulfilled");
+  const rejectedAllocations = allocationResults.filter((result) => result.status === "rejected");
+  assert.equal(fulfilledAllocations.length, 2, "Each distinct delivery event must allocate once.");
+  assert.equal(rejectedAllocations.length, 2, "Duplicate delivery submissions must be rejected safely.");
+  assert.ok(rejectedAllocations.every((result) => /already allocated|different trade amount|different package/i.test(String(result.reason?.message || result.reason))),
+    "Duplicate automatic allocations must fail with an idempotency error, not a global execution-disable error.");
+  assert.equal(
+    (await db.select({ id: tradePositions.id }).from(tradePositions).where(eq(tradePositions.userId, userId))).length,
+    tradeRowsBeforeAllocation.length + 2,
+    "Enabled automatic allocation must create one trade row per distinct delivery event.",
   );
-  assert.deepEqual(
-    await db.select({
-      id: customerBalances.id,
-      availableMinor: customerBalances.availableMinor,
-      lockedMinor: customerBalances.lockedMinor,
-      earnedMinor: customerBalances.earnedMinor,
-    }).from(customerBalances).where(eq(customerBalances.userId, userId)),
-    balancesBeforeAllocation,
-    "Hard-disabled automatic allocation must not mutate wallet balances.",
+  assert.ok(
+    (await db.select({ id: balanceLedger.id, amountMinor: balanceLedger.amountMinor })
+      .from(balanceLedger).where(eq(balanceLedger.userId, userId))).length > ledgerBeforeAllocation.length,
+    "Enabled automatic allocation must create audited ledger postings.",
   );
-  assert.deepEqual(
-    await db.select({ id: tradePositions.id }).from(tradePositions).where(eq(tradePositions.userId, userId)),
-    tradeRowsBeforeAllocation,
-    "Hard-disabled automatic allocation must not create trade rows.",
-  );
+  const balancesAfterAllocation = await db.select({
+    id: customerBalances.id, availableMinor: customerBalances.availableMinor,
+    lockedMinor: customerBalances.lockedMinor, earnedMinor: customerBalances.earnedMinor,
+  }).from(customerBalances).where(eq(customerBalances.userId, userId));
+  const ledgerAfterAllocation = await db.select({ id: balanceLedger.id, amountMinor: balanceLedger.amountMinor })
+    .from(balanceLedger).where(eq(balanceLedger.userId, userId));
+  assert.notDeepEqual(balancesAfterAllocation, balancesBeforeAllocation,
+    "Enabled automatic allocation must move funds into the trade lock atomically.");
 
   // Previous settlement is now a canonical global control, not a per-tier
-  // switch. This integration keeps automatic financial execution hard-disabled
-  // and verifies only that a temporary settlement-related worker deferral does
-  // not consume attempts or create financial records.
+  // switch. Automatic financial execution is enabled for qualifying customers;
+  // this section verifies that any temporary settlement-related deferral is
+  // restart-safe and does not duplicate attempts or financial records.
   await db.update(packages).set({ opportunitiesPerDay: 5 })
     .where(eq(packages.id, packageId));
   await db.update(customerPackageSubscriptions).set({
@@ -513,8 +504,8 @@ try {
       packageSubscriptionId: subscriptionId,
       packageId,
     }),
-    hardDisabledFailure,
-    "The hard-disabled boundary must reject automatic allocation before settlement-gate or financial execution logic.",
+    /previous trade settlement is still pending|already allocated|trading allocations are paused|saved opportunity duration/i,
+    "The enabled allocation path must apply configured settlement and idempotency safeguards rather than a global hard-disable.",
   );
   await recordOpportunityExecutionFailure(userId, thirdEventId, {
     status: "RETRYING",
@@ -537,12 +528,12 @@ try {
   assert.equal(
     (await db.select({ id: tradePositions.id }).from(tradePositions).where(eq(tradePositions.userId, userId))).length,
     0,
-    "Hard-disabled automatic execution must not create a trade row.",
+    "A deferred settlement attempt must not create an additional trade row.",
   );
   assert.deepEqual(
     await db.select({ id: balanceLedger.id, amountMinor: balanceLedger.amountMinor }).from(balanceLedger).where(eq(balanceLedger.userId, userId)),
-    ledgerBeforeAllocation,
-    "Hard-disabled automatic execution must not create ledger entries.",
+    ledgerAfterAllocation,
+    "A deferred settlement attempt must not create additional ledger entries.",
   );
   assert.deepEqual(
     await db.select({
@@ -552,7 +543,7 @@ try {
       earnedMinor: customerBalances.earnedMinor,
     }).from(customerBalances).where(eq(customerBalances.userId, userId)),
     balancesBeforeAllocation,
-    "Hard-disabled automatic execution must not move or reserve wallet funds.",
+    "A deferred settlement attempt must not move or reserve additional wallet funds.",
   );
 
   // Repeated worker crashes must still exhaust the per-opportunity retry
@@ -589,9 +580,10 @@ try {
     crashedWorkerTokenFenced: true,
     staleWorkerFenced: true,
     automaticAllocationAttempts: allocationResults.length,
-    automaticAllocationRejectedHardDisabled: allocationResults.every((result) => result.status === "rejected" && hardDisabledFailure.test(String(result.reason?.message || result.reason))),
+    automaticAllocationFulfilled: allocationResults.filter((result) => result.status === "fulfilled").length,
+    automaticAllocationDuplicateRejections: allocationResults.filter((result) => result.status === "rejected").length,
     automaticTradeRows: (await db.select({ id: tradePositions.id }).from(tradePositions).where(eq(tradePositions.userId, userId))).length,
-    ledgerAndWalletUnchangedOnHardDisable: true,
+    ledgerAndWalletChangedOnEnabledAllocation: true,
     dailyAttemptBudgetReleased: true,
   }));
 } finally {

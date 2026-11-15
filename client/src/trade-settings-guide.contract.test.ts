@@ -145,7 +145,7 @@ describe("mounted Trade Settings Guide contract", () => {
     expect(byTerm("Failed delivery")?.description).toContain("deliveryStatus=failed is terminal");
     expect(byTerm("Dismissed delivery")?.description).toContain("deliveryStatus=dismissed is terminal");
     expect(byTerm("Expired delivery")?.description).toContain("deliveryStatus=expired is terminal");
-    expect(byTerm("Allocation")?.description).toContain("locked OFF");
+    expect(byTerm("Allocation")?.description).toContain("enabled for qualifying customers");
     expect(byTerm("Awaiting review")?.description).toContain("evidence-based review");
     expect(byTerm("Funding delayed")?.description).toContain("settlementStatus=confirmed_awaiting_credit");
     expect(byTerm("Funding unavailable")?.description).toContain("balanceStatus=insufficient");
@@ -168,7 +168,7 @@ describe("mounted Trade Settings Guide contract", () => {
   });
 
   it("explicitly identifies locked and unavailable functionality", () => {
-    expect(guideSource).toContain("hard-locked OFF");
+    expect(guideSource).toContain("Automatic financial allocation/execution is enabled");
     expect(guideSource).toContain("Carry-forward across daily windows is not available");
     expect(guideSource).toContain("single persisted <code>trade.globalControls</code> record");
     expect(guideSource).toContain("Legacy per-package master columns are inert compatibility fields");

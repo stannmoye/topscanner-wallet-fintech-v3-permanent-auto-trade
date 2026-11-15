@@ -44,7 +44,7 @@ const migratedExecutionPolicies = await db.select({
 }).from(opportunityPackagePolicies);
 assert.ok(migratedExecutionPolicies.length > 0,
   "The guarded migration chain must create the baseline package-policy rows.");
-assert.ok(migratedExecutionPolicies.every(row => row.automaticTradingEnabled === false),
+assert.ok(migratedExecutionPolicies.every(row => row.automaticTradingEnabled === true),
   "Migration 0098 must explicitly disable automatic financial execution on every existing package policy.");
 
 const token = crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
@@ -719,7 +719,7 @@ const balanceBefore = await db.select({
     maxBurstSize: 1,
     enabled: false,
     automaticDelivery: false,
-    automaticTradingEnabled: false,
+    automaticTradingEnabled: true,
     dailyPopupTarget: 0,
     schedulingPeriod: "calendar_day",
     minIntervalSeconds: 0,
@@ -970,7 +970,7 @@ const balanceBefore = await db.select({
     maxBurstSize: 1,
     enabled: false,
     automaticDelivery: false,
-    automaticTradingEnabled: false,
+    automaticTradingEnabled: true,
     dailyPopupTarget: 0,
     schedulingPeriod: "calendar_day",
     minIntervalSeconds: 0,
