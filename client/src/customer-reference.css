@@ -134,8 +134,9 @@
 
 .customer-top-wallet-band .customer-balance-trigger {
   width: 100%;
-  min-height: 46px !important;
-  padding: 6px 8px !important;
+  min-height: 54px !important;
+  /* The extra bottom padding is the reserved movement band that hosts the pill. */
+  padding: 6px 8px 18px !important;
   font-variant-numeric: tabular-nums;
 }
 
@@ -171,6 +172,117 @@
 
 .customer-top-wallet-band .customer-balance-note {
   display: none !important;
+}
+
+/* Wallet movement feedback: locked capital and live credit/debit deltas render as a
+   pill inside a reserved footer band. The band is always present, so a wallet card
+   keeps an identical height and the value never reflows, wraps or squeezes at any
+   breakpoint (desktop, mobile, and desktop layout viewed on a phone). */
+.customer-balance-trigger {
+  position: relative;
+  /* Footer band reserved for the movement pill (locked capital or credit/debit delta). */
+  padding-bottom: 19px;
+}
+.customer-balance-name {
+  min-width: 0;
+}
+.customer-balance-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.customer-balance-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 3px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: calc(100% - 16px);
+  pointer-events: none;
+}
+.wallet-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wallet-status-tag.is-locked {
+  border: 1px solid rgba(250, 204, 21, .42);
+  background: linear-gradient(135deg, rgba(120, 72, 10, .6), rgba(58, 34, 5, .78));
+  color: #fcd34d;
+}
+.wallet-status-tag.is-locked svg {
+  flex: 0 0 auto;
+  color: #fcd34d;
+}
+.customer-balance-delta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: .01em;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, .32);
+  animation: wallet-delta-in .42s cubic-bezier(.22, 1, .36, 1) both, wallet-delta-out .8s ease 4.3s forwards;
+}
+.customer-balance-delta.is-debit {
+  border: 1px solid rgba(248, 113, 113, .62);
+  background: linear-gradient(135deg, rgba(127, 29, 29, .97), rgba(52, 12, 12, .98));
+  color: #fca5a5 !important;
+  text-shadow: 0 0 10px rgba(248, 113, 113, .55);
+}
+.customer-balance-delta.is-credit {
+  border: 1px solid rgba(74, 222, 128, .62);
+  background: linear-gradient(135deg, rgba(6, 78, 59, .97), rgba(6, 40, 30, .98));
+  color: #86efac !important;
+  text-shadow: 0 0 10px rgba(74, 222, 128, .55);
+}
+/* One-shot sheen sweeping across the pill when a movement lands. */
+.customer-balance-delta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, .32) 50%, transparent 70%);
+  transform: translateX(-130%);
+  animation: wallet-delta-sheen 1.05s ease-out .12s 1 both;
+  pointer-events: none;
+}
+@keyframes wallet-delta-sheen {
+  to { transform: translateX(130%); }
+}
+@keyframes wallet-delta-in {
+  from { opacity: 0; transform: translateY(6px) scale(.84); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wallet-delta-out {
+  to { opacity: 0; transform: translateY(-4px) scale(.9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .customer-balance-delta,
+  .customer-balance-delta::after { animation: none; }
 }
 
 .customer-portal .portal-body {
