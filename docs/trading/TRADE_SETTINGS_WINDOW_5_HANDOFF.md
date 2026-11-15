@@ -69,4 +69,4 @@ Hosted authenticated admin-browser acceptance remains required for save persiste
 3. Run the focused and full test/typecheck/build checks on the integrated head.
 4. Verify database persistence and authorization against disposable MySQL/MariaDB and authenticated browser sessions.
 5. Confirm that package fee and delivery retry saves retain drafts on failure and only show success after fresh persisted-state verification.
-6. Preserve the hard-disabled automatic financial execution boundary.
+6. Preserve the enabled automatic financial execution boundary for qualifying customers through the audited internal ledger; external-market execution is not claimed.

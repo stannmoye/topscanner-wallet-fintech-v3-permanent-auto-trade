@@ -45,7 +45,7 @@ The exact ownership map is maintained in `WORKSTREAM_OWNERSHIP.md`. Do not use a
 - Existing saved package policies are merged under the existing row lock; omitted fields and explicit zero values are preserved.
 - Global tier-policy, popup-delivery, company-rotation, randomized-timing and burst masters remain separately owned by Package Configuration and are saved through the existing audited `adminOperations.updateGlobalTradeControl` mutation.
 - Legacy per-package boolean placeholders are not exposed through the per-tier policy mutation.
-- `automaticTradingEnabled` remains excluded and hard-false. No financial execution, customer-fund allocation or settlement is enabled.
+- `automaticTradingEnabled` remains excluded from the package-policy patch allowlist. Automatic financial execution is enabled for qualifying customers through the audited internal ledger; external-market execution is not claimed.
 - Current new-package policy defaults still contain zero generation targets (`minHourlyTarget`, `normalHourlyTarget`, `dailyPopupTarget`). Window 3 must reconcile these with the requested package-specific generation cadence before automatic scheduling can be declared complete.
 
 ### Generation and publishing (Window 3 candidate)

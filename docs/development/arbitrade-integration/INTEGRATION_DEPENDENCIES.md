@@ -35,7 +35,7 @@
 
 | Dependency | Existing owner / source | Required behaviour | Integration check |
 | --- | --- | --- | --- |
-| Package policy contract | Window 2 PR #284; `package-opportunity-policy.ts` | Centralize new-package defaults, package-owned patch allowlist and package-isolated resolver; preserve omitted existing fields and keep global master toggles out of the package mutation. | Test package A/B isolation, invalid package mismatch, explicit zero preservation, package-policy validation, global master exclusion and hard-false financial execution. |
+| Package policy contract | Window 2 PR #284; `package-opportunity-policy.ts` | Centralize new-package defaults, package-owned patch allowlist and package-isolated resolver; preserve omitted existing fields and keep global master toggles out of the package mutation. | Test package A/B isolation, invalid package mismatch, explicit zero preservation, package-policy validation, global master exclusion and enabled financial execution for qualifying customers through the audited internal ledger (external-market execution is not claimed). |
 | Generation consumer | Window 3 | Read the selected package's persisted policy without duplicating defaults or changing global masters. | Verify package-specific terms and timing snapshots on integrated generation path. |
 
 ## Window 5 admin-settings dependencies

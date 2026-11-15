@@ -255,7 +255,7 @@ Acceptance must cover:
 - The package-fee rate/rounding baseline is not live-DB-verified until the disposable integration passes against both MySQL and MariaDB after migrations. Do not treat this requirements manual, static tests, or a workflow command as database acceptance.
 - Authenticated browser acceptance is a separate gate and must not be claimed from this documentation update or static CI checks.
 - All admin edits have role checks, validation, audit history and policy versions.
-- The previous-settlement switch is verified in both states: ON blocks a customer with an unsettled prior trade; OFF bypasses only that gate for a future allocation check; unavailable/malformed policy remains fail-closed; changes survive a fresh read/reload and are audited/versioned. The separate opportunity-delivery pause and automatic-financial-execution lock remain unchanged.
+- The previous-settlement switch is verified in both states: ON blocks a customer with an unsettled prior trade; OFF bypasses only that gate for a future allocation check; unavailable/malformed policy remains fail-closed; changes survive a fresh read/reload and are audited/versioned. The separate opportunity-delivery pause and enabling of automatic financial execution for qualifying customers through the audited internal ledger remain unchanged (external-market execution is not claimed).
 - No production deployment, live database verification, browser acceptance, or application migration is implied by passing source CI.
 
 ## 8. Canonical references

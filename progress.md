@@ -1,3 +1,15 @@
+## 2026-11-16 — Documentation, guide and script alignment to enabled internal-ledger execution
+
+- **Current state:** Automatic financial execution is enabled for qualifying customers through the audited internal ledger; external-market execution is not claimed.
+- **Alignment:** Updated leftover documentation, guide HTML and code comments that still described automatic execution, automatic result determination or automatic customer-fund allocation as disabled or OFF so they are consistent with the enabled state. Every change keeps the honest qualifier that external-market execution is not claimed.
+- **Runtime schema bridge:** `scripts/ensure-worker-runtime-schema.mjs` no longer replays `drizzle/0098_disable_automatic_financial_execution.sql`. The legacy portal tracker (`scripts/apply-portal-migrations.mjs`) and the installer recovery diagnostic (`installer/migration-recovery-status.mjs`) no longer list that filename, so neither replays or expects the superseded disable migration; migration 0112 permanently supersedes 0098. The historical migration file is preserved unchanged as history.
+- **Tests:** `scripts/worker-schema-contracts.test.mjs` now asserts that the runtime schema bridge, the legacy portal runner and the installer recovery diagnostic all omit the disable migration; the migration-content assertion was kept.
+- **Safeguards preserved:** Allocation remains internal-ledger only, requiring fresh FX evidence, atomic all-or-none multi-wallet funding, durable idempotency, row locks and fail-closed handling for invalid configuration. Historical checkpoint entries below remain unchanged.
+- **Build output:** Rebuilt the tracked `dist/` artifacts so the shipped static guide (`dist/public/trade-admin-guide.html`) and bundles carry the enabled internal-ledger wording instead of the stale hard-disabled copy.
+- **Verification:** `pnpm check` passes; `pnpm build` completes. The installer suite stays at its 5 pre-existing migration-journal failures (baseline-verified), and the main suite stays at its pre-existing 25 stale-contract failures across 12 files; the guide/worker-schema edits add no new failures.
+
+---
+
 ## 2026-11-15 — Internal-ledger financial execution enablement alignment
 
 - **Current state:** The application now treats automatic financial execution as enabled for qualifying customers through the audited internal ledger. Forward migration `0114_enable_automatic_financial_execution_all_packages.sql` enables package policies and resumes allocations; historical disablement migrations remain preserved as history.

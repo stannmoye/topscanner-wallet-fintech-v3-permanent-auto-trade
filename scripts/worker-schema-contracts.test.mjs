@@ -129,11 +129,11 @@ describe("worker schema contracts", () => {
     expect(settlementReviewTimestampMigration).toContain("ADD COLUMN IF NOT EXISTS `settlementReviewAt` timestamp NULL");
     expect(runtimeSchema).toContain('drizzle/0097_trading_daily_execution_attempt_accounting.sql');
     expect(runtimeSchema).toContain("await executeCompatibleMigrationSql(db, dailyExecutionAttemptAccountingMigration)");
-    expect(runtimeSchema).toContain('drizzle/0098_disable_automatic_financial_execution.sql');
-    expect(runtimeSchema).toContain("await executeCompatibleMigrationSql(db, automaticFinancialExecutionOffMigration)");
+    expect(runtimeSchema).not.toContain('drizzle/0098_disable_automatic_financial_execution.sql');
+    expect(runtimeSchema).not.toContain("automaticFinancialExecutionOffMigration");
     expect(automaticFinancialExecutionOffMigration).toContain("SET `automaticTradingEnabled` = 0");
-    expect(portalRunner).toContain('"0098_disable_automatic_financial_execution.sql"');
-    expect(installerRecovery).toContain('"0098_disable_automatic_financial_execution.sql"');
+    expect(portalRunner).not.toContain('"0098_disable_automatic_financial_execution.sql"');
+    expect(installerRecovery).not.toContain('"0098_disable_automatic_financial_execution.sql"');
     expect(dailyAttemptAccountingMigration).toContain("`executionDailyAttemptCount` int NOT NULL DEFAULT 0");
     expect(dailyAttemptAccountingMigration).toContain("`executionDailyAttemptDay` varchar(10) NULL");
     expect(dailyAttemptAccountingMigration).toContain("CREATE INDEX IF NOT EXISTS `opportunity_popup_user_daily_attempt_day_idx`");

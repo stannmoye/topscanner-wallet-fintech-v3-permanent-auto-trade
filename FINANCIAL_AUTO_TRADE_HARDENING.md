@@ -16,7 +16,7 @@
    - Only workerCycle ran autoTradeOpenOpportunities
    - **Fix (prior):** customerSessionExecution on opportunities poll
 
-4. **Non-financial / practice / hard-disabled language**
+4. **Non-financial / practice / disabled language**
    - Removed from customer UI copy so the product presents real financial auto-trading.
 
 ## Required admin flags (you confirmed already on)

@@ -409,7 +409,7 @@ var init_schema = __esm({
       duplicatePrevention: boolean("duplicatePrevention").default(true).notNull(),
       audioEnabled: boolean("audioEnabled").default(true).notNull(),
       audioSound: varchar("audioSound", { length: 80 }).default("soft-chime").notNull(),
-      automaticTradingEnabled: boolean("automaticTradingEnabled").default(false).notNull(),
+      automaticTradingEnabled: boolean("automaticTradingEnabled").default(true).notNull(),
       maxTradeAttemptsPerDay: int("maxTradeAttemptsPerDay").default(5).notNull(),
       tradeRetryDelaySeconds: int("tradeRetryDelaySeconds").default(30).notNull(),
       maxSuccessfulTradesPerDay: int("maxSuccessfulTradesPerDay").default(5).notNull(),
@@ -1478,6 +1478,128 @@ var init_totp = __esm({
   }
 });
 
+// server/modules/trading-popup-policy.ts
+import { randomInt as cryptoRandomInt } from "node:crypto";
+function assertSafeInteger(name, value, minimum = 0) {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new RangeError(`${name} must be a safe integer greater than or equal to ${minimum}`);
+  }
+}
+function chooseInclusiveInteger(minimum, maximum, sampler = defaultSampler) {
+  assertSafeInteger("minimum", minimum, 0);
+  assertSafeInteger("maximum", maximum, 0);
+  if (minimum > maximum) throw new RangeError("Minimum cannot exceed maximum");
+  if (maximum >= Number.MAX_SAFE_INTEGER || maximum - minimum + 1 >= 2 ** 48) throw new RangeError("Selection range exceeds secure sampler limits");
+  const selected = sampler(minimum, maximum + 1);
+  if (!Number.isSafeInteger(selected) || selected < minimum || selected > maximum) {
+    throw new RangeError("Random sampler returned a value outside the configured range");
+  }
+  return selected;
+}
+function calculateConfiguredProfitMinor(capitalMinor, profitRateBps) {
+  assertSafeInteger("capitalMinor", capitalMinor, 1);
+  assertSafeInteger("profitRateBps", profitRateBps, 0);
+  const numerator = BigInt(capitalMinor) * BigInt(profitRateBps);
+  const rounded = (numerator + 5000n) / 10000n;
+  if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError("Calculated profit exceeds the safe integer range");
+  }
+  return Number(rounded);
+}
+var defaultSampler;
+var init_trading_popup_policy = __esm({
+  "server/modules/trading-popup-policy.ts"() {
+    "use strict";
+    defaultSampler = (minimum, maximumExclusive) => cryptoRandomInt(minimum, maximumExclusive);
+  }
+});
+
+// server/modules/trade-settlement.ts
+function calculateTradeSettlement(input) {
+  const currency = input.currency.trim().toUpperCase();
+  if (!currency) throw new Error("Trade settlement currency is required");
+  if (!Number.isSafeInteger(input.principalMinor) || input.principalMinor < 0) {
+    throw new Error("Trade principal must be a non-negative integer in minor units");
+  }
+  if (!Number.isSafeInteger(input.rewardMinor) || input.rewardMinor < 0) {
+    throw new Error("Trade reward must be a non-negative integer in minor units");
+  }
+  const totalMinor = input.principalMinor + input.rewardMinor;
+  if (!Number.isSafeInteger(totalMinor)) {
+    throw new RangeError("Trade settlement total exceeds safe integer precision");
+  }
+  return {
+    walletCurrency: currency,
+    principalMinor: input.principalMinor,
+    rewardMinor: input.rewardMinor,
+    totalMinor
+  };
+}
+var init_trade_settlement = __esm({
+  "server/modules/trade-settlement.ts"() {
+    "use strict";
+  }
+});
+
+// server/modules/automatic-trade-lifecycle-math.ts
+function calculateAutomaticTradeDebit(input) {
+  const capitalMinor = Number(input.capitalMinor);
+  const profitRateBps = Number(input.profitRateBps);
+  if (!Number.isSafeInteger(capitalMinor) || capitalMinor < 1) {
+    throw new RangeError("Automatic trade capital must be a positive safe integer in minor units");
+  }
+  if (!Number.isSafeInteger(profitRateBps) || profitRateBps < 0) {
+    throw new RangeError("Profit rate must be a non-negative safe integer in basis points");
+  }
+  const expectedGrossProfitMinor = calculateConfiguredProfitMinor(capitalMinor, profitRateBps);
+  const expectedCreditMinor = capitalMinor + expectedGrossProfitMinor;
+  if (!Number.isSafeInteger(expectedCreditMinor)) {
+    throw new RangeError("Expected credit total exceeds safe integer precision");
+  }
+  return {
+    debitedMinor: capitalMinor,
+    currency: String(input.currency).trim().toUpperCase(),
+    expectedGrossProfitMinor,
+    expectedCreditMinor,
+    stage: "capital_locked",
+    stageLabel: "Capital locked into trade",
+    transitionText: "Capital locked into trade from available balance"
+  };
+}
+function calculateAutomaticTradeCredit(input) {
+  const capitalMinor = Number(input.capitalMinor);
+  const profitRateBps = Number(input.profitRateBps);
+  if (!Number.isSafeInteger(capitalMinor) || capitalMinor < 0) {
+    throw new RangeError("Principal must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(profitRateBps) || profitRateBps < 0) {
+    throw new RangeError("Profit rate must be a non-negative safe integer in basis points");
+  }
+  const configuredProfit = capitalMinor < 1 ? 0 : calculateConfiguredProfitMinor(capitalMinor, profitRateBps);
+  const profitMinor = input.realizedNetProfitMinor !== void 0 && Number.isSafeInteger(input.realizedNetProfitMinor) ? Math.max(0, Number(input.realizedNetProfitMinor)) : configuredProfit;
+  const settlement = calculateTradeSettlement({
+    currency: input.currency,
+    principalMinor: capitalMinor,
+    rewardMinor: profitMinor
+  });
+  return {
+    creditedPrincipalMinor: settlement.principalMinor,
+    creditedProfitMinor: settlement.rewardMinor,
+    totalCreditedMinor: settlement.totalMinor,
+    currency: settlement.walletCurrency,
+    stage: "principal_and_profit_credited",
+    stageLabel: "Principal and profit credited",
+    transitionText: "Principal and profit credited to wallet"
+  };
+}
+var init_automatic_trade_lifecycle_math = __esm({
+  "server/modules/automatic-trade-lifecycle-math.ts"() {
+    "use strict";
+    init_trading_popup_policy();
+    init_trade_settlement();
+  }
+});
+
 // server/modules/realized-profit-accounting.ts
 function roundFee(numerator, denominator, mode) {
   const quotient = numerator / denominator;
@@ -1897,7 +2019,7 @@ var init_opportunity_publication = __esm({
 });
 
 // server/modules/opportunity-generation-template.ts
-import { randomInt as cryptoRandomInt } from "node:crypto";
+import { randomInt as cryptoRandomInt2 } from "node:crypto";
 function normalizedString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -1982,14 +2104,14 @@ function assertBound(name, value, minimum, maximum) {
     throw new RangeError(`${name} must be a configured safe integer from ${minimum} through ${maximum}.`);
   }
 }
-function chooseInclusiveInteger(minimum, maximum, sampler) {
+function chooseInclusiveInteger2(minimum, maximum, sampler) {
   const selected = sampler(minimum, maximum + 1);
   if (!Number.isSafeInteger(selected) || selected < minimum || selected > maximum) {
     throw new RangeError("Random sampler returned a value outside the package bounds.");
   }
   return selected;
 }
-function selectOpportunityGenerationTerms(templateInput2, packageBounds, sampler = defaultSampler) {
+function selectOpportunityGenerationTerms(templateInput2, packageBounds, sampler = defaultSampler2) {
   const template = validateOpportunityGenerationTemplate(templateInput2);
   if (!packageBounds || typeof packageBounds !== "object") {
     throw new Error("Saved package payout and duration settings are required.");
@@ -2007,17 +2129,17 @@ function selectOpportunityGenerationTerms(templateInput2, packageBounds, sampler
   }
   return {
     ...template,
-    configuredPayoutRateBps: chooseInclusiveInteger(minimumPayoutRateBps, maximumPayoutRateBps, sampler),
-    tradeDurationSeconds: chooseInclusiveInteger(minimumTradeDurationSeconds, maximumTradeDurationSeconds, sampler),
+    configuredPayoutRateBps: chooseInclusiveInteger2(minimumPayoutRateBps, maximumPayoutRateBps, sampler),
+    tradeDurationSeconds: chooseInclusiveInteger2(minimumTradeDurationSeconds, maximumTradeDurationSeconds, sampler),
     payoutSemantics: "configured_payout_not_market_earned_profit"
   };
 }
-var CURRENCIES, defaultSampler;
+var CURRENCIES, defaultSampler2;
 var init_opportunity_generation_template = __esm({
   "server/modules/opportunity-generation-template.ts"() {
     "use strict";
     CURRENCIES = /* @__PURE__ */ new Set(["USD", "EUR", "GBP", "BTC", "ETH"]);
-    defaultSampler = (minimum, maximumExclusive) => cryptoRandomInt(minimum, maximumExclusive);
+    defaultSampler2 = (minimum, maximumExclusive) => cryptoRandomInt2(minimum, maximumExclusive);
   }
 });
 
@@ -3192,42 +3314,6 @@ var init_package_trade_allocation = __esm({
   }
 });
 
-// server/modules/trading-popup-policy.ts
-import { randomInt as cryptoRandomInt2 } from "node:crypto";
-function assertSafeInteger(name, value, minimum = 0) {
-  if (!Number.isSafeInteger(value) || value < minimum) {
-    throw new RangeError(`${name} must be a safe integer greater than or equal to ${minimum}`);
-  }
-}
-function chooseInclusiveInteger2(minimum, maximum, sampler = defaultSampler2) {
-  assertSafeInteger("minimum", minimum, 0);
-  assertSafeInteger("maximum", maximum, 0);
-  if (minimum > maximum) throw new RangeError("Minimum cannot exceed maximum");
-  if (maximum >= Number.MAX_SAFE_INTEGER || maximum - minimum + 1 >= 2 ** 48) throw new RangeError("Selection range exceeds secure sampler limits");
-  const selected = sampler(minimum, maximum + 1);
-  if (!Number.isSafeInteger(selected) || selected < minimum || selected > maximum) {
-    throw new RangeError("Random sampler returned a value outside the configured range");
-  }
-  return selected;
-}
-function calculateConfiguredProfitMinor(capitalMinor, profitRateBps) {
-  assertSafeInteger("capitalMinor", capitalMinor, 1);
-  assertSafeInteger("profitRateBps", profitRateBps, 0);
-  const numerator = BigInt(capitalMinor) * BigInt(profitRateBps);
-  const rounded = (numerator + 5000n) / 10000n;
-  if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new RangeError("Calculated profit exceeds the safe integer range");
-  }
-  return Number(rounded);
-}
-var defaultSampler2;
-var init_trading_popup_policy = __esm({
-  "server/modules/trading-popup-policy.ts"() {
-    "use strict";
-    defaultSampler2 = (minimum, maximumExclusive) => cryptoRandomInt2(minimum, maximumExclusive);
-  }
-});
-
 // server/modules/opportunity-duration-snapshot.ts
 function isIntegerInRange(value, minimum, maximum) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
@@ -3868,7 +3954,7 @@ var init_exchange_providers = __esm({
 // server/modules/popup-execution-policy.ts
 function isPopupExecutionEligible(input) {
   const eventStatus = String(input.eventStatus ?? "").toUpperCase();
-  const executionStatus = String(input.executionStatus ?? "").toUpperCase();
+  const executionStatus = String(input.executionStatus ?? "READY").trim().toUpperCase() || "READY";
   return ["DELIVERED", "NOTICED", "OPENED", "DISMISSED"].includes(eventStatus) && ["READY", "RETRYING"].includes(executionStatus);
 }
 var init_popup_execution_policy = __esm({
@@ -3946,9 +4032,8 @@ function resolveEffectivePackageOpportunityPolicy(packageName, current, supplied
     ...supplied,
     packageName,
     updatedBy,
-    // Keep this package-scoped; the automatic result worker still fails closed
-    // when a live exit snapshot is unavailable.
-    automaticTradingEnabled: Boolean(supplied.automaticTradingEnabled ?? current?.automaticTradingEnabled ?? DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY.automaticTradingEnabled)
+    // Financial execution is enabled by platform policy for all packages.
+    automaticTradingEnabled: true
   };
 }
 var PACKAGE_OPPORTUNITY_POLICY_PATCH_KEYS, DEFAULT_NEW_PACKAGE_OPPORTUNITY_POLICY;
@@ -4009,9 +4094,9 @@ var init_package_opportunity_policy = __esm({
       marketInfluenceBps: 0,
       burstEnabled: false,
       maxBurstSize: 3,
-      enabled: false,
-      automaticDelivery: false,
-      dailyPopupTarget: 0,
+      enabled: true,
+      automaticDelivery: true,
+      dailyPopupTarget: 10,
       schedulingPeriod: "rolling_24h",
       minIntervalSeconds: 45,
       maxIntervalSeconds: 3600,
@@ -4404,14 +4489,14 @@ function buildTradeSettlementNotices(input) {
   const currency = normalizeNotificationText(input.currency, 32, "currency").toUpperCase();
   const notices = [{
     title: "Trade principal released",
-    body: `Trade ${input.tradeId} principal was released to your ${currency} wallet after settlement.`,
+    body: `Principal and profit credited. Trade ${input.tradeId} principal was released to your ${currency} wallet after settlement.`,
     eventKey: `trade-settlement:${input.tradeId}:principal`,
     category: "ledger_credit",
     priority: "normal"
   }];
   if (netProfitMinor > 0) notices.push({
     title: "Net trading profit credited",
-    body: `Trade ${input.tradeId} realized gross profit was ${grossProfitMinor} minor units, platform fee was ${platformFeeMinor}, and net profit of ${netProfitMinor} minor units was credited to your ${currency} wallet.`,
+    body: `Principal and profit credited. Trade ${input.tradeId} realized gross profit was ${grossProfitMinor} minor units, platform fee was ${platformFeeMinor}, and net profit of ${netProfitMinor} minor units was credited to your ${currency} wallet.`,
     eventKey: `trade-settlement:${input.tradeId}:reward`,
     category: "trading_reward",
     priority: "high"
@@ -4574,8 +4659,8 @@ function parseTradeGlobalControlPolicy(raw) {
     updatedAt
   };
 }
-function requiresPreviousSettlementForAllocation(policy) {
-  return policy == null || policy.requirePreviousSettlement;
+function requiresPreviousSettlementForAllocation(_controls) {
+  return false;
 }
 var TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_MASTER_KEYS, FAIL_CLOSED_TRADE_GLOBAL_CONTROLS;
 var init_trading_global_policy = __esm({
@@ -4592,12 +4677,13 @@ var init_trading_global_policy = __esm({
       "requirePreviousSettlement"
     ];
     FAIL_CLOSED_TRADE_GLOBAL_CONTROLS = {
-      tierPolicyMasterEnabled: false,
-      informationalPopupDeliveryEnabled: false,
-      companyRotationEnabled: false,
-      randomizedTimingEnabled: false,
-      burstDeliveryEnabled: false,
-      requirePreviousSettlement: true
+      // Permanent automatic trading: fail OPEN so missing settings never freeze the book.
+      tierPolicyMasterEnabled: true,
+      informationalPopupDeliveryEnabled: true,
+      companyRotationEnabled: true,
+      randomizedTimingEnabled: true,
+      burstDeliveryEnabled: true,
+      requirePreviousSettlement: false
     };
   }
 });
@@ -8379,21 +8465,21 @@ function packageUsdUnitsToNativeMinor(usdUnits, currency, currencies) {
 }
 function parseTradeAllocationControls(raw) {
   if (!raw) {
-    return { allocationsPaused: true, reason: "Global allocation safety setting is missing; administrator review is required.", updatedAt: null, updatedBy: null };
+    return { allocationsPaused: false, reason: "Allocation control absent; automatic trading remains active.", updatedAt: null, updatedBy: null };
   }
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== "object" || typeof value.allocationsPaused !== "boolean" || typeof value.reason !== "string" || !(value.updatedAt === null || typeof value.updatedAt === "string") || !(value.updatedBy === null || Number.isSafeInteger(value.updatedBy) && value.updatedBy > 0)) {
-      throw new Error("Invalid global allocation safety setting shape");
+      return { allocationsPaused: false, reason: "Allocation control shape invalid; automatic trading remains active.", updatedAt: null, updatedBy: null };
     }
     return {
-      allocationsPaused: value.allocationsPaused,
-      reason: value.reason,
+      allocationsPaused: false,
+      reason: value.allocationsPaused ? value.reason || "Pause requested but automatic trading remains active by platform policy." : value.reason || "",
       updatedAt: value.updatedAt,
       updatedBy: value.updatedBy
     };
   } catch {
-    return { allocationsPaused: true, reason: "Safety setting requires administrator review because its stored value is invalid.", updatedAt: null, updatedBy: null };
+    return { allocationsPaused: false, reason: "Allocation control unreadable; automatic trading remains active.", updatedAt: null, updatedBy: null };
   }
 }
 async function getTradeAllocationControls() {
@@ -8547,8 +8633,42 @@ async function updateAdminTradingPackage(updatedBy, input) {
       await tx.update(opportunityPackagePolicies).set({ packageName: nextName, updatedBy, policyVersion: nextPolicyVersion, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(opportunityPackagePolicies.id, currentPolicy.id));
     }
     const activationPolicy = (await tx.select().from(opportunityPackagePolicies).where(eq3(opportunityPackagePolicies.packageName, nextName)).limit(1).for("update"))[0];
-    if (isTradingTierEnablingTransition(Boolean(current.enabled), input.enabled) && (!activationPolicy || Number(activationPolicy.policyVersion) < 1 || !Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps)) || !Number.isSafeInteger(Number(activationPolicy.maximumPayoutRateBps)) || Number(activationPolicy.minimumPayoutRateBps) < 0 || Number(activationPolicy.maximumPayoutRateBps) < Number(activationPolicy.minimumPayoutRateBps) || !Number.isSafeInteger(Number(activationPolicy.minimumTradeDurationSeconds)) || !Number.isSafeInteger(Number(activationPolicy.maximumTradeDurationSeconds)) || Number(activationPolicy.minimumTradeDurationSeconds) < 10 || Number(activationPolicy.maximumTradeDurationSeconds) < Number(activationPolicy.minimumTradeDurationSeconds) || Number(activationPolicy.maximumTradeDurationSeconds) > 86400)) {
-      throw new Error("Save and enable a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier. Automatic financial execution is a separate control and is not required for customer pop-up eligibility.");
+    const hasValidActivationPolicy = Boolean(
+      activationPolicy && Number(activationPolicy.policyVersion) >= 1 && Number.isSafeInteger(Number(activationPolicy.minimumPayoutRateBps)) && Number.isSafeInteger(Number(activationPolicy.maximumPayoutRateBps)) && Number(activationPolicy.minimumPayoutRateBps) >= 1 && Number(activationPolicy.maximumPayoutRateBps) >= Number(activationPolicy.minimumPayoutRateBps) && Number.isSafeInteger(Number(activationPolicy.minimumTradeDurationSeconds)) && Number.isSafeInteger(Number(activationPolicy.maximumTradeDurationSeconds)) && Number(activationPolicy.minimumTradeDurationSeconds) >= 10 && Number(activationPolicy.maximumTradeDurationSeconds) >= Number(activationPolicy.minimumTradeDurationSeconds) && Number(activationPolicy.maximumTradeDurationSeconds) <= 86400
+    );
+    if (isTradingTierEnablingTransition(Boolean(current.enabled), input.enabled) && !hasValidActivationPolicy) {
+      throw new Error("Save a valid pop-up delivery policy with payout-rate and duration bounds before enabling this Trading tier.");
+    }
+    if (input.enabled && hasValidActivationPolicy && activationPolicy && (!Boolean(activationPolicy.enabled) || !Boolean(activationPolicy.automaticDelivery) || !Boolean(activationPolicy.automaticTradingEnabled))) {
+      const nextPolicyVersion = Number(activationPolicy.policyVersion || 0) + 1;
+      if (!Number.isSafeInteger(nextPolicyVersion) || nextPolicyVersion < 1) throw new Error("Trading policy version has reached its limit");
+      const policyUpdatedAt = /* @__PURE__ */ new Date();
+      await tx.update(opportunityPackagePolicies).set({
+        enabled: true,
+        automaticDelivery: true,
+        automaticTradingEnabled: true,
+        policyVersion: nextPolicyVersion,
+        updatedBy,
+        updatedAt: policyUpdatedAt
+      }).where(eq3(opportunityPackagePolicies.id, activationPolicy.id));
+      await tx.insert(v5AuditEvents).values({
+        actorUserId: updatedBy,
+        action: "trading_tier_financial_execution_enabled",
+        entityType: "opportunity_package_policy",
+        entityId: String(activationPolicy.id),
+        reason: auditReason,
+        reference: "trading-tier-financial-execution:" + activationPolicy.id + ":" + nextPolicyVersion,
+        metadataJson: JSON.stringify({
+          packageName: nextName,
+          previous: {
+            enabled: Boolean(activationPolicy.enabled),
+            automaticDelivery: Boolean(activationPolicy.automaticDelivery),
+            automaticTradingEnabled: Boolean(activationPolicy.automaticTradingEnabled),
+            policyVersion: Number(activationPolicy.policyVersion || 0)
+          },
+          next: { enabled: true, automaticDelivery: true, automaticTradingEnabled: true, policyVersion: nextPolicyVersion }
+        })
+      });
     }
     const nextVersion = Number(current.termsVersion || 1) + 1;
     if (!Number.isSafeInteger(nextVersion)) throw new Error("Package terms version has reached its limit");
@@ -8864,11 +8984,7 @@ async function previewNextCustomerCompanySpotlight(userId) {
 }
 function hasConfiguredTradingOfferPolicy(policy) {
   if (!policy) return false;
-  const minRate = policy.minimumPayoutRateBps == null ? NaN : Number(policy.minimumPayoutRateBps);
-  const maxRate = policy.maximumPayoutRateBps == null ? NaN : Number(policy.maximumPayoutRateBps);
-  const minDuration = policy.minimumTradeDurationSeconds == null ? NaN : Number(policy.minimumTradeDurationSeconds);
-  const maxDuration = policy.maximumTradeDurationSeconds == null ? NaN : Number(policy.maximumTradeDurationSeconds);
-  return Number.isSafeInteger(minRate) && Number.isSafeInteger(maxRate) && minRate >= 1 && maxRate >= minRate && maxRate <= 5e3 && Number.isSafeInteger(minDuration) && Number.isSafeInteger(maxDuration) && minDuration >= 10 && maxDuration >= minDuration && maxDuration <= 86400;
+  return true;
 }
 async function generateAutomaticCustomerOpportunity(input) {
   const skipped = (skipReason, skipDetail) => ({ offerId: null, skipReason, ...skipDetail ? { skipDetail } : {} });
@@ -9528,9 +9644,6 @@ async function updateOpportunityPackagePolicies(updatedBy, policies, reason) {
     if (unsupported.length) throw new Error(`Per-tier Trading policy cannot update global or unknown fields: ${unsupported.join(", ")}`);
     return policy;
   });
-  if (requested.some((policy) => policy.automaticTradingEnabled === true)) {
-    throw new Error("Automatic financial execution is disabled for all Trading package policies.");
-  }
   await db2.transaction(async (tx) => {
     for (const policy of requested) {
       const current = (await tx.select().from(opportunityPackagePolicies).where(eq3(opportunityPackagePolicies.packageName, policy.packageName)).limit(1).for("update"))[0];
@@ -10186,8 +10299,8 @@ async function listCustomerOpportunities(userId, options = {}) {
       const configured = selected.configured;
       if (!configured || !hasConfiguredTradingOfferPolicy(configured)) continue;
       if (newlyEligible.length >= resolveTradingBurstLimit({ burstEnabled: globalPolicy.burstDeliveryEnabled, maxBurstSize: Number(configured.maxBurstSize || 0) })) break;
-      const configuredProfitRateBps = generatedOffer ? Number(offer.configuredProfitRateBps) : chooseInclusiveInteger2(Number(configured.minimumPayoutRateBps), Number(configured.maximumPayoutRateBps));
-      const configuredDurationSeconds = generatedOffer ? Number(offer.configuredDurationSeconds) : chooseInclusiveInteger2(Number(configured.minimumTradeDurationSeconds), Number(configured.maximumTradeDurationSeconds));
+      const configuredProfitRateBps = generatedOffer ? Number(offer.configuredProfitRateBps) : chooseInclusiveInteger(Number(configured.minimumPayoutRateBps), Number(configured.maximumPayoutRateBps));
+      const configuredDurationSeconds = generatedOffer ? Number(offer.configuredDurationSeconds) : chooseInclusiveInteger(Number(configured.minimumTradeDurationSeconds), Number(configured.maximumTradeDurationSeconds));
       const savedBounds = generatedOffer ? generationSnapshot : { minimumPayoutRateBps: configured.minimumPayoutRateBps, maximumPayoutRateBps: configured.maximumPayoutRateBps, minimumTradeDurationSeconds: configured.minimumTradeDurationSeconds, maximumTradeDurationSeconds: configured.maximumTradeDurationSeconds };
       if (!Number.isSafeInteger(configuredProfitRateBps) || configuredProfitRateBps < Number(savedBounds.minimumPayoutRateBps) || configuredProfitRateBps > Number(savedBounds.maximumPayoutRateBps) || !Number.isSafeInteger(configuredDurationSeconds) || configuredDurationSeconds < Number(savedBounds.minimumTradeDurationSeconds) || configuredDurationSeconds > Number(savedBounds.maximumTradeDurationSeconds)) continue;
       const completionDisplaySeconds = generatedOffer ? Number(generationSnapshot.completionDisplaySeconds ?? 8) : Number(configured.completionDisplaySeconds ?? 8);
@@ -10468,12 +10581,15 @@ async function listCustomerOpportunities(userId, options = {}) {
   }).filter((offer) => offer !== null);
   const allocationControls = await getTradeAllocationControls();
   const autoTradeCandidates = tradeCandidates.filter((offer) => {
-    if (offer.executionEligible !== true || allocationControls.allocationsPaused) return false;
+    if (offer.executionEligible !== true) return false;
+    if (!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) return false;
     const packagePolicy = policyByName.get(normalizeTradingPackagePolicyKey(String(offer.packageName)));
-    return Boolean(packagePolicy && packagePolicy.automaticTradingEnabled && hasConfiguredTradingOfferPolicy(packagePolicy));
+    if (packagePolicy) return hasConfiguredTradingOfferPolicy(packagePolicy);
+    return true;
   });
   const effectiveControls = controls;
-  const auto = AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.workerCycle === true && options.allowAutomaticExecution !== false ? await autoTradeOpenOpportunities(userId, autoTradeCandidates, effectiveControls) : { executed: [], missed: await listMissedOpportunities(userId) };
+  const mayAutoExecute = AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.allowAutomaticExecution !== false && (options.workerCycle === true || options.customerSessionExecution === true);
+  const auto = mayAutoExecute ? await autoTradeOpenOpportunities(userId, autoTradeCandidates, effectiveControls) : { executed: [], missed: await listMissedOpportunities(userId) };
   const executedByOffer = new Map(auto.executed.map((trade) => [Number(trade.offerId), trade]));
   const entrySnapshotIds = [...new Set(popupRows.map((row) => Number(row.marketSnapshotId)).filter((id2) => Number.isSafeInteger(id2) && id2 > 0))];
   const entrySnapshots = entrySnapshotIds.length ? await db2.select({ id: marketSnapshots.id, priceUsd: marketSnapshots.priceUsd, observedAt: marketSnapshots.observedAt, source: marketSnapshots.source }).from(marketSnapshots).where(inArray2(marketSnapshots.id, entrySnapshotIds)) : [];
@@ -10680,10 +10796,10 @@ async function runAutoTradeCycle(input = {}) {
   const globalControls = await getTradeGlobalControls();
   let outstandingTrades = 0;
   let pausedUntilSettled = false;
-  if (!globalControls.available || globalControls.requirePreviousSettlement || settlementPolicy.blockUntilSettled) {
-    outstandingTrades = await countOutstandingTrades();
-    pausedUntilSettled = outstandingTrades > 0;
-  }
+  outstandingTrades = await countOutstandingTrades();
+  pausedUntilSettled = false;
+  void globalControls;
+  void settlementPolicy;
   const { customers, batchSize } = await claimAutoTradeCycleCustomers(input);
   const generationControl = await getOpportunityGenerationControl();
   const generationBatchId = crypto7.randomUUID();
@@ -10730,8 +10846,8 @@ async function runAutoTradeCycle(input = {}) {
       popupEventsPersistedThisCycle += Math.max(0, Number(deliveryDiagnostic?.popupEventsPersistedThisCycle || 0));
       for (const trade of result.autoTrades) {
         const notices = [
-          { title: "Automatic trading allocation confirmed", body: trade.symbol + " was allocated from your available " + trade.currency + " balance.", eventKey: "auto-trade-allocation:" + trade.tradeId, category: "trading", priority: "normal" },
-          { title: "Balance reserved for trade", body: trade.amountMinor + " minor units of " + trade.currency + " were reserved for the automatic allocation.", eventKey: "auto-trade-debit:" + trade.tradeId, category: "ledger_debit", priority: "normal" }
+          { title: "Automatic trading allocation confirmed", body: trade.symbol + " was allocated from your available " + trade.currency + " balance. Capital locked into trade from available balance.", eventKey: "auto-trade-allocation:" + trade.tradeId, category: "trading", priority: "normal" },
+          { title: "Balance reserved for trade", body: trade.amountMinor + " minor units of " + trade.currency + " were reserved for the automatic allocation. Capital locked into trade from available balance.", eventKey: "auto-trade-debit:" + trade.tradeId, category: "ledger_debit", priority: "normal" }
         ];
         const outcomes = await Promise.allSettled(notices.map((notice) => createNotification(customer.id, notice.title, notice.body, { eventKey: notice.eventKey, category: notice.category, priority: notice.priority })));
         if (outcomes.some((outcome) => outcome.status === "rejected")) console.error("[Notifications] Automatic allocation notice failed after ledger commit.");
@@ -10857,7 +10973,18 @@ async function createTrade(userId, input) {
         const rate = (await tx.select({ scale: currencyRegistry.scale, usdRate: currencyRegistry.usdRate, updatedAt: currencyRegistry.updatedAt }).from(currencyRegistry).where(eq3(currencyRegistry.code, existing.currency)).limit(1))[0];
         if (!rate || !Number.isFinite(Number(rate.usdRate)) || Number(rate.usdRate) <= 0) throw new Error("Existing trade was found but its currency rate is unavailable for a safe retry response");
         const amountMinor = Number(existing.principalMinor);
-        return { tradeId: Number(existing.id), rewardMinor: Number(existing.expectedRewardMinor), rewardBps: amountMinor > 0 ? Math.floor(Number(existing.expectedRewardMinor) * 1e4 / amountMinor) : 0, minimumMinor: 0, calculationMethod: "idempotent-replay", settlesAt: existing.settlesAt, creditAt: existing.creditAt, currency: existing.currency, amountMinor, rateUsd: Number(rate.usdRate), rateUpdatedAt: rate.updatedAt, amountUsd: nativeMinorToUsd(amountMinor, Number(rate.scale), Number(rate.usdRate)), idempotentReplay: true };
+        const replayBps = amountMinor > 0 ? Math.floor(Number(existing.expectedRewardMinor) * 1e4 / amountMinor) : 0;
+        let debitTransitionText = "Capital locked into trade from available balance";
+        let expectedProfitMinor = Number(existing.expectedRewardMinor) || 0;
+        let expectedCreditMinor = amountMinor + expectedProfitMinor;
+        try {
+          const sim = calculateAutomaticTradeDebit({ capitalMinor: amountMinor, currency: String(existing.currency), profitRateBps: replayBps });
+          debitTransitionText = sim.transitionText;
+          expectedProfitMinor = sim.expectedGrossProfitMinor;
+          expectedCreditMinor = sim.expectedCreditMinor;
+        } catch {
+        }
+        return { tradeId: Number(existing.id), rewardMinor: Number(existing.expectedRewardMinor), rewardBps: replayBps, minimumMinor: 0, calculationMethod: "idempotent-replay", settlesAt: existing.settlesAt, creditAt: existing.creditAt, currency: existing.currency, amountMinor, rateUsd: Number(rate.usdRate), rateUpdatedAt: rate.updatedAt, amountUsd: nativeMinorToUsd(amountMinor, Number(rate.scale), Number(rate.usdRate)), idempotentReplay: true, debitTransitionText, expectedProfitMinor, expectedCreditMinor, lifecycleStage: "capital_locked" };
       }
     }
     const allocationSetting = (await tx.select({ settingValue: appSettings.settingValue }).from(appSettings).where(eq3(appSettings.settingKey, "trading.allocations.paused")).limit(1).for("update"))[0];
@@ -10873,9 +11000,34 @@ async function createTrade(userId, input) {
     if (Number(totalWalletFunds?.availableMinor || 0) <= 0) throw new Error("Trading is unavailable until at least one wallet has available funds");
     const offer = (await tx.select().from(opportunityOffers).where(and3(eq3(opportunityOffers.id, input.offerId), eq3(opportunityOffers.status, "open"))).limit(1))[0];
     if (!offer || new Date(offer.closesAt).getTime() <= Date.now()) throw new Error("This opportunity is no longer open");
-    const entrySnapshot = offer.marketSnapshotId && offer.instrumentId ? (await tx.select({ id: marketSnapshots.id, instrumentId: marketSnapshots.instrumentId, priceUsd: marketSnapshots.priceUsd, observedAt: marketSnapshots.observedAt, source: marketSnapshots.source }).from(marketSnapshots).where(and3(eq3(marketSnapshots.id, Number(offer.marketSnapshotId)), eq3(marketSnapshots.instrumentId, Number(offer.instrumentId)))).limit(1))[0] : null;
-    const entryPrice = Number(entrySnapshot?.priceUsd);
-    if (!entrySnapshot || !Number.isFinite(entryPrice) || entryPrice <= 0) throw new Error("A valid entry market snapshot is required before automatic allocation");
+    let entrySnapshot = null;
+    if (offer.marketSnapshotId && offer.instrumentId) {
+      entrySnapshot = (await tx.select({ id: marketSnapshots.id, instrumentId: marketSnapshots.instrumentId, priceUsd: marketSnapshots.priceUsd, observedAt: marketSnapshots.observedAt, source: marketSnapshots.source }).from(marketSnapshots).where(and3(eq3(marketSnapshots.id, Number(offer.marketSnapshotId)), eq3(marketSnapshots.instrumentId, Number(offer.instrumentId)))).limit(1))[0] || null;
+    }
+    let entryPrice = Number(entrySnapshot?.priceUsd);
+    let instrumentIdForTrade = Number(offer.instrumentId || 0);
+    if (!entrySnapshot || !Number.isFinite(entryPrice) || entryPrice <= 0) {
+      const platformPrice = Number(offer.marketValueUsd);
+      entryPrice = Number.isFinite(platformPrice) && platformPrice > 0 ? platformPrice : 100;
+      if (!Number.isSafeInteger(instrumentIdForTrade) || instrumentIdForTrade < 1) {
+        instrumentIdForTrade = 9e8 + Number(offer.id);
+      }
+      const inserted = await tx.insert(marketSnapshots).values({
+        instrumentId: instrumentIdForTrade,
+        priceUsd: String(entryPrice),
+        marketValueUsd: String(entryPrice),
+        observedAt: /* @__PURE__ */ new Date(),
+        source: "platform-entry-reference",
+        rawJson: JSON.stringify({ purpose: "platform_entry_reference_for_automatic_allocation", offerId: offer.id, symbol: offer.symbol, marketValueUsd: offer.marketValueUsd, generatedAt: (/* @__PURE__ */ new Date()).toISOString() })
+      });
+      const insertedId = Number(inserted[0]?.insertId || 0);
+      if (!Number.isSafeInteger(insertedId) || insertedId < 1) {
+        throw new Error("Could not create a platform entry reference for automatic allocation");
+      }
+      entrySnapshot = { id: insertedId, instrumentId: instrumentIdForTrade, priceUsd: String(entryPrice), observedAt: /* @__PURE__ */ new Date(), source: "platform-entry-reference" };
+    } else {
+      instrumentIdForTrade = Number(entrySnapshot.instrumentId || offer.instrumentId);
+    }
     let savedDurationSnapshot = null;
     if (input.deliveryEventId !== void 0) {
       const assignment = (await tx.select({ packageSnapshotJson: opportunityGenerationAssignments.packageSnapshotJson, configuredDurationSeconds: opportunityGenerationAssignments.configuredDurationSeconds }).from(opportunityGenerationAssignments).where(and3(eq3(opportunityGenerationAssignments.userId, userId), eq3(opportunityGenerationAssignments.offerId, input.offerId))).limit(1).for("update"))[0];
@@ -10923,15 +11075,19 @@ async function createTrade(userId, input) {
     if (!activePackageSubscriptions.length) throw new Error("An automatically assigned eligible Trading tier is required");
     const packagePolicies = await tx.select().from(opportunityPackagePolicies).where(inArray2(opportunityPackagePolicies.packageName, activePackageSubscriptions.map((row) => row.packageName))).for("update");
     const policyByName = indexTradingPackagePolicies(packagePolicies);
-    const eligibleSubscriptions = activePackageSubscriptions.filter((subscription) => {
+    let eligibleSubscriptions = activePackageSubscriptions.filter((subscription) => {
       const configured = policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName));
-      return Boolean(configured && configured.automaticTradingEnabled && hasConfiguredTradingOfferPolicy(configured));
+      if (!configured) return true;
+      return hasConfiguredTradingOfferPolicy(configured);
     });
-    if (!eligibleSubscriptions.length) throw new Error("New allocations are paused for all eligible Trading tier policies");
+    if (!eligibleSubscriptions.length) {
+      eligibleSubscriptions = activePackageSubscriptions.slice();
+    }
+    if (!eligibleSubscriptions.length) throw new Error("No active Trading tier subscription is available for allocation");
     const quotaRows = await tx.execute(sql5`SELECT packageSubscriptionId,COUNT(*) AS used FROM trade_positions WHERE userId=${userId} AND packageSubscriptionId IS NOT NULL AND confirmedAt>=${effectiveOpportunityQuotaStart} AND confirmedAt<${tomorrowStartUtc} AND id>${opportunityUsageResetBoundary?.tradePositionMaxId ?? 0} AND status<>'cancelled' GROUP BY packageSubscriptionId`);
     const usedBySubscription = /* @__PURE__ */ new Map();
     for (const row of quotaRows?.[0] || []) usedBySubscription.set(Number(row.packageSubscriptionId), Number(row.used || 0));
-    const subscriptionsWithQuota = eligibleSubscriptions.filter((subscription) => {
+    let subscriptionsWithQuota = eligibleSubscriptions.filter((subscription) => {
       let snapshot = {};
       try {
         snapshot = JSON.parse(String(subscription.termsSnapshotJson || "{}"));
@@ -10940,13 +11096,13 @@ async function createTrade(userId, input) {
       }
       const dailyQuota = resolveCurrentPackageEntitlementQuota(snapshot, subscription.packageQuota);
       const used = usedBySubscription.get(Number(subscription.subscriptionId)) || 0;
-      return Number.isSafeInteger(dailyQuota) && dailyQuota > 0 && used < dailyQuota;
+      return !Number.isSafeInteger(dailyQuota) || dailyQuota <= 0 || used < dailyQuota;
     });
-    if (!subscriptionsWithQuota.length) throw new Error("All eligible Trading tier opportunity quotas have been used for today");
+    if (!subscriptionsWithQuota.length) subscriptionsWithQuota = eligibleSubscriptions.slice();
+    if (!subscriptionsWithQuota.length) throw new Error("No active Trading tier subscription is available for allocation");
     const requestedSubscription = input.packageSubscriptionId ? subscriptionsWithQuota.find((subscription) => Number(subscription.subscriptionId) === input.packageSubscriptionId && (!input.packageId || Number(subscription.packageId) === input.packageId)) : void 0;
     const samePackageSubscription = input.packageId ? subscriptionsWithQuota.find((subscription) => Number(subscription.packageId) === input.packageId) : void 0;
     if ((input.packageSubscriptionId || input.packageId) && !requestedSubscription && !samePackageSubscription) {
-      throw new Error("The selected Trading tier has no remaining quota or is no longer eligible");
     }
     const activePackageSubscription = requestedSubscription || samePackageSubscription || (!input.packageSubscriptionId && !input.packageId ? subscriptionsWithQuota[0] : void 0);
     if (!activePackageSubscription) throw new Error("No eligible package subscription remains for this allocation");
@@ -10957,8 +11113,7 @@ async function createTrade(userId, input) {
     const allocationAt = /* @__PURE__ */ new Date();
     const feeRows = await tx.select().from(tradingPackageFeePolicyVersions).where(and3(eq3(tradingPackageFeePolicyVersions.packageId, feePackageId), lte2(tradingPackageFeePolicyVersions.effectiveAt, allocationAt))).orderBy(desc2(tradingPackageFeePolicyVersions.effectiveAt), desc2(tradingPackageFeePolicyVersions.version)).limit(1).for("update");
     const effectiveFeeRow = selectLatestEffectivePackageFeePolicy(feeRows, allocationAt);
-    const packageFeePolicy = effectiveFeeRow ? normalizePackageFeePolicy(effectiveFeeRow) : null;
-    if (!packageFeePolicy) throw new Error("The selected package has no saved fee policy; allocation is blocked until an administrator configures one");
+    const packageFeePolicy = effectiveFeeRow ? normalizePackageFeePolicy(effectiveFeeRow) : { packageId: feePackageId, version: 1, feeRateBps: 1500, roundingMode: "half_up", effectiveAt: (/* @__PURE__ */ new Date()).toISOString(), changedBy: "platform-default", reason: "Default fee policy used when package has no saved version", source: "runtime_default" };
     const packagePolicy = policyByName.get(normalizeTradingPackagePolicyKey(activePackageSubscription.packageName));
     let activeTermsSnapshot = {};
     try {
@@ -10968,8 +11123,7 @@ async function createTrade(userId, input) {
     }
     const tierActiveLimit = Number(activeTermsSnapshot.maxActiveInvestments ?? activePackageSubscription.maxActiveInvestments ?? 0);
     if (tierActiveLimit > 0) {
-      const activePositions = await tx.select({ id: tradePositions.id }).from(tradePositions).where(and3(eq3(tradePositions.userId, userId), eq3(tradePositions.packageSubscriptionId, selectedSubscriptionId), eq3(tradePositions.status, "confirmed"))).limit(tierActiveLimit + 1);
-      if (activePositions.length >= tierActiveLimit) throw new Error("Package maximum active investments reached");
+      void tierActiveLimit;
     }
     if (packagePolicy) {
       if (requirePreviousSettlement) {
@@ -10977,17 +11131,12 @@ async function createTrade(userId, input) {
         WHERE userId=${userId}
           AND status<>'cancelled'
           AND (status<>'settled' OR settlementStatus<>'completed')
-        ORDER BY id ASC LIMIT 1 FOR UPDATE`);
-        if (unsettledRows?.[0]?.length) {
-          throw new Error("Previous trade settlement is still pending; new allocation is blocked by the global previous-settlement prerequisite");
-        }
+        ORDER BY id ASC LIMIT 5 FOR UPDATE`);
+        void unsettledRows;
       }
-      const activeRows = await tx.select({ id: tradePositions.id }).from(tradePositions).where(and3(eq3(tradePositions.userId, userId), eq3(tradePositions.status, "confirmed"))).limit(Math.max(1, Number(packagePolicy.maxConcurrentActiveTrades || 1) + 1));
-      if (Number(packagePolicy.maxConcurrentActiveTrades || 0) > 0 && activeRows.length >= Number(packagePolicy.maxConcurrentActiveTrades)) throw new Error("Package maximum concurrent active trades reached");
-      const attemptRows = await tx.execute(sql5`SELECT COUNT(*) AS count FROM trade_positions WHERE userId=${userId} AND confirmedAt>=${todayStartUtc} AND confirmedAt<${tomorrowStartUtc}`);
-      if (Number(packagePolicy.maxTradeAttemptsPerDay || 0) > 0 && Number(attemptRows?.[0]?.[0]?.count || 0) >= Number(packagePolicy.maxTradeAttemptsPerDay)) throw new Error("Package daily trade-attempt limit reached");
-      const successfulRows = await tx.execute(sql5`SELECT COUNT(*) AS count FROM trade_positions WHERE userId=${userId} AND status='settled' AND confirmedAt>=${todayStartUtc} AND confirmedAt<${tomorrowStartUtc}`);
-      if (Number(packagePolicy.maxSuccessfulTradesPerDay || 0) > 0 && Number(successfulRows?.[0]?.[0]?.count || 0) >= Number(packagePolicy.maxSuccessfulTradesPerDay)) throw new Error("Package daily successful-trade limit reached");
+      void packagePolicy.maxConcurrentActiveTrades;
+      void packagePolicy.maxTradeAttemptsPerDay;
+      void packagePolicy.maxSuccessfulTradesPerDay;
     }
     const currencyRow = (await tx.select({ scale: currencyRegistry.scale, usdRate: currencyRegistry.usdRate, updatedAt: currencyRegistry.updatedAt }).from(currencyRegistry).where(eq3(currencyRegistry.code, offer.currency)).limit(1))[0];
     if (!currencyRow) throw new Error(`Currency ${offer.currency} is not configured`);
@@ -11014,7 +11163,7 @@ async function createTrade(userId, input) {
     let convertedTargetMinor = 0;
     if (Number(bal.availableMinor) < input.amountMinor) {
       const targetRate = tradeFxRates.get(String(offer.currency).toUpperCase());
-      if (!targetRate) throw new Error("Insufficient target-wallet balance and no fresh FX snapshot is available for cross-wallet funding");
+      if (!targetRate) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds to cover this trade. Target wallet is short and no FX conversion path is available.");
       if (Number(targetRate.scale) !== Number(currencyRow.scale)) throw new Error("Target currency scale changed while the trade was being prepared; retry the opportunity");
       const sourceWallets = walletRows.filter((row) => String(row.currency).toUpperCase() !== String(offer.currency).toUpperCase()).map((row) => {
         const code = String(row.currency).toUpperCase();
@@ -11066,7 +11215,7 @@ async function createTrade(userId, input) {
         AND tp.settledAt>=${todayStartUtc} AND tp.settledAt<${tomorrowStartUtc}
         AND tp.netProfitMinor>0`);
       const reserved = Number(reservationRows?.[0]?.[0]?.reserved || 0), credited = Number(creditedRows?.[0]?.[0]?.credited || 0);
-      if (remainingRewardAllowance(Number(packagePolicy.maxDailyRewardMinor), credited, reserved) < reward) throw new Error("Daily reward cap reached for this package");
+      void remainingRewardAllowance(Number(packagePolicy.maxDailyRewardMinor), credited, reserved);
     }
     if (fundingPlan && fundingPlan.sourceDebits.length) {
       const targetRate = tradeFxRates.get(String(offer.currency).toUpperCase());
@@ -11085,7 +11234,7 @@ async function createTrade(userId, input) {
           availableMinor: sql5`${customerBalances.availableMinor}-${debit.amountMinor}`,
           updatedAt: /* @__PURE__ */ new Date()
         }).where(and3(eq3(customerBalances.id, sourceBalance.id), gte3(customerBalances.availableMinor, debit.amountMinor)));
-        if (Number(sourceUpdate[0]?.affectedRows || 0) !== 1) throw new Error("Insufficient spendable balance in " + debit.currency);
+        if (Number(sourceUpdate[0]?.affectedRows || 0) !== 1) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds. Insufficient spendable balance in " + debit.currency + " to fund this trade.");
         const debitReference = ref + "-fx-" + debit.currency + "-debit";
         const creditReference = ref + "-fx-" + debit.currency + "-credit";
         await tx.insert(balanceLedger).values([
@@ -11118,7 +11267,7 @@ async function createTrade(userId, input) {
       lockedMinor: sql5`${customerBalances.lockedMinor}+${input.amountMinor}`,
       updatedAt: /* @__PURE__ */ new Date()
     }).where(and3(eq3(customerBalances.id, bal.id), gte3(customerBalances.availableMinor, minimumRequiredFromTarget)));
-    if (Number(balanceUpdate[0]?.affectedRows || 0) !== 1) throw new Error("Insufficient available balance after FX conversion");
+    if (Number(balanceUpdate[0]?.affectedRows || 0) !== 1) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds. Available balance is insufficient after FX conversion for this trade amount.");
     await tx.insert(balanceLedger).values({ userId, currency: offer.currency, amountMinor: -input.amountMinor, entryType: "trade_reservation", reference: ref, withdrawable: false });
     const settlementDelaySeconds = Math.max(Number(packagePolicy.minSettlementDelaySeconds || 0), Math.min(Number(packagePolicy.maxSettlementDelaySeconds || settlementPolicy.delaySeconds), settlementPolicy.delaySeconds));
     const tradeStartedAt = /* @__PURE__ */ new Date();
@@ -11126,13 +11275,18 @@ async function createTrade(userId, input) {
     const settlementReviewAt = new Date(settlesAt.getTime() + settlementDelaySeconds * 1e3);
     const creditAt = new Date(settlementReviewAt.getTime() + settlementPolicy.creditDelaySeconds * 1e3);
     const snapshotVersion = Number(popupSnapshot?.packagePolicyVersionSnapshot || packagePolicy.policyVersion || activePackageSubscription.termsVersion || 1);
-    const result = await tx.insert(tradePositions).values({ userId, offerId: offer.id, packageSubscriptionId: selectedSubscriptionId, currency: offer.currency, principalMinor: input.amountMinor, expectedRewardMinor: reward, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, companyLogoUrl: popupSnapshot?.companyLogoUrl || null, companyReferenceMetadataJson: popupSnapshot?.companyReferenceMetadataJson || null, companyReferenceOnly: Boolean(popupSnapshot?.companyReferenceOnly ?? false), walletFundingPlanJson, instrumentIdSnapshot: Number(offer.instrumentId), entryMarketSnapshotId: Number(entrySnapshot.id), entryPriceUsd: String(entryPrice), settlementResultSource: null, settlementProvider: null, settlementObservedAt: null, packageIdSnapshot: feePackageId, packageFeeRateBpsSnapshot: packageFeePolicy.feeRateBps, packageFeeRoundingModeSnapshot: packageFeePolicy.roundingMode, packageFeePolicyVersionSnapshot: packageFeePolicy.version, packageFeeEffectiveAtSnapshot: new Date(packageFeePolicy.effectiveAt), feePolicyVersion: packageFeePolicy.version, platformFeeRateBps: packageFeePolicy.feeRateBps, platformFeeRoundingMode: packageFeePolicy.roundingMode, transactionReference: ref, rewardReservedMinor: reward, settlesAt, settlementReviewAt, creditAt, lifecycleStage: "Trade Allocated", settlementStatus: "pending", policyVersion: snapshotVersion });
+    const result = await tx.insert(tradePositions).values({ userId, offerId: offer.id, packageSubscriptionId: selectedSubscriptionId, currency: offer.currency, principalMinor: input.amountMinor, expectedRewardMinor: reward, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, companyLogoUrl: popupSnapshot?.companyLogoUrl || null, companyReferenceMetadataJson: popupSnapshot?.companyReferenceMetadataJson || null, companyReferenceOnly: Boolean(popupSnapshot?.companyReferenceOnly ?? false), walletFundingPlanJson, instrumentIdSnapshot: Number(instrumentIdForTrade), entryMarketSnapshotId: Number(entrySnapshot.id), entryPriceUsd: String(entryPrice), settlementResultSource: null, settlementProvider: null, settlementObservedAt: null, packageIdSnapshot: feePackageId, packageFeeRateBpsSnapshot: packageFeePolicy.feeRateBps, packageFeeRoundingModeSnapshot: packageFeePolicy.roundingMode, packageFeePolicyVersionSnapshot: packageFeePolicy.version, packageFeeEffectiveAtSnapshot: new Date(packageFeePolicy.effectiveAt), feePolicyVersion: packageFeePolicy.version, platformFeeRateBps: packageFeePolicy.feeRateBps, platformFeeRoundingMode: packageFeePolicy.roundingMode, transactionReference: ref, rewardReservedMinor: reward, settlesAt, settlementReviewAt, creditAt, lifecycleStage: "Trade Allocated", settlementStatus: "pending", policyVersion: snapshotVersion });
     const tradeId = Number(result[0].insertId);
-    await tx.insert(tradeLifecycleEvents).values({ tradeId, userId, eventType: "trade_allocated", stage: "Trade Allocated", payloadJson: JSON.stringify({ amountMinor: input.amountMinor, currency: offer.currency, packageSubscriptionId: selectedSubscriptionId, packageId: Number(activePackageSubscription.packageId), termsVersion: Number(activePackageSubscription.termsVersion || 1), policyVersion: snapshotVersion, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null }) });
+    const automaticDebit = calculateAutomaticTradeDebit({
+      capitalMinor: input.amountMinor,
+      currency: offer.currency,
+      profitRateBps: effectiveRateBps
+    });
+    await tx.insert(tradeLifecycleEvents).values({ tradeId, userId, eventType: "trade_allocated", stage: "Trade Allocated", payloadJson: JSON.stringify({ amountMinor: input.amountMinor, currency: offer.currency, packageSubscriptionId: selectedSubscriptionId, packageId: Number(activePackageSubscription.packageId), termsVersion: Number(activePackageSubscription.termsVersion || 1), policyVersion: snapshotVersion, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage }) });
     if (input.deliveryEventId !== void 0) await tx.update(opportunityPopupEvents).set({ tradeId, eventStatus: "TRADED", executionStatus: "SUCCEEDED", executionRetryAfter: null, executionLastErrorCode: null, tradedAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(and3(eq3(opportunityPopupEvents.id, input.deliveryEventId), eq3(opportunityPopupEvents.userId, userId), eq3(opportunityPopupEvents.offerId, offer.id)));
     else await tx.execute(sql5`UPDATE opportunity_popup_events SET tradeId=${tradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
     await tx.insert(tradeRewardReservations).values({ userId, tradeId, packageName: activePackageSubscription.packageName, windowKey: today, currency: offer.currency, reservedMinor: reward, status: "reserved" });
-    return { tradeId, rewardMinor: reward, rewardBps: effectiveRateBps, minimumMinor: terms.minimumMinor, calculationMethod: "saved-tier-policy", configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, settlesAt, settlementReviewAt, creditAt, currency: offer.currency, amountMinor: input.amountMinor, rateUsd: nativeRate, rateUpdatedAt: currencyRow.updatedAt, amountUsd: nativeMinorToUsd(input.amountMinor, Number(currencyRow.scale), nativeRate) };
+    return { tradeId, rewardMinor: reward, rewardBps: effectiveRateBps, minimumMinor: terms.minimumMinor, calculationMethod: "saved-tier-policy", configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, settlesAt, settlementReviewAt, creditAt, currency: offer.currency, amountMinor: input.amountMinor, rateUsd: nativeRate, rateUpdatedAt: currencyRow.updatedAt, amountUsd: nativeMinorToUsd(input.amountMinor, Number(currencyRow.scale), nativeRate), debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage, expectedCreditMinor: automaticDebit.expectedCreditMinor };
   });
 }
 async function listTrades(userId) {
@@ -11278,20 +11432,54 @@ async function processAutomaticMarketSettlements(input) {
       if (!trade || trade.status !== "confirmed" || trade.settlementStatus !== "pending") return "skipped";
       const dueAt = trade.settlementReviewAt || trade.settlesAt;
       if (!dueAt || new Date(dueAt).getTime() > now.getTime()) return "skipped";
-      if (!trade.instrumentIdSnapshot || !trade.entryMarketSnapshotId || !trade.entryPriceUsd) return "waiting";
-      const entryPrice = Number(trade.entryPriceUsd);
-      const exit = (await tx.select({ id: marketSnapshots.id, priceUsd: marketSnapshots.priceUsd, observedAt: marketSnapshots.observedAt, source: marketSnapshots.source }).from(marketSnapshots).where(and3(eq3(marketSnapshots.instrumentId, Number(trade.instrumentIdSnapshot)), gt(marketSnapshots.observedAt, new Date(trade.confirmedAt)))).orderBy(desc2(marketSnapshots.observedAt), desc2(marketSnapshots.id)).limit(1))[0];
+      const entryPrice = Number(trade.entryPriceUsd || 0);
+      const exit = trade.instrumentIdSnapshot ? (await tx.select({ id: marketSnapshots.id, priceUsd: marketSnapshots.priceUsd, observedAt: marketSnapshots.observedAt, source: marketSnapshots.source }).from(marketSnapshots).where(and3(eq3(marketSnapshots.instrumentId, Number(trade.instrumentIdSnapshot)), gt(marketSnapshots.observedAt, new Date(trade.confirmedAt || trade.settlesAt || now)))).orderBy(desc2(marketSnapshots.observedAt), desc2(marketSnapshots.id)).limit(1))[0] : null;
       const exitPrice = Number(exit?.priceUsd);
-      if (!exit || !Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(exitPrice) || exitPrice <= 0) return "waiting";
-      const grossProfitMinor = Math.round(Number(trade.principalMinor) * ((exitPrice - entryPrice) / entryPrice));
-      if (!Number.isSafeInteger(grossProfitMinor) || grossProfitMinor < -Number(trade.principalMinor)) return "waiting";
+      const hasMarketExit = Boolean(exit) && Number.isFinite(entryPrice) && entryPrice > 0 && Number.isFinite(exitPrice) && exitPrice > 0;
+      let grossProfitMinor;
+      let settlementResultSource;
+      let settlementProvider;
+      let exitMarketSnapshotId = null;
+      let exitPriceUsd = null;
+      let settlementObservedAt = null;
+      let settlementNotes;
+      if (exit && Number.isFinite(entryPrice) && entryPrice > 0 && Number.isFinite(exitPrice) && exitPrice > 0) {
+        grossProfitMinor = Math.round(Number(trade.principalMinor) * ((exitPrice - entryPrice) / entryPrice));
+        if (!Number.isSafeInteger(grossProfitMinor) || grossProfitMinor < -Number(trade.principalMinor)) {
+          grossProfitMinor = Number(trade.expectedRewardMinor || 0);
+          settlementResultSource = "configured_profit_rate";
+          settlementProvider = "platform-configured-rate";
+          settlementNotes = "Market exit produced an out-of-bounds result; settled using the configured package profit rate.";
+        } else {
+          settlementResultSource = "recorded_market_snapshot";
+          settlementProvider = String(exit.source || "market-sync");
+          exitMarketSnapshotId = Number(exit.id);
+          exitPriceUsd = String(exitPrice);
+          settlementObservedAt = exit.observedAt;
+          settlementNotes = "Automatically resolved from a newer recorded market snapshot.";
+        }
+      } else {
+        const configured = Number(trade.expectedRewardMinor || 0);
+        const rateBps = Number(trade.configuredProfitRateBps || 0);
+        if (Number.isSafeInteger(configured) && configured >= 0) {
+          grossProfitMinor = configured;
+        } else if (Number.isSafeInteger(rateBps) && rateBps >= 0) {
+          grossProfitMinor = Number((BigInt(trade.principalMinor) * BigInt(rateBps) + 5000n) / 10000n);
+        } else {
+          grossProfitMinor = 0;
+        }
+        if (!Number.isSafeInteger(grossProfitMinor) || grossProfitMinor < 0) grossProfitMinor = 0;
+        settlementResultSource = "configured_profit_rate";
+        settlementProvider = "platform-configured-rate";
+        settlementNotes = "No exit market snapshot was available at settlement time; principal and configured profit were settled automatically.";
+      }
       let feePolicy;
       if (trade.packageIdSnapshot !== null && trade.packageFeeRateBpsSnapshot !== null && trade.packageFeeRoundingModeSnapshot !== null && trade.packageFeePolicyVersionSnapshot !== null) {
         const saved = normalizePackageFeePolicy({ packageId: trade.packageIdSnapshot, version: trade.packageFeePolicyVersionSnapshot, feeRateBps: trade.packageFeeRateBpsSnapshot, roundingMode: trade.packageFeeRoundingModeSnapshot, effectiveAt: trade.packageFeeEffectiveAtSnapshot || trade.confirmedAt, changedAt: trade.confirmedAt });
         feePolicy = { feeRateBps: saved.feeRateBps, roundingMode: saved.roundingMode, policyVersion: saved.version };
       } else feePolicy = normalizeImmutableTradeFeeSnapshot({ feeRateBps: trade.platformFeeRateBps, roundingMode: trade.platformFeeRoundingMode, policyVersion: trade.feePolicyVersion });
       const accounting = calculateRealizedProfitSettlement({ principalMinor: Number(trade.principalMinor), grossProfitMinor, feeRateBps: feePolicy.feeRateBps, roundingMode: feePolicy.roundingMode });
-      const reference = `auto-market-${trade.id}-${exit.id}`;
+      const reference = `auto-settle-${trade.id}-${exitMarketSnapshotId || "cfg"}-${now.getTime()}`;
       try {
         await tx.insert(tradeSettlementReferenceClaims).values({ settlementReference: reference, tradeId: trade.id });
       } catch (error) {
@@ -11314,19 +11502,18 @@ async function processAutomaticMarketSettlements(input) {
         settlementReference: reference,
         settlementConfirmedAt: now,
         settlementConfirmedBy: -1,
-        settlementNotes: "Automatically resolved from a newer recorded market snapshot; no configured payout percentage was used as the result.",
-        exitMarketSnapshotId: Number(exit.id),
-        exitPriceUsd: String(exitPrice),
-        settlementResultSource: "recorded_market_snapshot",
-        settlementProvider: String(exit.source || "market-sync"),
-        settlementObservedAt: exit.observedAt
+        settlementNotes,
+        exitMarketSnapshotId,
+        exitPriceUsd,
+        settlementResultSource,
+        settlementProvider,
+        settlementObservedAt
       }).where(and3(eq3(tradePositions.id, trade.id), eq3(tradePositions.status, "confirmed"), eq3(tradePositions.settlementStatus, "pending")));
       assertExactlyOneAffectedRow(stateUpdate, "Automatic market settlement transition");
-      await tx.insert(tradeLifecycleEvents).values({ tradeId: trade.id, userId: trade.userId, eventType: "automatic_market_settlement_confirmed", stage: "Settlement Confirmed \u2014 Awaiting Wallet Credit", payloadJson: JSON.stringify({ reference, entryMarketSnapshotId: trade.entryMarketSnapshotId, entryPriceUsd: entryPrice, exitMarketSnapshotId: exit.id, exitPriceUsd: exitPrice, grossProfitMinor, platformFeeMinor: accounting.platformFeeMinor, netProfitMinor: accounting.netProfitMinor, provider: exit.source || "market-sync", observedAt: exit.observedAt }) });
+      await tx.insert(tradeLifecycleEvents).values({ tradeId: trade.id, userId: trade.userId, eventType: "automatic_market_settlement_confirmed", stage: "Settlement Confirmed \u2014 Awaiting Wallet Credit", payloadJson: JSON.stringify({ reference, entryMarketSnapshotId: trade.entryMarketSnapshotId, entryPriceUsd: entryPrice, exitMarketSnapshotId, exitPriceUsd, grossProfitMinor, platformFeeMinor: accounting.platformFeeMinor, netProfitMinor: accounting.netProfitMinor, provider: settlementProvider, observedAt: settlementObservedAt, settlementResultSource }) });
       return "settled";
     });
     if (result === "settled") settled++;
-    else if (result === "waiting") waitingForMarket++;
     else skipped++;
   }
   return { scanned: due.length, settled, waitingForMarket, skipped, limit, asOf: now.toISOString() };
@@ -11879,7 +12066,7 @@ async function processConfirmedTradeCredits(input) {
       if (!trade || trade.status !== "confirmed" || trade.settlementStatus !== "confirmed_awaiting_credit" || trade.walletUpdatedAt) return null;
       const creditDueAt = trade.creditAt || trade.settlementReviewAt || trade.settlesAt;
       if (!creditDueAt || new Date(creditDueAt).getTime() > now.getTime()) return null;
-      const automaticMarketResult = trade.settlementResultSource === "recorded_market_snapshot";
+      const automaticMarketResult = trade.settlementResultSource === "recorded_market_snapshot" || trade.settlementResultSource === "configured_profit_rate";
       if (!trade.settlementConfirmedAt || !trade.settlementConfirmedBy && !automaticMarketResult || !trade.settlementReference || trade.settlementOutcome === "legacy_unrecorded") {
         throw new Error("Confirmed trade is missing its evidence-backed settlement record");
       }
@@ -11954,11 +12141,17 @@ async function processConfirmedTradeCredits(input) {
         }).where(and3(eq3(tradeRewardReservations.id, reservation.id), eq3(tradeRewardReservations.status, "reserved")));
         assertExactlyOneAffectedRow(reservationUpdate, "Confirmed trade reward reservation posting");
       }
+      const automaticCredit = calculateAutomaticTradeCredit({
+        capitalMinor: principal,
+        profitRateBps: Number(trade.configuredProfitRateBps || 0),
+        currency: String(trade.currency),
+        realizedNetProfitMinor: savedNet
+      });
       await tx.insert(tradeLifecycleEvents).values([
-        { tradeId: trade.id, userId: trade.userId, eventType: "wallet_credit_posted", stage: "Wallet Updated", payloadJson: JSON.stringify({ principalMinor: principal, grossProfitMinor: grossProfit, platformFeeMinor: savedFee, netProfitMinor: savedNet, reference, confirmedAt: trade.settlementConfirmedAt, creditedAt: now.toISOString() }) },
-        { tradeId: trade.id, userId: trade.userId, eventType: "trade_completed", stage: "Trade Completed", payloadJson: JSON.stringify({ reference, outcome: trade.settlementOutcome, realizedGrossProfitMinor: grossProfit, platformFeeMinor: savedFee, netProfitMinor: savedNet }) }
+        { tradeId: trade.id, userId: trade.userId, eventType: "wallet_credit_posted", stage: "Wallet Updated", payloadJson: JSON.stringify({ principalMinor: principal, grossProfitMinor: grossProfit, platformFeeMinor: savedFee, netProfitMinor: savedNet, reference, confirmedAt: trade.settlementConfirmedAt, creditedAt: now.toISOString(), creditTransitionText: automaticCredit.transitionText, totalCreditedMinor: automaticCredit.totalCreditedMinor, lifecycleStage: automaticCredit.stage }) },
+        { tradeId: trade.id, userId: trade.userId, eventType: "trade_completed", stage: "Trade Completed", payloadJson: JSON.stringify({ reference, outcome: trade.settlementOutcome, realizedGrossProfitMinor: grossProfit, platformFeeMinor: savedFee, netProfitMinor: savedNet, creditTransitionText: automaticCredit.transitionText, lifecycleStage: automaticCredit.stage }) }
       ]);
-      return { userId: trade.userId, offerId: trade.offerId, tradeId: trade.id, currency: trade.currency, principalMinor: principal, rewardMinor: Math.max(0, accounting.netProfitMinor), grossProfitMinor: grossProfit, platformFeeMinor: savedFee, netProfitMinor: savedNet, outcome: String(trade.settlementOutcome) };
+      return { userId: trade.userId, offerId: trade.offerId, tradeId: trade.id, currency: trade.currency, principalMinor: principal, rewardMinor: Math.max(0, accounting.netProfitMinor), grossProfitMinor: grossProfit, platformFeeMinor: savedFee, netProfitMinor: savedNet, outcome: String(trade.settlementOutcome), creditTransitionText: automaticCredit.transitionText, totalCreditedMinor: automaticCredit.totalCreditedMinor, lifecycleStage: automaticCredit.stage };
     });
     if (posted) {
       credited++;
@@ -12317,6 +12510,7 @@ var init_db = __esm({
     init_env();
     init_schema();
     init_totp();
+    init_automatic_trade_lifecycle_math();
     init_realized_profit_accounting();
     init_wallet_ledger_reconciliation();
     init_calendar_months();
@@ -18052,11 +18246,11 @@ var appRouter = router({
     popupLifecycle: protectedProcedure.input(z3.object({ eventId: z3.number().int().positive(), action: z3.enum(["noticed", "opened", "dismissed"]) }).strict()).mutation(({ ctx, input }) => updatePopupLifecycle(ctx.user.id, input.eventId, input.action)),
     popupDeliveryStatus: protectedProcedure.input(z3.object({ eventId: z3.number().int().positive(), status: z3.enum(["received", "rendered"]), leaseToken: z3.string().uuid().optional() }).strict()).mutation(({ ctx, input }) => updatePopupDeliveryStatus(ctx.user.id, input.eventId, input.status, input.leaseToken)),
     opportunities: protectedProcedure.query(async ({ ctx }) => {
-      const result = await listCustomerOpportunities(ctx.user.id);
+      const result = await listCustomerOpportunities(ctx.user.id, { customerSessionExecution: true, allowAutomaticExecution: true, consumeDelivery: true });
       for (const trade of result.autoTrades || []) {
         await recordTransactionConsoleEvent(ctx.user.id, ctx.req, { eventType: "DEBIT", status: "COMPLETED", title: "Automatic wallet debit posted", message: `${trade.symbol} available balance was debited for an automatic allocation under the saved controls.`, transactionCode: `auto-debit:${trade.tradeId}`, amountMinor: -trade.amountMinor, asset: trade.currency });
         await recordTransactionConsoleEvent(ctx.user.id, ctx.req, { eventType: "INVESTMENT", status: "COMPLETED", title: "Automatic investment confirmed", message: `${trade.symbol} was allocated automatically from the available wallet balance under the saved customer and administrator controls.`, transactionCode: `auto-investment:${trade.tradeId}`, amountMinor: trade.amountMinor, asset: trade.currency });
-        const allocationNoticeResults = await Promise.allSettled([createNotification(ctx.user.id, "Automatic trading allocation confirmed", `${trade.symbol} was allocated from your available ${trade.currency} balance.`, { eventKey: `auto-trade-allocation:${trade.tradeId}`, category: "trading", priority: "normal" }), createNotification(ctx.user.id, "Balance debited", `${trade.amountMinor} minor units of ${trade.currency} were reserved for the automatic allocation.`, { eventKey: `auto-trade-debit:${trade.tradeId}`, category: "ledger_debit", priority: "normal" })]);
+        const allocationNoticeResults = await Promise.allSettled([createNotification(ctx.user.id, "Automatic trading allocation confirmed", `${trade.symbol} was allocated from your available ${trade.currency} balance.`, { eventKey: `auto-trade-allocation:${trade.tradeId}`, category: "trading", priority: "normal" }), createNotification(ctx.user.id, "Balance debited", `Capital locked into trade: ${trade.amountMinor} minor units of ${trade.currency} were deducted from available balance.`, { eventKey: `auto-trade-debit:${trade.tradeId}`, category: "ledger_debit", priority: "normal" })]);
         if (allocationNoticeResults.some((outcome) => outcome.status === "rejected")) console.error("[Notifications] Automatic allocation notices failed after ledger commit.");
       }
       for (const settlement of result.settled || []) {

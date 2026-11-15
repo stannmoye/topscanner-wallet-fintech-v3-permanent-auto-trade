@@ -64,7 +64,7 @@ Use cPanel Cron Jobs with UTC schedules for the scheduled handlers documented in
 
 ## 5. Production boundary
 
-The product is production-deployable, but real-money execution and verified returns remain disabled until an actual execution/settlement provider is configured and approved. The application must not credit configured rates as real profit. Do not import development/demo seed data into production.
+The product is production-deployable. Automatic financial execution is enabled for qualifying customers through the audited internal ledger; real-money (external-market) execution and verified real-world returns are not claimed until an actual execution/settlement provider is configured and approved. The application must not credit configured rates as real profit. Do not import development/demo seed data into production.
 
 ## 6. Recovery
 

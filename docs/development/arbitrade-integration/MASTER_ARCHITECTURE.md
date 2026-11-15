@@ -47,7 +47,7 @@ Window 6 reuses the existing durable worker-health registry and monitoring surfa
 ## Financial and data boundary
 
 - Information-opportunity generation and display must not execute trades, allocate customer funds, determine results, settle trades, or write wallet/ledger entries.
-- Existing financial safeguards, authorization, audit controls and hard-disabled automatic financial execution remain unchanged.
+- Existing financial safeguards, authorization, audit controls and enabled automatic financial execution for qualifying customers through the audited internal ledger (external-market execution is not claimed) remain unchanged.
 - Preserve the existing 16 packages, 1,811 company catalogue records, logos, customers and historical rows.
 - Brand-only records remain brand identities. Never fabricate symbols, exchange listings, prices, market data, or realized outcomes.
 - Database changes are forward-only, additive where possible, ordered, documented and retry-safe. Never reset or reseed populated production data.
