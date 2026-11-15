@@ -45,7 +45,7 @@ const migratedExecutionPolicies = await db.select({
 assert.ok(migratedExecutionPolicies.length > 0,
   "The guarded migration chain must create the baseline package-policy rows.");
 assert.ok(migratedExecutionPolicies.every(row => row.automaticTradingEnabled === true),
-  "Migration 0098 must explicitly disable automatic financial execution on every existing package policy.");
+  "Automatic financial execution must be enabled on every existing package policy after the guarded migration chain.");
 
 const token = crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
 const userEmail = `popup-delivery-${token.toLowerCase()}@example.invalid`;

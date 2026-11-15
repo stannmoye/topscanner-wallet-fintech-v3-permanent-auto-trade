@@ -30,7 +30,7 @@ Window 1 owns the existing 1,811-record brand catalogue, local logos, admin elig
 
 ## Window 2 — Package Policies & Configuration
 
-Window 2 owns the typed package opportunity-policy row/patch contract, package-specific defaults, allowlist and package-isolated merge/resolution. It reuses `packages` and `opportunity_package_policies`; global delivery masters remain separate. New-package defaults must not enable financial execution.
+Window 2 owns the typed package opportunity-policy row/patch contract, package-specific defaults, allowlist and package-isolated merge/resolution. It reuses `packages` and `opportunity_package_policies`; global delivery masters remain separate. New-package defaults enable tier policy, informational delivery and the guarded internal-ledger financial-execution path for qualifying customers (external-market execution is not claimed); administrators can still disable a package or any delivery control.
 
 ## Window 4 — Opportunity Delivery & Customer Portal
 

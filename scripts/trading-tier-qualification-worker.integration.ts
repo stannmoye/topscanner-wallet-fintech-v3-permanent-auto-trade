@@ -119,8 +119,8 @@ try {
     tierIds.push(Number(inserted[0].insertId));
   }
   // Runtime reads do not synthesize tier policy rows from schema defaults. Keep
-  // these policies valid for scheduler reads while preserving the production
-  // hard-disable for automatic financial execution.
+  // these policies valid for scheduler reads now that automatic financial
+  // execution is enabled through the audited internal ledger.
   await db.insert(opportunityPackagePolicies).values(tierTerms.map((terms) => ({
     packageName: terms.name,
     minimumPayoutRateBps: 200,

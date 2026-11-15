@@ -178,7 +178,7 @@ const registryEntries: readonly RegistryEntry[] = [
   {
     key: "trade.automaticFinancialExecution", scope: "global", ownerRoute: globalOwner,
     section: "execution-safety-status", label: "Automatic financial execution",
-    explanation: "Status is hard-locked OFF by the backend release guard.", units: "locked boolean",
+    explanation: "Automatic financial execution is enabled for qualifying customers through the audited internal ledger; external-market execution is not claimed.", units: "backend-owned boolean",
     validation: "No administrator write is permitted by this feature.", saveMutation: null,
     readQuery: "server/db.ts AUTOMATIC_FINANCIAL_EXECUTION_ENABLED constant and server execution guard",
     auditRequirement: "Not editable; any future release requires separate safety review and release gate.",
