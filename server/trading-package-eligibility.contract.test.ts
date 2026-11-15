@@ -5,7 +5,7 @@ import { isTradingTierEnablingTransition } from "./modules/trading-tier-activati
 const source = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const packagePolicySource = readFileSync(new URL("./modules/package-opportunity-policy.ts", import.meta.url), "utf8");
 const router = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
-const executionOffMigrationSource = readFileSync(new URL("../drizzle/0098_disable_automatic_financial_execution.sql", import.meta.url), "utf8");
+const executionEnabledMigrationSource = readFileSync(new URL("../drizzle/0098_enable_automatic_financial_execution.sql", import.meta.url), "utf8");
 const tierEnableMigrationSource = readFileSync(new URL("../drizzle/0113_enable_tiers_for_informational_delivery.sql", import.meta.url), "utf8");
 
 describe("server-side automatic Trading tier eligibility", () => {
@@ -97,7 +97,7 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(source).toContain("processAutomaticMarketSettlements");
     expect(source).toContain("recorded_market_snapshot");
     expect(source).toContain("calculateAutomaticTradeDebit");
-    expect(executionOffMigrationSource).toContain("automaticTradingEnabled");
+    expect(executionEnabledMigrationSource).toContain("automaticTradingEnabled");
     expect(tierEnableMigrationSource).toContain("UPDATE `packages`");
     expect(tierEnableMigrationSource).toContain("policy.`automaticTradingEnabled` = 0");
     expect(tierEnableMigrationSource).toContain("policy.`automaticDelivery` = 1");

@@ -53,7 +53,7 @@ describe("Trading customer package subscription schema repair", () => {
       "0095_fx_snapshot_source_timestamp_precision",
       "0096_trade_settlement_review_timestamp",
       "0097_trading_daily_execution_attempt_accounting",
-      "0098_disable_automatic_financial_execution",
+      "0098_enable_automatic_financial_execution",
       "0099_trading_global_timing_policy_version",
       "0100_global_trade_master_controls",
       "0101_package_fee_policy_versions",

@@ -221,9 +221,9 @@ async function main() {
     await executeCompatibleMigrationSql(db, settlementReviewTimestampMigration);
     const dailyExecutionAttemptAccountingMigration = await readFile(resolve(root, "drizzle/0097_trading_daily_execution_attempt_accounting.sql"), "utf8");
     await executeCompatibleMigrationSql(db, dailyExecutionAttemptAccountingMigration);
-    // The historical 0098_disable_automatic_financial_execution.sql migration is intentionally
-    // not replayed here: automatic financial execution is enabled for qualifying customers
-    // through the audited internal ledger, and the runtime schema bridge must not disable it.
+    // The historical 0098_enable_automatic_financial_execution.sql migration is intentionally
+    // not replayed here: automatic financial execution is already enabled for qualifying
+    // customers through the audited internal ledger, and the forward migrations own that state.
     const packageFeePolicyMigration = await readFile(resolve(root, "drizzle/0101_package_fee_policy_versions.sql"), "utf8");
     await executeCompatibleMigrationSql(db, packageFeePolicyMigration);
 

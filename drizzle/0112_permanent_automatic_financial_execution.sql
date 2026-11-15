@@ -1,5 +1,5 @@
 -- Permanent automatic financial execution.
--- Neutralizes migration 0098 and fail-closed allocation holds.
+-- Confirms migration 0098 and clears fail-closed allocation holds.
 -- All INSERT column lists match NOT NULL schema requirements.
 
 -- 1) Force automatic trading ON and fill missing rate/duration ranges.
@@ -89,7 +89,7 @@ SELECT
   'migration-0112-permanent-automatic-financial-execution',
   JSON_OBJECT(
     'migration', '0112_permanent_automatic_financial_execution',
-    'supersedes', '0098_disable_automatic_financial_execution'
+    'supersedes', '0098_enable_automatic_financial_execution'
   )
 FROM DUAL
 WHERE NOT EXISTS (

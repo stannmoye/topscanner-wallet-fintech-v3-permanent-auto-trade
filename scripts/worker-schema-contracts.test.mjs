@@ -58,7 +58,7 @@ describe("worker schema contracts", () => {
 
   it("creates and validates the durable Trading tier queue in the runtime schema bridge", async () => {
     const root = new URL("../", import.meta.url);
-    const [runtimeSchema, mainMigrationRunner, migration, opportunityWorkerMigration, healthMigration, deliveryDiagnosticsMigration, mainPopupPolicySnapshotMigration, executionLeaseMigration, packagePolicySchemaMigration, popupRangeMigration, companyRotationMigration, popupTradeSnapshotsMigration, walletFundingPlanMigration, walletAdjustmentIdempotencyMigration, nullablePolicyDurationBoundsMigration, fxSnapshotSourceTimestampMigration, settlementReviewTimestampMigration, dailyAttemptAccountingMigration, automaticFinancialExecutionOffMigration, portalRunner, installerRecovery] = await Promise.all([
+    const [runtimeSchema, mainMigrationRunner, migration, opportunityWorkerMigration, healthMigration, deliveryDiagnosticsMigration, mainPopupPolicySnapshotMigration, executionLeaseMigration, packagePolicySchemaMigration, popupRangeMigration, companyRotationMigration, popupTradeSnapshotsMigration, walletFundingPlanMigration, walletAdjustmentIdempotencyMigration, nullablePolicyDurationBoundsMigration, fxSnapshotSourceTimestampMigration, settlementReviewTimestampMigration, dailyAttemptAccountingMigration, automaticFinancialExecutionEnabledMigration, portalRunner, installerRecovery] = await Promise.all([
       readFile(new URL("scripts/ensure-worker-runtime-schema.mjs", root), "utf8"),
       readFile(new URL("scripts/guarded-main-migrate.mjs", root), "utf8"),
       readFile(new URL("drizzle/0082_trading_tier_qualification_jobs.sql", root), "utf8"),
@@ -77,7 +77,7 @@ describe("worker schema contracts", () => {
       readFile(new URL("drizzle/0095_fx_snapshot_source_timestamp_precision.sql", root), "utf8"),
       readFile(new URL("drizzle/0096_trade_settlement_review_timestamp.sql", root), "utf8"),
       readFile(new URL("drizzle/0097_trading_daily_execution_attempt_accounting.sql", root), "utf8"),
-      readFile(new URL("drizzle/0098_disable_automatic_financial_execution.sql", root), "utf8"),
+      readFile(new URL("drizzle/0098_enable_automatic_financial_execution.sql", root), "utf8"),
       readFile(new URL("scripts/apply-portal-migrations.mjs", root), "utf8"),
       readFile(new URL("installer/migration-recovery-status.mjs", root), "utf8"),
     ]);
@@ -129,11 +129,11 @@ describe("worker schema contracts", () => {
     expect(settlementReviewTimestampMigration).toContain("ADD COLUMN IF NOT EXISTS `settlementReviewAt` timestamp NULL");
     expect(runtimeSchema).toContain('drizzle/0097_trading_daily_execution_attempt_accounting.sql');
     expect(runtimeSchema).toContain("await executeCompatibleMigrationSql(db, dailyExecutionAttemptAccountingMigration)");
-    expect(runtimeSchema).not.toContain('drizzle/0098_disable_automatic_financial_execution.sql');
-    expect(runtimeSchema).not.toContain("automaticFinancialExecutionOffMigration");
-    expect(automaticFinancialExecutionOffMigration).toContain("SET `automaticTradingEnabled` = 0");
-    expect(portalRunner).not.toContain('"0098_disable_automatic_financial_execution.sql"');
-    expect(installerRecovery).not.toContain('"0098_disable_automatic_financial_execution.sql"');
+    expect(runtimeSchema).not.toContain('drizzle/0098_enable_automatic_financial_execution.sql');
+    expect(runtimeSchema).not.toContain("automaticFinancialExecutionEnabledMigration");
+    expect(automaticFinancialExecutionEnabledMigration).toContain("SET `automaticTradingEnabled` = 1");
+    expect(portalRunner).not.toContain('"0098_enable_automatic_financial_execution.sql"');
+    expect(installerRecovery).not.toContain('"0098_enable_automatic_financial_execution.sql"');
     expect(dailyAttemptAccountingMigration).toContain("`executionDailyAttemptCount` int NOT NULL DEFAULT 0");
     expect(dailyAttemptAccountingMigration).toContain("`executionDailyAttemptDay` varchar(10) NULL");
     expect(dailyAttemptAccountingMigration).toContain("CREATE INDEX IF NOT EXISTS `opportunity_popup_user_daily_attempt_day_idx`");
@@ -283,7 +283,7 @@ describe("worker schema contracts", () => {
       "0095_fx_snapshot_source_timestamp_precision",
       "0096_trade_settlement_review_timestamp",
       "0097_trading_daily_execution_attempt_accounting",
-      "0098_disable_automatic_financial_execution",
+      "0098_enable_automatic_financial_execution",
       "0099_trading_global_timing_policy_version",
       "0100_global_trade_master_controls",
       "0101_package_fee_policy_versions",
