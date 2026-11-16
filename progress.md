@@ -1718,3 +1718,29 @@ The `89bd2bd6` installer log showed one remaining stale expectation in the secon
 - Fix: Control centre now reads `adminOperations.tradingPackages` and counts package rows that are enabled and not expired/archived. A valid package ON save now enables its matching informational policy and automatic delivery in the same transaction, increments the policy version, and records an audit event.
 - New package defaults are delivery-ready with valid payout/duration ranges. Migration `0113_enable_tiers_for_informational_delivery.sql` enables all package lifecycle rows, repairs missing/invalid informational policy ranges, enables informational delivery, and sets automatic financial execution ON. The schema default for `automaticTradingEnabled` is enabled by the forward migrations.
 - Safety boundary: this repair enables tier eligibility and informational popup delivery only. It does not enable automated wallet debits, capital locking, trade creation, or settlement. No production SQL was executed from this connector session, and no production customer balance/trade evidence is available here. Deploy the latest `main` revision in Blitz for migration 0113 to run, then verify the package count and delivery status in the admin UI.
+
+## 2026-11-16 — Customer left menu (rail) repair: dead top gap, overlap, and overflow
+
+Root causes found in the customer workspace left rail (`aside.portal-rail.customer-primary-rail`):
+- Dead gap at the top: the shared base rule `.portal-rail:before{content:"TREASURY OPERATIONS";…}` (`client/src/index.css`) rendered a stray 8px pseudo-label above the customer navigation. It is hidden only at ≤900px and for `.admin-portal`, so on desktop widths — including a phone in desktop mode at ~980px — it pushed the first navigation group ~40px down, reading as an empty strip.
+- Menu groups spreading/overlapping: the desktop rail used `justify-content:space-between` + `gap:18px`, which stretched `.customer-preferences-nav`, `.customer-rail-tools` and `.customer-rail-logout` across the full column height instead of stacking them tightly.
+- Stray internal gap: legacy `nav button:nth-child(4)` rules injected an "INVESTMENT CATALOGUE" label and extra top margin into the middle of the first menu group.
+- Header-height mismatch: the fixed header was 62px at ≤760px while the rail offset/`top` used 66px/74px/78px, so rail, wallet band and main column did not align.
+
+Changes:
+- `client/src/customer-reference.css`
+  - Desktop rail now uses `flex-direction:column; justify-content:flex-start; gap:12px; box-sizing:border-box` with `padding:16px 10px 14px`.
+  - `.customer-preferences-nav` is the single scroll region (`flex:1 1 auto; min-height:0; overflow-y:auto`); `.customer-rail-tools` and `.customer-rail-logout` are pinned `flex:0 0 auto`.
+  - Added `.customer-portal .portal-rail.customer-primary-rail::before,.customer-portal .customer-primary-rail::before{display:none!important;content:none!important}` to remove the stray rail label for the customer workspace.
+  - Replaced the 74px/78px rail offsets plus 26px/18px top padding with a single authoritative `.customer-portal .portal-body .customer-primary-rail{top:66px!important}` and `@media (max-width:900px){inset:66px auto 0 0!important}`.
+  - Normalised the ≤760px header/wallet-band/`.portal-main` offsets from 62px to 66px to match the fixed header.
+- `client/src/index.css`: removed all four legacy `nav button:nth-child(4)` rules (the injected "INVESTMENT CATALOGUE" label and margins).
+- `client/src/customer-theme-overrides.css`: the ≤600px themed header is now exactly `height:66px!important; min-height:66px` so the rail offset is flush for every theme.
+
+Verification (headless Chrome, CDP device-metrics emulation at 1600/1440/1280/1100/980/901/900/820/760/600/420/390/360, against both the source CSS and the built bundle):
+- Rail top edge y = 66 at every width; the desktop first nav group starts at y = 82 (= 66 + 16px padding) — the dead top gap is gone.
+- `.customer-rail-tools` and `.customer-rail-logout` stack directly under `.customer-preferences-nav` with a uniform 12px gap — no `space-between` spread and no overlap.
+- `document.documentElement.scrollWidth === innerWidth` at every width and the rail's `scrollWidth === clientWidth` — no horizontal overflow of the container or the page.
+- At ≤900px the rail is the off-canvas drawer (translated out, `main` full width, no leftover 194px gutter).
+
+Checks: `pnpm install --frozen-lockfile` completed; `pnpm check` (`tsc --noEmit`) passed; `pnpm build:static` passed. The rail-related contract tests (`portal-design-pass4`, `drawer-accessibility-contract`, `customer-theme-selector`, `notification-sound-deduplication`, `design-system-contract`) show the same 2 pre-existing failures with and without these changes (verified via `git stash`) — no new failures introduced. CSS-only change: no server, schema, database, worker, ledger or trading behaviour touched. No merge or deployment performed.
