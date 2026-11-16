@@ -116,11 +116,43 @@
   backdrop-filter: blur(14px);
 }
 
+/* Every wallet stays on one single row at every viewport. When the row cannot hold all
+   currencies the rail scrolls horizontally, exactly like the other customer rails, instead
+   of wrapping a currency onto a second line. */
 .customer-top-wallet-band .customer-balance-cards {
   display: grid !important;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  grid-template-columns: none !important;
+  grid-auto-flow: column !important;
+  grid-auto-columns: minmax(144px, 1fr) !important;
   gap: 8px !important;
-  overflow: visible !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(45, 221, 195, .42) transparent;
+  padding: 2px 2px 6px 0 !important;
+}
+
+.customer-top-wallet-band .customer-balance-cards > .customer-balance-card {
+  scroll-snap-align: start;
+}
+
+.customer-top-wallet-band .customer-balance-cards::-webkit-scrollbar {
+  height: 4px;
+}
+
+.customer-top-wallet-band .customer-balance-cards::-webkit-scrollbar-thumb {
+  background: rgba(45, 221, 195, .42);
+  border-radius: 999px;
+}
+
+/* Mid-width screens scroll anyway, so give each wallet a readable, wider card there. */
+@media (min-width: 761px) and (max-width: 1040px) {
+  .customer-portal .customer-top-wallet-band .customer-balance-cards {
+    grid-auto-columns: minmax(168px, 1fr) !important;
+  }
 }
 
 .customer-top-wallet-band .customer-balance-card {
@@ -134,13 +166,14 @@
   transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
 }
 
-/* Per-currency identity tint: drives the coin ring, the top hairline and the corner glow. */
-.customer-balance-card[data-currency="USD"] { --coin-tint: #60a5fa; --coin-glow: rgba(59, 130, 246, .55); }
-.customer-balance-card[data-currency="EUR"] { --coin-tint: #818cf8; --coin-glow: rgba(99, 102, 241, .55); }
-.customer-balance-card[data-currency="GBP"] { --coin-tint: #f87171; --coin-glow: rgba(239, 68, 68, .5); }
-.customer-balance-card[data-currency="BTC"] { --coin-tint: #f7931a; --coin-glow: rgba(247, 147, 26, .58); }
-.customer-balance-card[data-currency="ETH"] { --coin-tint: #a5aef0; --coin-glow: rgba(139, 147, 190, .58); }
-.customer-balance-card[data-currency="USDT"] { --coin-tint: #2fd0a0; --coin-glow: rgba(38, 161, 123, .62); }
+/* Per-currency identity tint, matched to each mark's own colours, so the ring, the top
+   hairline and the corner glow all read as that currency. */
+.customer-balance-card[data-currency="USD"] { --coin-tint: #4f7bf0; --coin-glow: rgba(79, 123, 240, .5); }
+.customer-balance-card[data-currency="EUR"] { --coin-tint: #f2c53d; --coin-glow: rgba(242, 197, 61, .45); }
+.customer-balance-card[data-currency="GBP"] { --coin-tint: #2a41a0; --coin-glow: rgba(42, 65, 160, .55); }
+.customer-balance-card[data-currency="BTC"] { --coin-tint: #f7931a; --coin-glow: rgba(247, 147, 26, .55); }
+.customer-balance-card[data-currency="ETH"] { --coin-tint: #8b7bf5; --coin-glow: rgba(139, 123, 245, .5); }
+.customer-balance-card[data-currency="USDT"] { --coin-tint: #26a17b; --coin-glow: rgba(38, 161, 123, .58); }
 
 .customer-top-wallet-band .customer-balance-card::before {
   content: "";
@@ -184,7 +217,9 @@
   overflow: hidden;
   background: #0b2035 !important;
   color: #ffffff !important;
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--coin-tint, #8ec9f0) 78%, transparent), 0 4px 12px var(--coin-glow, rgba(0, 0, 0, .42)), inset 0 1px rgba(255, 255, 255, .24) !important;
+  /* A dark separator keeps the currency ring crisp and visible on the navy card, so the
+     ring colour always reads as the currency it belongs to. */
+  box-shadow: 0 0 0 1px rgba(4, 15, 28, .92), 0 0 0 2.5px var(--coin-tint, #8ec9f0), 0 4px 12px var(--coin-glow, rgba(0, 0, 0, .42)), inset 0 1px rgba(255, 255, 255, .22) !important;
 }
 
 .customer-top-wallet-band .customer-balance-icon svg {
