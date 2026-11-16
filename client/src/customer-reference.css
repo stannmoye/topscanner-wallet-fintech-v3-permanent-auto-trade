@@ -207,8 +207,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The wallet emblem is a coin medallion: a currency ring, a gloss highlight and the flag or
-   brand mark inside, so each wallet reads like a real instrument rather than a letter tile. */
+/* The wallet emblem is a clean, perfectly round disc: just the flag or brand mark with a soft
+   gloss and shadow, and no coloured ring or border around it. */
 .customer-top-wallet-band .customer-balance-icon {
   position: relative;
   width: 34px !important;
@@ -217,9 +217,9 @@
   overflow: hidden;
   background: #0b2035 !important;
   color: #ffffff !important;
-  /* A dark separator keeps the currency ring crisp and visible on the navy card, so the
-     ring colour always reads as the currency it belongs to. */
-  box-shadow: 0 0 0 1px rgba(4, 15, 28, .92), 0 0 0 2.5px var(--coin-tint, #8ec9f0), 0 4px 12px var(--coin-glow, rgba(0, 0, 0, .42)), inset 0 1px rgba(255, 255, 255, .22) !important;
+  /* A soft neutral shadow and a thin top gloss give the disc depth without drawing any
+     coloured outline, so the mark keeps a perfect round shape on every currency. */
+  box-shadow: 0 4px 11px rgba(0, 0, 0, .42), inset 0 1px rgba(255, 255, 255, .2) !important;
 }
 
 .customer-top-wallet-band .customer-balance-icon svg {
@@ -496,6 +496,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* These three bands are the page header of the main column, so wherever the account rail is a
+   fixed sidebar they must clear it exactly like .portal-main does (194px offset). Otherwise
+   they float across the top of the rail and hide the left menu behind their higher z-index.
+   Below 901px the rail is an off-canvas drawer, so the bands stay full width there. */
+@media (min-width: 901px) {
+  .customer-portal .customer-top-wallet-band,
+  .customer-portal .customer-top-workspace-menu,
+  .customer-portal .customer-top-welcome-band {
+    width: auto !important;
+    max-width: 1100px !important;
+    margin-left: calc(194px + max(0px, (100% - 194px - 1100px) / 2)) !important;
+    margin-right: auto !important;
+  }
 }
 
 @media (max-width: 760px) {
