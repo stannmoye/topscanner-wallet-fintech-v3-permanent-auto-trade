@@ -391,7 +391,6 @@
     margin-top: 62px;
     padding: 0 8px;
   }
-
   .customer-portal .customer-top-wallet-band .customer-balance-cards {
     display: grid !important;
     grid-template-columns: none !important;
@@ -420,6 +419,15 @@
   .customer-top-wallet-band .customer-balance-cards::-webkit-scrollbar-thumb {
     background: rgba(45, 221, 195, .48);
     border-radius: 999px;
+  }
+}
+
+/* On phones the themed header is 66px tall (see customer-theme-overrides.css), not the 62px
+   tablet height, so the wallet band needs the extra room or the top edge of the wallet
+   container hides behind the fixed header. */
+@media (max-width: 600px) {
+  .customer-portal .customer-top-wallet-band {
+    margin-top: 66px;
   }
 }
 
@@ -1229,6 +1237,14 @@
     background: rgba(1, 8, 18, .7) !important;
     backdrop-filter: blur(2px);
     cursor: pointer !important;
+  }
+
+  /* At this width the rail is an off-canvas drawer, so the main column must stop reserving the
+     docked 194px gutter. Without this the whole page body is shoved 194px right and an empty
+     strip is left under the hidden rail, while the full-width header bands stay at the left
+     edge - so the bands and the page body no longer line up. */
+  .customer-portal .portal-body .portal-main {
+    margin-left: 0 !important;
   }
 
   .customer-portal .portal-body .customer-primary-rail {
