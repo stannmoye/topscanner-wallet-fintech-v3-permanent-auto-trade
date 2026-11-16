@@ -1,3 +1,13 @@
+## 2026-11-16 — Customer wallet layout fix: bands clear the account rail, currency logos lose their ring
+
+- **Scope:** Design-only change to the customer wallet shell (`client/src/customer-reference.css`). No functional, ledger, routing or data changes.
+- **Bug fixed:** The wallet ribbon, the workspace menu and the "Welcome back, Jordan" band are siblings of `.portal-body`, so they never received `.portal-main`'s 194px left offset. Their higher `z-index` (69/67/68) let them paint across the fixed account rail (`z-index: 50`), hiding the left menu on desktop/tablet widths. All three bands now take the same 194px offset and a centred 1100px max-width at `min-width: 901px`; below 901px the rail is an off-canvas drawer, so the bands correctly stay full width.
+- **Currency emblem:** Replaced the layered coloured ring/border box-shadow on `.customer-top-wallet-band .customer-balance-icon` with a soft neutral shadow plus inset gloss. `border-radius: 50%` and `overflow: hidden` are retained, so each currency mark stays a perfectly round disc with no visible outline. Per-currency `--coin-tint` / `--coin-glow` variables are kept because the balance card's top hairline and corner glow still consume them.
+- **Verification:** `pnpm check` (tsc --noEmit) passes; `pnpm build:static` succeeds. A headless-Chromium geometry check across 14 viewports (1440→390px) confirmed the bands align to `left=194` with `.portal-main` at ≥901px and `left=0` at ≤900px, with no horizontal overflow, and the icon reports `border-radius: 50%`, `border-width 0px` and no ring shadow at every width.
+- **Build output:** Rebuilt the tracked `dist/` artifacts to match.
+
+---
+
 ## 2026-11-16 — Documentation, guide and script alignment to enabled internal-ledger execution
 
 - **Current state:** Automatic financial execution is enabled for qualifying customers through the audited internal ledger; external-market execution is not claimed.
