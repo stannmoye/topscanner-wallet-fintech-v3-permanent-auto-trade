@@ -63,7 +63,7 @@ describe("Trade experience visual system", () => {
     expect(popupOverride).toContain("transform: translate(-50%, -50%)");
     expect(popupOverride).not.toContain("overflow: hidden");
     expect(popupOverride).not.toContain("to { opacity:1; transform:none; }");
-    expect(compactMobile).toContain(".customer-portal .reference-popup-route .reference-popup-provider-flag { width:44px; height:38px; flex:0 0 44px; overflow:visible; border-radius:9px; font-size:36px; animation:none; transform:none; }");
+    expect(compactMobile).toContain(".customer-portal .reference-popup-route .reference-popup-provider-flag { width:48px; height:48px; flex:0 0 48px; overflow:hidden; border-radius:50%; font-size:40px !important; animation:none; transform:none; padding:0; }");
   });
 
   it("keeps interaction states accessible and honours reduced-motion preferences", () => {

@@ -1,3 +1,10 @@
+## 2026-11-18 — Enlarge the opportunity popup country flag
+
+- **UI fix:** Changed the exchange-provider country flag badge to a centered circular holder with a larger emoji flag, using a compact mobile size that is protected from the route's small-label typography.
+- **Verification:** `pnpm check`, the popup-specific style assertion, and `pnpm build` pass. The full style test file has one unrelated stale menu-item assertion failure (7/8 pass). No live-site deployment or authenticated browser validation was performed.
+
+---
+
 ## 2026-11-18 — Halve the wallet leading inset
 
 - **Refinement:** Halved the added gap between the wallet ribbon's slanted edge and the first currency card, and halved the cards' extra left padding. Slant dimensions and the 8px inter-card gap are unchanged.
