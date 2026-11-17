@@ -314,3 +314,25 @@
     }
   }
 }
+
+/* Keep the stacked dashboard surfaces visually separate on every device. */
+:root[data-arb-theme] .customer-portal {
+  --customer-top-band-gap: clamp(14px, 1.4vw, 20px);
+}
+
+:root[data-arb-theme] .customer-portal .customer-top-wallet-band {
+  padding-top: var(--customer-top-band-gap) !important;
+}
+
+:root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-ribbon {
+  margin-bottom: 0 !important;
+}
+
+:root[data-arb-theme] .customer-portal .customer-top-workspace-menu {
+  margin-top: var(--customer-top-band-gap) !important;
+  margin-bottom: var(--customer-top-band-gap) !important;
+}
+
+:root[data-arb-theme] .customer-portal .customer-top-welcome-band {
+  margin-top: var(--customer-top-band-gap) !important;
+}

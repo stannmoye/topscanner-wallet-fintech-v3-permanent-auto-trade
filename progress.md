@@ -1,3 +1,11 @@
+## 2026-11-18 — Separate the customer dashboard bands
+
+- **Layout fix:** Added a shared responsive 14–20px top-band gap for the wallet, workspace menu and welcome panel in `client/src/customer-theme-overrides.css`. Removed the wallet ribbon's duplicate bottom margin so spacing stays consistent.
+- **Responsive verification:** Measured rendered gaps using Chromium with the customer stylesheets at 12 widths from 320px phone through 1920px desktop, including Android-sized and landscape cases. All three separations measured 14–20px, with no horizontal overflow.
+- **Checks:** `pnpm check`, `pnpm build` and `pnpm test:popup-responsive` pass. The build refreshed `dist/public` bundles, which the user chose to keep. The design-system contract test cannot load because `.github/workflows/stage-2-design-system.yml` is absent; `portal-design-pass4.test.ts` is excluded by the current Vitest configuration.
+
+---
+
 ## 2026-11-18 — Responsive popup and flag audit
 
 - **Responsive fix:** Keep the provider flag at 60px on phones and enlarge it to 72px on wider screens so the rendered emoji stays within the circular badge. Stack exchange-route cards at widths up to 420px to preserve provider-label space.
