@@ -1,3 +1,10 @@
+## 2026-11-18 — Responsive popup and flag audit
+
+- **Responsive fix:** Keep the provider flag at 60px on phones and enlarge it to 72px on wider screens so the rendered emoji stays within the circular badge. Stack exchange-route cards at widths up to 420px to preserve provider-label space.
+- **Verification:** Added `pnpm test:popup-responsive`, a Playwright geometry check across 18 viewport sizes, including short landscape, phone/tablet Android emulation, laptop, and wide desktop. It verifies popup bounds, horizontal overflow, flag glyph bounds, responsive columns, and scroll access to actions. The matrix, focused CSS contract test, type check, and production build pass.
+
+---
+
 ## 2026-11-18 — Restore opportunity flag badge scale
 
 - **Correction:** The previous 48px mobile circle reduced the available flag area. Increased the mobile circle to 60px and the flag glyph to 46px, with grid centering and clipping contained inside the round badge.

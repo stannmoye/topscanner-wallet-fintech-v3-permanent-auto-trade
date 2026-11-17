@@ -8,6 +8,7 @@
     "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "node scripts/start-with-diagnostics.mjs",
     "check": "tsc --noEmit",
+    "test:popup-responsive": "node scripts/trading-popup-responsive-layout.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "drizzle-kit generate --config=drizzle.config.ts && node scripts/guarded-main-migrate.mjs",

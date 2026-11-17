@@ -1907,7 +1907,7 @@
 @keyframes routeIconShine { 0%,55%,100% { transform:translateX(-130%); } 75% { transform:translateX(250%); } }
 .customer-portal .reference-popup-provider-card { position:relative; overflow:hidden; animation:providerCardPulse 3.6s ease-in-out infinite; }
 .customer-portal .reference-popup-provider-card::after { content:""; position:absolute; inset:0 auto 0 -30%; width:22%; pointer-events:none; background:linear-gradient(100deg,transparent,rgba(125,211,252,.22),transparent); animation:routeIconShine 4.5s ease-in-out infinite; }
-.customer-portal .reference-popup-provider-flag { position:relative; z-index:1; display:grid; place-items:center; box-sizing:border-box; width:64px; height:64px; flex:0 0 64px; overflow:hidden; border:1px solid rgba(125,211,252,.4); border-radius:50%; background:rgba(125,211,252,.14); font-size:50px !important; line-height:1; padding:0; text-shadow:0 1px 2px rgba(0,0,0,.18); }
+.customer-portal .reference-popup-provider-flag { position:relative; z-index:1; display:grid; place-items:center; box-sizing:border-box; width:72px; height:72px; flex:0 0 72px; overflow:hidden; border:1px solid rgba(125,211,252,.4); border-radius:50%; background:rgba(125,211,252,.14); font-size:50px !important; line-height:1; padding:0; text-shadow:0 1px 2px rgba(0,0,0,.18); }
 .customer-portal .reference-popup-route > div:nth-child(2) svg,.customer-portal .reference-popup-route > div:nth-child(1) > svg { filter:drop-shadow(0 0 7px rgba(125,211,252,.45)); }
 .customer-portal .reference-popup-route > div:nth-child(2) svg { animation:providerFlagFloat 3.2s ease-in-out infinite reverse; }
 
@@ -1961,5 +1961,8 @@
   .customer-portal .reference-popup-actions { grid-template-columns:1.5fr 1fr; gap:6px; padding:7px 9px 0; }
   .customer-portal .reference-popup-actions button { height:38px; border-radius:9px; font-size:12px; }
   .customer-portal .reference-popup-disclaimer { padding:5px 9px 7px; font-size:8px; line-height:1.25; }
+}
+@media (max-width:420px) {
+  .customer-portal .reference-popup-route { grid-template-columns:1fr; }
 }
 @media (prefers-reduced-motion:reduce) { .customer-portal .reference-popup-provider-card,.customer-portal .reference-popup-provider-flag,.customer-portal .reference-popup-route > div:nth-child(2) svg { animation:none!important; } }
