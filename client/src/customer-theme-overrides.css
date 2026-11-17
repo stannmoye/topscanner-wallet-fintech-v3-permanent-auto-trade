@@ -151,9 +151,9 @@
 /* ==========================================================================
    ARCHITECTURAL FACET SURFACES — cut-corner containers
    --------------------------------------------------------------------------
-   The wallet ribbon, the workspace menu and the dashboard panels no longer
-   render as plain square boxes. Their opposing top-right and bottom-left
-   chamfers follow the reference's cut-corner wallet shape (option C).
+   The workspace menu and dashboard panels use the reference's opposing
+   cut-corner shape (option C). The wallet ribbon and currency cards use the
+   slanted profile (option B).
 
    Shape is produced with clip-path only. The 1px edge is an inset ring plus
    a corner facet highlight, because a real border and an outer box-shadow are
@@ -168,6 +168,8 @@
     --fc-b: 24px;   /* bottom-left chamfer         */
     --fc-st: 10px;  /* small top-right chamfer     */
     --fc-sb: 14px;  /* small bottom-left chamfer   */
+    --fc-wallet-slope: 26px;
+    --fc-wallet-card-slope: 18px;
     --fc-rim: color-mix(in srgb, var(--arb-color-accent) 48%, var(--arb-color-border));
     --fc-rim-soft: color-mix(in srgb, var(--arb-color-accent) 24%, var(--arb-color-border));
     --fc-edge: color-mix(in srgb, var(--arb-color-accent) 40%, transparent);
@@ -200,6 +202,18 @@
     -webkit-clip-path: var(--fc-shape);
     clip-path: var(--fc-shape);
     transition: transform .3s cubic-bezier(.22, .61, .36, 1), box-shadow .3s ease;
+  }
+
+  /* Wallet-only Shape B: slanted ribbon and slanted currency tiles. */
+  :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-ribbon {
+    background: var(--fc-glow), var(--fc-fill) !important;
+    -webkit-clip-path: polygon(var(--fc-wallet-slope) 0, 100% 0, calc(100% - var(--fc-wallet-slope)) 100%, 0 100%);
+    clip-path: polygon(var(--fc-wallet-slope) 0, 100% 0, calc(100% - var(--fc-wallet-slope)) 100%, 0 100%);
+  }
+
+  :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-card {
+    -webkit-clip-path: polygon(var(--fc-wallet-card-slope) 0, 100% 0, calc(100% - var(--fc-wallet-card-slope)) 100%, 0 100%);
+    clip-path: polygon(var(--fc-wallet-card-slope) 0, 100% 0, calc(100% - var(--fc-wallet-card-slope)) 100%, 0 100%);
   }
 
   /* Secondary surfaces: nested cards, menu tiles and metric cells share a smaller facet. */
@@ -251,6 +265,8 @@
       --fc-b: 18px;
       --fc-st: 9px;
       --fc-sb: 12px;
+      --fc-wallet-slope: 18px;
+      --fc-wallet-card-slope: 12px;
     }
   }
 

@@ -1,3 +1,10 @@
+## 2026-11-18 — Wallet surfaces use the slanted reference shape
+
+- **Refinement:** Applied reference option B's slanted profile only to the top wallet ribbon and its currency cards. The workspace menu and dashboard panels retain option C. Slant depth scales down on narrow screens; theme, hover and reduced-motion behavior remain intact.
+- **Verification:** `pnpm check` and `pnpm build` pass. Refreshed tracked `dist/public` output. No live-site deployment or authenticated browser validation was performed.
+
+---
+
 ## 2026-11-18 — Customer portal cut-corner surfaces
 
 - **Scope:** Design-only customer portal update in `client/src/customer-theme-overrides.css`, matching the uploaded wallet reference's option C with opposing top-right and bottom-left chamfers across wallet, menu and dashboard surfaces. Theme-aware accent rims, responsive cut sizes, hover treatment and reduced-motion handling are included.
