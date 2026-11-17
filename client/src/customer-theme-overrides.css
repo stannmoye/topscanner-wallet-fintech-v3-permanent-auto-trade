@@ -213,8 +213,8 @@
 
   :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-cards {
     gap: 8px !important;
-    padding-inline-start: calc(var(--fc-wallet-slope) + 14px) !important;
-    scroll-padding-inline-start: calc(var(--fc-wallet-slope) + 14px);
+    padding-inline-start: calc(var(--fc-wallet-slope) + 7px) !important;
+    scroll-padding-inline-start: calc(var(--fc-wallet-slope) + 7px);
   }
 
   :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-card {
@@ -223,7 +223,7 @@
   }
 
   :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-trigger {
-    padding-left: 18px !important;
+    padding-left: 9px !important;
   }
 
   /* Secondary surfaces: nested cards, menu tiles and metric cells share a smaller facet. */
@@ -281,12 +281,12 @@
 
     :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-cards {
       gap: 8px !important;
-      padding-inline-start: calc(var(--fc-wallet-slope) + 12px) !important;
-      scroll-padding-inline-start: calc(var(--fc-wallet-slope) + 12px);
+      padding-inline-start: calc(var(--fc-wallet-slope) + 6px) !important;
+      scroll-padding-inline-start: calc(var(--fc-wallet-slope) + 6px);
     }
 
     :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-trigger {
-      padding-left: 16px !important;
+      padding-left: 8px !important;
     }
   }
 

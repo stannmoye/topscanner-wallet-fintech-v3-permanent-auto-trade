@@ -1,3 +1,10 @@
+## 2026-11-18 — Halve the wallet leading inset
+
+- **Refinement:** Halved the added gap between the wallet ribbon's slanted edge and the first currency card, and halved the cards' extra left padding. Slant dimensions and the 8px inter-card gap are unchanged.
+- **Verification:** `pnpm check` and `pnpm build` pass. Refreshed tracked `dist/public` output; no live-site deployment or authenticated browser validation was performed.
+
+---
+
 ## 2026-11-18 — Inset first wallet card from the slanted edge
 
 - **Correction:** Restored the prior wallet slant dimensions and 8px inter-card gap. Added leading inset to the wallet scroller plus left padding inside each currency tile so the first balance stays clear of the clipped ribbon/card edges.
