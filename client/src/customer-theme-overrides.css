@@ -168,8 +168,8 @@
     --fc-b: 24px;   /* bottom-left chamfer         */
     --fc-st: 10px;  /* small top-right chamfer     */
     --fc-sb: 14px;  /* small bottom-left chamfer   */
-    --fc-wallet-slope: 26px;
-    --fc-wallet-card-slope: 18px;
+    --fc-wallet-slope: 42px;
+    --fc-wallet-card-slope: 32px;
     --fc-rim: color-mix(in srgb, var(--arb-color-accent) 48%, var(--arb-color-border));
     --fc-rim-soft: color-mix(in srgb, var(--arb-color-accent) 24%, var(--arb-color-border));
     --fc-edge: color-mix(in srgb, var(--arb-color-accent) 40%, transparent);
@@ -209,6 +209,10 @@
     background: var(--fc-glow), var(--fc-fill) !important;
     -webkit-clip-path: polygon(var(--fc-wallet-slope) 0, 100% 0, calc(100% - var(--fc-wallet-slope)) 100%, 0 100%);
     clip-path: polygon(var(--fc-wallet-slope) 0, 100% 0, calc(100% - var(--fc-wallet-slope)) 100%, 0 100%);
+  }
+
+  :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-cards {
+    gap: 18px !important;
   }
 
   :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-card {
@@ -265,8 +269,12 @@
       --fc-b: 18px;
       --fc-st: 9px;
       --fc-sb: 12px;
-      --fc-wallet-slope: 18px;
-      --fc-wallet-card-slope: 12px;
+      --fc-wallet-slope: 30px;
+      --fc-wallet-card-slope: 24px;
+    }
+
+    :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-cards {
+      gap: 14px !important;
     }
   }
 

@@ -1,3 +1,10 @@
+## 2026-11-18 — Strengthen wallet slant and card spacing
+
+- **Refinement:** Increased the slant depth on the top wallet ribbon and currency tiles, and widened the inter-card gap to make the USD and other wallets read as separate cards. Phone values remain slightly tighter.
+- **Verification:** `pnpm check` and `pnpm build` pass. Refreshed tracked `dist/public` output; no live-site deployment or authenticated browser validation was performed.
+
+---
+
 ## 2026-11-18 — Wallet surfaces use the slanted reference shape
 
 - **Refinement:** Applied reference option B's slanted profile only to the top wallet ribbon and its currency cards. The workspace menu and dashboard panels retain option C. Slant depth scales down on narrow screens; theme, hover and reduced-motion behavior remain intact.
