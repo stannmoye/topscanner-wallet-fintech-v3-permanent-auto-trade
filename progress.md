@@ -1,3 +1,11 @@
+## 2026-11-18 — Customer portal cut-corner surfaces
+
+- **Scope:** Design-only customer portal update in `client/src/customer-theme-overrides.css`, matching the uploaded wallet reference's option C with opposing top-right and bottom-left chamfers across wallet, menu and dashboard surfaces. Theme-aware accent rims, responsive cut sizes, hover treatment and reduced-motion handling are included.
+- **Verification:** `pnpm check` and `pnpm build` pass. `pnpm test` reports 25 existing failures across 12 suites; the design-system contract suite cannot load because this checkout has no `.github/workflows/` directory.
+- **Build output:** Refreshed tracked `dist/public` assets to match the source. No live-site deployment or authenticated browser validation was performed.
+
+---
+
 ## 2026-11-16 — Customer shell: rail containment at every breakpoint and a phone-height header fix
 
 - **Scope:** Design-only change to the customer shell (`client/src/customer-reference.css`, `client/src/customer-theme-overrides.css`). No functional, ledger, routing or data changes.

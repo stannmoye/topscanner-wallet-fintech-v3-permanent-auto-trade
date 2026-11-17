@@ -147,3 +147,134 @@
     z-index: 81 !important;
   }
 }
+
+/* ==========================================================================
+   ARCHITECTURAL FACET SURFACES — cut-corner containers
+   --------------------------------------------------------------------------
+   The wallet ribbon, the workspace menu and the dashboard panels no longer
+   render as plain square boxes. Their opposing top-right and bottom-left
+   chamfers follow the reference's cut-corner wallet shape (option C).
+
+   Shape is produced with clip-path only. The 1px edge is an inset ring plus
+   a corner facet highlight, because a real border and an outer box-shadow are
+   both clipped away by clip-path. All colours come from semantic tokens, so
+   every theme (original, midnight, clean-light, emerald, aurora, gold) and
+   every viewport inherits the treatment automatically.
+   Wrapped in @supports so browsers without clip-path keep the square fallback.
+   ========================================================================== */
+@supports (clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%)) {
+  :root[data-arb-theme] .customer-portal {
+    --fc-t: 16px;   /* top-right chamfer           */
+    --fc-b: 24px;   /* bottom-left chamfer         */
+    --fc-st: 10px;  /* small top-right chamfer     */
+    --fc-sb: 14px;  /* small bottom-left chamfer   */
+    --fc-rim: color-mix(in srgb, var(--arb-color-accent) 48%, var(--arb-color-border));
+    --fc-rim-soft: color-mix(in srgb, var(--arb-color-accent) 24%, var(--arb-color-border));
+    --fc-edge: color-mix(in srgb, var(--arb-color-accent) 40%, transparent);
+    --fc-hi: color-mix(in srgb, var(--arb-color-text) 7%, transparent);
+    --fc-glow: radial-gradient(135% 125% at 6% -12%, color-mix(in srgb, var(--arb-color-accent) 17%, transparent), transparent 50%);
+    --fc-fill: linear-gradient(148deg, color-mix(in srgb, var(--arb-color-surface-raised) 90%, var(--arb-color-accent) 10%), var(--arb-color-surface) 66%);
+    --fc-shape: polygon(0 0, calc(100% - var(--fc-t)) 0, 100% var(--fc-t), 100% 100%, var(--fc-b) 100%, 0 calc(100% - var(--fc-b)));
+    --fc-shape-sm: polygon(0 0, calc(100% - var(--fc-st)) 0, 100% var(--fc-st), 100% 100%, var(--fc-sb) 100%, 0 calc(100% - var(--fc-sb)));
+  }
+
+  /* Primary surfaces: wallet ribbon, workspace menu, welcome hero, dashboard cards. */
+  :root[data-arb-theme] .customer-portal :is(
+    .customer-top-wallet-band .customer-balance-ribbon,
+    .customer-top-workspace-menu,
+    .customer-market-hero,
+    .customer-workspace-card,
+    .customer-ledger-panel
+  ) {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background:
+      linear-gradient(225deg, transparent 0 50%, var(--fc-edge) 50%) 100% 0 / var(--fc-t) var(--fc-t) no-repeat,
+      linear-gradient(45deg, var(--fc-edge) 0 50%, transparent 50%) 0 100% / var(--fc-b) var(--fc-b) no-repeat,
+      var(--fc-glow),
+      var(--fc-fill) !important;
+    box-shadow:
+      inset 0 0 0 1px var(--fc-rim-soft),
+      inset 0 1px 0 var(--fc-hi),
+      inset 0 -22px 40px -30px color-mix(in srgb, var(--arb-color-accent) 40%, transparent) !important;
+    -webkit-clip-path: var(--fc-shape);
+    clip-path: var(--fc-shape);
+    transition: transform .3s cubic-bezier(.22, .61, .36, 1), box-shadow .3s ease;
+  }
+
+  /* Secondary surfaces: nested cards, menu tiles and metric cells share a smaller facet. */
+  :root[data-arb-theme] .customer-portal :is(
+    .customer-balance-card,
+    .customer-quick-actions > button,
+    .customer-workspace-categories > button,
+    .customer-workspace-featured button,
+    .customer-protected-note,
+    .customer-hero-opportunity,
+    .customer-ledger-panel .customer-panel,
+    .customer-ledger-panel .customer-metric-grid > div
+  ) {
+    border-radius: 0 !important;
+    -webkit-clip-path: var(--fc-shape-sm);
+    clip-path: var(--fc-shape-sm);
+  }
+
+  /* Hover: accent rim, lift and a soft glow on the non-scrolling surfaces. */
+  @media (hover: hover) {
+    :root[data-arb-theme] .customer-portal :is(
+      .customer-top-workspace-menu,
+      .customer-market-hero,
+      .customer-workspace-card,
+      .customer-ledger-panel
+    ):hover {
+      transform: translateY(-3px);
+      box-shadow:
+        inset 0 0 0 1px var(--fc-rim),
+        inset 0 1px 0 color-mix(in srgb, var(--arb-color-text) 9%, transparent),
+        inset 0 -22px 40px -30px color-mix(in srgb, var(--arb-color-accent) 55%, transparent) !important;
+      filter: drop-shadow(0 18px 30px color-mix(in srgb, var(--arb-color-accent) 26%, transparent));
+    }
+
+    /* The wallet ribbon wraps a horizontal scroller. Older Android WebViews paint a
+       clipped + filtered scroll box as empty, so its hover keeps the rim but no filter. */
+    :root[data-arb-theme] .customer-portal .customer-top-wallet-band .customer-balance-ribbon:hover {
+      transform: translateY(-2px);
+      box-shadow:
+        inset 0 0 0 1px var(--fc-rim),
+        inset 0 1px 0 color-mix(in srgb, var(--arb-color-text) 9%, transparent) !important;
+    }
+  }
+
+  /* Tighter facets on phones so the cut never crowds small cards. */
+  @media (max-width: 640px) {
+    :root[data-arb-theme] .customer-portal {
+      --fc-t: 12px;
+      --fc-b: 18px;
+      --fc-st: 9px;
+      --fc-sb: 12px;
+    }
+  }
+
+  /* Honour reduced-motion: drop the lift/transition, keep the shape and rim. */
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-arb-theme] .customer-portal :is(
+      .customer-top-wallet-band .customer-balance-ribbon,
+      .customer-top-workspace-menu,
+      .customer-market-hero,
+      .customer-workspace-card,
+      .customer-ledger-panel
+    ) {
+      transition: none;
+    }
+
+    :root[data-arb-theme] .customer-portal :is(
+      .customer-top-wallet-band .customer-balance-ribbon,
+      .customer-top-workspace-menu,
+      .customer-market-hero,
+      .customer-workspace-card,
+      .customer-ledger-panel
+    ):hover {
+      transform: none;
+      filter: none !important;
+    }
+  }
+}
