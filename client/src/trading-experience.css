@@ -1907,7 +1907,7 @@
 @keyframes routeIconShine { 0%,55%,100% { transform:translateX(-130%); } 75% { transform:translateX(250%); } }
 .customer-portal .reference-popup-provider-card { position:relative; overflow:hidden; animation:providerCardPulse 3.6s ease-in-out infinite; }
 .customer-portal .reference-popup-provider-card::after { content:""; position:absolute; inset:0 auto 0 -30%; width:22%; pointer-events:none; background:linear-gradient(100deg,transparent,rgba(125,211,252,.22),transparent); animation:routeIconShine 4.5s ease-in-out infinite; }
-.customer-portal .reference-popup-provider-flag { position:relative; z-index:1; display:flex; align-items:center; justify-content:center; box-sizing:border-box; width:56px; height:56px; flex:0 0 56px; overflow:hidden; border:1px solid rgba(125,211,252,.4); border-radius:50%; background:rgba(125,211,252,.14); font-size:44px; line-height:1; padding:0; text-shadow:0 1px 2px rgba(0,0,0,.18); }
+.customer-portal .reference-popup-provider-flag { position:relative; z-index:1; display:grid; place-items:center; box-sizing:border-box; width:64px; height:64px; flex:0 0 64px; overflow:hidden; border:1px solid rgba(125,211,252,.4); border-radius:50%; background:rgba(125,211,252,.14); font-size:50px !important; line-height:1; padding:0; text-shadow:0 1px 2px rgba(0,0,0,.18); }
 .customer-portal .reference-popup-route > div:nth-child(2) svg,.customer-portal .reference-popup-route > div:nth-child(1) > svg { filter:drop-shadow(0 0 7px rgba(125,211,252,.45)); }
 .customer-portal .reference-popup-route > div:nth-child(2) svg { animation:providerFlagFloat 3.2s ease-in-out infinite reverse; }
 
@@ -1944,7 +1944,7 @@
   .customer-portal .reference-popup-route > div { min-width:0; gap:5px; padding:5px; border-radius:8px; }
   .customer-portal .reference-popup-route > div > svg { width:17px; height:17px; flex:none; }
   .customer-portal .reference-popup-provider-card { align-items:center; overflow:visible; }
-  .customer-portal .reference-popup-route .reference-popup-provider-flag { width:48px; height:48px; flex:0 0 48px; overflow:hidden; border-radius:50%; font-size:40px !important; animation:none; transform:none; padding:0; }
+  .customer-portal .reference-popup-route .reference-popup-provider-flag { display:grid; place-items:center; width:60px; height:60px; flex:0 0 60px; overflow:hidden; border-radius:50%; font-size:46px !important; line-height:1; letter-spacing:0; animation:none; transform:none; padding:0; }
   .customer-portal .reference-popup-route span { font-size:7px; letter-spacing:.02em; }
   .customer-portal .reference-popup-route strong { font-size:9px; }
   .customer-portal .reference-popup-flow { grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:3px 5px; margin:5px 9px 0; padding:6px; border-radius:8px; font-size:9px; text-align:left; }

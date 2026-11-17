@@ -1,3 +1,10 @@
+## 2026-11-18 — Restore opportunity flag badge scale
+
+- **Correction:** The previous 48px mobile circle reduced the available flag area. Increased the mobile circle to 60px and the flag glyph to 46px, with grid centering and clipping contained inside the round badge.
+- **Verification:** `pnpm check`, the popup-specific style assertion, and `pnpm build` pass. Signed into production to inspect the customer portal; no active opportunity popup was available for a live visual check.
+
+---
+
 ## 2026-11-18 — Enlarge the opportunity popup country flag
 
 - **UI fix:** Changed the exchange-provider country flag badge to a centered circular holder with a larger emoji flag, using a compact mobile size that is protected from the route's small-label typography.
