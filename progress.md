@@ -41,7 +41,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 31 | Fee-policy reason limits alignment | `[x]` | `Fix #31` |
 | 32 | Validate every per-tier editable field | `[x]` | `Fix #32` |
 | 33 | Docs update (spec, progress, admin guide) | `[x]` | `Fix #33` (first pass; final pass after #64) |
-| 34 | Delivery acknowledgement retry cap/backoff | `[ ]` | |
+| 34 | Delivery acknowledgement retry cap/backoff | `[x]` | `Fix #34` |
 | 35 | Fix sounds for all sounds (per-sound enabled) | `[ ]` | |
 | 36 | Countdowns must not trust local clock | `[ ]` | |
 | 37 | Dismiss/minimize must not cancel rendered ack | `[ ]` | |
@@ -124,6 +124,14 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 34 notes (`Fix #34`)
+
+- **Problem.** The popup delivery acknowledgement effect in [App.tsx](file:///workspace/repo/client/src/App.tsx) retried a failed receipt/render every 5 seconds forever (`retryTimer=window.setTimeout(()=>void acknowledge(),5000)`), with no attempt cap and no terminal state.
+- **Bounded job.** [popup-delivery-acknowledgement.ts](file:///workspace/repo/client/src/popup-delivery-acknowledgement.ts) now exports `POPUP_ACKNOWLEDGEMENT_RETRY_LIMITS` (6 attempts, 45 s wall clock), `popupAcknowledgementBackoffMs` (1 s → 2 s → 4 s → 8 s → 15 s ceiling) and `runPopupDeliveryAcknowledgement`, which runs the idempotent receipt + render rounds under that budget, calls `onGiveUp` exactly once and returns a terminal `"unconfirmed"`. It never throws and never emits `FAILED`. The original `acknowledgePopupDelivery` helper is unchanged and still used a single round at a time.
+- **Client wiring.** The effect now calls `runPopupDeliveryAcknowledgement(...)`; on give-up it logs a bounded `console.warn` and shows the customer a clear final state via the existing status channel: "Could not confirm delivery — the notice was shown, but the server receipt could not be confirmed. It will not be marked failed; delivery is re-checked the next time the notice opens." No `FAILED` transition is introduced; the protected ledger flow is untouched.
+- **Tests.** [popup-delivery-acknowledgement.test.ts](file:///workspace/repo/client/src/popup-delivery-acknowledgement.test.ts) extended with 7 cases: success stops immediately, bounded attempts → single `onGiveUp` + `"unconfirmed"`, wall-clock budget stops before the attempt cap, cancellation without give-up, never-throws, and the back-off curve/cap. [trading-customer-popup-rendering.contract.test.ts](file:///workspace/repo/server/trading-customer-popup-rendering.contract.test.ts) updated to pin the bounded runner and assert the unbounded retry timer is gone.
+- **Scope note.** Item 37 (surviving dismiss/minimize) is still handled separately, so minimizing still cancels the current job at this step.
 
 ### Item 33 notes (`Fix #33`, first docs pass)
 

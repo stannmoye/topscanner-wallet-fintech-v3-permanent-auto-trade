@@ -17,7 +17,7 @@ import { buildChangedPolicyPatches, TRADING_TIER_POLICY_PATCH_KEYS } from "./tra
 import { isFreshCustomerPopupCandidate, isServerActiveCustomerPopupSlotOwner } from "./customer-popup-eligibility";
 import { remainingOpportunityMilliseconds } from "./customer-opportunity-countdown";
 import { CustomerOpportunityHistoryPanel, hasPersistedCustomerOpportunityDismissal } from "./customer-opportunity-history";
-import { acknowledgePopupDelivery } from "./popup-delivery-acknowledgement";
+import { runPopupDeliveryAcknowledgement } from "./popup-delivery-acknowledgement";
 import { waitForPopupVisibility } from "./popup-visibility-confirmation";
 import { CustomerSlideMenu } from "@/components/CustomerSlideMenu";
 import { CustomerTradingEligibility } from "@/components/CustomerTradingEligibility";
@@ -719,25 +719,26 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
     const leaseToken=String(popup?.deliveryLeaseToken||"");
     if(eventId<=0||!leaseToken||minimized)return;
     let cancelled=false;
-    let retryTimer:number|null=null;
     const visibilityAbort=new AbortController();
     const isCurrent=()=>!cancelled&&Number(popupRef.current?.deliveryEventId)===eventId&&String(popupRef.current?.deliveryLeaseToken||"")===leaseToken;
-    const acknowledge=async()=>{
-      const result=await acknowledgePopupDelivery({
-        received:()=>deliveryStatus.mutateAsync({eventId,status:"received",leaseToken}),
-        rendered:async()=>{
-          const visible=await waitForPopupVisibility(popupSurfaceRef.current,isCurrent,visibilityAbort.signal);
-          if(visible&&isCurrent())await deliveryStatus.mutateAsync({eventId,status:"rendered",leaseToken});
-        },
-        isCurrent,
-      });
-      if(result==="retry"&&isCurrent())retryTimer=window.setTimeout(()=>void acknowledge(),5000);
-    };
     // Receipt is recorded first; render is acknowledged only after the popup
     // is connected, visible in the foreground viewport, and survives two paint frames.
     // Ambiguous network errors retry idempotently and never become FAILED.
-    void acknowledge();
-    return()=>{cancelled=true;visibilityAbort.abort();if(retryTimer!==null)window.clearTimeout(retryTimer);};
+    // Item 34: retries are bounded (attempts + wall-clock) with back-off, and the
+    // job reports a terminal "unconfirmed" state instead of retrying forever.
+    void runPopupDeliveryAcknowledgement({
+      received:()=>deliveryStatus.mutateAsync({eventId,status:"received",leaseToken}),
+      rendered:async()=>{
+        const visible=await waitForPopupVisibility(popupSurfaceRef.current,isCurrent,visibilityAbort.signal);
+        if(visible&&isCurrent())await deliveryStatus.mutateAsync({eventId,status:"rendered",leaseToken});
+      },
+      isCurrent,
+      onGiveUp:({attempts,elapsedMs})=>{
+        console.warn(`[opportunity-popup] delivery acknowledgement unconfirmed after ${attempts} attempts in ${elapsedMs}ms (event ${eventId}); the notice is not marked failed and delivery is re-checked when it next opens.`);
+        if(isCurrent())onStatusMessage("Could not confirm delivery — the notice was shown, but the server receipt could not be confirmed. It will not be marked failed; delivery is re-checked the next time the notice opens.");
+      },
+    });
+    return()=>{cancelled=true;visibilityAbort.abort();};
   },[popup?.deliveryEventId,popup?.deliveryLeaseToken,deliveryStatus.mutateAsync,minimized]);
   useEffect(()=>{
     if(!popup||!Array.isArray(opportunityData?.offers))return;

@@ -107,11 +107,14 @@ describe("customer opportunity popup retry and visibility gates", () => {
     expect(delivery).toContain("a refreshed customer portal can retry rendering and status recording");
     expect(delivery).toContain("const dispatches=await claimPopupDeliveryDispatches(userId)");
     expect(delivery).toContain("deliveryLeaseToken:dispatch.leaseToken");
-    expect(component).toContain("acknowledgePopupDelivery({");
+    expect(component).toContain("runPopupDeliveryAcknowledgement({");
     expect(component).toContain('status:"received",leaseToken');
     expect(component).toContain('status:"rendered",leaseToken');
     expect(component).not.toContain('status:"failed",errorCode:"POPUP_RENDER_FAILED"');
-    expect(component).toContain('retryTimer=window.setTimeout(()=>void acknowledge(),5000)');
+    // Item 34: the acknowledgement retry is bounded, so there is no unbounded
+    // "retry every 5s forever" timer in the component any more.
+    expect(component).not.toContain("retryTimer=window.setTimeout(()=>void acknowledge(),5000)");
+    expect(component).toContain("onGiveUp:({attempts,elapsedMs})=>{");
   });
 
   it("only acknowledges rendering after the popup has committed and never maps RPC errors to failure", () => {
