@@ -43,7 +43,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 33 | Docs update (spec, progress, admin guide) | `[x]` | `Fix #33` (first pass; final pass after #64) |
 | 34 | Delivery acknowledgement retry cap/backoff | `[x]` | `Fix #34` |
 | 35 | Fix sounds for all sounds (per-sound enabled) | `[x]` | `Fix #35` |
-| 36 | Countdowns must not trust local clock | `[ ]` | |
+| 36 | Countdowns must not trust local clock | `[x]` | `Fix #36` |
 | 37 | Dismiss/minimize must not cancel rendered ack | `[ ]` | |
 | 38 | Visibility-aware polling | `[ ]` | |
 | 39 | Refresh balance invalidates balances + FX | `[ ]` | |
@@ -124,6 +124,16 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 36 notes (`Fix #36`)
+
+- **Problem.** The pop-up countdown derived "now" from the browser wall clock plus a one-time offset: `serverClockOffsetMs.current = serverTimeMs - Date.now()` captured once, then `remainingMs = closesAt - (Date.now() + offset)`. Because `Date.now()` was re-read on every tick, moving the system clock forward/backward shifted the countdown — a customer could make an opportunity appear to expire early or stay open longer.
+- **Server-anchored, monotonic clock.** [customer-opportunity-countdown.ts](file:///workspace/repo/client/src/customer-opportunity-countdown.ts) now exports `ServerClockAnchor`, `createServerClockAnchor(serverTime, performanceNow)`, `serverNowMilliseconds(anchor, performanceNow)` and `remainingOpportunityMillisecondsFromAnchor(closesAt, anchor, performanceNow)`. "Now" = `anchor.serverTimeMilliseconds + (performance.now() - anchor.performanceMilliseconds)`: the absolute base is the server-issued `serverTime` and the elapsed part is the **monotonic** `performance.now()` delta, which wall-clock changes cannot affect.
+- **Re-anchor on every feed.** [App.tsx](file:///workspace/repo/client/src/App.tsx) kept a `serverClockAnchorRef` rebuilt from `opportunityData.serverTime` on every feed/refetch (the server always sends `serverTime`), and a 1 s tick recomputes the render clock from the anchor via a `readServerNow()` helper. `isOfferOpen`, `isFreshOffer` (popup candidacy), the minimise/auto-collapse `scheduleCollapse` and the visible countdown all read the server-anchored clock. The `serverClockOffsetMs` ref is gone.
+- **Fallback.** If a feed ever arrives without a usable `serverTime`, `readServerNow()` falls back to `Date.now()` so the notice still works; the customer feed always sends `serverTime`, so this is defensive only.
+- **No money shown as completed.** The countdown already rendered "Expiry time reached · confirming status" at zero and never treated zero as settlement; that is unchanged and re-asserted.
+- **Tests.** [customer-opportunity-countdown.test.ts](file:///workspace/repo/client/src/customer-opportunity-countdown.test.ts) gained a server-anchored-clock suite: `now` = server time + monotonic elapsed, wall-clock independence, invalid-input nulls, and the App wiring. [trading-customer-popup-rendering.contract.test.ts](file:///workspace/repo/server/trading-customer-popup-rendering.contract.test.ts) now asserts the anchored clock and that `serverClockOffsetMs` is gone.
+- **Protected area.** Client display only; no server, ledger, allocation or settlement change.
 
 ### Item 35 notes (`Fix #35`)
 

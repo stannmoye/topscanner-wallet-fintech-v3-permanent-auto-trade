@@ -62,7 +62,7 @@ describe("customer opportunity popup retry and visibility gates", () => {
 
   it("minimizes at the shared server expiry instead of using a separate display timer", () => {
     expect(component).toContain("timer.current=window.setTimeout(()=>{");
-    expect(component).toContain("remainingOpportunityMilliseconds(popupRef.current?.closesAt,Date.now(),serverClockOffsetMs.current)");
+    expect(component).toContain("remainingOpportunityMilliseconds(popupRef.current?.closesAt,readServerNow(),0)");
     expect(component).not.toContain("configuredSeconds*1000");
     expect(database).toContain("const closesAt=new Date(rewardAt.getTime()+completionDisplaySeconds*1000)");
     expect(database).toContain("const displaySeconds=terms.tradeDurationSeconds+completionDisplaySeconds");
@@ -153,7 +153,11 @@ describe("customer opportunity popup retry and visibility gates", () => {
     expect(database).toContain("const responseNow=new Date();");
     expect(database).toContain("serverTime:responseNow.toISOString()");
     expect(database).toContain('expiryStatus:row.closesAt?');
-    expect(component).toContain("serverClockOffsetMs.current");
+    // The countdown is anchored to the server-issued time plus monotonic elapsed
+    // time (performance.now()); it never derives "now" from the local clock.
+    expect(component).toContain("createServerClockAnchor(opportunityData?.serverTime");
+    expect(component).toContain("serverNowMilliseconds(serverClockAnchorRef.current");
+    expect(component).not.toContain("serverClockOffsetMs");
     expect(component).toContain("popup.expiryStatus");
     expect(component).toContain("Opportunity expires in");
     expect(component).toContain("Countdown is synchronised to the server-saved expiry timestamp.");
@@ -167,7 +171,7 @@ describe("customer opportunity popup retry and visibility gates", () => {
   it("refreshes the visible popup with server-confirmed expiry and company status", () => {
     expect(component).toContain('const refreshedFields=["expiryStatus","popupEligible","companyDisplayName","companyLogoUrl","deliveryStatus"]');
     expect(component).toContain("current[key]!==popup[key]");
-    expect(component).toContain("Date.now()+serverClockOffsetMs.current");
+    expect(component).toContain("readServerNow()");
   });
 
   it("shows live connection state while retaining the last known informational popup", () => {
@@ -246,7 +250,7 @@ describe("customer opportunity popup retry and visibility gates", () => {
 
     expect(isFreshCustomerPopupCandidate(offer, clientNow)).toBe(false);
     expect(isFreshCustomerPopupCandidate(offer, serverNow)).toBe(true);
-    expect(component).toContain("const isFreshOffer=(offer:any)=>isFreshCustomerPopupCandidate(offer,Date.now()+serverClockOffsetMs.current)");
+    expect(component).toContain("const isFreshOffer=(offer:any)=>isFreshCustomerPopupCandidate(offer,readServerNow())");
     expect(component.match(/isFreshOffer\(offer\)/g)).toHaveLength(2);
   });
 

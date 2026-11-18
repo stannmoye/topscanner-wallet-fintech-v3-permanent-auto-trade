@@ -16,7 +16,7 @@ import { getPageCount, paginateItems } from "./trading-catalogue-pagination";
 import { countEnabledTradingPackages } from "./trading-package-status";
 import { buildChangedPolicyPatches, TRADING_TIER_POLICY_PATCH_KEYS } from "./trading-policy-patches";
 import { isFreshCustomerPopupCandidate, isServerActiveCustomerPopupSlotOwner } from "./customer-popup-eligibility";
-import { remainingOpportunityMilliseconds } from "./customer-opportunity-countdown";
+import { createServerClockAnchor, remainingOpportunityMilliseconds, serverNowMilliseconds } from "./customer-opportunity-countdown";
 import { CustomerOpportunityHistoryPanel, hasPersistedCustomerOpportunityDismissal } from "./customer-opportunity-history";
 import { runPopupDeliveryAcknowledgement } from "./popup-delivery-acknowledgement";
 import { waitForPopupVisibility } from "./popup-visibility-confirmation";
@@ -577,8 +577,9 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const [popup,setPopup]=useState<any>(null);
   const [minimized,setMinimized]=useState(false);
   const [detailsExpanded,setDetailsExpanded]=useState(false);
-  const [clockNow,setClockNow]=useState(()=>Date.now());
-  const serverClockOffsetMs=useRef(0);
+  const [clockNow,setClockNow]=useState<number>(()=>Date.now());
+  const serverClockAnchorRef=useRef<ReturnType<typeof createServerClockAnchor>>(null);
+  const readServerNow=()=>serverNowMilliseconds(serverClockAnchorRef.current,typeof performance!=="undefined"?performance.now():Date.now())??Date.now();
   const popupRef=useRef<any>(null);
   const popupSurfaceRef=useRef<HTMLDivElement|null>(null);
   const seen=useRef<Set<number>>(new Set());
@@ -592,21 +593,22 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const storageKey=`arbitrade_opportunity_popup_timing:${String(userEmail||"unknown").trim().toLowerCase()}`;
 
   useEffect(()=>{
-    const serverTimeMs=Date.parse(String(opportunityData?.serverTime||""));
-    if(Number.isFinite(serverTimeMs))serverClockOffsetMs.current=serverTimeMs-Date.now();
+    const anchor=createServerClockAnchor(opportunityData?.serverTime,typeof performance!=="undefined"?performance.now():Date.now());
+    if(anchor)serverClockAnchorRef.current=anchor;
+    setClockNow(readServerNow());
   },[opportunityData?.serverTime]);
   useEffect(()=>{
-    setClockNow(Date.now());
+    setClockNow(readServerNow());
     if(!popup)return;
-    const interval=window.setInterval(()=>setClockNow(Date.now()),1000);
+    const interval=window.setInterval(()=>setClockNow(readServerNow()),1000);
     return()=>window.clearInterval(interval);
   },[popup?.id]);
 
   const isOfferOpen=(offer:any)=>{
     const closesAt=new Date(offer.closesAt).getTime();
-    return String(offer.offerStatus||"").toLowerCase()==="open"&&Number.isFinite(closesAt)&&closesAt>Date.now()+serverClockOffsetMs.current;
+    return String(offer.offerStatus||"").toLowerCase()==="open"&&Number.isFinite(closesAt)&&closesAt>readServerNow();
   };
-  const isFreshOffer=(offer:any)=>isFreshCustomerPopupCandidate(offer,Date.now()+serverClockOffsetMs.current);
+  const isFreshOffer=(offer:any)=>isFreshCustomerPopupCandidate(offer,readServerNow());
   const isOfferCurrent=(offer:any)=>!dismissed.current.has(Number(offer.id))&&!expired.current.has(Number(offer.id))&&isOfferOpen(offer)&&isFreshOffer(offer)&&
     Boolean(opportunityData?.offers?.some((current:any)=>Number(current.id)===Number(offer.id)&&
       current.popupEligible===true&&String(current.offerStatus||"").toLowerCase()==="open"));
@@ -625,7 +627,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const scheduleCollapse=()=>{
     if(timer.current!==null)window.clearTimeout(timer.current);
     const scheduledOfferId=Number(popupRef.current?.id||0);
-    const remainingMs=remainingOpportunityMilliseconds(popupRef.current?.closesAt,Date.now(),serverClockOffsetMs.current);
+    const remainingMs=remainingOpportunityMilliseconds(popupRef.current?.closesAt,readServerNow(),0);
     if(remainingMs===null)return;
     timer.current=window.setTimeout(()=>{
       timer.current=null;
@@ -828,7 +830,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const closesAt=new Date(popup.closesAt);
   const closesAtMs=closesAt.getTime();
   const closesLabel=Number.isFinite(closesAtMs)?closesAt.toLocaleString():"Unavailable";
-  const remainingMs=remainingOpportunityMilliseconds(popup.closesAt,clockNow,serverClockOffsetMs.current);
+  const remainingMs=remainingOpportunityMilliseconds(popup.closesAt,clockNow,0);
   const remainingSeconds=remainingMs===null?null:Math.ceil(remainingMs/1000);
   const opensAtMs=Date.parse(String(popup.opensAt||""));
   const expiryDurationMs=closesAtMs-opensAtMs;
