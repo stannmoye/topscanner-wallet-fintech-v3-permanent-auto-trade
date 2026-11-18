@@ -29,7 +29,7 @@ Legend: `[x]` done & pushed · `[~]` verified already-correct (no change needed)
 | 4 | Profit % randomly generated within min/max | `[~]` | — |
 | 5 | Trade amount randomly generated within min/max | `[~]` | — |
 | 6 | Fix other errors found (e.g. UNION-collation 500) | `[x]` | `d0232f7` |
-| 7 | Verify all workers flow with no conflicts | `[ ]` | — |
+| 7 | Verify all workers flow with no conflicts | `[~]` | — |
 
 ---
 
@@ -155,6 +155,45 @@ Checks: `pnpm test` (1322 passed / 31 skipped, 171 files), `pnpm check`,
 
 ---
 
-### Task 7 — Worker / conflict verification — PENDING
+### Task 7 — Worker / conflict verification — VERIFIED OK
 
-Confirm every registered worker cycle runs with no conflicts after Tasks 3 and 6.
+All 13 worker keys in `WORKER_HEALTH_REGISTRY` (`server/_core/workerHealth.ts`)
+are actually started, so none is orphaned:
+
+- `server/_core/index.ts`: `trading-tier-qualification` (5 s),
+  `notification-campaigns` (30 s), `mining-rewards` (30 s),
+  `mining-price-feeds` (5 min), `popup-retention` (60 min + once at startup),
+  `settlement-reconciliation`, `automatic-market-settlement`,
+  `settlement-credit-posting`, `trading-opportunities` (all inside the 30 s
+  trade cycle), and `market-data-refresh`.
+- `server/_core/heartbeat.ts`: `local-scheduled-jobs`.
+- `server/emailQueue.ts`: `email-outbox`, `daily-digests`.
+
+No conflict exists between cycles:
+
+- `runMonitoredWorkerCycle` (workerHealth.ts:35,135–136) keeps an
+  `inFlightCycles` map keyed by worker key and returns the running promise
+  instead of starting a second copy, so overlapping timer ticks of the same
+  worker (and the two `ensureMarketDrivenOpportunities` call sites) are
+  centrally de-duplicated.
+- The trade cycle runs in the correct order for this fix set:
+  `reconcileAllDueTradesAwaitingConfirmation` →
+  `processAutomaticMarketSettlements` → `processConfirmedTradeCredits` →
+  `runAutoTradeCycle` + delivery, so existing trades settle/credit before new
+  opportunities are generated.
+- Settlement and credit transitions are row-locked and conditional
+  (`assertExactlyOneAffectedRow`), so two workers can never double-settle or
+  double-credit one trade.
+- `ensureMarketDrivenOpportunities` (`server/marketSync.ts`) is read-only and
+  idempotent (it only closes already-expired open offers), so calling it from
+  both the trade cycle and the market refresh cannot conflict.
+- No hidden settlement delay remains: `trade.creditDelaySeconds` already
+  defaults to `0` (db.ts:450/514), so with Task 3's delay the deadlines are
+  `settlementReviewAt = creditAt = settlesAt`.
+- Randomizers re-confirmed wired to admin bounds via `node:crypto.randomInt`:
+  duration/payout in `selectOpportunityGenerationTerms`
+  (opportunity-generation-template.ts:169–170, called at db.ts:3514) and trade
+  amount in `chooseSecureTradeAmount` (db.ts:4027).
+
+No code change required. `pnpm test` (1322 passed / 31 skipped) includes the
+worker-health and trade-credit-posting contract tests.
