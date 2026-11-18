@@ -39,7 +39,7 @@ import { assertExactlyOneAffectedRow } from "./db-mutation-guards";
 import { isValidSettlementEvidenceReference, isValidSettlementEvidenceStorageKey, type SettlementEvidenceType } from "./settlement-evidence";
 import { isTradingTierEnablingTransition } from "./modules/trading-tier-activation";
 import { reserveUniquePublicTradeId } from "./modules/public-trade-id";
-import { FAIL_CLOSED_TRADE_GLOBAL_CONTROLS, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_MASTER_KEYS, parseTradeGlobalControlPolicy, requiresPreviousSettlementForAllocation, type TradeGlobalMasterKey, type TradeGlobalControlStatus } from "./trading-global-policy";
+import { FAIL_CLOSED_TRADE_GLOBAL_CONTROLS, TRADE_GLOBAL_CONTROL_KEYS, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_CONTROL_SETTINGS_KEY, parseTradeGlobalControlPolicy, requiresPreviousSettlementForAllocation, automaticFinancialExecutionEnabled, type TradeGlobalControlKey, type TradeGlobalControlStatus } from "./trading-global-policy";
 import { classifyTradeFeeSnapshot, normalizeImmutableTradeFeeSnapshot, normalizeLegacyTradeFeePolicy, resolvePackageFeePolicyWrite, selectLatestEffectivePackageFeePolicy } from "./modules/package-fee-policy";
 const TRADE_FEE_SETTING_KEYS = ["trade.platformFeeBps", "trade.feeRoundingMode", "trade.feePolicyVersion"] as const;
 const READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS = new Set<string>(TRADE_FEE_SETTING_KEYS);
@@ -576,11 +576,11 @@ export async function getTradeGlobalControls():Promise<TradeGlobalControlStatus>
 export class TradeGlobalControlVersionConflictError extends Error {
   constructor() { super("Global Trade controls changed in another session. Refresh the saved settings before retrying."); this.name="TradeGlobalControlVersionConflictError"; }
 }
-export async function setTradeGlobalControl(input:{key:TradeGlobalMasterKey;enabled:boolean;reason:string;expectedPolicyVersion:number},updatedBy:number) {
+export async function setTradeGlobalControl(input:{key:TradeGlobalControlKey;enabled:boolean;reason:string;expectedPolicyVersion:number},updatedBy:number) {
   const auditReason=String(input.reason??"").trim();
   if(auditReason.length<5||auditReason.length>500) throw new Error("A 5–500 character administrator reason is required for global Trade control changes");
   if(!Number.isSafeInteger(input.expectedPolicyVersion)||input.expectedPolicyVersion<1) throw new Error("A valid saved global Trade policy version is required");
-  if(!TRADE_GLOBAL_MASTER_KEYS.includes(input.key)) throw new Error("Unknown global Trade control key");
+  if(!TRADE_GLOBAL_CONTROL_KEYS.includes(input.key)) throw new Error("Unknown global Trade control key");
   const db=await getDb(); if(!db) throw new Error("Database is not available");
   const saved=await db.transaction(async tx=>{
     const currentRow=(await tx.select().from(appSettings).where(eq(appSettings.settingKey,TRADE_GLOBAL_CONTROL_SETTINGS_KEY)).limit(1).for("update"))[0];
@@ -600,7 +600,7 @@ export async function setTradeGlobalControl(input:{key:TradeGlobalMasterKey;enab
     return next;
   });
   const persisted=await getTradeGlobalControls();
-  if(!persisted.available||persisted.policyVersion!==saved.policyVersion||TRADE_GLOBAL_MASTER_KEYS.some(key=>persisted[key]!==saved[key])) {
+  if(!persisted.available||persisted.policyVersion!==saved.policyVersion||TRADE_GLOBAL_CONTROL_KEYS.some(key=>persisted[key]!==saved[key])) {
     throw new Error("Global Trade control save committed, but a fresh database read did not confirm every value and the new policy version");
   }
   return persisted;
@@ -4027,9 +4027,6 @@ export async function recordOpportunityExecutionFailure(userId:number,eventId:nu
   if(state.status==="RETRYING") set.executionRetryDay=now.toISOString().slice(0,10);
   await db.update(opportunityPopupEvents).set(set).where(and(eq(opportunityPopupEvents.id,eventId),eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.executionLeaseToken,state.executionLeaseToken),notInArray(opportunityPopupEvents.eventStatus,["TRADED","SETTLED"])));
 }
-// Financial execution is server-owned and requires the real-market-result stage
-// below before any wallet credit can occur.
-const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;
 async function autoTradeOpenOpportunities(userId:number,offers:any[],controls:any){
   const executed:any[]=[];
   if(controls.accountStatus!=="active") return {executed,missed:await listMissedOpportunities(userId)};
@@ -4128,6 +4125,10 @@ function projectPopupBalance(minimumMinorValue:unknown, availableMinorValue:unkn
 export async function listCustomerOpportunities(userId:number, options:{consumeDelivery?:boolean;workerCycle?:boolean;allowAutomaticExecution?:boolean;customerSessionExecution?:boolean;generationBatchId?:string;automaticGenerationEnabled?:boolean}={}) {
   const db=await getDb(); if(!db) throw new Error("Database is not available");
   const globalPolicy=await getTradeGlobalControls();
+  // Automatic financial execution is an audited administrator control persisted
+  // with the other global Trade controls. It fails closed when the global policy
+  // cannot be read, and OFF blocks every new automatic debit.
+  const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);
   const now=new Date();
   const quotaDay=now.toISOString().slice(0,10);
   const settled:Array<{tradeId:number;rewardMinor:number;currency:string;totalMinor:number}>=[];
@@ -4893,7 +4894,10 @@ function allocationBlockedError(code:string,message:string):Error{
   return error;
 }
 export async function createTrade(userId:number,input:{offerId:number;amountMinor:number;deliveryEventId?:number;packageSubscriptionId?:number;packageId?:number;executionLeaseToken?:string}){
- if(!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) throw new Error("Automatic trade allocation is disabled by the server safety guard");
+ // Automatic financial execution is an audited administrator control persisted
+ // with the other global Trade controls. It fails closed when the global policy
+ // cannot be read, and OFF blocks the automatic debit before any wallet is touched.
+ if(!automaticFinancialExecutionEnabled(await getTradeGlobalControls())) throw new Error("Automatic trade allocation is disabled by the administrator");
  const db=await getDb();if(!db)throw new Error("Database is not available");
  // Fetch FX quotes before opening the financial transaction. The transaction below
  // locks every affected wallet in stable order and rechecks all spendable balances.

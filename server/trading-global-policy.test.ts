@@ -27,6 +27,7 @@ describe("global Trade control policy", () => {
       randomizedTimingEnabled: false,
       burstDeliveryEnabled: false,
       requirePreviousSettlement: true,
+      automaticFinancialExecutionEnabled: false,
     });
     expect(parseTradeGlobalControlPolicy(null)).toBeNull();
     expect(parseTradeGlobalControlPolicy("not-json")).toBeNull();

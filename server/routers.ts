@@ -450,7 +450,7 @@ export const appRouter = router({
       }
     }),
     updateGlobalTradeControl: adminProcedure.input(z.object({
-      key: z.enum(["tierPolicyMasterEnabled","informationalPopupDeliveryEnabled","companyRotationEnabled","randomizedTimingEnabled","burstDeliveryEnabled","requirePreviousSettlement"]),
+      key: z.enum(["tierPolicyMasterEnabled","informationalPopupDeliveryEnabled","companyRotationEnabled","randomizedTimingEnabled","burstDeliveryEnabled","requirePreviousSettlement","automaticFinancialExecutionEnabled"]),
       enabled: z.boolean(),
       reason: z.string().trim().min(5).max(500),
       expectedPolicyVersion: z.number().int().positive(),

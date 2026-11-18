@@ -45,7 +45,8 @@ describe("Package Configuration global Trade controls", () => {
     expect(specification).toContain("default ON");
     expect(adminApp).not.toContain("OFF · locked");
     expect(database).not.toContain('if(input.key==="requirePreviousSettlement"&&input.enabled===false)');
-    expect(database).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true");
+    expect(database).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);");
+    expect(database).toContain('if(!automaticFinancialExecutionEnabled(await getTradeGlobalControls())) throw new Error("Automatic trade allocation is disabled by the administrator");');
     expect(adminApp).not.toContain("automaticTradingEnabled: true");
   });
 

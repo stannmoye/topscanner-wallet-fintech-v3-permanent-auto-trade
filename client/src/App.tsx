@@ -1217,23 +1217,24 @@ function AdminOpportunityEngine() {
   </div>;
 }
 
-type AdminTradeGlobalMasterKey = "tierPolicyMasterEnabled" | "informationalPopupDeliveryEnabled" | "companyRotationEnabled" | "randomizedTimingEnabled" | "burstDeliveryEnabled" | "requirePreviousSettlement";
+type AdminTradeGlobalControlKey = "tierPolicyMasterEnabled" | "informationalPopupDeliveryEnabled" | "companyRotationEnabled" | "randomizedTimingEnabled" | "burstDeliveryEnabled" | "requirePreviousSettlement" | "automaticFinancialExecutionEnabled";
 function AdminGlobalTradeControls() {
   const q=trpc.adminOperations.globalTradeControls.useQuery(undefined,{refetchInterval:10000});
   const save=trpc.adminOperations.updateGlobalTradeControl.useMutation();
   const [reason,setReason]=useState("");
   const [message,setMessage]=useState("");
   const [messageKind,setMessageKind]=useState<"success"|"error">("success");
-  const controls:Array<{key:AdminTradeGlobalMasterKey;label:string;description:string}>=[
+  const controls:Array<{key:AdminTradeGlobalControlKey;label:string;description:string}>=[
     {key:"tierPolicyMasterEnabled",label:"Tier policy master",description:"Allows otherwise-valid enabled package tiers to be considered for future qualification and delivery."},
     {key:"informationalPopupDeliveryEnabled",label:"Pop-up delivery",description:"Allows new customer pop-ups from open worker-generated offers assigned to eligible customers. When automatic trading is enabled, qualifying pop-ups lock capital and execute trades."},
     {key:"companyRotationEnabled",label:"Company rotation",description:"Allows approved, enabled, non-archived catalogue identities to be shown. An empty catalogue never fabricates an identity."},
     {key:"randomizedTimingEnabled",label:"Randomized timing",description:"Uses the saved bounded timing rule; OFF uses its minimum interval."},
     {key:"burstDeliveryEnabled",label:"Burst delivery",description:"Allows only the configured bounded delivery batch; OFF limits a cycle to one item per customer."},
     {key:"requirePreviousSettlement",label:"Require previous settlement",description:"ON blocks a new allocation until prior trades are fully settled. OFF bypasses only this prerequisite for future allocations; other safeguards and the separate opportunity-delivery pause still apply."},
+    {key:"automaticFinancialExecutionEnabled",label:"Automatic financial execution",description:"Master switch for the automatic wallet debit and capital lock on a qualifying pop-up. ON performs the audited internal-ledger debit after the pop-up is shown; OFF blocks every new automatic debit before any wallet is touched. Informational delivery is independent. A missing or unreadable policy fails closed (OFF)."},
   ];
   const policy=q.data as any;
-  const saveControl=async(key:AdminTradeGlobalMasterKey)=>{
+  const saveControl=async(key:AdminTradeGlobalControlKey)=>{
     const auditReason=reason.trim();
     if(auditReason.length<5||auditReason.length>500){setMessageKind("error");setMessage("Enter a 5–500 character reason before changing a global Trade control.");return;}
     if(!policy?.available||!Number.isSafeInteger(Number(policy.policyVersion))){setMessageKind("error");setMessage("The canonical global policy is unavailable. Run the reviewed migration before changing controls.");return;}
@@ -1253,7 +1254,6 @@ function AdminGlobalTradeControls() {
     {q.isError&&<div className="admin-trading-global-controls__notice is-error" role="alert">Global Trade policy could not be read. Controls remain unavailable; no defaults were created. {q.error.message}</div>}
     {!q.isLoading&&!q.isError&&!policy?.available&&<div className="admin-trading-global-controls__notice is-error" role="alert">The canonical global policy is not installed or is malformed. No controls can be changed until migration 0100 is applied to the intended database and verified.</div>}
     {policy?.available&&<div className="admin-trading-global-controls__grid">{controls.map(control=><article className="admin-trading-global-controls__package" key={control.key}><div><span className="eyebrow">Global · future decisions</span><h3>{control.label}</h3><p>{control.description}</p></div><button type="button" role="switch" aria-checked={Boolean(policy[control.key])} aria-label={control.label} className={"admin-trading-global-controls__switch"+(policy[control.key]?" is-on":" is-off")} disabled={save.isPending||!policy.available||reason.trim().length<5} onClick={()=>void saveControl(control.key)}><span>{control.label}</span><strong>{policy[control.key]?"ON":"OFF"}</strong></button></article>)}
-      <article className="admin-trading-global-controls__package"><div><span className="eyebrow">Backend release guard</span><h3>Automatic financial execution</h3><p>Informational delivery is independent from financial execution.</p></div><span className="admin-trading-global-controls__protected">ON · active</span></article>
     </div>}
     {policy?.migrationDiagnostic&&<details className="admin-policy-note"><summary>Legacy migration diagnostic</summary><pre>{JSON.stringify(policy.migrationDiagnostic,null,2)}</pre></details>}
     <label className="admin-policy-reason">Administrator reason (required, 5–500 characters)<textarea maxLength={500} rows={2} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Explain why this shared Trade policy is changing."/></label>

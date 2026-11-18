@@ -151,7 +151,7 @@ describe("Automatic Trading tier qualification", () => {
   it("keeps allocation and due-trade processing in the scheduled worker", () => {
     expect(databaseSource).toContain("workerCycle?:boolean");
     expect(databaseSource.slice(databaseSource.indexOf("export async function listCustomerOpportunities("), databaseSource.indexOf("\nexport async function ", databaseSource.indexOf("export async function listCustomerOpportunities(") + 1))).not.toContain("markDueTradesAwaitingConfirmation");
-    expect(databaseSource).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;");
+    expect(databaseSource).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);");
     expect(databaseSource).toContain("const mayAutoExecute=AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.allowAutomaticExecution!==false");
     expect(databaseSource).toContain("await autoTradeOpenOpportunities(userId,autoTradeCandidates,effectiveControls)");
     expect(databaseSource).toContain("allowAutomaticExecution:!pausedUntilSettled");
@@ -184,7 +184,7 @@ describe("Automatic Trading tier qualification", () => {
   it("keeps opportunity generation and customer responses read-only", () => {
     expect(databaseSource).toContain("if(options.workerCycle===true&&globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled&&!formulaCooling&&remainingQuota>0)");
     expect(databaseSource.slice(databaseSource.indexOf("export async function listCustomerOpportunities("), databaseSource.indexOf("\nexport async function ", databaseSource.indexOf("export async function listCustomerOpportunities(") + 1))).not.toContain("markDueTradesAwaitingConfirmation");
-    expect(databaseSource).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;");
+    expect(databaseSource).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);");
     expect(databaseSource).toContain("const mayAutoExecute=AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.allowAutomaticExecution!==false");
     expect(databaseSource).toContain("await autoTradeOpenOpportunities(userId,autoTradeCandidates,effectiveControls)");
     expect(databaseSource).toContain("allowAutomaticExecution:!pausedUntilSettled");

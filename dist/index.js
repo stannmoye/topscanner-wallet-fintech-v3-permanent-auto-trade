@@ -4705,6 +4705,9 @@ function parseTradeGlobalControlPolicy(raw) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value;
   if (TRADE_GLOBAL_MASTER_KEYS.some((key) => typeof record[key] !== "boolean")) return null;
+  const financialRaw = record[TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY];
+  if (financialRaw !== void 0 && typeof financialRaw !== "boolean") return null;
+  const automaticFinancialExecutionEnabled2 = financialRaw === void 0 ? true : financialRaw;
   const policyVersion = Number(record.policyVersion);
   if (!Number.isSafeInteger(policyVersion) || policyVersion < 1) return null;
   const updatedBy = record.updatedBy === null || record.updatedBy === void 0 ? null : Number(record.updatedBy);
@@ -4717,6 +4720,7 @@ function parseTradeGlobalControlPolicy(raw) {
     randomizedTimingEnabled: record.randomizedTimingEnabled,
     burstDeliveryEnabled: record.burstDeliveryEnabled,
     requirePreviousSettlement: record.requirePreviousSettlement,
+    automaticFinancialExecutionEnabled: automaticFinancialExecutionEnabled2,
     policyVersion,
     updatedBy,
     updatedAt
@@ -4727,7 +4731,12 @@ function requiresPreviousSettlementForAllocation(controls) {
   if ("available" in controls && controls.available !== true) return true;
   return controls.requirePreviousSettlement !== false;
 }
-var TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_MASTER_KEYS, FAIL_CLOSED_TRADE_GLOBAL_CONTROLS;
+function automaticFinancialExecutionEnabled(controls) {
+  if (!controls) return false;
+  if ("available" in controls && controls.available !== true) return false;
+  return controls.automaticFinancialExecutionEnabled === true;
+}
+var TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_MASTER_KEYS, TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY, TRADE_GLOBAL_CONTROL_KEYS, FAIL_CLOSED_TRADE_GLOBAL_CONTROLS;
 var init_trading_global_policy = __esm({
   "server/trading-global-policy.ts"() {
     "use strict";
@@ -4741,13 +4750,19 @@ var init_trading_global_policy = __esm({
       "burstDeliveryEnabled",
       "requirePreviousSettlement"
     ];
+    TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY = "automaticFinancialExecutionEnabled";
+    TRADE_GLOBAL_CONTROL_KEYS = [
+      ...TRADE_GLOBAL_MASTER_KEYS,
+      TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY
+    ];
     FAIL_CLOSED_TRADE_GLOBAL_CONTROLS = {
       tierPolicyMasterEnabled: false,
       informationalPopupDeliveryEnabled: false,
       companyRotationEnabled: false,
       randomizedTimingEnabled: false,
       burstDeliveryEnabled: false,
-      requirePreviousSettlement: true
+      requirePreviousSettlement: true,
+      automaticFinancialExecutionEnabled: false
     };
   }
 });
@@ -6391,7 +6406,7 @@ async function setTradeGlobalControl(input, updatedBy) {
   const auditReason = String(input.reason ?? "").trim();
   if (auditReason.length < 5 || auditReason.length > 500) throw new Error("A 5\u2013500 character administrator reason is required for global Trade control changes");
   if (!Number.isSafeInteger(input.expectedPolicyVersion) || input.expectedPolicyVersion < 1) throw new Error("A valid saved global Trade policy version is required");
-  if (!TRADE_GLOBAL_MASTER_KEYS.includes(input.key)) throw new Error("Unknown global Trade control key");
+  if (!TRADE_GLOBAL_CONTROL_KEYS.includes(input.key)) throw new Error("Unknown global Trade control key");
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
   const saved = await db2.transaction(async (tx) => {
@@ -6416,7 +6431,7 @@ async function setTradeGlobalControl(input, updatedBy) {
     return next;
   });
   const persisted = await getTradeGlobalControls();
-  if (!persisted.available || persisted.policyVersion !== saved.policyVersion || TRADE_GLOBAL_MASTER_KEYS.some((key) => persisted[key] !== saved[key])) {
+  if (!persisted.available || persisted.policyVersion !== saved.policyVersion || TRADE_GLOBAL_CONTROL_KEYS.some((key) => persisted[key] !== saved[key])) {
     throw new Error("Global Trade control save committed, but a fresh database read did not confirm every value and the new policy version");
   }
   return persisted;
@@ -10053,6 +10068,7 @@ async function listCustomerOpportunities(userId, options = {}) {
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
   const globalPolicy = await getTradeGlobalControls();
+  const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = automaticFinancialExecutionEnabled(globalPolicy);
   const now = /* @__PURE__ */ new Date();
   const quotaDay = now.toISOString().slice(0, 10);
   const settled = [];
@@ -11039,7 +11055,7 @@ function allocationBlockedError(code, message) {
   return error;
 }
 async function createTrade(userId, input) {
-  if (!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) throw new Error("Automatic trade allocation is disabled by the server safety guard");
+  if (!automaticFinancialExecutionEnabled(await getTradeGlobalControls())) throw new Error("Automatic trade allocation is disabled by the administrator");
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
   const preflightWallets = await db2.select({ currency: customerBalances.currency, availableMinor: customerBalances.availableMinor }).from(customerBalances).where(eq3(customerBalances.userId, userId));
@@ -12659,7 +12675,7 @@ async function resetTradeOpportunityUsage(input, actorId) {
     return summary;
   });
 }
-var TRADE_FEE_SETTING_KEYS, READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS, _db, _pool, tradingFxRateCache, TRADE_SETTINGS_AUDIT_ACTIONS, TRADE_SETTLEMENT_POLICY_VERSION_KEY, TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TradeTimingPolicyVersionConflictError, TradeGlobalControlVersionConflictError, DeliveryRetryPolicyVersionConflictError, ACCOUNT_CLOSURE_TICKET_SUBJECT, defaultCurrencies, PAYOUT_ASSET_CODES, AccountClosureDecisionError, TRADE_ALLOCATION_CONTROL_KEY, TradingPackageTermsVersionConflictError, OPPORTUNITY_GENERATION_CONTROL_KEY, OpportunityGenerationControlVersionConflictError, TRADING_TIER_POLICY_PATCH_KEYS, AUTOMATIC_FINANCIAL_EXECUTION_ENABLED, ADMIN_LEDGER_ACTIVITY_PAGE_SIZE, OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY, OPPORTUNITY_USAGE_RESET_ACTION, OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS, OPPORTUNITY_USAGE_RESET_MAX_ROWS;
+var TRADE_FEE_SETTING_KEYS, READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS, _db, _pool, tradingFxRateCache, TRADE_SETTINGS_AUDIT_ACTIONS, TRADE_SETTLEMENT_POLICY_VERSION_KEY, TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TradeTimingPolicyVersionConflictError, TradeGlobalControlVersionConflictError, DeliveryRetryPolicyVersionConflictError, ACCOUNT_CLOSURE_TICKET_SUBJECT, defaultCurrencies, PAYOUT_ASSET_CODES, AccountClosureDecisionError, TRADE_ALLOCATION_CONTROL_KEY, TradingPackageTermsVersionConflictError, OPPORTUNITY_GENERATION_CONTROL_KEY, OpportunityGenerationControlVersionConflictError, TRADING_TIER_POLICY_PATCH_KEYS, ADMIN_LEDGER_ACTIVITY_PAGE_SIZE, OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY, OPPORTUNITY_USAGE_RESET_ACTION, OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS, OPPORTUNITY_USAGE_RESET_MAX_ROWS;
 var init_db = __esm({
   "server/db.ts"() {
     "use strict";
@@ -12760,7 +12776,6 @@ var init_db = __esm({
     OpportunityGenerationControlVersionConflictError = class extends Error {
     };
     TRADING_TIER_POLICY_PATCH_KEYS = new Set(PACKAGE_OPPORTUNITY_POLICY_PATCH_KEYS);
-    AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;
     ADMIN_LEDGER_ACTIVITY_PAGE_SIZE = 50;
     OPPORTUNITY_USAGE_RESET_GLOBAL_KEY = "trading.opportunityUsageReset.global";
     OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY = (userId) => `trading.opportunityUsageReset.customer.${userId}`;
@@ -18569,7 +18584,7 @@ var appRouter = router({
       }
     }),
     updateGlobalTradeControl: adminProcedure.input(z3.object({
-      key: z3.enum(["tierPolicyMasterEnabled", "informationalPopupDeliveryEnabled", "companyRotationEnabled", "randomizedTimingEnabled", "burstDeliveryEnabled", "requirePreviousSettlement"]),
+      key: z3.enum(["tierPolicyMasterEnabled", "informationalPopupDeliveryEnabled", "companyRotationEnabled", "randomizedTimingEnabled", "burstDeliveryEnabled", "requirePreviousSettlement", "automaticFinancialExecutionEnabled"]),
       enabled: z3.boolean(),
       reason: z3.string().trim().min(5).max(500),
       expectedPolicyVersion: z3.number().int().positive()

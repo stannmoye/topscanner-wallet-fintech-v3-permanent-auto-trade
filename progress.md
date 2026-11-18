@@ -21,7 +21,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 11 | Remove fallback session secret | `[x]` | `Fix #11` |
 | 12 | database.sql / Git LFS dump | `[-]` | owner: ignore |
 | 13 | General .gitignore | `[-]` | owner: ignore (except item 50) |
-| 14 | Persist `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED` + audit switches | `[ ]` | |
+| 14 | Persist `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED` + audit switches | `[x]` | `Fix #14` |
 | 15 | `customer.opportunities` auto-trades in query | `[-]` | owner: intentional |
 | 16 | Float math in balance summary / min-max / exit P&L | `[-]` | owner: intentional |
 | 17 | Admin wallet priority order | `[ ]` | |
@@ -98,6 +98,29 @@ Item 4 added the UNION-branch regression test for item 3; item 5 fixed the ambig
 ### Batch 3 summary (items 9–11)
 
 Item 9 made every rate that feeds a calculation come from a live API fetch; item 10 made allocation fail closed and enforced the tier/quota/concurrency/success/reward caps; item 11 removed the public fallback session secret and made startup require a real `SESSION_SECRET` in every environment. Items 12 and 13 are owner-ignored, so this batch is 9–11. Tests/typecheck/build green (1352 passed, 31 skipped).
+
+### Batch 4 summary (items 12–14)
+
+Only item 14 was actionable (items 12 and 13 are owner-ignored). Item 14 replaced the hardcoded `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true` with a persisted, versioned and audited administrator master in the canonical `trade.globalControls` policy, added it to the Global Trade Controls screen, and audited every other administrator Trade switch (persist → reload → behaviour). Tests/typecheck/build green (1363 passed, 31 skipped).
+
+### Item 14 notes (`Fix #14`)
+
+- **What changed.** The module-level `const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;` in [db.ts](file:///workspace/server/db.ts) is gone. It is now `automaticFinancialExecutionEnabled(globalPolicy)` read from the same audited global Trade policy as the delivery masters: `listCustomerOpportunities` computes `const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);` and `createTrade` guards with `if(!automaticFinancialExecutionEnabled(await getTradeGlobalControls())) throw new Error("Automatic trade allocation is disabled by the administrator");` before any wallet is touched. No debit or credit amount changes (protected area respected).
+- **Storage / audit.** The switch is stored in the existing `app_settings` record `trade.globalControls` (no new key, no migration) alongside the six delivery masters. Writes go through the existing `setTradeGlobalControl` transaction (row lock + optimistic `policyVersion` check → `TradeGlobalControlVersionConflictError`, actor/reason audit action `trade_global_control_updated`, fresh read-back verification). `TRADE_GLOBAL_CONTROL_KEYS` now includes `automaticFinancialExecutionEnabled`, so the API validates and the read-back checks all seven keys.
+- **Backward compatibility (no live behaviour flip on deploy).** `parseTradeGlobalControlPolicy` treats a **missing** `automaticFinancialExecutionEnabled` key in an otherwise-valid row as **ON**, so the seeded `0098/0112/0113/0114` rows keep today's behaviour with no data rewrite. A present non-boolean is malformed (policy rejected). `automaticFinancialExecutionEnabled()` **fails closed (OFF)** when the policy is missing, unavailable or malformed.
+- **Default & required behaviour.** Defaults ON (matches today). Persists across refresh, logout/login and server restart because it is a normal row in `app_settings`. The owner can toggle it any time from **Package Configuration → Global Trade Controls** (`adminOperations.updateGlobalTradeControl` / read `adminOperations.globalTradeControls`).
+- **Audit of the other switches (table).** Every administrator Trade switch saves to the database, reloads the last-saved value through its read query, and has a runtime consumer:
+
+  | Switch | Store | Save mutation | Read | Runtime consumer |
+  |---|---|---|---|---|
+  | 6 global delivery masters + automatic financial execution | `app_settings: trade.globalControls` (versioned) | `adminOperations.updateGlobalTradeControl` | `adminOperations.globalTradeControls` | `requiresPreviousSettlementForAllocation`, `automaticFinancialExecutionEnabled`, delivery gates |
+  | New-allocation pause / resume | `trading.allocations.paused` | `adminOperations.updateTradeAllocationControls` | `getTradeAllocationControls` | `if(allocationControls.allocationsPaused) {` in `createTrade` |
+  | Opportunity generation control | `trade.opportunityGeneration.control` (versioned) | `adminOperations.setOpportunityGenerationControl` | `getOpportunityGenerationControl` | `const generationControl=await getOpportunityGenerationControl();` |
+  | Delivery retry policy | `DELIVERY_RETRY_POLICY_SETTING_KEY` | `adminOperations.updateDeliveryRetryPolicy` | `getDeliveryRetryPolicy` | retry sweeper |
+  | Per-tier `enabled` / `automaticDelivery` / `automaticTradingEnabled` | `opportunity_package_policies` | `adminOperations.updateTradingPackagePolicy` | tier policy read | `trading_tier_financial_execution_enabled` audit, `hasConfiguredTradingOfferPolicy`, `globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled` |
+
+- **UI.** [App.tsx](file:///workspace/client/src/App.tsx) renames `AdminTradeGlobalMasterKey` → `AdminTradeGlobalControlKey`, adds the 7th switch, and removes the previous static non-interactive "Backend release guard … ON · active" row so the master renders as a real `role="switch"` button. Ownership registry [trade-settings-ownership.ts](file:///workspace/client/src/trade-settings-ownership.ts) now declares `trade.automaticFinancialExecution` as an auditable `globalMaster`.
+- **Tests.** New `server/trading-global-financial-execution.test.ts` (parser backward-compatibility + fail-closed helper) and `server/trading-admin-switch-persistence.contract.test.ts` (the switch-audit table above, asserting persist → read-query → runtime-consumer for every switch). Updated: `server/trading-global-policy.test.ts` (fail-closed object gains the 7th key), `server/trading-admin-global-controls.contract.test.ts`, `server/trading-package-eligibility.contract.test.ts`, `server/trading-auto-tier-qualification.contract.test.ts`, `client/src/trade-settings-ownership.contract.test.ts`, `client/src/opportunity-close-action.contract.test.ts`. Docs: `docs/TRADING_SYSTEM_SPECIFICATION.md` §6 and the Package Configuration owner list. Characterization tests (item 9) still pass unchanged.
 
 ### Item 8 notes (`Fix #8`)
 

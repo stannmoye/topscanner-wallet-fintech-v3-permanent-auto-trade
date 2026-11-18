@@ -10,9 +10,26 @@ export const TRADE_GLOBAL_MASTER_KEYS = [
   "requirePreviousSettlement",
 ] as const;
 
+/**
+ * The automatic financial-execution gate lives in the same persisted
+ * `trade.globalControls` record as the six delivery masters. It was added after
+ * those masters, so rows written before it existed omit the key; the parser
+ * treats a missing value as ON (today's behaviour) and only an explicit OFF or
+ * an unreadable/malformed policy blocks automatic execution.
+ */
+export const TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY = "automaticFinancialExecutionEnabled" as const;
+
+/** Every persisted global Trade control, including the financial-execution gate. */
+export const TRADE_GLOBAL_CONTROL_KEYS = [
+  ...TRADE_GLOBAL_MASTER_KEYS,
+  TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY,
+] as const;
+
 export type TradeGlobalMasterKey = typeof TRADE_GLOBAL_MASTER_KEYS[number];
+export type TradeGlobalControlKey = typeof TRADE_GLOBAL_CONTROL_KEYS[number];
 export type TradeGlobalMasterValues = Record<TradeGlobalMasterKey, boolean>;
-export type TradeGlobalControlPolicy = TradeGlobalMasterValues & {
+export type TradeGlobalControlValues = TradeGlobalMasterValues & Record<typeof TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY, boolean>;
+export type TradeGlobalControlPolicy = TradeGlobalControlValues & {
   policyVersion: number;
   updatedBy: number | null;
   updatedAt: string | null;
@@ -22,13 +39,14 @@ export type TradeGlobalControlStatus = TradeGlobalControlPolicy & {
   migrationDiagnostic: Record<string, unknown> | null;
 };
 
-export const FAIL_CLOSED_TRADE_GLOBAL_CONTROLS: TradeGlobalMasterValues = {
+export const FAIL_CLOSED_TRADE_GLOBAL_CONTROLS: TradeGlobalControlValues = {
   tierPolicyMasterEnabled: false,
   informationalPopupDeliveryEnabled: false,
   companyRotationEnabled: false,
   randomizedTimingEnabled: false,
   burstDeliveryEnabled: false,
   requirePreviousSettlement: true,
+  automaticFinancialExecutionEnabled: false,
 };
 
 export type LegacyPackageControlRow = {
@@ -92,6 +110,12 @@ export function parseTradeGlobalControlPolicy(raw: unknown): TradeGlobalControlP
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (TRADE_GLOBAL_MASTER_KEYS.some(key => typeof record[key] !== "boolean")) return null;
+  // Backward compatibility: the financial-execution gate was added after the
+  // original six masters. A row without it keeps automatic execution ON (the
+  // previous hard-coded behaviour); a present but non-boolean value is malformed.
+  const financialRaw = record[TRADE_GLOBAL_FINANCIAL_EXECUTION_KEY];
+  if (financialRaw !== undefined && typeof financialRaw !== "boolean") return null;
+  const automaticFinancialExecutionEnabled = financialRaw === undefined ? true : (financialRaw as boolean);
   const policyVersion = Number(record.policyVersion);
   if (!Number.isSafeInteger(policyVersion) || policyVersion < 1) return null;
   const updatedBy = record.updatedBy === null || record.updatedBy === undefined ? null : Number(record.updatedBy);
@@ -104,6 +128,7 @@ export function parseTradeGlobalControlPolicy(raw: unknown): TradeGlobalControlP
     randomizedTimingEnabled: record.randomizedTimingEnabled as boolean,
     burstDeliveryEnabled: record.burstDeliveryEnabled as boolean,
     requirePreviousSettlement: record.requirePreviousSettlement as boolean,
+    automaticFinancialExecutionEnabled,
     policyVersion,
     updatedBy,
     updatedAt,
@@ -118,4 +143,15 @@ export function requiresPreviousSettlementForAllocation(controls?: TradeGlobalCo
   if (!controls) return true;
   if ("available" in controls && controls.available !== true) return true;
   return controls.requirePreviousSettlement !== false;
+}
+
+/**
+ * Automatic financial execution fails closed. A missing, unavailable or
+ * malformed global policy returns false, and so does an explicit OFF. Only an
+ * explicit ON read from the persisted policy allows an automatic capital lock.
+ */
+export function automaticFinancialExecutionEnabled(controls?: TradeGlobalControlStatus | TradeGlobalControlValues | null): boolean {
+  if (!controls) return false;
+  if ("available" in controls && controls.available !== true) return false;
+  return controls.automaticFinancialExecutionEnabled === true;
 }

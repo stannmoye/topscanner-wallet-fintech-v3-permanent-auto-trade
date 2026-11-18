@@ -45,7 +45,7 @@ describe("server-side automatic Trading tier eligibility", () => {
     const implementation = source.slice(start, end);
     expect(implementation).toContain("globalDeliveryEnabled=globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled");
     expect(implementation).not.toContain("configured.automaticTradingEnabled && hasConfiguredTradingOfferPolicy(configured)");
-    expect(source).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;");
+    expect(source).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);");
   });
 
   it("allows tier lifecycle enablement only when valid policy terms exist, independently of global masters", () => {
@@ -90,7 +90,8 @@ describe("server-side automatic Trading tier eligibility", () => {
   });
 
   it("keeps financial execution enabled in package defaults while retaining historical migration evidence", () => {
-    expect(source).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true;");
+    expect(source).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED=automaticFinancialExecutionEnabled(globalPolicy);");
+    expect(source).toContain('if(!automaticFinancialExecutionEnabled(await getTradeGlobalControls())) throw new Error("Automatic trade allocation is disabled by the administrator");');
     expect(source).toContain("AUTOMATIC_FINANCIAL_EXECUTION_ENABLED && options.allowAutomaticExecution!==false");
     expect(packagePolicySource).toContain("automaticTradingEnabled: true");
     expect(source).toContain("automaticTradingEnabled:true");

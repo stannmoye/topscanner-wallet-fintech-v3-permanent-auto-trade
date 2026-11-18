@@ -6,7 +6,7 @@ const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const closeAction = readFileSync(new URL("./components/OpportunityCloseAction.tsx", import.meta.url), "utf8");
 const guide = readFileSync(new URL("./components/TradeSettingsAdminGuide.tsx", import.meta.url), "utf8");
 const templateAdmin = readFileSync(new URL("./components/AdminOpportunityTemplates.tsx", import.meta.url), "utf8");
-const opportunityPage = app.slice(app.indexOf("function AdminOpportunityEngine()"), app.indexOf("type AdminTradeGlobalMasterKey"));
+const opportunityPage = app.slice(app.indexOf("function AdminOpportunityEngine()"), app.indexOf("type AdminTradeGlobalControlKey"));
 
  describe("audited close on generated Opportunity Generation & Management", () => {
   it("renders the close action only from the existing owner page", () => {
