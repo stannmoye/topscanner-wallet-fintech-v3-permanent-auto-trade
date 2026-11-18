@@ -119,3 +119,18 @@ export function usdUnitsToNativeMinor(usdUnits: number, scale: number, usdRate: 
   if (!Number.isFinite(usdUnits) || usdUnits < 0 || !Number.isFinite(usdRate) || usdRate <= 0) throw new Error("Invalid currency conversion inputs");
   return Math.max(1, Math.round((usdUnits / usdRate) * Math.pow(10, scale)));
 }
+
+/**
+ * Reciprocate a positive FX rate (1 / rate) with exact decimal arithmetic at a
+ * fixed number of decimal places. Used to turn a provider's "native units per
+ * USD" quote into a "USD per native unit" rate without binary floating-point
+ * error (never `1 / x`). The default 12 decimals match the FX rate scale that
+ * `rateToScaled` parses.
+ */
+export function invertDecimalRate(rate: Decimal.Value, decimalPlaces = 12): string {
+  if (!Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 30) throw new Error("Invalid decimal places for FX inversion");
+  let value: Decimal;
+  try { value = new Decimal(rate); } catch { throw new Error("Invalid FX rate for inversion"); }
+  if (!value.isFinite() || !value.gt(0)) throw new Error("FX rate must be finite and positive");
+  return new Decimal(1).div(value).toDecimalPlaces(decimalPlaces, Decimal.ROUND_HALF_UP).toFixed(decimalPlaces);
+}

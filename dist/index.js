@@ -3626,6 +3626,68 @@ var init_trading_wallet_fx = __esm({
   }
 });
 
+// shared/money.ts
+import Decimal from "decimal.js";
+function minorToMajor(minor, scale) {
+  return Number(minor || 0) / Math.pow(10, scale);
+}
+function nativeMinorToUsd(minor, scale, usdRate) {
+  return minorToMajor(minor, scale) * usdRate;
+}
+function nativeMinorToUsdMinorExact(minor, scale, usdRate) {
+  if (!Number.isSafeInteger(minor) || minor < 0) throw new Error("Native amount must be a non-negative safe integer in minor units");
+  if (!Number.isInteger(scale) || scale < 0 || scale > 30) throw new Error("Invalid native currency precision scale");
+  let rate;
+  try {
+    rate = new Decimal(usdRate);
+  } catch {
+    throw new Error("Invalid USD conversion rate");
+  }
+  if (!rate.isFinite() || !rate.gt(0)) throw new Error("USD conversion rate must be finite and positive");
+  const usdMinor = new Decimal(minor).times(rate).times(new Decimal(10).pow(2 - scale)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  if (!usdMinor.isFinite() || !usdMinor.isInteger() || !usdMinor.abs().lte(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Converted USD minor amount exceeds the safe integer range");
+  }
+  return usdMinor.toNumber();
+}
+function proportionalMinorAmount(totalMinor, partMinor, wholeMinor) {
+  if (!Number.isSafeInteger(totalMinor) || totalMinor < 0) throw new Error("Total attribution must be a non-negative safe integer");
+  if (!Number.isSafeInteger(partMinor) || partMinor <= 0) throw new Error("Partial amount must be a positive safe integer");
+  if (!Number.isSafeInteger(wholeMinor) || wholeMinor <= 0 || partMinor > wholeMinor) throw new Error("Whole amount must be a safe integer at least as large as the partial amount");
+  const allocated = new Decimal(totalMinor).times(partMinor).div(wholeMinor).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  if (!allocated.isFinite() || !allocated.isInteger() || allocated.lt(0) || allocated.gt(totalMinor) || !allocated.lte(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Proportional attribution exceeds the safe integer range");
+  }
+  return allocated.toNumber();
+}
+function usdUnitsToNativeMinor(usdUnits, scale, usdRate) {
+  if (!Number.isFinite(usdUnits) || usdUnits < 0 || !Number.isFinite(usdRate) || usdRate <= 0) throw new Error("Invalid currency conversion inputs");
+  return Math.max(1, Math.round(usdUnits / usdRate * Math.pow(10, scale)));
+}
+function invertDecimalRate(rate, decimalPlaces = 12) {
+  if (!Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 30) throw new Error("Invalid decimal places for FX inversion");
+  let value;
+  try {
+    value = new Decimal(rate);
+  } catch {
+    throw new Error("Invalid FX rate for inversion");
+  }
+  if (!value.isFinite() || !value.gt(0)) throw new Error("FX rate must be finite and positive");
+  return new Decimal(1).div(value).toDecimalPlaces(decimalPlaces, Decimal.ROUND_HALF_UP).toFixed(decimalPlaces);
+}
+var roundingMap;
+var init_money = __esm({
+  "shared/money.ts"() {
+    "use strict";
+    roundingMap = {
+      half_up: Decimal.ROUND_HALF_UP,
+      down: Decimal.ROUND_DOWN,
+      up: Decimal.ROUND_UP,
+      half_even: Decimal.ROUND_HALF_EVEN
+    };
+  }
+});
+
 // server/marketProviders.ts
 async function fetchMostActiveStocks(limit = 200) {
   const payload = await json(`https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=${Math.min(200, Math.max(1, limit))}&offset=0&download=true`);
@@ -3674,7 +3736,7 @@ async function fetchCurrencyUsdRate(input) {
       const sourceDate2 = row2?.date ? String(row2.date) : "";
       const sourceMs2 = sourceDate2 ? new Date(sourceDate2).getTime() : NaN;
       if (Number.isFinite(usdToNative) && usdToNative > 0 && Number.isFinite(sourceMs2) && sourceMs2 <= Date.now() + 6e4 && Date.now() - sourceMs2 <= 4 * 24 * 60 * 60 * 1e3) {
-        return { rate: String(1 / usdToNative), provider: "frankfurter-ecb", sourceDate: sourceDate2, fetchedAt };
+        return { rate: invertDecimalRate(row2?.rate), provider: "frankfurter-ecb", sourceDate: sourceDate2, fetchedAt };
       }
     } catch {
     }
@@ -3687,7 +3749,7 @@ async function fetchCurrencyUsdRate(input) {
       if (!Number.isFinite(usdToNative) || usdToNative <= 0 || !Number.isFinite(sourceMs2) || sourceMs2 > Date.now() + 6e4 || Date.now() - sourceMs2 > 24 * 60 * 60 * 1e3) {
         throw new Error(`ExchangeRate-API returned no fresh rate for ${code}.`);
       }
-      return { rate: String(1 / usdToNative), provider: "open-er-api", sourceDate: sourceDate2, fetchedAt };
+      return { rate: invertDecimalRate(payload2?.rates?.[code]), provider: "open-er-api", sourceDate: sourceDate2, fetchedAt };
     } catch {
       throw new Error(`No fresh supported fiat-to-USD API rate is available for wallet ${code}.`);
     }
@@ -3709,6 +3771,7 @@ var json, numeric;
 var init_marketProviders = __esm({
   "server/marketProviders.ts"() {
     "use strict";
+    init_money();
     json = async (url, init) => {
       const response = await fetch(url, { ...init, headers: { "User-Agent": "Arbitrade-market-sync/1.0", Accept: "application/json", ...init?.headers ?? {} } });
       if (!response.ok) throw new Error(`${url} returned ${response.status}`);
@@ -3719,57 +3782,6 @@ var init_marketProviders = __esm({
       if (typeof value !== "string") return null;
       const cleaned = value.replace(/[$,%\s,]/g, "");
       return cleaned && Number.isFinite(Number(cleaned)) ? cleaned : null;
-    };
-  }
-});
-
-// shared/money.ts
-import Decimal from "decimal.js";
-function minorToMajor(minor, scale) {
-  return Number(minor || 0) / Math.pow(10, scale);
-}
-function nativeMinorToUsd(minor, scale, usdRate) {
-  return minorToMajor(minor, scale) * usdRate;
-}
-function nativeMinorToUsdMinorExact(minor, scale, usdRate) {
-  if (!Number.isSafeInteger(minor) || minor < 0) throw new Error("Native amount must be a non-negative safe integer in minor units");
-  if (!Number.isInteger(scale) || scale < 0 || scale > 30) throw new Error("Invalid native currency precision scale");
-  let rate;
-  try {
-    rate = new Decimal(usdRate);
-  } catch {
-    throw new Error("Invalid USD conversion rate");
-  }
-  if (!rate.isFinite() || !rate.gt(0)) throw new Error("USD conversion rate must be finite and positive");
-  const usdMinor = new Decimal(minor).times(rate).times(new Decimal(10).pow(2 - scale)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
-  if (!usdMinor.isFinite() || !usdMinor.isInteger() || !usdMinor.abs().lte(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("Converted USD minor amount exceeds the safe integer range");
-  }
-  return usdMinor.toNumber();
-}
-function proportionalMinorAmount(totalMinor, partMinor, wholeMinor) {
-  if (!Number.isSafeInteger(totalMinor) || totalMinor < 0) throw new Error("Total attribution must be a non-negative safe integer");
-  if (!Number.isSafeInteger(partMinor) || partMinor <= 0) throw new Error("Partial amount must be a positive safe integer");
-  if (!Number.isSafeInteger(wholeMinor) || wholeMinor <= 0 || partMinor > wholeMinor) throw new Error("Whole amount must be a safe integer at least as large as the partial amount");
-  const allocated = new Decimal(totalMinor).times(partMinor).div(wholeMinor).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
-  if (!allocated.isFinite() || !allocated.isInteger() || allocated.lt(0) || allocated.gt(totalMinor) || !allocated.lte(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("Proportional attribution exceeds the safe integer range");
-  }
-  return allocated.toNumber();
-}
-function usdUnitsToNativeMinor(usdUnits, scale, usdRate) {
-  if (!Number.isFinite(usdUnits) || usdUnits < 0 || !Number.isFinite(usdRate) || usdRate <= 0) throw new Error("Invalid currency conversion inputs");
-  return Math.max(1, Math.round(usdUnits / usdRate * Math.pow(10, scale)));
-}
-var roundingMap;
-var init_money = __esm({
-  "shared/money.ts"() {
-    "use strict";
-    roundingMap = {
-      half_up: Decimal.ROUND_HALF_UP,
-      down: Decimal.ROUND_DOWN,
-      up: Decimal.ROUND_UP,
-      half_even: Decimal.ROUND_HALF_EVEN
     };
   }
 });
@@ -15871,6 +15883,7 @@ import Decimal5 from "decimal.js";
 init_db();
 init_schema();
 init_marketProviders();
+init_money();
 import { and as and5, eq as eq5, gt as gt3, lte as lte3 } from "drizzle-orm";
 async function refreshMarketData() {
   const db2 = await getDb();
@@ -15891,7 +15904,7 @@ async function refreshMarketData() {
   let fxStored = 0;
   if (fiat.status === "fulfilled") for (const row of fiat.value) {
     await db2.insert(fxRateSnapshots).values({ baseAsset: row.base, quoteAsset: row.quote, rate: row.rate, provider: "frankfurter-ecb", sourceDate: row.sourceDate, rawJson: JSON.stringify(row.raw) });
-    const usdRate = String(1 / Number(row.rate));
+    const usdRate = invertDecimalRate(row.rate);
     await db2.insert(currencyRegistry).values({ code: row.quote, name: row.quote === "EUR" ? "Euro" : "British Pound", symbol: row.quote === "EUR" ? "\u20AC" : "\xA3", scale: 2, assetType: "fiat", usdRate, rateProvider: "frankfurter-ecb", externalCode: row.quote, enabled: true }).onDuplicateKeyUpdate({ set: { usdRate, rateProvider: "frankfurter-ecb", externalCode: row.quote, enabled: true, updatedAt: /* @__PURE__ */ new Date() } });
     fxStored++;
   }

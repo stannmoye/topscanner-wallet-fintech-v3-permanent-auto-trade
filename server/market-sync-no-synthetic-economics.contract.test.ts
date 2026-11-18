@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("./marketSync.ts", import.meta.url), "utf8");
+const providersSource = readFileSync(new URL("./marketProviders.ts", import.meta.url), "utf8");
 const databaseSource = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const adminApp = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf8");
 const routerSource = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
@@ -87,6 +88,13 @@ describe("trading opportunity economics integrity", () => {
     expect(implementation).toContain('eq(opportunityOffers.status, "open")');
     expect(implementation).toContain('gt(opportunityOffers.closesAt, now)');
   });
+
+  it("inverts FX rates with exact decimal math instead of 1/x floats", () => {
+    expect(source).toContain("invertDecimalRate");
+    expect(source).not.toMatch(/1\s*\/\s*Number\(/);
+    expect(providersSource).toContain("invertDecimalRate");
+    expect(providersSource).not.toMatch(/String\(1\s*\/\s*/);
+  });
 });
 
 
@@ -101,6 +109,7 @@ describe("Trading opportunity publication guidance", () => {
 
 
 describe("Admin opportunity publisher error handling", () => {
+
   it("makes retired manual publication routes fail explicitly instead of silently creating offers", () => {
     expect(routerSource).toContain("PRECONDITION_FAILED");
     expect(routerSource).toContain("Customer-specific opportunities are generated automatically from the approved company catalogue");

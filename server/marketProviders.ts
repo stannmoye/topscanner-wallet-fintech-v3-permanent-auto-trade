@@ -1,3 +1,5 @@
+import { invertDecimalRate } from "../shared/money";
+
 export type MarketInstrumentInput = {
   symbol: string;
   name: string;
@@ -89,7 +91,7 @@ export async function fetchCurrencyUsdRate(input: {
       const sourceMs = sourceDate ? new Date(sourceDate).getTime() : NaN;
       if (Number.isFinite(usdToNative) && usdToNative > 0 && Number.isFinite(sourceMs) &&
         sourceMs <= Date.now() + 60_000 && Date.now() - sourceMs <= 4 * 24 * 60 * 60 * 1000) {
-        return { rate: String(1 / usdToNative), provider: "frankfurter-ecb", sourceDate, fetchedAt };
+        return { rate: invertDecimalRate(row?.rate), provider: "frankfurter-ecb", sourceDate, fetchedAt };
       }
     } catch {
       // Try the broader fiat-code API below.
@@ -107,7 +109,7 @@ export async function fetchCurrencyUsdRate(input: {
         sourceMs > Date.now() + 60_000 || Date.now() - sourceMs > 24 * 60 * 60 * 1000) {
         throw new Error(`ExchangeRate-API returned no fresh rate for ${code}.`);
       }
-      return { rate: String(1 / usdToNative), provider: "open-er-api", sourceDate, fetchedAt };
+      return { rate: invertDecimalRate(payload?.rates?.[code]), provider: "open-er-api", sourceDate, fetchedAt };
     } catch {
       throw new Error(`No fresh supported fiat-to-USD API rate is available for wallet ${code}.`);
     }

@@ -2,6 +2,7 @@ import { and, desc, eq, gt, lte } from "drizzle-orm";
 import { countOutstandingTrades, getDb, getTradeSettlementPolicy } from "./db";
 import { currencyRegistry, fxRateSnapshots, marketInstruments, marketSnapshots, opportunityOffers } from "../drizzle/schema";
 import { fetchCryptoRates, fetchFiatRates, fetchMostActiveStocks } from "./marketProviders";
+import { invertDecimalRate } from "../shared/money";
 
 export async function refreshMarketData() {
   const db = await getDb();
@@ -22,7 +23,7 @@ export async function refreshMarketData() {
   let fxStored = 0;
   if (fiat.status === "fulfilled") for (const row of fiat.value) {
     await db.insert(fxRateSnapshots).values({ baseAsset: row.base, quoteAsset: row.quote, rate: row.rate, provider: "frankfurter-ecb", sourceDate: row.sourceDate, rawJson: JSON.stringify(row.raw) });
-    const usdRate = String(1 / Number(row.rate));
+    const usdRate = invertDecimalRate(row.rate);
     await db.insert(currencyRegistry).values({ code: row.quote, name: row.quote === "EUR" ? "Euro" : "British Pound", symbol: row.quote === "EUR" ? "€" : "£", scale: 2, assetType: "fiat", usdRate, rateProvider: "frankfurter-ecb", externalCode: row.quote, enabled: true }).onDuplicateKeyUpdate({ set: { usdRate, rateProvider: "frankfurter-ecb", externalCode: row.quote, enabled: true, updatedAt: new Date() } });
     fxStored++;
   }
