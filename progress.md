@@ -1,3 +1,86 @@
+## 2026-11-18 — 64-item audit remediation (work order)
+
+Branch `main`. 64 numbered items fixed one at a time, in batches of 3. Each item is
+implemented, tested (`pnpm test` / `pnpm check` / `pnpm build`), then committed as
+`Fix #N: ...`, `git pull --rebase origin main`, pushed to `main`.
+
+Legend: `[x]` done · `[~]` done with a documented decision/later dependency · `[ ]` pending · `[-]` intentionally not changed (owner instruction)
+
+| # | Item | Status | Commit |
+|---|------|--------|--------|
+| 1 | `settlementIntegrityIssues` 500 — surface cause, fix collation drift | `[x]` | `Fix #1` |
+| 2 | `walletLedgerReconciliation` 500 — sequential queries | `[ ]` | |
+| 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[ ]` | |
+| 4 | Test covering item 3 on every UNION branch | `[ ]` | |
+| 5 | Delivery queue diagnostics ambiguous `createdAt` | `[ ]` | |
+| 6 | `opportunityDeliveryCustomerSearch` email/name search | `[ ]` | |
+| 7 | SQL text in 500 responses | `[-]` | owner: leave alone |
+| 8 | Replace `1/x` float inversion with exact decimal | `[ ]` | |
+| 9 | Use live API rates everywhere a calc reads a stored rate | `[ ]` | |
+| 10 | Allocation fail-open — enforce tier/quota caps | `[ ]` | |
+| 11 | Remove fallback session secret | `[ ]` | |
+| 12 | database.sql / Git LFS dump | `[-]` | owner: ignore |
+| 13 | General .gitignore | `[-]` | owner: ignore (except item 50) |
+| 14 | Persist `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED` + audit switches | `[ ]` | |
+| 15 | `customer.opportunities` auto-trades in query | `[-]` | owner: intentional |
+| 16 | Float math in balance summary / min-max / exit P&L | `[-]` | owner: intentional |
+| 17 | Admin wallet priority order | `[ ]` | |
+| 18 | Live fiat FX + customer conversion indicator | `[ ]` | |
+| 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[ ]` | |
+| 20 | Remove package fee entirely | `[ ]` | |
+| 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[ ]` | |
+| 22 | CSRF Origin/Sec-Fetch-Site checks | `[ ]` | |
+| 23 | popup-execution-policy fail closed on blank status | `[ ]` | |
+| 24 | `updatePopupDeliveryStatus` requires leaseToken | `[ ]` | |
+| 25 | Allocation reason 8–500 chars, strict input | `[ ]` | |
+| 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[ ]` | |
+| 27 | No writes during reads in `getTradeSettlementPolicy` | `[ ]` | |
+| 28 | `calculateCombinedBalanceSnapshot` error handling | `[ ]` | |
+| 29 | Quiet hours use admin timezone (UTC default) | `[ ]` | |
+| 30 | Missing source-wallet rate → stop "rate unavailable" | `[ ]` | |
+| 31 | Fee-policy reason limits alignment | `[ ]` | |
+| 32 | Validate every per-tier editable field | `[ ]` | |
+| 33 | Docs update (spec, progress, admin guide) | `[ ]` | |
+| 34 | Delivery acknowledgement retry cap/backoff | `[ ]` | |
+| 35 | Fix sounds for all sounds (per-sound enabled) | `[ ]` | |
+| 36 | Countdowns must not trust local clock | `[ ]` | |
+| 37 | Dismiss/minimize must not cancel rendered ack | `[ ]` | |
+| 38 | Visibility-aware polling | `[ ]` | |
+| 39 | Refresh balance invalidates balances + FX | `[ ]` | |
+| 40 | Minimal customer feed payload | `[ ]` | |
+| 41 | Remove duplicate menus, keep ONE navigation | `[ ]` | |
+| 42 | Mobile admin drawer group-header close | `[ ]` | |
+| 43 | `AdminSlideMenu` label/active resolution | `[ ]` | |
+| 44 | Replace `window.prompt`/`confirm` | `[ ]` | |
+| 45 | Generic registration/login responses | `[ ]` | |
+| 46 | Remove password pepper | `[ ]` | |
+| 47 | Shorten sessions with sliding renewal | `[ ]` | |
+| 48 | Remove legacy 3-part session tokens | `[ ]` | |
+| 49 | Strengthen admin checks (keep `/ops-console-7f3a`) | `[ ]` | |
+| 50 | Stop tracking dist/ + 2 zips (add narrow .gitignore) | `[ ]` | |
+| 51 | Lower global body limits per route | `[ ]` | |
+| 52 | `/api/platform/config.js` browser-key only | `[ ]` | |
+| 53 | `recordDeliveryHistory` bounded warning log | `[ ]` | |
+| 54 | FX rate cache single-flight | `[ ]` | |
+| 55 | `usdUnitsToNativeMinor` clamp + unavailable flag | `[ ]` | |
+| 56 | Registry key rename + register 4 patchable fields | `[ ]` | |
+| 57 | Remove/dedupe `getAdminNavigationItem` | `[ ]` | |
+| 58 | Unify display-delay label | `[ ]` | |
+| 59 | Remove dead code (DashboardLayout, unreachable dashboard) | `[ ]` | |
+| 60 | CustomerTradingEligibility hidden markup/CSS | `[ ]` | |
+| 61 | Cancel focus rAF in CustomerSlideMenu cleanup | `[ ]` | |
+| 62 | Visible "tap to enable sound" hint | `[ ]` | |
+| 63 | Opportunities page eligibility consistency | `[ ]` | |
+| 64 | Single source of truth for `packageName` | `[ ]` | |
+
+### Item 1 notes (`Fix #1`)
+
+- Surfaced the dropped tRPC error cause in server logs (`server/_core/index.ts` `onError`), leaving the client response unchanged (item 7).
+- Root cause of the 500: cross-table string comparisons in `listTradeSettlementIntegrityIssues` compared `trade_positions` (created without an explicit collation) against `trade_reward_reservations` / `trade_settlement_reference_claims` (created `utf8mb4_unicode_ci`), raising "Illegal mix of collations". Pinned an explicit `COLLATE utf8mb4_unicode_ci` on both sides (same pattern already used in `opportunityDeliveryDiagnostics.ts`). No schema change / migration was required.
+- Sandbox constraint: no MySQL/MariaDB server binary, so the query could not be executed against a live database. The contract test asserts the generated SQL pins the collation.
+
+---
+
 ## 2026-11-18 — Delivered popups were being retired by their own package cooldown
 
 - **Root cause (live-verified on `https://stan.prod.page/customer`):** `generateAutomaticCustomerOpportunity` receives a cooldown-filtered subscription list, and used that same list to decide whether an existing open offer was "obsolete". As soon as a package delivered a popup it entered its own `minIntervalSeconds` cooldown, so the next worker cycle treated that still-open, already-delivered offer as `PACKAGE_REASSIGNED` and set `opportunityOffers.status='cancelled'`. Customer popups therefore disappeared about one worker cycle after they rendered. Live evidence: 32 customer offers, 29 `cancelled` / 3 `closed`, `activeVisibleCount: 0`, while `generationDiagnostics.openGeneratedOfferAlreadyExists` stayed true.

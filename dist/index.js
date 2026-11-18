@@ -11733,7 +11733,7 @@ async function listTradeSettlementIntegrityIssues(input) {
     and3(eq3(tradePositions.status, "settled"), eq3(tradePositions.settlementOutcome, "legacy_unrecorded")),
     and3(eq3(tradePositions.status, "settled"), isNull2(tradePositions.settlementReference)),
     and3(eq3(tradePositions.status, "settled"), isNull2(tradeSettlementReferenceClaims.tradeId)),
-    and3(eq3(tradePositions.status, "settled"), isNotNull(tradePositions.settlementReference), isNotNull(tradeSettlementReferenceClaims.settlementReference), sql5`${tradePositions.settlementReference} <> ${tradeSettlementReferenceClaims.settlementReference}`),
+    and3(eq3(tradePositions.status, "settled"), isNotNull(tradePositions.settlementReference), isNotNull(tradeSettlementReferenceClaims.settlementReference), sql5`${tradePositions.settlementReference} COLLATE utf8mb4_unicode_ci <> ${tradeSettlementReferenceClaims.settlementReference} COLLATE utf8mb4_unicode_ci`),
     and3(eq3(tradePositions.status, "settled"), sql5`${tradePositions.settlementStatus} <> 'completed'`),
     and3(eq3(tradePositions.status, "confirmed"), eq3(tradePositions.settlementStatus, "pending"), isNull2(tradeRewardReservations.id), gt(tradePositions.rewardReservedMinor, 0)),
     and3(eq3(tradePositions.status, "confirmed"), eq3(tradePositions.settlementStatus, "pending"), eq3(tradeRewardReservations.status, "credited")),
@@ -11745,7 +11745,7 @@ async function listTradeSettlementIntegrityIssues(input) {
     and3(eq3(tradePositions.status, "confirmed"), eq3(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNull2(tradeRewardReservations.id), gt(tradePositions.rewardReservedMinor, 0)),
     and3(eq3(tradePositions.status, "confirmed"), eq3(tradePositions.settlementStatus, "confirmed_awaiting_credit"), or3(eq3(tradeRewardReservations.status, "credited"), eq3(tradeRewardReservations.status, "released"))),
     and3(eq3(tradePositions.status, "settled"), eq3(tradePositions.settlementStatus, "completed"), eq3(tradeRewardReservations.status, "reserved")),
-    and3(isNotNull(tradeRewardReservations.id), sql5`(${tradeRewardReservations.userId} <> ${tradePositions.userId} OR ${tradeRewardReservations.currency} <> ${tradePositions.currency} OR ${tradeRewardReservations.reservedMinor} <> ${tradePositions.rewardReservedMinor})`)
+    and3(isNotNull(tradeRewardReservations.id), sql5`(${tradeRewardReservations.userId} <> ${tradePositions.userId} OR ${tradeRewardReservations.currency} COLLATE utf8mb4_unicode_ci <> ${tradePositions.currency} COLLATE utf8mb4_unicode_ci OR ${tradeRewardReservations.reservedMinor} <> ${tradePositions.rewardReservedMinor})`)
   );
   const whereClause = input?.beforeTradeId ? and3(statusIssues, lt(tradePositions.id, input.beforeTradeId)) : statusIssues;
   const rows2 = await db2.select({
@@ -19602,7 +19602,31 @@ async function startServer() {
     "/api/trpc",
     createExpressMiddleware({
       router: appRouter,
-      createContext
+      createContext,
+      // tRPC maps unexpected failures to a generic INTERNAL_SERVER_ERROR and only
+      // forwards the outer `message` to the client (the driver error is dropped from
+      // the response, which is intentional). Without this hook the real database
+      // cause — driver code, SQLSTATE, column/table and message — is lost entirely,
+      // so a broken admin query such as `settlementIntegrityIssues` fails silently.
+      // Log the underlying cause server-side (redacted) while leaving the client
+      // response unchanged.
+      onError({ error, path: path4, type }) {
+        const cause = error.cause;
+        if (cause == null) return;
+        const details = cause && typeof cause === "object" ? cause : {};
+        const text2 = (value) => typeof value === "string" && value.trim() ? value : void 0;
+        console.error("[trpc] procedure failed", {
+          path: path4 ?? "unknown",
+          type,
+          name: text2(details.name)?.slice(0, 80) ?? "UnknownCause",
+          code: details.code == null ? void 0 : String(details.code).replace(/[^A-Z0-9_]/gi, "").slice(0, 80),
+          errno: details.errno == null ? void 0 : details.errno,
+          sqlState: details.sqlState == null ? void 0 : String(details.sqlState).slice(0, 16),
+          table: details.table == null ? void 0 : String(details.table).replace(/[^A-Z0-9_]/gi, "").slice(0, 120),
+          column: details.column == null ? void 0 : String(details.column).replace(/[^A-Z0-9_]/gi, "").slice(0, 120),
+          cause: sanitizeWorkerErrorMessage(details.sqlMessage ?? details.message ?? cause)
+        });
+      }
     })
   );
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: (/* @__PURE__ */ new Date()).toISOString(), event: "routes-registered-and-static-setup-start", nodeEnv: process.env.NODE_ENV || "unset" }));

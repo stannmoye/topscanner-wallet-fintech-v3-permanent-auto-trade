@@ -270,6 +270,30 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      // tRPC maps unexpected failures to a generic INTERNAL_SERVER_ERROR and only
+      // forwards the outer `message` to the client (the driver error is dropped from
+      // the response, which is intentional). Without this hook the real database
+      // cause — driver code, SQLSTATE, column/table and message — is lost entirely,
+      // so a broken admin query such as `settlementIntegrityIssues` fails silently.
+      // Log the underlying cause server-side (redacted) while leaving the client
+      // response unchanged.
+      onError({ error, path, type }) {
+        const cause = (error as { cause?: unknown }).cause;
+        if (cause == null) return;
+        const details = cause && typeof cause === "object" ? (cause as Record<string, unknown>) : {};
+        const text = (value: unknown) => (typeof value === "string" && value.trim() ? value : undefined);
+        console.error("[trpc] procedure failed", {
+          path: path ?? "unknown",
+          type,
+          name: text(details.name)?.slice(0, 80) ?? "UnknownCause",
+          code: details.code == null ? undefined : String(details.code).replace(/[^A-Z0-9_]/gi, "").slice(0, 80),
+          errno: details.errno == null ? undefined : details.errno,
+          sqlState: details.sqlState == null ? undefined : String(details.sqlState).slice(0, 16),
+          table: details.table == null ? undefined : String(details.table).replace(/[^A-Z0-9_]/gi, "").slice(0, 120),
+          column: details.column == null ? undefined : String(details.column).replace(/[^A-Z0-9_]/gi, "").slice(0, 120),
+          cause: sanitizeWorkerErrorMessage(details.sqlMessage ?? details.message ?? cause),
+        });
+      },
     })
   );
   // development mode uses Vite, production mode uses static files

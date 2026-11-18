@@ -5651,7 +5651,7 @@ export async function listTradeSettlementIntegrityIssues(input?: { limit?: numbe
     and(eq(tradePositions.status, "settled"), eq(tradePositions.settlementOutcome, "legacy_unrecorded")),
     and(eq(tradePositions.status, "settled"), isNull(tradePositions.settlementReference)),
     and(eq(tradePositions.status, "settled"), isNull(tradeSettlementReferenceClaims.tradeId)),
-    and(eq(tradePositions.status, "settled"), isNotNull(tradePositions.settlementReference), isNotNull(tradeSettlementReferenceClaims.settlementReference), sql`${tradePositions.settlementReference} <> ${tradeSettlementReferenceClaims.settlementReference}`),
+    and(eq(tradePositions.status, "settled"), isNotNull(tradePositions.settlementReference), isNotNull(tradeSettlementReferenceClaims.settlementReference), sql`${tradePositions.settlementReference} COLLATE utf8mb4_unicode_ci <> ${tradeSettlementReferenceClaims.settlementReference} COLLATE utf8mb4_unicode_ci`),
     and(eq(tradePositions.status, "settled"), sql`${tradePositions.settlementStatus} <> 'completed'`),
     and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "pending"), isNull(tradeRewardReservations.id), gt(tradePositions.rewardReservedMinor, 0)),
     and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "pending"), eq(tradeRewardReservations.status, "credited")),
@@ -5663,7 +5663,7 @@ export async function listTradeSettlementIntegrityIssues(input?: { limit?: numbe
     and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), isNull(tradeRewardReservations.id), gt(tradePositions.rewardReservedMinor, 0)),
     and(eq(tradePositions.status, "confirmed"), eq(tradePositions.settlementStatus, "confirmed_awaiting_credit"), or(eq(tradeRewardReservations.status, "credited"), eq(tradeRewardReservations.status, "released"))),
     and(eq(tradePositions.status, "settled"), eq(tradePositions.settlementStatus, "completed"), eq(tradeRewardReservations.status, "reserved")),
-    and(isNotNull(tradeRewardReservations.id), sql`(${tradeRewardReservations.userId} <> ${tradePositions.userId} OR ${tradeRewardReservations.currency} <> ${tradePositions.currency} OR ${tradeRewardReservations.reservedMinor} <> ${tradePositions.rewardReservedMinor})`)
+    and(isNotNull(tradeRewardReservations.id), sql`(${tradeRewardReservations.userId} <> ${tradePositions.userId} OR ${tradeRewardReservations.currency} COLLATE utf8mb4_unicode_ci <> ${tradePositions.currency} COLLATE utf8mb4_unicode_ci OR ${tradeRewardReservations.reservedMinor} <> ${tradePositions.rewardReservedMinor})`)
   );
   const whereClause = input?.beforeTradeId
     ? and(statusIssues, lt(tradePositions.id, input.beforeTradeId))
