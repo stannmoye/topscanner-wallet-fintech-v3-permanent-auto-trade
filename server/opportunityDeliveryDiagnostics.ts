@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
 import { mysqlConnectionOptions } from "./_core/mysql";
+import { resolveCustomerPackageName, resolveCustomerPackageNames } from "./db";
 
 export type DeliveryDiagnosticsFilters = {
   customerName?: string;
@@ -341,11 +342,13 @@ export async function searchOpportunityDeliveryCustomers(query: string) {
     // Match a partial, case-insensitive name or email; LOWER() keeps the match
     // case-insensitive regardless of the column collation. An all-digit term also
     // matches an exact customer id.
-    const [rows] = await connection.query<any[]>(`SELECT id,name,email,packageName FROM users
+    const [rows] = await connection.query<any[]>(`SELECT id,name,email FROM users
       WHERE role='user' AND (LOWER(name) LIKE LOWER(?) ESCAPE '!' OR LOWER(email) LIKE LOWER(?) ESCAPE '!'${searchById ? " OR id=?" : ""})
       ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END, name, id LIMIT 20`,
       searchById ? [like, like, searchById, searchById] : [like, like, 0]);
-    return { sourceAvailable: true as const, customers: rows.map(row => ({ id: Number(row.id), name: String(row.name || `Customer ${row.id}`), email: row.email == null || row.email === "" ? null : String(row.email), packageName: String(row.packageName || "Unavailable") })), generatedAt: new Date().toISOString() };
+    // Item 64: derive the display package name from the single server source of truth.
+    const packageNames = await resolveCustomerPackageNames(rows.map((row: any) => Number(row.id)));
+    return { sourceAvailable: true as const, customers: rows.map(row => ({ id: Number(row.id), name: String(row.name || `Customer ${row.id}`), email: row.email == null || row.email === "" ? null : String(row.email), packageName: packageNames.get(Number(row.id)) || "Unavailable" })), generatedAt: new Date().toISOString() };
   });
 }
 
@@ -353,8 +356,10 @@ export async function getOpportunityDeliveryCustomer(userId: number) {
   if (!Number.isSafeInteger(userId) || userId < 1) throw new RangeError("A valid customer ID is required.");
   if (!process.env.DATABASE_URL) return { sourceAvailable: false as const, customer: null, aggregates: null, recent: [], generatedAt: null };
   return withConnection(async connection => {
-    const [users] = await connection.query<any[]>("SELECT id,name,packageName FROM users WHERE id=? AND role='user' LIMIT 1", [userId]);
+    const [users] = await connection.query<any[]>("SELECT id,name FROM users WHERE id=? AND role='user' LIMIT 1", [userId]);
     if (!users[0]) return { sourceAvailable: true as const, customer: null, aggregates: null, recent: [], generatedAt: new Date().toISOString() };
+    // Item 64: derive the display package name from the single server source of truth.
+    const packageName = await resolveCustomerPackageName(Number(users[0].id));
     const [aggregateRows] = await connection.query<any[]>(`${RECORD_CTES}
       SELECT COUNT(DISTINCT CASE WHEN r.assignmentStatus IS NOT NULL THEN r.offerId END) AS generated,
         SUM(r.deliveryStatus IN ('queued','in_progress','retry_wait')) AS queued,
@@ -379,7 +384,7 @@ export async function getOpportunityDeliveryCustomer(userId: number) {
     const list = await listOpportunityDeliveryRecords({ filters: { customerId: userId }, page: 1, pageSize: 20, includeHistory: false });
     return {
       sourceAvailable: true as const,
-      customer: { id: Number(users[0].id), name: String(users[0].name || `Customer ${userId}`), packageName: String(users[0].packageName || "Unavailable") },
+      customer: { id: Number(users[0].id), name: String(users[0].name || `Customer ${userId}`), packageName: packageName || "Unavailable" },
       aggregates: { generated: Number(aggregateRows[0]?.generated || 0), queued: Number(aggregateRows[0]?.queued || 0), received: Number(aggregateRows[0]?.received || 0), rendered: Number(aggregateRows[0]?.rendered || 0), failed: Number(aggregateRows[0]?.failed || 0), expired: Number(aggregateRows[0]?.expired || 0), pending: Number(aggregateRows[0]?.pending || 0), lastRenderedAt: iso(timestamps[0]?.lastRenderedAt), mostRecentFailureAt: iso(timestamps[0]?.mostRecentFailureAt), mostRecentFailureCode: safeCode(timestamps[0]?.mostRecentFailureCode), mostRecentFailureMessage: safeDeliveryDiagnosticMessage(safeCode(timestamps[0]?.mostRecentFailureCode)), averageDeliveryLatencyMs: latencyRows[0]?.averageMs == null ? null : Number(latencyRows[0].averageMs), averageDeliveryLatencySamples: Number(latencyRows[0]?.samples || 0) },
       recent: list.rows, generatedAt: new Date().toISOString(),
     };

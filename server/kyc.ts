@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { sendRenderedEmail } from "./email";
+import { resolveCustomerPackageNames } from "./db";
 import mysql, { type Pool, type RowDataPacket, type ResultSetHeader } from "mysql2/promise";
 import { mysqlConnectionOptions } from "./_core/mysql";
 
@@ -148,11 +149,14 @@ export async function adminCustomerDirectory(input: { page?: number; pageSize?: 
   if (status) { where += " AND COALESCE(p.overallStatus,'NOT_STARTED')=?"; params.push(status); }
   const [countRows, customers] = await Promise.all([
     rows<any>(`SELECT COUNT(*) total FROM users u LEFT JOIN kyc_profiles p ON p.userId=u.id ${where}`, params),
-    rows<any>(`SELECT u.id customerId,u.email,u.name,u.packageName,p.id profileId,
+    rows<any>(`SELECT u.id customerId,u.email,u.name,p.id profileId,
       COALESCE(p.overallStatus,'NOT_STARTED') overallStatus,COALESCE(p.currentLevel,'L0') currentLevel,
       p.riskLevel,p.updatedAt FROM users u LEFT JOIN kyc_profiles p ON p.userId=u.id ${where}
       ORDER BY u.id DESC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]),
   ]);
+  // Item 64: derive the display package name from the single server source of truth
+  // instead of the stored users.packageName column.
+  const packageNames = await resolveCustomerPackageNames(customers.map((item: any) => Number(item.customerId)));
   const profileIds = customers.map((item: any) => Number(item.profileId)).filter((id: number) => id > 0);
   const stateRows = profileIds.length ? await rows<any>(`SELECT p.userId,s.stageCode,s.state,s.verifiedAt
     FROM kyc_profiles p JOIN kyc_stage_states s ON s.profileId=p.id
@@ -179,7 +183,7 @@ export async function adminCustomerDirectory(input: { page?: number; pageSize?: 
       profileId: customer.profileId ? Number(customer.profileId) : null,
       email: customer.email,
       name: customer.name,
-      packageName: customer.packageName,
+      packageName: packageNames.get(Number(customer.customerId)) || "No active package",
       overallStatus: customer.overallStatus,
       currentLevel: customer.currentLevel,
       riskLevel: customer.riskLevel || "LOW_RISK",

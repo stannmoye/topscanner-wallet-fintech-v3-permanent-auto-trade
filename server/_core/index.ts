@@ -7,7 +7,7 @@ import { registerProviderOAuthRoutes } from "./providerOAuth";
 import { publicPlatformScript } from "./publicConfig";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
+import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, resolveCustomerPackageName, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { configuredAuthRateLimitStore, createAuthRateLimiter } from "./authRateLimit";
@@ -132,7 +132,7 @@ async function startServer() {
       void requestEmailVerification(user.id).catch(error => console.error("[Email] Registration verification enqueue failed:", error instanceof Error ? error.name : "UnknownError"));
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
-      return res.json({ user: safeUser });
+      return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
     } catch (error) {
       // Generic response so a registration attempt never confirms whether an email
       // address is already registered. The real cause is logged server-side only.
@@ -152,7 +152,7 @@ async function startServer() {
       setLocalSession(req, res, user);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
-      return res.json({ user: safeUser });
+      return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
     } catch {
       return res.status(503).json({ error: "Authentication service is not configured. Configure DATABASE_URL and run the migrations." });
     }
@@ -168,7 +168,7 @@ async function startServer() {
       setLocalSession(req, res, user);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
-      return res.json({ user: safeUser });
+      return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
     } catch {
       return res.status(503).json({ error: "Authentication service is not configured. Configure DATABASE_URL and run the migrations." });
     }

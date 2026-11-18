@@ -4,7 +4,7 @@ import { parse as parseCookieHeader } from "cookie";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { listAdminTradeAuditHistory, listAdminTradingHistory, resetTradeOpportunityUsage } from "./db";
+import { listAdminTradeAuditHistory, listAdminTradingHistory, resetTradeOpportunityUsage, resolveCustomerPackageName } from "./db";
 import { countCompanyReferences, findCompanyReferencesBySymbol, getCompanyReferenceById, getCompanyReferenceSummary, getRandomCompanyReference, searchCompanyReferences } from "./modules/company-catalogue-reference";
 import { z } from "zod";
 import { communicationSettingsInput, getAdminCommunicationSettings, getCustomerCommunicationOptions, saveAdminCommunicationSettings, validateCommunicationSettingsInput } from "./communicationSettings";
@@ -176,10 +176,11 @@ export const appRouter = router({
   }),
 
   auth: router({
-    me: publicProcedure.query(opts => {
+    me: publicProcedure.query(async opts => {
       if (!opts.ctx.user) return null;
       const { passwordHash: _passwordHash, ...safeUser } = opts.ctx.user;
-      return safeUser;
+      // Item 64: the package name shown here must agree with customer.tradingEligibility.
+      return { ...safeUser, packageName: await resolveCustomerPackageName(opts.ctx.user.id) };
     }),
     requestEmailVerification: protectedProcedure.mutation(({ ctx }) => requestEmailVerification(ctx.user.id)),
     confirmEmailVerification: protectedProcedure.input(z.object({ code: z.string().regex(/^\d{8}$/) })).mutation(({ ctx, input }) => confirmEmailVerification(ctx.user.id, input.code)),

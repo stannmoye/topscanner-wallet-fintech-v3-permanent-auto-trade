@@ -3373,6 +3373,76 @@ export async function getCustomerTradingEligibility(userId:number) {
 }
 
 
+/**
+ * Item 64: single source of truth for a customer's display package name.
+ * The stored users.packageName column is kept for audit only and is never read
+ * for display. Every reader derives the name from the same eligibility logic the
+ * customer Trading eligibility endpoint uses, so the login/auth response and
+ * tradingEligibility.currentPackage can never disagree.
+ */
+export const NO_ACTIVE_PACKAGE_LABEL="No active package";
+
+export async function resolveCustomerPackageName(userId:number):Promise<string>{
+  try{
+    const eligibility=await getCustomerTradingEligibility(userId);
+    const derived=String(eligibility.currentPackage?.name||"").trim();
+    return derived||NO_ACTIVE_PACKAGE_LABEL;
+  }catch(error){
+    // Derivation is display-only; a lookup failure must never break authentication or admin lists.
+    console.error("[PackageName] Failed to derive the active package name",error instanceof Error?error.name:"UnknownError");
+    return NO_ACTIVE_PACKAGE_LABEL;
+  }
+}
+
+/**
+ * Batched form of resolveCustomerPackageName for admin lists. It applies the same
+ * active-automatic-tier selection rules as getCustomerTradingEligibility (active
+ * auto-tier subscription, enabled package, highest qualifying threshold wins).
+ */
+export async function resolveCustomerPackageNames(userIds:number[]):Promise<Map<number,string>>{
+  const resolved=new Map<number,string>();
+  const ids=[...new Set(userIds.filter(id=>Number.isSafeInteger(id)&&id>0))];
+  for(const id of ids) resolved.set(id,NO_ACTIVE_PACKAGE_LABEL);
+  if(!ids.length) return resolved;
+  try{
+    const db=await getDb(); if(!db) throw new Error("Database is not available");
+    const now=new Date();
+    const rows=await db.select({
+      userId:customerPackageSubscriptions.userId,
+      activationKey:customerPackageSubscriptions.activationKey,
+      termsSnapshotJson:customerPackageSubscriptions.termsSnapshotJson,
+      packageName:packages.name,
+      minimumQualifyingBalanceUsdMinor:packages.minimumQualifyingBalanceUsdMinor,
+    }).from(customerPackageSubscriptions).innerJoin(packages,eq(customerPackageSubscriptions.packageId,packages.id))
+      .where(and(
+        inArray(customerPackageSubscriptions.userId,ids),
+        eq(customerPackageSubscriptions.status,"active"),
+        lte(customerPackageSubscriptions.startsAt,now),
+        or(isNull(customerPackageSubscriptions.expiresAt),gt(customerPackageSubscriptions.expiresAt,now)),
+        eq(packages.enabled,true),
+        or(isNull(packages.startsAt),lte(packages.startsAt,now)),
+        or(isNull(packages.expiresAt),gt(packages.expiresAt,now)),
+      ));
+    const best=new Map<number,{name:string;threshold:number}>();
+    for(const row of rows){
+      if(!String(row.activationKey||"").startsWith("auto-tier:")) continue;
+      let snapshot:any={}; try{ snapshot=JSON.parse(String(row.termsSnapshotJson||"{}")); }catch{}
+      const threshold=Number(snapshot.minimumQualifyingBalanceUsdMinor??row.minimumQualifyingBalanceUsdMinor);
+      if(!Number.isSafeInteger(threshold)||threshold<=0) continue;
+      const name=String(row.packageName||"").trim();
+      if(!name) continue;
+      const userId=Number(row.userId);
+      const current=best.get(userId);
+      if(!current||threshold>current.threshold) best.set(userId,{name,threshold});
+    }
+    for(const [id,value] of best) resolved.set(id,value.name);
+  }catch(error){
+    console.error("[PackageName] Failed to derive package names in bulk",error instanceof Error?error.name:"UnknownError");
+  }
+  return resolved;
+}
+
+
 export async function previewNextCustomerCompanySpotlight(userId:number) {
   const globalPolicy=await getTradeGlobalControls();
   if(!globalPolicy.available||!globalPolicy.tierPolicyMasterEnabled||!globalPolicy.companyRotationEnabled) return null;
@@ -5806,7 +5876,7 @@ export async function reviewSettlementEvidence(adminId:number,input:{evidenceId:
 
 export async function listPendingSettlements(){
   const db=await getDb(); if(!db) throw new Error("Database is not available");
-  return db.select({
+  const rows=await db.select({
     id:tradePositions.id, userId:tradePositions.userId, offerId:tradePositions.offerId,
     packageSubscriptionId:tradePositions.packageSubscriptionId,
     currency:tradePositions.currency, principalMinor:tradePositions.principalMinor,
@@ -5823,17 +5893,21 @@ export async function listPendingSettlements(){
     reservationStatus:tradeRewardReservations.status,
     reservationPackageName:tradeRewardReservations.packageName,
     reservationAmountMinor:tradeRewardReservations.reservedMinor,
-    symbol:opportunityOffers.symbol, packageName:users.packageName, customerName:users.name, customerEmail:users.email
+    symbol:opportunityOffers.symbol, customerName:users.name, customerEmail:users.email
   }).from(tradePositions)
     .leftJoin(opportunityOffers,eq(opportunityOffers.id,tradePositions.offerId))
     .leftJoin(users,eq(users.id,tradePositions.userId))
     .leftJoin(tradeRewardReservations,eq(tradeRewardReservations.tradeId,tradePositions.id))
-    .where(and(eq(tradePositions.status,"confirmed"),or(eq(tradePositions.settlementStatus,"pending"),eq(tradePositions.settlementStatus,"confirmed_awaiting_credit")))).orderBy(desc(tradePositions.confirmedAt)).then((rows) => rows.map((row) => ({
+    .where(and(eq(tradePositions.status,"confirmed"),or(eq(tradePositions.settlementStatus,"pending"),eq(tradePositions.settlementStatus,"confirmed_awaiting_credit")))).orderBy(desc(tradePositions.confirmedAt));
+  // Item 64: derive the display package name from the single server source of truth.
+  const packageNames=await resolveCustomerPackageNames(rows.map(row=>Number(row.userId)));
+  return rows.map((row) => ({
       ...row,
+      packageName: packageNames.get(Number(row.userId))||NO_ACTIVE_PACKAGE_LABEL,
       feeSnapshotStatus: row.packageIdSnapshot !== null
         ? "snapshotted" as const
         : classifyTradeFeeSnapshot({ feeRateBps: row.platformFeeRateBps, roundingMode: row.platformFeeRoundingMode, policyVersion: row.feePolicyVersion }),
-    })));
+    }));
 }
 /**
  * Read-only reconciliation queue for settlement records whose persisted state

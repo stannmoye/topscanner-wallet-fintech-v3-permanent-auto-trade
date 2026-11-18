@@ -71,7 +71,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 61 | Cancel focus rAF in CustomerSlideMenu cleanup | `[x]` | Fix #61 |
 | 62 | Visible "tap to enable sound" hint | `[x]` | Fix #62 |
 | 63 | Opportunities page eligibility consistency | `[x]` | Fix #63 |
-| 64 | Single source of truth for `packageName` | `[ ]` | |
+| 64 | Single source of truth for `packageName` | `[x]` | Fix #64 |
 
 ### Item 1 notes (`Fix #1`)
 
