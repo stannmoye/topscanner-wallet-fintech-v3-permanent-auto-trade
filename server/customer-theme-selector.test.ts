@@ -9,22 +9,21 @@ const customerCss = readFileSync("client/src/customer-reference.css", "utf8");
 const customerThemeOverrides = readFileSync("client/src/customer-theme-overrides.css", "utf8");
 
 describe("customer theme selector integration", () => {
-  it("renders exactly one customer theme selector in the header beside the logo/profile row", () => {
+  it("renders exactly one customer theme selector in the customer Settings rail", () => {
     expect(appSource).toContain('return <div className="arb-page separate-portal customer-portal"');
 
     const headerStart = appSource.indexOf("function PortalHeader");
     const customerAuthStart = appSource.indexOf("function CustomerAuth", headerStart);
     const header = appSource.slice(headerStart, customerAuthStart);
     const selectorMarkup = '<ThemeSelector compact ariaLabel="Change customer theme"/>';
-    expect(header.match(/<ThemeSelector compact ariaLabel="Change customer theme"\/>/g) || []).toHaveLength(1);
-    expect(header.indexOf(selectorMarkup)).toBeLessThan(header.indexOf('className="customer-header-bell"'));
+    expect(header).not.toContain(selectorMarkup);
     expect(appSource.match(/<ThemeSelector compact ariaLabel="Change customer theme"\/>/g) || []).toHaveLength(1);
 
     const workspaceStart = appSource.indexOf("function CustomerWorkspace");
     const workspaceEnd = appSource.indexOf("function CustomerOpportunityAlert", workspaceStart);
     const workspace = appSource.slice(workspaceStart, workspaceEnd);
-    expect(workspace).not.toContain("ThemeSelector");
-    expect(workspace).not.toContain("customer-primary-rail-theme-control");
+    expect(workspace).toContain(selectorMarkup);
+    expect(workspace).toContain("customer-rail-tools");
   });
 
   it("does not render theme selectors in floating menu controls or the navigation drawer", () => {
@@ -39,10 +38,9 @@ describe("customer theme selector integration", () => {
     expect(themeCss).not.toContain(".customer-theme-sidebar-control");
     expect(themeCss).not.toContain(".customer-slide-theme-control");
     expect(themeCss).not.toContain(".customer-portal > .arb-theme-selector-compact");
-    expect(themeCss).toContain(".customer-portal .customer-primary-rail .arb-theme-selector");
     expect(themeCss).toContain(".customer-slide-portal .arb-theme-selector");
     expect(themeCss).toContain(".customer-slide-drawer .arb-theme-selector");
-    expect(themeCss).toContain("Keep customer theme selection in the header only");
+    expect(themeCss).toContain("Keep theme selection in the customer Settings rail");
     expect(customerThemeOverrides).not.toContain("customer-primary-rail-theme-control");
     expect(customerThemeOverrides).not.toContain(".customer-portal>.arb-theme-selector-compact");
     expect(customerCss).toContain(':root[data-arb-theme] .customer-portal .portal-main');
@@ -52,7 +50,8 @@ describe("customer theme selector integration", () => {
 
   it("keeps the one header selector policy-aware, accessible, and styled by the active theme", () => {
     expect(selectorSource).toContain('ariaLabel ?? (compact ? "Change workspace theme" : "Appearance settings")');
-    expect(customerThemeOverrides).toMatch(/\.portal-session\s*>\s*\.arb-theme-selector-compact/);
+    expect(appSource).toContain('ariaLabel="Change customer theme"');
+    expect(appSource).toContain("customer-rail-tools");
     expect(customerThemeOverrides).toContain("Customer workspace experience polish");
   });
 

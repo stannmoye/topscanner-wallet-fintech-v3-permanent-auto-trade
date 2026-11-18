@@ -71,8 +71,13 @@ describe("automatic opportunity generation and package-aware customer delivery",
   });
 
   it("shows catalogue company identity instead of the BRAND display sentinel in customer popup headings", () => {
-    expect(customerPortal).toContain('String(popup.companyDisplayName||popup.symbol||"Opportunity")+" opportunity notice"');
-    expect(customerPortal).toContain('popup.companyDisplayName||popup.symbol||"Company unavailable"');
+    const popupStart = customerPortal.indexOf("function CustomerOpportunityAlert(");
+    const popupEnd = customerPortal.indexOf("\nfunction CustomerDashboard(", popupStart);
+    const popup = customerPortal.slice(popupStart, popupEnd);
+    expect(popup).toContain('const fallbackSymbol=String(popup.symbol||"").trim()');
+    expect(popup).toContain('fallbackSymbol.toUpperCase()!=="BRAND"');
+    expect(popup).toContain('"Company opportunity"');
+    expect(popup).not.toContain('LIVE ARBITRAGE ALERT');
     expect(customerPortal).toContain('value!=="Informational"');
     expect(customerPortal).toContain('"Brand catalogue opportunity"');
   });

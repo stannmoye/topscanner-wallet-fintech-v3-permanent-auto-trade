@@ -13,10 +13,9 @@ const table = readFileSync(new URL("../client/src/components/ui/table.tsx", impo
 const componentShowcase = readFileSync(new URL("../client/src/pages/ComponentShowcase.tsx", import.meta.url), "utf8");
 const routers = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const browserAcceptance = readFileSync(new URL("../scripts/stage2-browser-acceptance.cjs", import.meta.url), "utf8");
-const workflow = readFileSync(new URL("../.github/workflows/stage-2-design-system.yml", import.meta.url), "utf8");
-const installerWorkflow = readFileSync(new URL("../.github/workflows/installer-validation.yml", import.meta.url), "utf8");
-const miningDatabaseWorkflow = readFileSync(new URL("../.github/workflows/mining-database-regression.yml", import.meta.url), "utf8");
-const miningRegressionWorkflow = readFileSync(new URL("../.github/workflows/mining-regression.yml", import.meta.url), "utf8");
+const buildSource = JSON.parse(readFileSync(new URL("../BUILD_SOURCE.json", import.meta.url), "utf8"));
+const releaseGuide = readFileSync(new URL("../BUILD_AND_RELEASE.md", import.meta.url), "utf8");
+const releaseWorkflow = readFileSync(new URL("../.github/workflows/full-production-release.yml", import.meta.url), "utf8");
 
 describe("ARBITRADE shared design-system contract", () => {
   it("defines the semantic tokens used by shared components", () => {
@@ -413,42 +412,22 @@ describe("ARBITRADE shared design-system contract", () => {
   });
 
 
-  it("runs Stage 3 validation on branch pushes and pull requests to integration bases", () => {
-    expect(workflow).toContain("name: Stage 3 five-theme validation");
-    expect(workflow).toContain("on:\n  push:");
-    expect(workflow).toContain("- feat/stage-3-five-theme-architecture");
-    expect(workflow).toContain("  pull_request:\n    branches:");
-    expect(workflow).toContain("- feat/stage-2-design-system-foundation");
-    expect(workflow).toContain("- integration/auth-installer-vps-safety");
-  });
-
-
-  it("isolates Stage 3 concurrency groups by event and head branch", () => {
-    expect(workflow).toContain("concurrency:");
-    expect(workflow).toContain("group: stage-3-five-theme-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}");
-    expect(workflow).toContain("cancel-in-progress: true");
-    expect(workflow).not.toContain("group: stage-3-five-theme-${{ github.workflow }}-${{ github.ref }}");
-  });
-
-
-  it("coalesces same-repository installer runs while isolating fork runs", () => {
-    expect(installerWorkflow).toContain("concurrency:");
-    expect(installerWorkflow).toContain("group: installer-validation-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}");
-    expect(installerWorkflow).toContain("cancel-in-progress: true");
-    expect(installerWorkflow).not.toContain("group: installer-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}");
-  });
-
-
-  it("scopes mining database workflow concurrency to repository and branch across events", () => {
-    expect(miningDatabaseWorkflow).toContain("group: mining-database-regression-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}");
-    expect(miningDatabaseWorkflow).toContain("cancel-in-progress: true");
-    expect(miningDatabaseWorkflow).not.toContain("group: mining-database-regression-${{ github.workflow }}-${{ github.ref }}");
-  });
-
-  it("scopes mining regression workflow concurrency to repository and branch across events", () => {
-    expect(miningRegressionWorkflow).toContain("group: mining-regression-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}");
-    expect(miningRegressionWorkflow).toContain("cancel-in-progress: true");
-    expect(miningRegressionWorkflow).not.toContain("group: mining-regression-${{ github.workflow }}-${{ github.ref }}");
+  it("runs the documented full production release contract only from main", () => {
+    expect(buildSource.release.workflow).toBe(".github/workflows/full-production-release.yml");
+    expect(buildSource.release.dispatch_policy).toContain("refs/heads/main only");
+    expect(releaseGuide).toContain("full-production-release.yml");
+    expect(releaseWorkflow).toContain("name: Full production release");
+    expect(releaseWorkflow).toContain("workflow_dispatch:");
+    expect(releaseWorkflow).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(releaseWorkflow).toContain("pnpm install --frozen-lockfile");
+    expect(releaseWorkflow).toContain("pnpm check");
+    expect(releaseWorkflow).toContain("pnpm test");
+    expect(releaseWorkflow).toContain("pnpm build");
+    expect(releaseWorkflow).toContain("0060_customer_totp_authenticators.sql");
+    expect(releaseWorkflow).toContain("BUILD_PROVENANCE.json");
+    expect(releaseWorkflow).toContain("sha256sum");
+    expect(releaseWorkflow).toContain("gh release create");
+    expect(releaseWorkflow).toContain("full-production-release-${{ github.ref }}");
   });
 
 });

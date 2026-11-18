@@ -39,8 +39,11 @@ describe("Package Configuration global Trade controls", () => {
     expect(adminApp).toContain("The canonical global policy is not installed or is malformed");
     expect(adminApp).toContain("no defaults were created");
     expect(adminApp).toContain("requirePreviousSettlement");
-    expect(adminApp).toContain("OFF · locked");
-    expect(adminApp).not.toContain("This safety prerequisite cannot be switched OFF through this route.");
+    expect(adminApp).toContain('key:"requirePreviousSettlement",label:"Require previous settlement"');
+    expect(adminApp).toContain('role="switch" aria-checked={Boolean(policy[control.key])}');
+    expect(adminApp).toContain('policy[control.key]?"ON":"OFF"');
+    expect(specification).toContain("default ON");
+    expect(adminApp).not.toContain("OFF · locked");
     expect(database).not.toContain('if(input.key==="requirePreviousSettlement"&&input.enabled===false)');
     expect(database).toContain("const AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true");
     expect(adminApp).not.toContain("automaticTradingEnabled: true");

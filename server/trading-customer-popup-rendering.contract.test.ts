@@ -151,9 +151,10 @@ describe("customer opportunity popup retry and visibility gates", () => {
     expect(component).toContain("popup.expiryStatus");
     expect(component).toContain("Opportunity expires in");
     expect(component).toContain("Countdown is synchronised to the server-saved expiry timestamp.");
-    expect(component).toContain("Scheduled expiry:");
-    expect(component).toContain("{expiryLabel}: {expiryCountdown}");
-    expect(component).toContain("Supplied code:");
+    expect(component).toContain("<dt>Scheduled expiry</dt>");
+    expect(component).toContain("{expiryLabel}");
+    expect(component).toContain("{expiryCountdown}");
+    expect(component).toContain("<dt>Opportunity reference</dt>");
     expect(component).not.toContain("Trade closes in");
   });
 
@@ -294,9 +295,11 @@ describe("customer opportunity popup retry and visibility gates", () => {
     })).toBe(false);
   });
 
-  it("does not poll trade history for informational-only opportunity alerts", () => {
+  it("does not poll trade history from the alert and labels internal-ledger allocation accurately", () => {
     expect(component).not.toContain("trpc.customer.trades.useQuery");
-    expect(component).not.toContain("automaticTrade");
-    expect(component).toContain("Informational notice only");
+    expect(component).toContain("popup.automaticTrade||popup.tradeId");
+    expect(component).toContain("Trade executing.");
+    expect(component).toContain("Internal-ledger processing");
+    expect(component).toContain("No external order is placed");
   });
 });

@@ -2717,9 +2717,8 @@ export type TradeAllocationControls = {
 };
 
 function parseTradeAllocationControls(raw: string | null | undefined): TradeAllocationControls {
-  // Permanent: allocation pause never fail-closes automatic trading.
   if (!raw) {
-    return { allocationsPaused: false, reason: "Allocation control absent; automatic trading remains active.", updatedAt: null, updatedBy: null };
+    return { allocationsPaused: true, reason: "Global allocation safety setting is missing; administrator review is required.", updatedAt: null, updatedBy: null };
   }
   try {
     const value = JSON.parse(raw);
@@ -2728,16 +2727,16 @@ function parseTradeAllocationControls(raw: string | null | undefined): TradeAllo
         typeof value.reason !== "string" ||
         !(value.updatedAt === null || typeof value.updatedAt === "string") ||
         !(value.updatedBy === null || (Number.isSafeInteger(value.updatedBy) && value.updatedBy > 0))) {
-      return { allocationsPaused: false, reason: "Allocation control shape invalid; automatic trading remains active.", updatedAt: null, updatedBy: null };
+      return { allocationsPaused: true, reason: "Invalid global allocation safety setting shape; administrator review is required.", updatedAt: null, updatedBy: null };
     }
     return {
-      allocationsPaused: false,
-      reason: value.allocationsPaused ? (value.reason || "Pause requested but automatic trading remains active by platform policy.") : (value.reason || ""),
+      allocationsPaused: value.allocationsPaused,
+      reason: value.reason || "",
       updatedAt: value.updatedAt,
       updatedBy: value.updatedBy,
     };
   } catch {
-    return { allocationsPaused: false, reason: "Allocation control unreadable; automatic trading remains active.", updatedAt: null, updatedBy: null };
+    return { allocationsPaused: true, reason: "Global allocation safety setting is unreadable; administrator review is required.", updatedAt: null, updatedBy: null };
   }
 }
 
@@ -4592,9 +4591,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   }).filter((offer) => offer !== null);
   const allocationControls=await getTradeAllocationControls();
   const autoTradeCandidates=tradeCandidates.filter((offer:any)=>{
-    // Permanent: allocation pause and package automaticTradingEnabled no longer
-    // block capital lock when AUTOMATIC_FINANCIAL_EXECUTION_ENABLED is true.
-    if(offer.executionEligible!==true) return false;
+    if(offer.executionEligible!==true || allocationControls.allocationsPaused) return false;
     if(!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) return false;
     const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(String(offer.packageName)));
     if(packagePolicy) return hasConfiguredTradingOfferPolicy(packagePolicy);
@@ -4757,12 +4754,8 @@ export async function claimAutoTradeCycleCustomers(input:{batchSize?:number}={})
 export async function runAutoTradeCycle(input:{batchSize?:number}={}){
   const settlementPolicy=await getTradeSettlementPolicy();
   const globalControls=await getTradeGlobalControls();
-  let outstandingTrades=0;
-  let pausedUntilSettled=false;
-  // Permanent: never pause the auto-trade cycle for previous-settlement or blockUntilSettled.
-  outstandingTrades=await countOutstandingTrades();
-  pausedUntilSettled=false;
-  void globalControls; void settlementPolicy;
+  const outstandingTrades=await countOutstandingTrades();
+  const pausedUntilSettled=settlementPolicy.blockUntilSettled&&outstandingTrades>0;
   // Settlement gates apply to financial execution, not informational customer
   // pop-up delivery. Continue processing eligible customers while a trade is open,
   // but suppress the automatic-execution pass for this cycle.
@@ -4954,40 +4947,16 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   const totalWalletFunds=(await tx.select({availableMinor:sql`COALESCE(SUM(${customerBalances.availableMinor}),0)`}).from(customerBalances).where(eq(customerBalances.userId,userId)))[0]; if(Number(totalWalletFunds?.availableMinor||0)<=0) throw new Error("Trading is unavailable until at least one wallet has available funds");
   const offer=(await tx.select().from(opportunityOffers).where(and(eq(opportunityOffers.id,input.offerId),eq(opportunityOffers.status,"open"))).limit(1))[0];
   if(!offer || new Date(offer.closesAt).getTime()<=Date.now()) throw new Error("This opportunity is no longer open");
-  // Prefer a real market snapshot when present. When the offer was generated
-  // without instrument/marketSnapshotId (common for catalogue-driven popups),
-  // create a durable platform entry reference so financial allocation can proceed
-  // instead of silently refusing the debit while the UI promises automatic trading.
+  // Market evidence is optional for an internal-ledger allocation. Never invent
+  // a quote or instrument identifier when the opportunity has no real snapshot.
   let entrySnapshot:any=null;
   if(offer.marketSnapshotId&&offer.instrumentId){
     entrySnapshot=(await tx.select({id:marketSnapshots.id,instrumentId:marketSnapshots.instrumentId,priceUsd:marketSnapshots.priceUsd,observedAt:marketSnapshots.observedAt,source:marketSnapshots.source})
       .from(marketSnapshots).where(and(eq(marketSnapshots.id,Number(offer.marketSnapshotId)),eq(marketSnapshots.instrumentId,Number(offer.instrumentId)))).limit(1))[0]||null;
   }
-  let entryPrice=Number(entrySnapshot?.priceUsd);
-  let instrumentIdForTrade=Number(offer.instrumentId||0);
-  if(!entrySnapshot||!Number.isFinite(entryPrice)||entryPrice<=0){
-    const platformPrice=Number(offer.marketValueUsd);
-    entryPrice=Number.isFinite(platformPrice)&&platformPrice>0?platformPrice:100;
-    // Ensure a synthetic instrument id for ledger continuity when the offer has none.
-    if(!Number.isSafeInteger(instrumentIdForTrade)||instrumentIdForTrade<1){
-      instrumentIdForTrade=900000000+Number(offer.id);
-    }
-    const inserted=await tx.insert(marketSnapshots).values({
-      instrumentId:instrumentIdForTrade,
-      priceUsd:String(entryPrice),
-      marketValueUsd:String(entryPrice),
-      observedAt:new Date(),
-      source:"platform-entry-reference",
-      rawJson:JSON.stringify({purpose:"platform_entry_reference_for_automatic_allocation",offerId:offer.id,symbol:offer.symbol,marketValueUsd:offer.marketValueUsd,generatedAt:new Date().toISOString()}),
-    } as any);
-    const insertedId=Number((inserted as any)[0]?.insertId||0);
-    if(!Number.isSafeInteger(insertedId)||insertedId<1){
-      throw new Error("Could not create a platform entry reference for automatic allocation");
-    }
-    entrySnapshot={id:insertedId,instrumentId:instrumentIdForTrade,priceUsd:String(entryPrice),observedAt:new Date(),source:"platform-entry-reference"};
-  } else {
-    instrumentIdForTrade=Number(entrySnapshot.instrumentId||offer.instrumentId);
-  }
+  const entryPrice=Number(entrySnapshot?.priceUsd);
+  const hasValidMarketReference=Boolean(entrySnapshot&&Number.isFinite(entryPrice)&&entryPrice>0);
+  const instrumentIdForTrade=hasValidMarketReference?Number(entrySnapshot.instrumentId):null;
   let savedDurationSnapshot:ReturnType<typeof validateOpportunityDurationSnapshot>=null;
   if(input.deliveryEventId!==undefined){
     const assignment=(await tx.select({packageSnapshotJson:opportunityGenerationAssignments.packageSnapshotJson,configuredDurationSeconds:opportunityGenerationAssignments.configuredDurationSeconds})
@@ -5080,10 +5049,8 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
     .where(and(eq(tradingPackageFeePolicyVersions.packageId,feePackageId),lte(tradingPackageFeePolicyVersions.effectiveAt,allocationAt)))
     .orderBy(desc(tradingPackageFeePolicyVersions.effectiveAt),desc(tradingPackageFeePolicyVersions.version)).limit(1).for("update");
   const effectiveFeeRow=selectLatestEffectivePackageFeePolicy(feeRows,allocationAt);
-  // Permanent: missing package fee policy never blocks allocation — use platform default.
-  const packageFeePolicy=effectiveFeeRow
-    ? normalizePackageFeePolicy(effectiveFeeRow)
-    : {packageId:feePackageId,version:1,feeRateBps:1500,roundingMode:"half_up" as const,effectiveAt:new Date().toISOString(),changedBy:"platform-default",reason:"Default fee policy used when package has no saved version",source:"runtime_default"};
+  const packageFeePolicy=effectiveFeeRow?normalizePackageFeePolicy(effectiveFeeRow):null;
+  if(!packageFeePolicy) throw new Error("The selected package has no saved fee policy; allocation is blocked until an administrator configures one");
   const packagePolicy=policyByName.get(normalizeTradingPackagePolicyKey(activePackageSubscription.packageName));
   let activeTermsSnapshot:any={};try{activeTermsSnapshot=JSON.parse(String(activePackageSubscription.termsSnapshotJson||"{}"))}catch{activeTermsSnapshot={}}
   const tierActiveLimit=Number(activeTermsSnapshot.maxActiveInvestments??activePackageSubscription.maxActiveInvestments??0);
@@ -5096,14 +5063,15 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
     // previous trade remains unsettled until its confirmed result is posted to
     // the wallet and the lifecycle reaches its completed state. The independent
     // opportunity-delivery pause does not override this allocation setting.
-    // Permanent: previous-settlement, concurrent, and daily caps are quota signals only.
     if(requirePreviousSettlement) {
       const unsettledRows=await tx.execute(sql`SELECT id FROM trade_positions
         WHERE userId=${userId}
           AND status<>'cancelled'
           AND (status<>'settled' OR settlementStatus<>'completed')
         ORDER BY id ASC LIMIT 5 FOR UPDATE`) as any;
-      void unsettledRows;
+      if(Number((unsettledRows?.[0]||[]).length)>0) {
+        throw new Error("A previous trade settlement is still pending");
+      }
     }
     void packagePolicy.maxConcurrentActiveTrades;
     void packagePolicy.maxTradeAttemptsPerDay;
@@ -5237,7 +5205,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   const settlementReviewAt=new Date(settlesAt.getTime()+settlementDelaySeconds*1000);
   const creditAt=new Date(settlementReviewAt.getTime()+settlementPolicy.creditDelaySeconds*1000);
   const snapshotVersion=Number(popupSnapshot?.packagePolicyVersionSnapshot||packagePolicy.policyVersion||activePackageSubscription.termsVersion||1);
-  const result=await tx.insert(tradePositions).values({publicTradeId,userId,offerId:offer.id,packageSubscriptionId:selectedSubscriptionId,currency:offer.currency,principalMinor:input.amountMinor,expectedRewardMinor:reward,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,companyLogoUrl:popupSnapshot?.companyLogoUrl||null,companyReferenceMetadataJson:popupSnapshot?.companyReferenceMetadataJson||null,companyReferenceOnly:Boolean(popupSnapshot?.companyReferenceOnly??false),walletFundingPlanJson,instrumentIdSnapshot:Number(instrumentIdForTrade),entryMarketSnapshotId:Number(entrySnapshot.id),entryPriceUsd:String(entryPrice),settlementResultSource:null,settlementProvider:null,settlementObservedAt:null,packageIdSnapshot:feePackageId,packageFeeRateBpsSnapshot:packageFeePolicy.feeRateBps,packageFeeRoundingModeSnapshot:packageFeePolicy.roundingMode,packageFeePolicyVersionSnapshot:packageFeePolicy.version,packageFeeEffectiveAtSnapshot:new Date(packageFeePolicy.effectiveAt),feePolicyVersion:packageFeePolicy.version,platformFeeRateBps:packageFeePolicy.feeRateBps,platformFeeRoundingMode:packageFeePolicy.roundingMode,transactionReference:ref,rewardReservedMinor:reward,settlesAt,settlementReviewAt,creditAt,lifecycleStage:"Trade Allocated",settlementStatus:"pending",policyVersion:snapshotVersion} as any);
+  const result=await tx.insert(tradePositions).values({publicTradeId,userId,offerId:offer.id,packageSubscriptionId:selectedSubscriptionId,currency:offer.currency,principalMinor:input.amountMinor,expectedRewardMinor:reward,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,companyLogoUrl:popupSnapshot?.companyLogoUrl||null,companyReferenceMetadataJson:popupSnapshot?.companyReferenceMetadataJson||null,companyReferenceOnly:Boolean(popupSnapshot?.companyReferenceOnly??false),walletFundingPlanJson,instrumentIdSnapshot:instrumentIdForTrade,entryMarketSnapshotId:hasValidMarketReference?Number(entrySnapshot.id):null,entryPriceUsd:hasValidMarketReference?String(entrySnapshot.priceUsd):null,settlementResultSource:null,settlementProvider:null,settlementObservedAt:null,packageIdSnapshot:feePackageId,packageFeeRateBpsSnapshot:packageFeePolicy.feeRateBps,packageFeeRoundingModeSnapshot:packageFeePolicy.roundingMode,packageFeePolicyVersionSnapshot:packageFeePolicy.version,packageFeeEffectiveAtSnapshot:new Date(packageFeePolicy.effectiveAt),feePolicyVersion:packageFeePolicy.version,platformFeeRateBps:packageFeePolicy.feeRateBps,platformFeeRoundingMode:packageFeePolicy.roundingMode,transactionReference:ref,rewardReservedMinor:reward,settlesAt,settlementReviewAt,creditAt,lifecycleStage:"Trade Allocated",settlementStatus:"pending",policyVersion:snapshotVersion} as any);
   const tradeId=Number(result[0].insertId);
   // Simulated popup-trade mathematics: debit side (amount deducted while popup / trade is live)
   const automaticDebit = calculateAutomaticTradeDebit({

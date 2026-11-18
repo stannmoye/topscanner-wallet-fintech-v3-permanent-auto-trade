@@ -27,10 +27,16 @@ describe("global trade allocation pause", () => {
   });
 
   it("fails closed when the stored safety setting is malformed", () => {
-    expect(db).toContain("A malformed safety setting must fail closed");
-    expect(db).toContain("Invalid global allocation safety setting shape");
-    expect(db).toContain("Global allocation safety setting is missing; administrator review is required.");
-    expect(db).toContain('allocationsPaused: true, reason: "Safety setting requires administrator review');
+    const start = db.indexOf("function parseTradeAllocationControls(");
+    const end = db.indexOf("\nexport async function getTradeAllocationControls(", start);
+    const parser = db.slice(start, end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(parser).toContain("Global allocation safety setting is missing; administrator review is required.");
+    expect(parser).toContain("Invalid global allocation safety setting shape; administrator review is required.");
+    expect(parser).toContain("Global allocation safety setting is unreadable; administrator review is required.");
+    expect(parser).toContain("allocationsPaused: true");
+    expect(parser).toContain("allocationsPaused: value.allocationsPaused");
   });
 
   it("locks and audits pause/resume changes", () => {

@@ -657,6 +657,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
       setPopup(offer);
       window.dispatchEvent(new CustomEvent("arbitrade:customer-popup-state",{detail:{visible:true}}));
       setMinimized(false);
+      setDetailsExpanded(false);
       if(offer.deliveryEventId){
         void lifecycle.mutateAsync({eventId:offer.deliveryEventId,action:"noticed"}).catch(()=>{});
       }
@@ -779,8 +780,8 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const shortfallMoney=formatMinor(shortfallMinor);
   const balanceStatus=String(popup.balanceStatus||"unknown").toLowerCase();
   const insufficientBalance=balanceStatus==="insufficient";
-  const sufficientBalance=balanceStatus==="sufficient";
-  const heading=String(popup.companyDisplayName||popup.symbol||"Opportunity");
+  const fallbackSymbol=String(popup.symbol||"").trim();
+  const heading=String(popup.companyDisplayName||"").trim()||(fallbackSymbol.toUpperCase()!=="BRAND"?fallbackSymbol:"")||"Company opportunity";
   const packagePolicy=popup.packagePolicy&&typeof popup.packagePolicy==="object"?popup.packagePolicy:{};
   const packageFeePolicy=popup.packageFeePolicy&&typeof popup.packageFeePolicy==="object"?popup.packageFeePolicy:{};
   const profitRateBps=Number(popup.configuredProfitRateBps||popup.expectedRewardBps||0);
@@ -790,14 +791,6 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const estimatedFee=estimatedGrossProfit>0?Math.round(estimatedGrossProfit*feeRateBps/10000):0;
   const estimatedNetProfit=Math.max(0,estimatedGrossProfit-estimatedFee);
   const estimatedTotal=selectedMinor+estimatedNetProfit;
-  const availableAfter=Math.max(0,availableMinor-selectedMinor);
-  const packageMinRate=Number(packagePolicy.minimumPayoutRateBps);
-  const packageMaxRate=Number(packagePolicy.maximumPayoutRateBps);
-  const packageMinFee=Number(packageFeePolicy.feeRateBps);
-  const packageMaxFee=Number(packageFeePolicy.feeRateBps);
-  const hasRateRange=Number.isFinite(packageMinRate)&&Number.isFinite(packageMaxRate)&&packageMinRate>=0&&packageMaxRate>=packageMinRate;
-  const hasEntryPrice=Number.isFinite(Number(popup.entryPriceUsd))&&Number(popup.entryPriceUsd)>0;
-  const entryPrice=hasEntryPrice?`$${Number(popup.entryPriceUsd).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})}`:"Unavailable";
   const closesAt=new Date(popup.closesAt);
   const closesAtMs=closesAt.getTime();
   const closesLabel=Number.isFinite(closesAtMs)?closesAt.toLocaleString():"Unavailable";
@@ -807,19 +800,20 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const expiryDurationMs=closesAtMs-opensAtMs;
   const expiryProgress=Number.isFinite(expiryDurationMs)&&expiryDurationMs>0&&remainingSeconds!==null?Math.max(0,Math.min(100,(remainingSeconds*1000/expiryDurationMs)*100)):0;
   const expiryConfirmed=String(popup.expiryStatus||"").toLowerCase()==="expired";
-  const expiryLabel=expiryConfirmed?"Opportunity expired":remainingSeconds===0?"Expiry time reached · confirming status":"Execution window closes in";
+  const expiryLabel=expiryConfirmed?"Opportunity expired":remainingSeconds===0?"Expiry time reached · confirming status":"Opportunity expires in";
   const formatExpiry=(seconds:number|null)=>{if(seconds===null)return "Unavailable";const hours=Math.floor(seconds/3600),minutes=Math.floor((seconds%3600)/60),remainder=seconds%60;return hours>0?`${String(hours).padStart(2,"0")}:${String(minutes).padStart(2,"0")}:${String(remainder).padStart(2,"0")}`:`${String(minutes).padStart(2,"0")}:${String(remainder).padStart(2,"0")}`;};
   const expiryCountdown=formatExpiry(remainingSeconds);
   const connectionLabel=connectionStatus==="offline"?"Connection interrupted":connectionStatus==="updating"?"Refreshing status":"Live status connected";
-  const openedLabel=Number.isFinite(Date.parse(String(popup.opensAt||"")))?new Date(popup.opensAt).toLocaleString():"Unavailable";
-  const durationLabel=Number(popup.configuredDurationSeconds)>0?`${Math.round(Number(popup.configuredDurationSeconds)/3600*10)/10}h`:"Configured duration unavailable";
   const formatPercent=(bps:number)=>Number.isFinite(bps)?`${(bps/100).toFixed(2)}%`:"Unavailable";
-  const formatRange=(min:number,max:number)=>min===max?formatPercent(min):`${formatPercent(min)} – ${formatPercent(max)}`;
   const packageAmountLabel=Number(packagePolicy.minimumTradeUnits)>0&&Number(packagePolicy.maximumTradeUnits)>0?`${Number(packagePolicy.minimumTradeUnits).toLocaleString()} – ${Number(packagePolicy.maximumTradeUnits).toLocaleString()} units`:`${formatMinor(Number(popup.packageMinimumTradeMinor))} – ${formatMinor(Number(popup.packageMaximumTradeMinor))}`;
   const statusTone=insufficientBalance?"opportunity-trade-card--warning":"";
+  const detailsId=`opportunity-details-${Number(popup.id)||"current"}`;
+  const scheduledExpiry=Number.isFinite(closesAtMs)?closesAt.toLocaleString():"Unavailable";
+  const serverStatus=expiryConfirmed?"Expired":String(popup.offerStatus||"Open");
+  const hasTrade=Boolean(popup.automaticTrade||popup.tradeId);
 
   if(minimized)return <div className="opportunity-popup-dock" role="region" aria-label="Minimized opportunity alert" aria-live="polite">
-    <div className="opportunity-popup-dock__content"><strong>{insufficientBalance?"Missed — insufficient balance":"Automatic trade in progress"}</strong><span>{heading} · {popup.packageName||"Assigned package"} · {formatPercent(profitRateBps)} configured return</span><span>{expiryLabel}: {expiryCountdown}</span>{popup.publicTradeId&&<div className="opportunity-popup-dock__trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(popup.publicTradeId)} className="trade-id-copy--compact"/></div>}</div>
+    <div className="opportunity-popup-dock__content"><strong>{insufficientBalance?"Missed — insufficient balance":hasTrade?"Trade executing":"Configured trade opportunity"}</strong><span>{heading} · {popup.packageName||"Assigned package"} · {formatPercent(profitRateBps)} configured return</span><span>{expiryLabel}: {expiryCountdown}</span>{popup.publicTradeId&&<div className="opportunity-popup-dock__trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(popup.publicTradeId)} className="trade-id-copy--compact"/></div>}</div>
     <div className="opportunity-popup-dock__actions"><button type="button" aria-label="Maximize opportunity alert" onClick={()=>setMinimized(false)}>Maximize</button><button type="button" className="opportunity-popup-dock__dismiss" onClick={dismiss}>Dismiss</button></div>
   </div>;
 
@@ -828,28 +822,33 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const profitAmount=formatMinor(estimatedGrossProfit);
   const feeAmount=formatMinor(estimatedFee);
   const netProfitAmount=formatMinor(estimatedNetProfit);
-  const buyVenue=String(popup.venueFrom||"Source venue");
-  const sellVenue=String(popup.venueTo||"Destination venue");
-  const exchangeProviderName=String(popup.exchangeProviderName||sellVenue||"Exchange provider unavailable");
-  const exchangeProviderCode=String(popup.exchangeProviderCode||"").trim().toUpperCase();
   const exchangeProviderFlag=String(popup.exchangeProviderFlag||"🏳️");
   const exchangeCountry=String(popup.exchangeCountry||"Country unavailable");
-  const buyPrice=hasEntryPrice?`$${Number(popup.entryPriceUsd).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})}`:"Unavailable";
-  const sellPrice=hasEntryPrice&&profitRateBps>0?`$${(Number(popup.entryPriceUsd)*(1+profitRateBps/10000)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})}`:"Unavailable";
-  return <div ref={popupSurfaceRef} className={`center-opportunity-toast opportunity-reference-popup ${statusTone}`} role="region" aria-label="Live arbitrage opportunity alert">
-    <div className="reference-popup-ticker" aria-hidden="true"><span>{symbol} <b className="up">▲ {formatPercent(profitRateBps)}</b></span><span>{buyVenue.toUpperCase()} <b className="up">▲ LIVE</b></span><span>{sellVenue.toUpperCase()} <b className="down">▼ RISK</b></span><span>{symbol} <b className="up">▲ {formatPercent(profitRateBps)}</b></span><span>{buyVenue.toUpperCase()} <b className="up">▲ LIVE</b></span><span>{sellVenue.toUpperCase()} <b className="down">▼ RISK</b></span></div>
-    <div className="reference-popup-head"><div className="reference-popup-live"><span className="reference-popup-live-dot"/> LIVE ARBITRAGE ALERT</div><div className="reference-popup-head-actions"><span className={`opportunity-popup-connection opportunity-popup-connection--${connectionStatus}`} role="status"><span aria-hidden="true"/>{connectionLabel}</span><button type="button" className="reference-popup-close" aria-label="Close pop-up" onClick={dismiss}><X size={16}/></button></div></div>
-    <div className="reference-popup-asset"><div className="reference-popup-asset-icon reference-popup-asset-icon--logo">{popup.companyLogoUrl||popup.companyDisplayName?<CompanyReferenceLogo name={String(popup.companyDisplayName||heading||symbol)} logoUrl={popup.companyLogoUrl?String(popup.companyLogoUrl):null} size={72}/>:<TrendingUp size={34}/>}</div><div className="reference-popup-asset-copy"><strong>{heading}</strong><div><span className="reference-popup-symbol">{symbol}</span><span>{popup.sector||popup.industry||"Verified market asset"}</span><span>{exchangeProviderCode||exchangeProviderName}</span><span>• {popup.currency||"Currency unavailable"}</span></div></div><svg className="reference-popup-sparkline" viewBox="0 0 140 56" role="img" aria-label="Market trend"><defs><linearGradient id="reference-spark-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#34D399" stopOpacity=".35"/><stop offset="1" stopColor="#34D399" stopOpacity="0"/></linearGradient></defs><path d="M0 44L14 40L28 42L42 32L56 36L70 26L84 30L98 18L112 22L126 10L140 6V56H0Z" fill="url(#reference-spark-fill)"/><path d="M0 44L14 40L28 42L42 32L56 36L70 26L84 30L98 18L112 22L126 10L140 6" stroke="#34D399" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
-    <div className="reference-popup-metrics"><div><span>Required to invest</span><strong>{requiredMoney}</strong></div><div><span>Amount to gain</span><strong className="positive">+{profitAmount}</strong></div><div className="positive-card"><span>Profit</span><strong className="positive">{formatPercent(profitRateBps)}</strong></div></div>
-    <div className="reference-popup-details"><div><span>Assigned package</span><strong>{packageName}</strong></div><div><span>Package limits</span><strong>{packageAmountLabel}</strong></div><div><span>Platform fee</span><strong>{formatPercent(feeRateBps)}</strong></div><div><span>Amount deducted by platform</span><strong className="negative">−{feeAmount}</strong></div></div>
-    <div className="reference-popup-net"><div><span>Amount earned after deduction</span><small>Net profit credited only after an actual recorded settlement</small></div><strong>{netProfitAmount}</strong></div>
+  return <div ref={popupSurfaceRef} className={`center-opportunity-toast opportunity-reference-popup ${statusTone}`} role="region" aria-label="Configured trade opportunity alert">
+    <div className="reference-popup-head"><div className="reference-popup-live"><span className="reference-popup-live-dot"/> CONFIGURED TRADE OPPORTUNITY</div><div className="reference-popup-head-actions"><span className={"opportunity-popup-connection opportunity-popup-connection--"+connectionStatus} role="status"><span aria-hidden="true"/>{connectionLabel}</span><button type="button" className="opportunity-popup-minimize" aria-label="Minimize opportunity alert" onClick={()=>{stopConfiguredSound();setMinimized(true);}}>Minimize</button><button type="button" className="reference-popup-close" aria-label="Close pop-up" onClick={dismiss}><X size={16}/></button></div></div>
+    <div className="reference-popup-asset"><div className="reference-popup-asset-icon reference-popup-asset-icon--logo">{popup.companyLogoUrl||popup.companyDisplayName?<CompanyReferenceLogo name={String(popup.companyDisplayName||heading||symbol)} logoUrl={popup.companyLogoUrl?String(popup.companyLogoUrl):null} size={72}/>:<TrendingUp size={34}/>}</div><div className="reference-popup-asset-copy"><strong>{heading}</strong><div><span className="reference-popup-symbol">{symbol}</span><span>{popup.sector||popup.industry||"Catalogue reference"}</span><span>Internal-ledger opportunity</span><span>• {popup.currency||"Currency unavailable"}</span></div></div></div>
+    <div className="reference-popup-metrics"><div><span>Required capital</span><strong>{requiredMoney}</strong></div><div><span>Configured return estimate</span><strong className="positive">+{profitAmount}</strong></div><div className="positive-card"><span>Configured rate</span><strong className="positive">{formatPercent(profitRateBps)}</strong></div></div>
+    <div className="reference-popup-details"><div><span>Assigned package</span><strong>{packageName}</strong></div><div><span>Package limits</span><strong>{packageAmountLabel}</strong></div><div><span>Configured platform fee</span><strong>{formatPercent(feeRateBps)}</strong></div><div><span>Estimated fee</span><strong className="negative">−{feeAmount}</strong></div></div>
+    <div className="reference-popup-net"><div><span>Configured return after fee</span><small>Contractual estimate; credit occurs only after server-side settlement confirmation.</small></div><strong>{netProfitAmount}</strong></div>
     {popup.publicTradeId&&<div className="reference-popup-trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(popup.publicTradeId)}/></div>}
-    <div className="reference-popup-route"><div className="reference-popup-provider-card"><span className="reference-popup-provider-flag" aria-label={`${exchangeCountry} flag`}>{exchangeProviderFlag}</span><Building2 size={28}/><div><span>Exchange provider · {exchangeCountry}</span><strong>{exchangeProviderName}{exchangeProviderCode&&<em className="reference-popup-provider-code">{exchangeProviderCode}</em>}</strong></div></div><div><Globe2 size={26}/><div><span>Exchange route</span><strong>{buyVenue} → {exchangeProviderName}</strong></div></div></div>
-    <div className="reference-popup-flow"><div><span>BUY</span> {buyPrice} <em>{buyVenue}</em></div><div className="reference-popup-arrows"><b>›</b><b>›</b><b>›</b></div><div><span>SELL</span> {sellPrice} <em>{sellVenue}</em></div><div className="reference-popup-window"><span>Opportunity window</span><span>{expiryLabel} · {expiryCountdown}</span></div><div className="reference-popup-drain"><i style={{width:`${expiryProgress}%`}}/></div></div>
-    <div className="reference-popup-wallet"><div><WalletCards size={22}/><span>Combined available</span><strong>{availableMoney}</strong></div><div><Lock size={22}/><span>Auto-locked capital</span><strong>{requiredMoney}</strong></div><div><CircleDollarSign size={22}/><span>Auto-credit at settlement</span><strong>{formatMinor(estimatedTotal)}</strong></div></div>
-    {insufficientBalance?<div className="reference-popup-warning"><ShieldAlert size={15}/><span><strong>Insufficient available balance.</strong> Required {requiredMoney}; available {availableMoney}. No capital will be moved. Top up any wallet to qualify for automatic allocation.</span></div>:<div className="reference-popup-auto-status"><ShieldCheck size={15}/><span><strong>Automatic trade.</strong> Combined wallet balance qualifies. Capital is locked from available balance now. Principal and profit are credited at settlement.</span></div>}
-    <div className="reference-popup-actions">{!insufficientBalance&&<button className="reference-popup-execute" type="button" disabled aria-disabled="true"><Lock size={15}/>{popup.automaticTrade||popup.tradeId?"Capital locked into trade":"Qualifying — allocating capital"}</button>}<button className="reference-popup-dismiss" type="button" onClick={dismiss}>Dismiss alert</button><button type="button" className="text-button" onClick={()=>{if(popup.deliveryEventId)void lifecycle.mutateAsync({eventId:popup.deliveryEventId,action:"opened"}).catch(()=>{});stop();onOpen();}}>View details</button></div>
-    <div className="reference-popup-disclaimer">Automatic trade lifecycle · Audit logged · {popup.marketObservedAt?`Market snapshot ${new Date(popup.marketObservedAt).toLocaleString()}`:"Market snapshot timestamp unavailable"} · Returns depend on recorded settlement.</div>
+    <div className="reference-popup-route"><div className="reference-popup-provider-card"><span className="reference-popup-provider-flag" aria-label={`${exchangeCountry} reference`}>{exchangeProviderFlag}</span><Building2 size={28}/><div><span>Catalogue country reference</span><strong>{exchangeCountry}</strong></div></div><div><Globe2 size={26}/><div><span>Processing model</span><strong>Internal ledger · No external order is placed.</strong></div></div></div>
+    <div className="opportunity-expiry-panel" role="status" aria-live="polite"><div className="opportunity-expiry-ring" aria-hidden="true"><svg viewBox="0 0 72 72"><circle className="opportunity-expiry-ring__track" cx="36" cy="36" r="31"/><circle className="opportunity-expiry-ring__value" cx="36" cy="36" r="31" style={{strokeDashoffset:194.78*(1-expiryProgress/100)}}/></svg><span>{expiryProgress}%</span></div><div className="opportunity-expiry-copy"><span>{expiryLabel}</span><strong>{expiryCountdown}</strong><small>Countdown is synchronised to the server-saved expiry timestamp. It does not confirm a settlement result.</small></div></div>
+    <div className="reference-popup-wallet"><div><WalletCards size={22}/><span>Combined available</span><strong>{availableMoney}</strong></div><div><Lock size={22}/><span>Required capital</span><strong>{requiredMoney}</strong></div><div><CircleDollarSign size={22}/><span>Configured total after settlement</span><strong>{formatMinor(estimatedTotal)}</strong></div></div>
+    {insufficientBalance?<div className="reference-popup-warning"><ShieldAlert size={15}/><span><strong>Missed — insufficient balance.</strong> Required capital: {requiredMoney}. Available balance: {availableMoney}. Shortfall: {shortfallMoney}. No funds were moved. It does not execute a trade, allocate capital, or change a wallet balance.</span></div>:<div className="reference-popup-auto-status"><ShieldCheck size={15}/><span><strong>{hasTrade?"Trade executing.":"Balance qualifies; allocation is being checked."}</strong> Funds move only through a successful atomic internal-ledger allocation. Configured return is credited only after recorded settlement.</span></div>}
+    <section className="opportunity-popup-details">
+      <button type="button" className="opportunity-popup-details__toggle" aria-expanded={detailsExpanded} aria-controls={detailsId} onClick={()=>setDetailsExpanded(value=>!value)}>
+        <span>Opportunity details</span><span aria-hidden="true">{detailsExpanded?"−":"+"}</span>
+      </button>
+      {detailsExpanded&&<dl id={detailsId} className="opportunity-popup-details__grid">
+        <div><dt>Opportunity reference</dt><dd>{String(popup.publicTradeId||popup.id||"Unavailable")}</dd></div>
+        <div><dt>Assigned package</dt><dd>{packageName}</dd></div>
+        <div><dt>Scheduled expiry</dt><dd>{scheduledExpiry}</dd></div>
+        <div><dt>Server status</dt><dd>{serverStatus}</dd></div>
+        <div><dt>Configured duration</dt><dd>{Number(popup.configuredDurationSeconds)>0?`${Number(popup.configuredDurationSeconds)} seconds`:"Unavailable"}</dd></div>
+      </dl>}
+    </section>
+    <div className="reference-popup-actions">{!insufficientBalance&&<button className="reference-popup-execute" type="button" disabled aria-disabled="true"><Lock size={15}/>{hasTrade?"Trade executing · internal ledger":"Allocation pending server checks"}</button>}<button className="reference-popup-dismiss" type="button" onClick={dismiss}>Dismiss alert</button><button type="button" className="text-button" onClick={()=>{if(popup.deliveryEventId)void lifecycle.mutateAsync({eventId:popup.deliveryEventId,action:"opened"}).catch(()=>{});stop();onOpen();}}>View details</button></div>
+    <div className="reference-popup-disclaimer">Configured return estimate · Internal-ledger processing · No external market execution is represented · Funds are credited only after server-confirmed settlement.</div>
   </div>;
 }
 function CustomerDashboard({push,sound,setSound,soundSettings,delivery,opportunityData}:{push:(x:string)=>void;sound:boolean;setSound:(x:boolean)=>void;soundSettings:SoundSettings;delivery?:{enabled?:boolean;maxPopupsPerDay:number;maxVisibleOffers:number;pausedUntilSettled?:boolean;outstandingTrades?:number};opportunityData?:any}) {

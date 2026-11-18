@@ -30,7 +30,7 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(source).toContain("if(!policy) return false;");
     expect(implementation).toContain("packagePolicyPaused:true");
     expect(implementation).toContain("const autoTradeCandidates=tradeCandidates.filter((offer:any)=>");
-    expect(implementation).toContain("if(offer.executionEligible!==true) return false;");
+    expect(implementation).toContain("if(offer.executionEligible!==true || allocationControls.allocationsPaused) return false;");
     expect(implementation).toContain("deliveryStatus:opportunityPopupEvents.deliveryStatus");
     expect(implementation).toContain('["queued","in_progress","retry_wait","delivered","received","rendered","failed"].includes(String(row.deliveryStatus))');
     expect(implementation).toContain("if(!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) return false;");
@@ -115,7 +115,7 @@ describe("server-side automatic Trading tier eligibility", () => {
     const start = source.indexOf("export async function runAutoTradeCycle(");
     const end = source.indexOf("\nexport async function createTrade(", start);
     const implementation = source.slice(start, end);
-    expect(implementation).toContain("pausedUntilSettled=false");
+    expect(implementation).toContain("const pausedUntilSettled=settlementPolicy.blockUntilSettled&&outstandingTrades>0;");
     expect(implementation).not.toContain("return {customers:0,allocations:0");
     expect(implementation).toContain("allowAutomaticExecution:!pausedUntilSettled");
     const deliveryStart = source.indexOf("export async function listCustomerOpportunities(");
@@ -137,7 +137,10 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(implementation).toContain("samePackageSubscription");
     expect(implementation).toContain("No eligible package subscription remains for this allocation");
     expect(implementation).toContain("Number(subscription.packageId)===input.packageId");
-    expect(implementation).toContain("Permanent: previous-settlement, concurrent, and daily caps are quota signals only.");
+    expect(implementation).toContain("const requirePreviousSettlement=requiresPreviousSettlementForAllocation(globalControls);");
+    expect(implementation).toContain("if(requirePreviousSettlement) {");
+    expect(implementation).toContain("status<>'settled' OR settlementStatus<>'completed'");
+    expect(implementation).toContain('throw new Error("A previous trade settlement is still pending");');
   });
 
   it("never auto-allocates a pending or retrying popup that was not delivered", () => {

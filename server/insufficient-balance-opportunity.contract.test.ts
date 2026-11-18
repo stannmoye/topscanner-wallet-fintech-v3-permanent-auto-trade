@@ -52,7 +52,9 @@ describe("insufficient-balance opportunity handling", () => {
   });
 
   it("delegates the authoritative balance decision to atomic multi-wallet FX funding", () => {
-    expect(autoTrade).toContain("const requestedAmount=Math.max(offerMinimum,packageMinimum)");
+    expect(autoTrade).toContain("const amountMinimum=Math.max(offerMinimum,packageMinimum)");
+    expect(autoTrade).toContain("const sampledAmount=chooseSecureTradeAmount({");
+    expect(autoTrade).toContain("const requestedAmount=sampledAmount??amountMinimum");
     expect(autoTrade).toContain("createTrade(userId,{");
     expect(createTrade).toContain("getFreshTradingFxRate(config)");
     expect(createTrade).toContain("planCrossWalletFunding({");
@@ -84,6 +86,9 @@ describe("insufficient-balance opportunity handling", () => {
     expect(funding).toContain("if (remainingTargetMinor > 0) throw new Error(\"Insufficient combined spendable wallet balance at current exchange rates\")");
     expect(funding).toContain("return { targetCreditMinor, sourceDebits }");
     expect(createTrade).toContain("await tx.update(customerBalances).set({");
-    expect(createTrade).toContain("throw new Error(\"Insufficient available balance after FX conversion\")");
+    expect(createTrade).toContain('throw new Error("INSUFFICIENT_BALANCE: Deposit more funds. Available balance is insufficient after FX conversion for this trade amount.")');
+    expect(createTrade).toContain("planCrossWalletFunding({");
+    expect(createTrade.indexOf('throw new Error("INSUFFICIENT_BALANCE: Deposit more funds. Available balance is insufficient after FX conversion for this trade amount.")'))
+      .toBeLessThan(createTrade.indexOf('entryType:"trade_reservation"'));
   });
 });

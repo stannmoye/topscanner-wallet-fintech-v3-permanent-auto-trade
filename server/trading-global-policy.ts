@@ -23,13 +23,12 @@ export type TradeGlobalControlStatus = TradeGlobalControlPolicy & {
 };
 
 export const FAIL_CLOSED_TRADE_GLOBAL_CONTROLS: TradeGlobalMasterValues = {
-  // Permanent automatic trading: fail OPEN so missing settings never freeze the book.
-  tierPolicyMasterEnabled: true,
-  informationalPopupDeliveryEnabled: true,
-  companyRotationEnabled: true,
-  randomizedTimingEnabled: true,
-  burstDeliveryEnabled: true,
-  requirePreviousSettlement: false,
+  tierPolicyMasterEnabled: false,
+  informationalPopupDeliveryEnabled: false,
+  companyRotationEnabled: false,
+  randomizedTimingEnabled: false,
+  burstDeliveryEnabled: false,
+  requirePreviousSettlement: true,
 };
 
 export type LegacyPackageControlRow = {
@@ -115,7 +114,8 @@ export function parseTradeGlobalControlPolicy(raw: unknown): TradeGlobalControlP
  * Missing or malformed global policy fails closed. A valid saved OFF value
  * bypasses only the prior-unsettled-trade prerequisite for future allocations.
  */
-export function requiresPreviousSettlementForAllocation(_controls?: TradeGlobalControlStatus | TradeGlobalMasterValues | null): boolean {
-  // Permanent: never block a new allocation because another trade is still open or awaiting credit.
-  return false;
+export function requiresPreviousSettlementForAllocation(controls?: TradeGlobalControlStatus | TradeGlobalMasterValues | null): boolean {
+  if (!controls) return true;
+  if ("available" in controls && controls.available !== true) return true;
+  return controls.requirePreviousSettlement !== false;
 }

@@ -4706,8 +4706,10 @@ function parseTradeGlobalControlPolicy(raw) {
     updatedAt
   };
 }
-function requiresPreviousSettlementForAllocation(_controls) {
-  return false;
+function requiresPreviousSettlementForAllocation(controls) {
+  if (!controls) return true;
+  if ("available" in controls && controls.available !== true) return true;
+  return controls.requirePreviousSettlement !== false;
 }
 var TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_MASTER_KEYS, FAIL_CLOSED_TRADE_GLOBAL_CONTROLS;
 var init_trading_global_policy = __esm({
@@ -4724,13 +4726,12 @@ var init_trading_global_policy = __esm({
       "requirePreviousSettlement"
     ];
     FAIL_CLOSED_TRADE_GLOBAL_CONTROLS = {
-      // Permanent automatic trading: fail OPEN so missing settings never freeze the book.
-      tierPolicyMasterEnabled: true,
-      informationalPopupDeliveryEnabled: true,
-      companyRotationEnabled: true,
-      randomizedTimingEnabled: true,
-      burstDeliveryEnabled: true,
-      requirePreviousSettlement: false
+      tierPolicyMasterEnabled: false,
+      informationalPopupDeliveryEnabled: false,
+      companyRotationEnabled: false,
+      randomizedTimingEnabled: false,
+      burstDeliveryEnabled: false,
+      requirePreviousSettlement: true
     };
   }
 });
@@ -8512,21 +8513,21 @@ function packageUsdUnitsToNativeMinor(usdUnits, currency, currencies) {
 }
 function parseTradeAllocationControls(raw) {
   if (!raw) {
-    return { allocationsPaused: false, reason: "Allocation control absent; automatic trading remains active.", updatedAt: null, updatedBy: null };
+    return { allocationsPaused: true, reason: "Global allocation safety setting is missing; administrator review is required.", updatedAt: null, updatedBy: null };
   }
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== "object" || typeof value.allocationsPaused !== "boolean" || typeof value.reason !== "string" || !(value.updatedAt === null || typeof value.updatedAt === "string") || !(value.updatedBy === null || Number.isSafeInteger(value.updatedBy) && value.updatedBy > 0)) {
-      return { allocationsPaused: false, reason: "Allocation control shape invalid; automatic trading remains active.", updatedAt: null, updatedBy: null };
+      return { allocationsPaused: true, reason: "Invalid global allocation safety setting shape; administrator review is required.", updatedAt: null, updatedBy: null };
     }
     return {
-      allocationsPaused: false,
-      reason: value.allocationsPaused ? value.reason || "Pause requested but automatic trading remains active by platform policy." : value.reason || "",
+      allocationsPaused: value.allocationsPaused,
+      reason: value.reason || "",
       updatedAt: value.updatedAt,
       updatedBy: value.updatedBy
     };
   } catch {
-    return { allocationsPaused: false, reason: "Allocation control unreadable; automatic trading remains active.", updatedAt: null, updatedBy: null };
+    return { allocationsPaused: true, reason: "Global allocation safety setting is unreadable; administrator review is required.", updatedAt: null, updatedBy: null };
   }
 }
 async function getTradeAllocationControls() {
@@ -10647,7 +10648,7 @@ async function listCustomerOpportunities(userId, options = {}) {
   }).filter((offer) => offer !== null);
   const allocationControls = await getTradeAllocationControls();
   const autoTradeCandidates = tradeCandidates.filter((offer) => {
-    if (offer.executionEligible !== true) return false;
+    if (offer.executionEligible !== true || allocationControls.allocationsPaused) return false;
     if (!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) return false;
     const packagePolicy = policyByName.get(normalizeTradingPackagePolicyKey(String(offer.packageName)));
     if (packagePolicy) return hasConfiguredTradingOfferPolicy(packagePolicy);
@@ -10861,12 +10862,8 @@ async function claimAutoTradeCycleCustomers(input = {}) {
 async function runAutoTradeCycle(input = {}) {
   const settlementPolicy = await getTradeSettlementPolicy();
   const globalControls = await getTradeGlobalControls();
-  let outstandingTrades = 0;
-  let pausedUntilSettled = false;
-  outstandingTrades = await countOutstandingTrades();
-  pausedUntilSettled = false;
-  void globalControls;
-  void settlementPolicy;
+  const outstandingTrades = await countOutstandingTrades();
+  const pausedUntilSettled = settlementPolicy.blockUntilSettled && outstandingTrades > 0;
   const { customers, batchSize } = await claimAutoTradeCycleCustomers(input);
   const generationControl = await getOpportunityGenerationControl();
   const generationBatchId = crypto8.randomUUID();
@@ -11083,30 +11080,9 @@ async function createTrade(userId, input) {
     if (offer.marketSnapshotId && offer.instrumentId) {
       entrySnapshot = (await tx.select({ id: marketSnapshots.id, instrumentId: marketSnapshots.instrumentId, priceUsd: marketSnapshots.priceUsd, observedAt: marketSnapshots.observedAt, source: marketSnapshots.source }).from(marketSnapshots).where(and3(eq3(marketSnapshots.id, Number(offer.marketSnapshotId)), eq3(marketSnapshots.instrumentId, Number(offer.instrumentId)))).limit(1))[0] || null;
     }
-    let entryPrice = Number(entrySnapshot?.priceUsd);
-    let instrumentIdForTrade = Number(offer.instrumentId || 0);
-    if (!entrySnapshot || !Number.isFinite(entryPrice) || entryPrice <= 0) {
-      const platformPrice = Number(offer.marketValueUsd);
-      entryPrice = Number.isFinite(platformPrice) && platformPrice > 0 ? platformPrice : 100;
-      if (!Number.isSafeInteger(instrumentIdForTrade) || instrumentIdForTrade < 1) {
-        instrumentIdForTrade = 9e8 + Number(offer.id);
-      }
-      const inserted = await tx.insert(marketSnapshots).values({
-        instrumentId: instrumentIdForTrade,
-        priceUsd: String(entryPrice),
-        marketValueUsd: String(entryPrice),
-        observedAt: /* @__PURE__ */ new Date(),
-        source: "platform-entry-reference",
-        rawJson: JSON.stringify({ purpose: "platform_entry_reference_for_automatic_allocation", offerId: offer.id, symbol: offer.symbol, marketValueUsd: offer.marketValueUsd, generatedAt: (/* @__PURE__ */ new Date()).toISOString() })
-      });
-      const insertedId = Number(inserted[0]?.insertId || 0);
-      if (!Number.isSafeInteger(insertedId) || insertedId < 1) {
-        throw new Error("Could not create a platform entry reference for automatic allocation");
-      }
-      entrySnapshot = { id: insertedId, instrumentId: instrumentIdForTrade, priceUsd: String(entryPrice), observedAt: /* @__PURE__ */ new Date(), source: "platform-entry-reference" };
-    } else {
-      instrumentIdForTrade = Number(entrySnapshot.instrumentId || offer.instrumentId);
-    }
+    const entryPrice = Number(entrySnapshot?.priceUsd);
+    const hasValidMarketReference = Boolean(entrySnapshot && Number.isFinite(entryPrice) && entryPrice > 0);
+    const instrumentIdForTrade = hasValidMarketReference ? Number(entrySnapshot.instrumentId) : null;
     let savedDurationSnapshot = null;
     if (input.deliveryEventId !== void 0) {
       const assignment = (await tx.select({ packageSnapshotJson: opportunityGenerationAssignments.packageSnapshotJson, configuredDurationSeconds: opportunityGenerationAssignments.configuredDurationSeconds }).from(opportunityGenerationAssignments).where(and3(eq3(opportunityGenerationAssignments.userId, userId), eq3(opportunityGenerationAssignments.offerId, input.offerId))).limit(1).for("update"))[0];
@@ -11192,7 +11168,8 @@ async function createTrade(userId, input) {
     const allocationAt = /* @__PURE__ */ new Date();
     const feeRows = await tx.select().from(tradingPackageFeePolicyVersions).where(and3(eq3(tradingPackageFeePolicyVersions.packageId, feePackageId), lte2(tradingPackageFeePolicyVersions.effectiveAt, allocationAt))).orderBy(desc2(tradingPackageFeePolicyVersions.effectiveAt), desc2(tradingPackageFeePolicyVersions.version)).limit(1).for("update");
     const effectiveFeeRow = selectLatestEffectivePackageFeePolicy(feeRows, allocationAt);
-    const packageFeePolicy = effectiveFeeRow ? normalizePackageFeePolicy(effectiveFeeRow) : { packageId: feePackageId, version: 1, feeRateBps: 1500, roundingMode: "half_up", effectiveAt: (/* @__PURE__ */ new Date()).toISOString(), changedBy: "platform-default", reason: "Default fee policy used when package has no saved version", source: "runtime_default" };
+    const packageFeePolicy = effectiveFeeRow ? normalizePackageFeePolicy(effectiveFeeRow) : null;
+    if (!packageFeePolicy) throw new Error("The selected package has no saved fee policy; allocation is blocked until an administrator configures one");
     const packagePolicy = policyByName.get(normalizeTradingPackagePolicyKey(activePackageSubscription.packageName));
     let activeTermsSnapshot = {};
     try {
@@ -11211,7 +11188,9 @@ async function createTrade(userId, input) {
           AND status<>'cancelled'
           AND (status<>'settled' OR settlementStatus<>'completed')
         ORDER BY id ASC LIMIT 5 FOR UPDATE`);
-        void unsettledRows;
+        if (Number((unsettledRows?.[0] || []).length) > 0) {
+          throw new Error("A previous trade settlement is still pending");
+        }
       }
       void packagePolicy.maxConcurrentActiveTrades;
       void packagePolicy.maxTradeAttemptsPerDay;
@@ -11354,7 +11333,7 @@ async function createTrade(userId, input) {
     const settlementReviewAt = new Date(settlesAt.getTime() + settlementDelaySeconds * 1e3);
     const creditAt = new Date(settlementReviewAt.getTime() + settlementPolicy.creditDelaySeconds * 1e3);
     const snapshotVersion = Number(popupSnapshot?.packagePolicyVersionSnapshot || packagePolicy.policyVersion || activePackageSubscription.termsVersion || 1);
-    const result = await tx.insert(tradePositions).values({ publicTradeId, userId, offerId: offer.id, packageSubscriptionId: selectedSubscriptionId, currency: offer.currency, principalMinor: input.amountMinor, expectedRewardMinor: reward, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, companyLogoUrl: popupSnapshot?.companyLogoUrl || null, companyReferenceMetadataJson: popupSnapshot?.companyReferenceMetadataJson || null, companyReferenceOnly: Boolean(popupSnapshot?.companyReferenceOnly ?? false), walletFundingPlanJson, instrumentIdSnapshot: Number(instrumentIdForTrade), entryMarketSnapshotId: Number(entrySnapshot.id), entryPriceUsd: String(entryPrice), settlementResultSource: null, settlementProvider: null, settlementObservedAt: null, packageIdSnapshot: feePackageId, packageFeeRateBpsSnapshot: packageFeePolicy.feeRateBps, packageFeeRoundingModeSnapshot: packageFeePolicy.roundingMode, packageFeePolicyVersionSnapshot: packageFeePolicy.version, packageFeeEffectiveAtSnapshot: new Date(packageFeePolicy.effectiveAt), feePolicyVersion: packageFeePolicy.version, platformFeeRateBps: packageFeePolicy.feeRateBps, platformFeeRoundingMode: packageFeePolicy.roundingMode, transactionReference: ref, rewardReservedMinor: reward, settlesAt, settlementReviewAt, creditAt, lifecycleStage: "Trade Allocated", settlementStatus: "pending", policyVersion: snapshotVersion });
+    const result = await tx.insert(tradePositions).values({ publicTradeId, userId, offerId: offer.id, packageSubscriptionId: selectedSubscriptionId, currency: offer.currency, principalMinor: input.amountMinor, expectedRewardMinor: reward, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, companyLogoUrl: popupSnapshot?.companyLogoUrl || null, companyReferenceMetadataJson: popupSnapshot?.companyReferenceMetadataJson || null, companyReferenceOnly: Boolean(popupSnapshot?.companyReferenceOnly ?? false), walletFundingPlanJson, instrumentIdSnapshot: instrumentIdForTrade, entryMarketSnapshotId: hasValidMarketReference ? Number(entrySnapshot.id) : null, entryPriceUsd: hasValidMarketReference ? String(entrySnapshot.priceUsd) : null, settlementResultSource: null, settlementProvider: null, settlementObservedAt: null, packageIdSnapshot: feePackageId, packageFeeRateBpsSnapshot: packageFeePolicy.feeRateBps, packageFeeRoundingModeSnapshot: packageFeePolicy.roundingMode, packageFeePolicyVersionSnapshot: packageFeePolicy.version, packageFeeEffectiveAtSnapshot: new Date(packageFeePolicy.effectiveAt), feePolicyVersion: packageFeePolicy.version, platformFeeRateBps: packageFeePolicy.feeRateBps, platformFeeRoundingMode: packageFeePolicy.roundingMode, transactionReference: ref, rewardReservedMinor: reward, settlesAt, settlementReviewAt, creditAt, lifecycleStage: "Trade Allocated", settlementStatus: "pending", policyVersion: snapshotVersion });
     const tradeId = Number(result[0].insertId);
     const automaticDebit = calculateAutomaticTradeDebit({
       capitalMinor: input.amountMinor,

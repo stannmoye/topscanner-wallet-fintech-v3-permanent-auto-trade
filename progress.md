@@ -1,3 +1,13 @@
+## 2026-11-18 — Trading safety remediation and release-contract verification
+
+- **Trading safeguards:** Allocation controls fail closed when missing or unreadable; saved allocation and settlement pauses are enforced; previous-settlement policy is checked inside the allocation transaction; missing fee policy blocks allocation; synthetic market prices/instruments are no longer created.
+- **Customer popup:** Restored reversible minimize/maximize and accessible details/expiry controls, retained server-backed expiry, clarified configured-return and internal-ledger wording, and restored explicit insufficient-balance amounts.
+- **Contract and release checks:** Updated obsolete package-eligibility/company-spotlight assertions to match current guards. Replaced stale references to absent stage-specific workflows with the canonical main-only full-production workflow declared by `BUILD_SOURCE.json`; added `.github/workflows/full-production-release.yml` with locked install, type check, complete tests, build, Stage 5 file checks, provenance, checksum, and release publication.
+- **Verification:** `pnpm test` passes (1,320 passed, 31 skipped); `pnpm check`, `pnpm build`, `pnpm test:popup-responsive` (18 viewports), focused contracts (47 tests), workflow Prettier parsing, and `git diff --check` pass. The GitHub Actions workflow was not dispatched from this sandbox; no release was published.
+- **Pending:** Migration `0115_trade_public_id_registry.sql` and live portal behavior remain unverified against a database/host. No push was completed because GitHub write authentication is unavailable. Rotate credentials and the token previously shared in chat.
+
+---
+
 ## 2026-11-18 — Public trade ID implementation and verification
 
 - **Implementation:** Added stable `TX-XXXX-XXXX-XXXX` public references for popup events and their eventual trades, backed by a unique registry with collision retries. Numeric ledger IDs remain unchanged. Added one-click copy controls in popups, minimized alerts, opportunity/trade views, and history details; updated the trading specification and added migration `drizzle/0115_trade_public_id_registry.sql`.

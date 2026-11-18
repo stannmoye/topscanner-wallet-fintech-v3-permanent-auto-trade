@@ -28,7 +28,7 @@ describe("trading opportunity economics integrity", () => {
     expect(end).toBeGreaterThan(start);
     expect(worker.indexOf("getTradeSettlementPolicy()")).toBeGreaterThanOrEqual(0);
     expect(worker.indexOf("getTradeSettlementPolicy()")).toBeLessThan(worker.indexOf("claimAutoTradeCycleCustomers(input)"));
-    expect(worker).toContain("pausedUntilSettled=outstandingTrades>0");
+    expect(worker).toContain("settlementPolicy.blockUntilSettled&&outstandingTrades>0");
     expect(worker).toContain("allowAutomaticExecution:!pausedUntilSettled");
     expect(worker).not.toContain("return {customers:0,allocations:0");
   });
@@ -59,6 +59,22 @@ describe("trading opportunity economics integrity", () => {
     expect(adminApp).toContain("Customer opportunities are generated automatically from administrator-approved templates");
     expect(adminApp).toContain("Manual publication and CSV import are disabled");
     expect(adminApp).toContain("historical manual records cannot create customer pop-ups");
+  });
+
+  it("does not fabricate market quotes or describe configured returns as market execution", () => {
+    const createTradeStart = databaseSource.indexOf("export async function createTrade(");
+    const createTradeEnd = databaseSource.indexOf("\nexport async function listTrades(", createTradeStart);
+    const allocation = databaseSource.slice(createTradeStart, createTradeEnd);
+    expect(allocation).not.toContain("platform-entry-reference");
+    expect(allocation).not.toContain("900000000+Number(offer.id)");
+    expect(allocation).toContain("entryMarketSnapshotId:hasValidMarketReference?Number(entrySnapshot.id):null");
+    const popupStart = adminApp.indexOf("function CustomerOpportunityAlert(");
+    const popupEnd = adminApp.indexOf("\nfunction CustomerDashboard(", popupStart);
+    const popup = adminApp.slice(popupStart, popupEnd);
+    expect(popup).not.toContain("LIVE ARBITRAGE ALERT");
+    expect(popup).not.toContain("const sellPrice=hasEntryPrice");
+    expect(popup).toContain("No external order is placed");
+    expect(popup).toContain("Configured return estimate");
   });
 
   it("expires stale offers and reports existing active offers without creating new ones", () => {

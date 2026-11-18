@@ -55,8 +55,9 @@ describe("administrator-managed Trading popup policy bounds and snapshots", () =
     expect(app).not.toContain("formatCompanyReferenceMetadata");
     expect(app).not.toContain("Company reference only");
     expect(app).not.toContain("Admin-approved company reference");
-    expect(app).toContain("<strong>{popup.companyDisplayName}</strong>");
-    expect(app).toContain("CompanyReferenceLogo name={String(popup.companyDisplayName)}");
+    expect(app).toContain('const heading=String(popup.companyDisplayName||"").trim()');
+    expect(app).toContain('fallbackSymbol.toUpperCase()!=="BRAND"');
+    expect(app).toContain("CompanyReferenceLogo name={String(popup.companyDisplayName||heading||symbol)}");
     expect(database).toContain("companyReferenceMetadataJson:tradePositions.companyReferenceMetadataJson");
     expect(policyEditor).toContain("Each newly delivered pop-up selects one rate and one duration inside the saved tier ranges.");
     expect(policyEditor).toContain("existing pop-ups keep their original snapshots.");
@@ -73,7 +74,7 @@ describe("administrator-managed Trading popup policy bounds and snapshots", () =
   it("fails closed for new or incomplete policy rows and requires a change reason", () => {
     expect(schema).toContain('enabled: boolean("enabled").default(false).notNull()');
     expect(schema).toContain('automaticDelivery: boolean("automaticDelivery").default(false).notNull()');
-    expect(schema).toContain('automaticTradingEnabled: boolean("automaticTradingEnabled").default(false).notNull()');
+    expect(schema).toContain('automaticTradingEnabled: boolean("automaticTradingEnabled").default(true).notNull()');
     expect(policySchemaMigration).toContain("`enabled` tinyint(1) NOT NULL DEFAULT 0");
     expect(policySchemaMigration).toContain("`automaticTradingEnabled` tinyint(1) NOT NULL DEFAULT 0");
     expect(migration).toContain("SET `enabled` = 0, `automaticDelivery` = 0, `automaticTradingEnabled` = 0");

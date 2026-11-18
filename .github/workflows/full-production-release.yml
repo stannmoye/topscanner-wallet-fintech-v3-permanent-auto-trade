@@ -1,0 +1,110 @@
+name: Full production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: New release tag (vMAJOR.MINOR.PATCH-stage5-full)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: full-production-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact main commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require main and an unused release tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-stage5-full$ ]]
+          if git ls-remote --exit-code --refs origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm check
+
+      - name: Run complete test suite
+        run: pnpm test
+
+      - name: Build production application
+        run: pnpm build
+
+      - name: Verify required Stage 5 release files
+        run: |
+          set -euo pipefail
+          for path in \
+            client/src/components/CustomerAuthenticatorSettings.tsx \
+            client/src/components/PayoutRequests.tsx \
+            drizzle/0059_manual_payout_requests.sql \
+            drizzle/0060_customer_totp_authenticators.sql \
+            drizzle/0061_customer_totp_recovery_codes.sql \
+            installer/install.sh \
+            installer/index.php \
+            Dockerfile \
+            dist/index.js
+          do
+            test -f "$path" || { echo "Missing required release file: $path" >&2; exit 1; }
+          done
+
+      - name: Package full application and build provenance
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/arbitrade-release"
+          mkdir -p "$staging" artifacts
+          git archive "$SOURCE_SHA" | tar -x -C "$staging"
+          cp -a dist/. "$staging/dist/"
+          cp -a node_modules "$staging/node_modules"
+          rm -rf "$staging/.github"
+          find "$staging" -type f -name '.env*' ! -name '.env.example' -delete
+          printf '{\n  "source_sha": "%s",\n  "workflow_run_id": "%s",\n  "workflow_run_attempt": "%s",\n  "release_tag": "%s"\n}\n' \
+            "$SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RELEASE_TAG" \
+            > "$staging/BUILD_PROVENANCE.json"
+          archive="artifacts/arbitrade-full-application-${RELEASE_TAG}.zip"
+          (cd "$staging" && zip -qr "$GITHUB_WORKSPACE/$archive" .)
+          sha256sum "$archive" > "$archive.sha256"
+          echo "RELEASE_ARCHIVE=$archive" >> "$GITHUB_ENV"
+          echo "RELEASE_CHECKSUM=$archive.sha256" >> "$GITHUB_ENV"
+
+      - name: Publish release and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" "$RELEASE_ARCHIVE" "$RELEASE_CHECKSUM" \
+            --target "$SOURCE_SHA" \
+            --title "$RELEASE_TAG" \
+            --notes "Full application package built from commit $SOURCE_SHA. Verify the detached SHA-256 checksum before deployment."
