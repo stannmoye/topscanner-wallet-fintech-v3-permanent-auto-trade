@@ -118,7 +118,7 @@ const css = readFileSync(new URL("./index.css", import.meta.url), "utf8");
   });
 
   it("passes the persisted administrator volume into customer notification playback", () => {
-    expect(effect).toContain("playConfiguredSound(headerSoundSettings[soundKey],soundKey,false,true,headerSoundSettings.volume)");
+    expect(effect).toContain("playConfiguredSound(headerSoundSettings,soundKey)");
   });
 
   it("normalizes persisted sound history before applying the bounded newest-ID window", () => {
@@ -136,8 +136,8 @@ const css = readFileSync(new URL("./index.css", import.meta.url), "utf8");
     const controller = readFileSync(new URL("./notification-audio-controller.ts", import.meta.url), "utf8");
     expect(app).toContain('import { createNotificationAudioController } from "./notification-audio-controller"');
     expect(app).toContain('new CustomEvent("arbitrade:notification-audio-blocked"');
-    expect(app).toContain("notificationAudioController.play(preset.src");
-    expect(app).toContain("{kind,presetId:preset.id}");
+    expect(app).toContain("notificationAudioController.play(plan.src");
+    expect(app).toContain("{kind,presetId:plan.presetId}");
     expect(controller).toContain("options.onBlocked(context)");
   });
 
@@ -207,9 +207,10 @@ describe("notification sound playback reliability", () => {
   });
 
   it("keeps the explicit customer opt-in and administrator sound policy gates", () => {
-    expect(app).toContain('if(!force&&(!soundEffectsEnabled()||!defaultSoundSettings.enabled))return;');
+    expect(app).toContain("resolveSoundPlayback(settings,kind,SOUND_PRESETS,{userOptIn:soundEffectsEnabled(),force:options.force,loop:options.loop})");
     expect(app).toContain('window.localStorage.setItem("wisebond-sound-effects",next?"on":"off")');
-    expect(app).toContain("headerSoundSettings.enabled&&soundEffectsEnabled()");
+    // Item 35: cues must read their own loaded policy, never the module-level default.
+    expect(app).not.toContain("defaultSoundSettings.enabled");
   });
 });
 

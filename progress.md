@@ -42,7 +42,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 32 | Validate every per-tier editable field | `[x]` | `Fix #32` |
 | 33 | Docs update (spec, progress, admin guide) | `[x]` | `Fix #33` (first pass; final pass after #64) |
 | 34 | Delivery acknowledgement retry cap/backoff | `[x]` | `Fix #34` |
-| 35 | Fix sounds for all sounds (per-sound enabled) | `[ ]` | |
+| 35 | Fix sounds for all sounds (per-sound enabled) | `[x]` | `Fix #35` |
 | 36 | Countdowns must not trust local clock | `[ ]` | |
 | 37 | Dismiss/minimize must not cancel rendered ack | `[ ]` | |
 | 38 | Visibility-aware polling | `[ ]` | |
@@ -124,6 +124,16 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 35 notes (`Fix #35`)
+
+- **Problem.** Every cue went through the old `playConfiguredSound(id,kind,loop,force,volume)` in [App.tsx](file:///workspace/repo/client/src/App.tsx), which (a) gated the whole call on `!soundEffectsEnabled() || !defaultSoundSettings.enabled` — and `defaultSoundSettings.enabled` is a module constant `false`, so a cue whose *own* `enabled` flag was `true` was silenced anyway — and (b) played at `defaultSoundSettings.volume`, ignoring each cue's configured volume, and (c) never looped the opportunity cue from its own `loopOpportunity` flag.
+- **Per-cue resolver.** New [notification-sound-playback.ts](file:///workspace/repo/client/src/notification-sound-playback.ts) exports `resolveSoundPlayback(settings, kind, presets, {userOptIn, force, loop})` plus `soundEnabledForPlayback`/`soundLoopFor`. It reads **only** the passed settings object's own `enabled`, the cue's own preset-id field, the cue's own `volume`, and (opportunity only) its own `loopOpportunity`; `userOptIn` is the visitor's browser opt-in and `force` is an explicit preview override. Unknown/missing values fall back safely.
+- **Live settings store.** A single `activeSoundSettings` value in App.tsx is kept current by `applyActiveSoundSettings(...)`, called from the header settings query ([PortalHeader](file:///workspace/repo/client/src/App.tsx)), the customer sound-settings query, and the admin save/preview form, so admin-configured cues take effect without a reload.
+- **All cues migrated.** Header notifications, the pop-up opportunity cue, the customer console ledger cues (debit/credit/failure), the balance-change WebAudio tone (now scaled by `normalizeNotificationVolume(settings.volume)` and gated on the loaded policy, not the module default), and the admin wallet adjustment cues all resolve from the loaded per-cue policy.
+- **Blocked autoplay.** `installNotificationAudioUnlockOnFirstGesture()` unlocks playback on the first `pointerdown`/`keydown`/`touchstart`; blocking is surfaced through the existing `dispatchNotificationAudioBlocked` channel (item 62 presents the visible hint).
+- **Tests.** Extended [notification-sound-playback.test.ts](file:///workspace/repo/client/src/notification-sound-playback.test.ts) with per-cue preset/volume, `enabled:false` silence, opt-in vs. force, opportunity-only loop, explicit loop override, unknown-id and bad-input safety, and the App-wiring assertions for every cue. Updated [notification-sound-deduplication.test.ts](file:///workspace/repo/client/src/notification-sound-deduplication.test.ts) to the new call shape and added a guard that no cue reads `defaultSoundSettings.enabled`.
+- **Protected area.** Client-only; no server, ledger, allocation or settlement module touched.
 
 ### Item 34 notes (`Fix #34`)
 
