@@ -5763,44 +5763,46 @@ export async function listWalletLedgerReconciliation(input?: {
     and(eq(payoutRequests.userId, input.afterUserId), gt(payoutRequests.currency, input.afterCurrency!))
   );
 
-  const [walletGroups, ledgerGroups, tradeGroups, payoutGroups] = await Promise.all([
-    tx.select({
-      userId: customerBalances.userId,
-      currency: customerBalances.currency,
-      walletCount: count(),
-      availableMinor: sql<string>`COALESCE(SUM(${customerBalances.availableMinor}), 0)`,
-      lockedMinor: sql<string>`COALESCE(SUM(${customerBalances.lockedMinor}), 0)`,
-    }).from(customerBalances).where(walletCursor)
-      .groupBy(customerBalances.userId, customerBalances.currency)
-      .orderBy(customerBalances.userId, customerBalances.currency).limit(safeLimit + 1),
-    tx.select({
-      userId: balanceLedger.userId,
-      currency: balanceLedger.currency,
-      ledgerEntryCount: count(),
-      ledgerNetMinor: sql<string>`COALESCE(SUM(${balanceLedger.amountMinor}), 0)`,
-    }).from(balanceLedger).where(ledgerCursor)
-      .groupBy(balanceLedger.userId, balanceLedger.currency)
-      .orderBy(balanceLedger.userId, balanceLedger.currency).limit(safeLimit + 1),
-    tx.select({
-      userId: tradePositions.userId,
-      currency: tradePositions.currency,
-      activeTradeCount: count(),
-      knownActiveTradePrincipalMinor: sql<string>`COALESCE(SUM(${tradePositions.principalMinor}), 0)`,
-    }).from(tradePositions).where(and(
-      tradeCursor,
-      inArray(tradePositions.status, ["confirmed"]),
-      eq(tradePositions.settlementStatus, "pending")
-    )).groupBy(tradePositions.userId, tradePositions.currency)
-      .orderBy(tradePositions.userId, tradePositions.currency).limit(safeLimit + 1),
-    tx.select({
-      userId: payoutRequests.userId,
-      currency: payoutRequests.currency,
-      pendingPayoutCount: count(),
-      pendingPayoutMinor: sql<string>`COALESCE(SUM(${payoutRequests.amountMinor}), 0)`,
-    }).from(payoutRequests).where(and(payoutCursor, eq(payoutRequests.status, "pending")))
-      .groupBy(payoutRequests.userId, payoutRequests.currency)
-      .orderBy(payoutRequests.userId, payoutRequests.currency).limit(safeLimit + 1),
-  ]);
+  // A Drizzle transaction is bound to a single MySQL connection, and mysql2 cannot
+  // pipeline overlapping commands on one connection: issuing these four aggregates with
+  // `Promise.all` raised a driver-level "Command out of sync"/connection error (the
+  // reported failing statement was the `payout_requests` aggregate). Run them in series.
+  const walletGroups = await tx.select({
+    userId: customerBalances.userId,
+    currency: customerBalances.currency,
+    walletCount: count(),
+    availableMinor: sql<string>`COALESCE(SUM(${customerBalances.availableMinor}), 0)`,
+    lockedMinor: sql<string>`COALESCE(SUM(${customerBalances.lockedMinor}), 0)`,
+  }).from(customerBalances).where(walletCursor)
+    .groupBy(customerBalances.userId, customerBalances.currency)
+    .orderBy(customerBalances.userId, customerBalances.currency).limit(safeLimit + 1);
+  const ledgerGroups = await tx.select({
+    userId: balanceLedger.userId,
+    currency: balanceLedger.currency,
+    ledgerEntryCount: count(),
+    ledgerNetMinor: sql<string>`COALESCE(SUM(${balanceLedger.amountMinor}), 0)`,
+  }).from(balanceLedger).where(ledgerCursor)
+    .groupBy(balanceLedger.userId, balanceLedger.currency)
+    .orderBy(balanceLedger.userId, balanceLedger.currency).limit(safeLimit + 1);
+  const tradeGroups = await tx.select({
+    userId: tradePositions.userId,
+    currency: tradePositions.currency,
+    activeTradeCount: count(),
+    knownActiveTradePrincipalMinor: sql<string>`COALESCE(SUM(${tradePositions.principalMinor}), 0)`,
+  }).from(tradePositions).where(and(
+    tradeCursor,
+    inArray(tradePositions.status, ["confirmed"]),
+    eq(tradePositions.settlementStatus, "pending")
+  )).groupBy(tradePositions.userId, tradePositions.currency)
+    .orderBy(tradePositions.userId, tradePositions.currency).limit(safeLimit + 1);
+  const payoutGroups = await tx.select({
+    userId: payoutRequests.userId,
+    currency: payoutRequests.currency,
+    pendingPayoutCount: count(),
+    pendingPayoutMinor: sql<string>`COALESCE(SUM(${payoutRequests.amountMinor}), 0)`,
+  }).from(payoutRequests).where(and(payoutCursor, eq(payoutRequests.status, "pending")))
+    .groupBy(payoutRequests.userId, payoutRequests.currency)
+    .orderBy(payoutRequests.userId, payoutRequests.currency).limit(safeLimit + 1);
 
   const keyFor = (userId: number, currency: string) => String(userId) + "\u0000" + currency;
   const candidateKeys = new Map<string, { userId: number; currency: string }>();

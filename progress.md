@@ -9,7 +9,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | # | Item | Status | Commit |
 |---|------|--------|--------|
 | 1 | `settlementIntegrityIssues` 500 — surface cause, fix collation drift | `[x]` | `Fix #1` |
-| 2 | `walletLedgerReconciliation` 500 — sequential queries | `[ ]` | |
+| 2 | `walletLedgerReconciliation` 500 — sequential queries | `[x]` | `Fix #2` |
 | 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[ ]` | |
 | 4 | Test covering item 3 on every UNION branch | `[ ]` | |
 | 5 | Delivery queue diagnostics ambiguous `createdAt` | `[ ]` | |
@@ -78,6 +78,10 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 - Surfaced the dropped tRPC error cause in server logs (`server/_core/index.ts` `onError`), leaving the client response unchanged (item 7).
 - Root cause of the 500: cross-table string comparisons in `listTradeSettlementIntegrityIssues` compared `trade_positions` (created without an explicit collation) against `trade_reward_reservations` / `trade_settlement_reference_claims` (created `utf8mb4_unicode_ci`), raising "Illegal mix of collations". Pinned an explicit `COLLATE utf8mb4_unicode_ci` on both sides (same pattern already used in `opportunityDeliveryDiagnostics.ts`). No schema change / migration was required.
 - Sandbox constraint: no MySQL/MariaDB server binary, so the query could not be executed against a live database. The contract test asserts the generated SQL pins the collation.
+
+### Item 2 notes (`Fix #2`)
+
+- `listWalletLedgerReconciliation` ran four aggregate reads with `Promise.all` inside one `db.transaction`. A Drizzle transaction is bound to a single MySQL connection and mysql2 cannot pipeline overlapping commands, so the report 500'd (the reported failing statement was the `payout_requests` aggregate). The four aggregates are now `await`ed in series.
 
 ---
 

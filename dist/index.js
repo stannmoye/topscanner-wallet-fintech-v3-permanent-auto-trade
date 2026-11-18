@@ -11829,37 +11829,35 @@ async function listWalletLedgerReconciliation(input) {
       gt(payoutRequests.userId, input.afterUserId),
       and3(eq3(payoutRequests.userId, input.afterUserId), gt(payoutRequests.currency, input.afterCurrency))
     );
-    const [walletGroups, ledgerGroups, tradeGroups, payoutGroups] = await Promise.all([
-      tx.select({
-        userId: customerBalances.userId,
-        currency: customerBalances.currency,
-        walletCount: count(),
-        availableMinor: sql5`COALESCE(SUM(${customerBalances.availableMinor}), 0)`,
-        lockedMinor: sql5`COALESCE(SUM(${customerBalances.lockedMinor}), 0)`
-      }).from(customerBalances).where(walletCursor).groupBy(customerBalances.userId, customerBalances.currency).orderBy(customerBalances.userId, customerBalances.currency).limit(safeLimit + 1),
-      tx.select({
-        userId: balanceLedger.userId,
-        currency: balanceLedger.currency,
-        ledgerEntryCount: count(),
-        ledgerNetMinor: sql5`COALESCE(SUM(${balanceLedger.amountMinor}), 0)`
-      }).from(balanceLedger).where(ledgerCursor).groupBy(balanceLedger.userId, balanceLedger.currency).orderBy(balanceLedger.userId, balanceLedger.currency).limit(safeLimit + 1),
-      tx.select({
-        userId: tradePositions.userId,
-        currency: tradePositions.currency,
-        activeTradeCount: count(),
-        knownActiveTradePrincipalMinor: sql5`COALESCE(SUM(${tradePositions.principalMinor}), 0)`
-      }).from(tradePositions).where(and3(
-        tradeCursor,
-        inArray2(tradePositions.status, ["confirmed"]),
-        eq3(tradePositions.settlementStatus, "pending")
-      )).groupBy(tradePositions.userId, tradePositions.currency).orderBy(tradePositions.userId, tradePositions.currency).limit(safeLimit + 1),
-      tx.select({
-        userId: payoutRequests.userId,
-        currency: payoutRequests.currency,
-        pendingPayoutCount: count(),
-        pendingPayoutMinor: sql5`COALESCE(SUM(${payoutRequests.amountMinor}), 0)`
-      }).from(payoutRequests).where(and3(payoutCursor, eq3(payoutRequests.status, "pending"))).groupBy(payoutRequests.userId, payoutRequests.currency).orderBy(payoutRequests.userId, payoutRequests.currency).limit(safeLimit + 1)
-    ]);
+    const walletGroups = await tx.select({
+      userId: customerBalances.userId,
+      currency: customerBalances.currency,
+      walletCount: count(),
+      availableMinor: sql5`COALESCE(SUM(${customerBalances.availableMinor}), 0)`,
+      lockedMinor: sql5`COALESCE(SUM(${customerBalances.lockedMinor}), 0)`
+    }).from(customerBalances).where(walletCursor).groupBy(customerBalances.userId, customerBalances.currency).orderBy(customerBalances.userId, customerBalances.currency).limit(safeLimit + 1);
+    const ledgerGroups = await tx.select({
+      userId: balanceLedger.userId,
+      currency: balanceLedger.currency,
+      ledgerEntryCount: count(),
+      ledgerNetMinor: sql5`COALESCE(SUM(${balanceLedger.amountMinor}), 0)`
+    }).from(balanceLedger).where(ledgerCursor).groupBy(balanceLedger.userId, balanceLedger.currency).orderBy(balanceLedger.userId, balanceLedger.currency).limit(safeLimit + 1);
+    const tradeGroups = await tx.select({
+      userId: tradePositions.userId,
+      currency: tradePositions.currency,
+      activeTradeCount: count(),
+      knownActiveTradePrincipalMinor: sql5`COALESCE(SUM(${tradePositions.principalMinor}), 0)`
+    }).from(tradePositions).where(and3(
+      tradeCursor,
+      inArray2(tradePositions.status, ["confirmed"]),
+      eq3(tradePositions.settlementStatus, "pending")
+    )).groupBy(tradePositions.userId, tradePositions.currency).orderBy(tradePositions.userId, tradePositions.currency).limit(safeLimit + 1);
+    const payoutGroups = await tx.select({
+      userId: payoutRequests.userId,
+      currency: payoutRequests.currency,
+      pendingPayoutCount: count(),
+      pendingPayoutMinor: sql5`COALESCE(SUM(${payoutRequests.amountMinor}), 0)`
+    }).from(payoutRequests).where(and3(payoutCursor, eq3(payoutRequests.status, "pending"))).groupBy(payoutRequests.userId, payoutRequests.currency).orderBy(payoutRequests.userId, payoutRequests.currency).limit(safeLimit + 1);
     const keyFor = (userId, currency) => String(userId) + "\0" + currency;
     const candidateKeys = /* @__PURE__ */ new Map();
     for (const row of [...walletGroups, ...ledgerGroups, ...tradeGroups, ...payoutGroups]) {

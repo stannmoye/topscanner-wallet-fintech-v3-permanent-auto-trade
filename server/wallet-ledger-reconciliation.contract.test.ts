@@ -13,6 +13,21 @@ const integrityEnd = source.indexOf("\nexport async function listWalletLedgerRec
 const integrity = source.slice(integrityStart, integrityEnd);
 
 describe("wallet and settlement reconciliation read-only contract", () => {
+  it("runs the four reconciliation aggregates sequentially because a transaction shares one connection", () => {
+    // mysql2 cannot pipeline overlapping commands on a single connection, and a Drizzle
+    // transaction is bound to one connection. The previous `Promise.all([...])` made the
+    // read-only report fail with a driver error on the `payout_requests` aggregate.
+    expect(implementation).not.toContain("Promise.all([");
+    const wallet = implementation.indexOf("const walletGroups = await tx.select");
+    const ledger = implementation.indexOf("const ledgerGroups = await tx.select");
+    const trade = implementation.indexOf("const tradeGroups = await tx.select");
+    const payout = implementation.indexOf("const payoutGroups = await tx.select");
+    expect(wallet).toBeGreaterThanOrEqual(0);
+    expect(ledger).toBeGreaterThan(wallet);
+    expect(trade).toBeGreaterThan(ledger);
+    expect(payout).toBeGreaterThan(trade);
+  });
+
   it("groups wallet, signed ledger, active trade and pending payout evidence independently", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
