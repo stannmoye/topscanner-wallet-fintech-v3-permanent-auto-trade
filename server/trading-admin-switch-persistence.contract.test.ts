@@ -59,4 +59,16 @@ describe("administrator Trade switch persistence, reload and runtime consumption
     expect(database).toContain("hasConfiguredTradingOfferPolicy");
     expect(database).toContain("globalPolicy.available&&globalPolicy.tierPolicyMasterEnabled&&globalPolicy.informationalPopupDeliveryEnabled");
   });
+
+  it("persists the admin wallet funding priority with a versioned audit and consumes it in the funding runtime", () => {
+    expect(router).toContain("walletFundingPriority: adminProcedure.query(() => getWalletFundingPriority())");
+    expect(router).toContain("updateWalletFundingPriority: adminProcedure.input");
+    expect(database).toContain('WALLET_FUNDING_PRIORITY_SETTING_KEY');
+    expect(database).toContain("export async function getWalletFundingPriority(): Promise<WalletFundingPriorityView> {");
+    expect(database).toContain("export async function setWalletFundingPriority(");
+    expect(database).toContain('action: "trade_wallet_funding_priority_updated"');
+    // Runtime consumption: createTrade resolves the order and passes it to the funding planner.
+    expect(database).toContain("const fundingPriority=await getWalletFundingPriorityForFunding();");
+    expect(database).toContain("priorityCurrencies:fundingPriority.order,");
+  });
 });

@@ -34,6 +34,7 @@ import { getTradeGlobalControls, setTradeGlobalControl, TradeGlobalControlVersio
 import { getPackageFeePolicies, getPackageFeeHistory, updatePackageFeePolicy } from "./db";
 import { getDeliveryRetryPolicy, updateDeliveryRetryPolicy, DeliveryRetryPolicyVersionConflictError } from "./db";
 import { closeOpportunityOffer } from "./db";
+import { getWalletFundingPriority, setWalletFundingPriority, WalletFundingPriorityVersionConflictError } from "./db";
 import { getOpportunityGenerationControl, getOpportunityGenerationMonitor, listOpportunityGenerationTemplates, OpportunityGenerationControlVersionConflictError, saveOpportunityGenerationTemplate, setOpportunityGenerationControl } from "./db";
 import { getSystemDiagnosticsReport } from "./_core/systemDiagnostics";
 import { exportOpportunityDeliveryRecords, getOpportunityDeliveryCustomer, getOpportunityDeliveryDetails, getOpportunityDeliveryQueueDiagnostics, listOpportunityDeliveryRecords, searchOpportunityDeliveryCustomers } from "./opportunityDeliveryDiagnostics";
@@ -466,6 +467,18 @@ export const appRouter = router({
       allocationsPaused: z.boolean(),
       reason: z.string().trim().max(500),
     })).mutation(({ ctx, input }) => setTradeAllocationControls(ctx.user.id, input)),
+    walletFundingPriority: adminProcedure.query(() => getWalletFundingPriority()),
+    updateWalletFundingPriority: adminProcedure.input(z.object({
+      order: z.array(z.string().trim().min(2).max(12)).max(50),
+      reason: z.string().trim().min(5).max(500),
+      expectedPolicyVersion: z.number().int().min(0),
+    }).strict()).mutation(async ({ ctx, input }) => {
+      try { return await setWalletFundingPriority(ctx.user.id, input); }
+      catch (error) {
+        if (error instanceof WalletFundingPriorityVersionConflictError) throw new TRPCError({ code: "CONFLICT", message: error.message });
+        throw error;
+      }
+    }),
     tradingPackages: adminProcedure.query(() => listAdminTradingPackages()),
     createTradingPackage: adminProcedure.input(z.object({
       name: z.string().trim().min(1).max(80),

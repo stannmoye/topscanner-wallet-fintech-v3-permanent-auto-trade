@@ -24,7 +24,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 14 | Persist `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED` + audit switches | `[x]` | `Fix #14` |
 | 15 | `customer.opportunities` auto-trades in query | `[-]` | owner: intentional |
 | 16 | Float math in balance summary / min-max / exit P&L | `[-]` | owner: intentional |
-| 17 | Admin wallet priority order | `[ ]` | |
+| 17 | Admin wallet priority order | `[x]` | `Fix #17` |
 | 18 | Live fiat FX + customer conversion indicator | `[ ]` | |
 | 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[ ]` | |
 | 20 | Remove package fee entirely | `[ ]` | |
@@ -121,6 +121,16 @@ Only item 14 was actionable (items 12 and 13 are owner-ignored). Item 14 replace
 
 - **UI.** [App.tsx](file:///workspace/client/src/App.tsx) renames `AdminTradeGlobalMasterKey` → `AdminTradeGlobalControlKey`, adds the 7th switch, and removes the previous static non-interactive "Backend release guard … ON · active" row so the master renders as a real `role="switch"` button. Ownership registry [trade-settings-ownership.ts](file:///workspace/client/src/trade-settings-ownership.ts) now declares `trade.automaticFinancialExecution` as an auditable `globalMaster`.
 - **Tests.** New `server/trading-global-financial-execution.test.ts` (parser backward-compatibility + fail-closed helper) and `server/trading-admin-switch-persistence.contract.test.ts` (the switch-audit table above, asserting persist → read-query → runtime-consumer for every switch). Updated: `server/trading-global-policy.test.ts` (fail-closed object gains the 7th key), `server/trading-admin-global-controls.contract.test.ts`, `server/trading-package-eligibility.contract.test.ts`, `server/trading-auto-tier-qualification.contract.test.ts`, `client/src/trade-settings-ownership.contract.test.ts`, `client/src/opportunity-close-action.contract.test.ts`. Docs: `docs/TRADING_SYSTEM_SPECIFICATION.md` §6 and the Package Configuration owner list. Characterization tests (item 9) still pass unchanged.
+
+### Item 17 notes (`Fix #17`)
+
+- Funding source wallets were sorted alphabetically (`trading-wallet-fx.ts` `a.currency.localeCompare(b.currency)`), ignoring any administrator intent. Added a persisted, versioned and audited **wallet funding priority list**.
+- **Default used:** `DEFAULT_WALLET_FUNDING_PRIORITY = ["USD"]` — i.e. never configured means **USD first, then the remaining currencies alphabetically** (the owner-specified default). `resolveWalletFundingOrder` puts configured currencies first in their saved relative order, then every remaining currency alphabetically.
+- **Storage / audit.** New module [`wallet-funding-priority.ts`](file:///workspace/server/modules/wallet-funding-priority.ts) owns the shape; the value lives in a new `app_settings` row `trade.walletFundingPriority` (no migration — the row is inserted on first save, like `trading.allocations.paused`). `setWalletFundingPriority` runs in a transaction with a `.for("update")` row lock, an optimistic `policyVersion` check (`WalletFundingPriorityVersionConflictError` → tRPC `CONFLICT`), an audit event `trade_wallet_funding_priority_updated`, and a fresh read-back verification. It requires a 5–500 character reason.
+- **Runtime consumer.** `createTrade` ([db.ts](file:///workspace/server/db.ts)) reads `getWalletFundingPriorityForFunding()` before any source debit and passes `priorityCurrencies` into `planCrossWalletFunding`; the realised order is recorded on the trade's `walletFundingPlanJson`. Wallet **row locking stays in the fixed `ORDER BY currency` order** so funding cannot deadlock.
+- **Fail closed.** A malformed saved value returns `{ blocked }` and `createTrade` throws **before any debit** — no silent fallback to a default order, and debit/credit amounts are unchanged (protected area respected).
+- **UI.** New `AdminWalletFundingPriority` control in **Package Configuration** (after Global Trade Controls), reading `adminOperations.walletFundingPriority` and writing `adminOperations.updateWalletFundingPriority`; it shows the current/default order, version, last-change actor/reason, a malformed-state error, and "Reset to default (USD first)". Ownership registry declares `trade.walletFundingPriority` (scope `global`, section `allocation-safety`, risk `high`).
+- **Tests.** New `server/modules/wallet-funding-priority.test.ts` (9 tests: parse/normalize/serialize, default + configured order resolution, malformed → default, and `planCrossWalletFunding` honouring the priority). Added a switch-audit assertion to `server/trading-admin-switch-persistence.contract.test.ts`. Characterization tests (item 9) still pass unchanged; existing `trading-wallet-fx.test.ts` ordering (`EUR` before `GBP`) is preserved by the default.
 
 ### Item 8 notes (`Fix #8`)
 

@@ -3417,6 +3417,92 @@ var init_opportunity_duration_snapshot = __esm({
   }
 });
 
+// server/modules/wallet-funding-priority.ts
+function normalizeWalletFundingPriorityOrder(raw) {
+  if (!Array.isArray(raw)) return null;
+  if (raw.length > WALLET_FUNDING_PRIORITY_MAX_ENTRIES) return null;
+  const seen = /* @__PURE__ */ new Set();
+  const order = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") return null;
+    const code = entry.trim().toUpperCase();
+    if (!CURRENCY_PATTERN.test(code)) return null;
+    if (seen.has(code)) return null;
+    seen.add(code);
+    order.push(code);
+  }
+  return order;
+}
+function parseWalletFundingPriorityState(raw) {
+  if (raw === null || raw === void 0 || raw.trim() === "") return { status: "not-configured" };
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { status: "malformed", detail: "The saved wallet funding priority is not valid JSON." };
+  }
+  if (!value || typeof value !== "object") {
+    return { status: "malformed", detail: "The saved wallet funding priority is not an object." };
+  }
+  const record = value;
+  const order = normalizeWalletFundingPriorityOrder(record.order);
+  if (!order) {
+    return { status: "malformed", detail: "The saved wallet funding priority order is invalid." };
+  }
+  const policyVersion = record.policyVersion;
+  if (typeof policyVersion !== "number" || !Number.isSafeInteger(policyVersion) || policyVersion < 1) {
+    return { status: "malformed", detail: "The saved wallet funding priority version is invalid." };
+  }
+  const updatedBy = record.updatedBy;
+  if (!(updatedBy === null || typeof updatedBy === "number" && Number.isSafeInteger(updatedBy) && updatedBy > 0)) {
+    return { status: "malformed", detail: "The saved wallet funding priority actor is invalid." };
+  }
+  const updatedAt = record.updatedAt;
+  if (!(updatedAt === null || typeof updatedAt === "string")) {
+    return { status: "malformed", detail: "The saved wallet funding priority timestamp is invalid." };
+  }
+  const reason = typeof record.reason === "string" ? record.reason : "";
+  return { status: "configured", config: { order, policyVersion, updatedBy, updatedAt, reason } };
+}
+function serializeWalletFundingPriority(config2) {
+  return JSON.stringify({
+    order: [...config2.order],
+    policyVersion: config2.policyVersion,
+    updatedBy: config2.updatedBy,
+    updatedAt: config2.updatedAt,
+    reason: config2.reason
+  });
+}
+function configuredWalletFundingOrder(state) {
+  return state.status === "configured" ? [...state.config.order] : null;
+}
+function resolveWalletFundingOrder(input) {
+  const configured = normalizeWalletFundingPriorityOrder(input.order ?? []) ?? [];
+  const priority = configured.length ? configured : [...DEFAULT_WALLET_FUNDING_PRIORITY];
+  const rank = /* @__PURE__ */ new Map();
+  priority.forEach((code, index2) => {
+    if (!rank.has(code)) rank.set(code, index2);
+  });
+  const fallbackRank = priority.length;
+  const unique = [...new Set(input.currencies.map((code) => code.trim().toUpperCase()).filter(Boolean))];
+  return unique.sort((a, b) => {
+    const rankA = rank.has(a) ? rank.get(a) : fallbackRank;
+    const rankB = rank.has(b) ? rank.get(b) : fallbackRank;
+    if (rankA !== rankB) return rankA - rankB;
+    return a.localeCompare(b);
+  });
+}
+var WALLET_FUNDING_PRIORITY_SETTING_KEY, DEFAULT_WALLET_FUNDING_PRIORITY, WALLET_FUNDING_PRIORITY_MAX_ENTRIES, CURRENCY_PATTERN;
+var init_wallet_funding_priority = __esm({
+  "server/modules/wallet-funding-priority.ts"() {
+    "use strict";
+    WALLET_FUNDING_PRIORITY_SETTING_KEY = "trade.walletFundingPriority";
+    DEFAULT_WALLET_FUNDING_PRIORITY = ["USD"];
+    WALLET_FUNDING_PRIORITY_MAX_ENTRIES = 50;
+    CURRENCY_PATTERN = /^[A-Z0-9]{2,12}$/;
+  }
+});
+
 // server/modules/trading-wallet-fx.ts
 function assertMinor(name, value) {
   if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${name} must be a non-negative safe integer`);
@@ -3462,7 +3548,7 @@ function planCrossWalletFunding(input) {
   let remainingTargetMinor = Math.max(0, input.requiredTargetMinor - input.targetAvailableMinor);
   const sourceDebits = [];
   const seenCurrencies = /* @__PURE__ */ new Set();
-  const ordered = [...input.sourceWallets].map((wallet) => {
+  const candidates = [...input.sourceWallets].map((wallet) => {
     const currency = wallet.currency.trim().toUpperCase();
     if (!currency) throw new Error("Every source wallet must identify its currency");
     if (seenCurrencies.has(currency)) throw new Error(`Duplicate source wallet currency: ${currency}`);
@@ -3480,7 +3566,12 @@ function planCrossWalletFunding(input) {
       }
     }
     return { ...wallet, currency };
-  }).filter((wallet) => wallet.currency !== targetCurrency).sort((a, b) => a.currency.localeCompare(b.currency));
+  }).filter((wallet) => wallet.currency !== targetCurrency);
+  const byCurrency = new Map(candidates.map((wallet) => [wallet.currency, wallet]));
+  const ordered = resolveWalletFundingOrder({
+    currencies: candidates.map((wallet) => wallet.currency),
+    order: input.priorityCurrencies ?? null
+  }).map((currency) => byCurrency.get(currency));
   for (const wallet of ordered) {
     if (remainingTargetMinor <= 0) break;
     assertMinor(`${wallet.currency} availableMinor`, wallet.availableMinor);
@@ -3621,6 +3712,7 @@ var RATE_DECIMAL_PLACES, RATE_SCALE;
 var init_trading_wallet_fx = __esm({
   "server/modules/trading-wallet-fx.ts"() {
     "use strict";
+    init_wallet_funding_priority();
     RATE_DECIMAL_PLACES = 12;
     RATE_SCALE = 10n ** BigInt(RATE_DECIMAL_PLACES);
   }
@@ -8645,6 +8737,65 @@ async function setTradeAllocationControls(updatedBy, input) {
     return next;
   });
 }
+async function readWalletFundingPriorityState() {
+  const db2 = await getDb();
+  if (!db2) return { status: "malformed", detail: "Database is not available" };
+  const row = (await db2.select({ settingValue: appSettings.settingValue }).from(appSettings).where(eq3(appSettings.settingKey, WALLET_FUNDING_PRIORITY_SETTING_KEY)).limit(1))[0];
+  return parseWalletFundingPriorityState(row?.settingValue);
+}
+async function getWalletFundingPriority() {
+  const fallback = { defaultOrder: [...DEFAULT_WALLET_FUNDING_PRIORITY] };
+  const state = await readWalletFundingPriorityState();
+  if (state.status === "configured") return { status: "configured", order: [...state.config.order], ...fallback, policyVersion: state.config.policyVersion, updatedBy: state.config.updatedBy, updatedAt: state.config.updatedAt, reason: state.config.reason, detail: null };
+  if (state.status === "malformed") return { status: "malformed", order: null, ...fallback, policyVersion: 0, updatedBy: null, updatedAt: null, reason: "", detail: state.detail };
+  return { status: "not-configured", order: null, ...fallback, policyVersion: 0, updatedBy: null, updatedAt: null, reason: "", detail: null };
+}
+async function getWalletFundingPriorityForFunding() {
+  const state = await readWalletFundingPriorityState();
+  if (state.status === "malformed") return { blocked: "The saved wallet funding priority is malformed; cross-wallet funding is blocked until an administrator repairs it." };
+  return { order: configuredWalletFundingOrder(state) };
+}
+async function setWalletFundingPriority(updatedBy, input) {
+  if (!Number.isSafeInteger(updatedBy) || updatedBy <= 0) throw new Error("Administrator identity is required");
+  const reason = String(input.reason ?? "").trim();
+  if (reason.length < 5 || reason.length > 500) throw new Error("Provide a wallet funding priority reason of 5\u2013500 characters");
+  const order = normalizeWalletFundingPriorityOrder(input.order);
+  if (!order) throw new Error("Wallet funding priority must be a list of at most 50 unique 2\u201312 character currency codes");
+  if (!Number.isSafeInteger(input.expectedPolicyVersion) || input.expectedPolicyVersion < 0) throw new Error("A valid saved wallet funding priority version is required");
+  const db2 = await getDb();
+  if (!db2) throw new Error("Database is not available");
+  const saved = await db2.transaction(async (tx) => {
+    const row = (await tx.select({ settingKey: appSettings.settingKey, settingValue: appSettings.settingValue }).from(appSettings).where(eq3(appSettings.settingKey, WALLET_FUNDING_PRIORITY_SETTING_KEY)).limit(1).for("update"))[0];
+    const current = row ? parseWalletFundingPriorityState(row.settingValue) : { status: "not-configured" };
+    if (current.status === "malformed") throw new Error("Saved wallet funding priority is malformed; no settings were changed. Repair it before saving a new order.");
+    const currentVersion = current.status === "configured" ? current.config.policyVersion : 0;
+    if (currentVersion !== input.expectedPolicyVersion) throw new WalletFundingPriorityVersionConflictError();
+    const previousOrder = current.status === "configured" ? current.config.order : null;
+    const changedAt = /* @__PURE__ */ new Date();
+    const config2 = { order, policyVersion: currentVersion + 1, updatedBy, updatedAt: changedAt.toISOString(), reason };
+    const settingValue = serializeWalletFundingPriority(config2);
+    if (row) {
+      await tx.update(appSettings).set({ settingValue, updatedBy, updatedAt: changedAt }).where(eq3(appSettings.settingKey, WALLET_FUNDING_PRIORITY_SETTING_KEY));
+    } else {
+      await tx.insert(appSettings).values({ settingKey: WALLET_FUNDING_PRIORITY_SETTING_KEY, settingValue, updatedBy });
+    }
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: updatedBy,
+      action: "trade_wallet_funding_priority_updated",
+      entityType: "trade_wallet_funding_priority",
+      entityId: String(config2.policyVersion),
+      reason,
+      reference: `trade-wallet-funding-priority:${config2.policyVersion}`,
+      metadataJson: JSON.stringify({ previousOrder, newOrder: order, policyVersion: config2.policyVersion })
+    });
+    return config2;
+  });
+  const persisted = await getWalletFundingPriority();
+  if (persisted.status !== "configured" || persisted.policyVersion !== saved.policyVersion || JSON.stringify(persisted.order) !== JSON.stringify(saved.order) || persisted.updatedBy !== updatedBy) {
+    throw new Error("Wallet funding priority save committed, but a fresh database read did not confirm the new order and version");
+  }
+  return persisted;
+}
 async function listAdminTradingPackages() {
   try {
     const db2 = await getDb();
@@ -11331,11 +11482,15 @@ async function createTrade(userId, input) {
     if (!bal) throw new Error("Target currency wallet could not be initialized");
     const ref = "trade-" + offer.id + "-" + userId + "-" + Date.now();
     let fundingPlan = null;
+    let fundingPriorityOrder = null;
     let convertedTargetMinor = 0;
     if (Number(bal.availableMinor) < input.amountMinor) {
       const targetRate = tradeFxRates.get(String(offer.currency).toUpperCase());
       if (!targetRate) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds to cover this trade. Target wallet is short and no FX conversion path is available.");
       if (Number(targetRate.scale) !== Number(currencyRow.scale)) throw new Error("Target currency scale changed while the trade was being prepared; retry the opportunity");
+      const fundingPriority = await getWalletFundingPriorityForFunding();
+      if ("blocked" in fundingPriority) throw new Error(fundingPriority.blocked);
+      fundingPriorityOrder = fundingPriority.order;
       const sourceWallets = walletRows.filter((row) => String(row.currency).toUpperCase() !== String(offer.currency).toUpperCase()).map((row) => {
         const code = String(row.currency).toUpperCase();
         const rate = tradeFxRates.get(code) || null;
@@ -11346,7 +11501,8 @@ async function createTrade(userId, input) {
         requiredTargetMinor: input.amountMinor,
         targetAvailableMinor: Number(bal.availableMinor || 0),
         targetRate,
-        sourceWallets
+        sourceWallets,
+        priorityCurrencies: fundingPriority.order
       });
       convertedTargetMinor = fundingPlan.targetCreditMinor;
     }
@@ -11356,6 +11512,7 @@ async function createTrade(userId, input) {
       targetAvailableMinorBeforeConversion: Number(bal.availableMinor || 0),
       convertedTargetMinor,
       sourceDebits: fundingPlan?.sourceDebits || [],
+      fundingPriorityOrder,
       targetRate: convertedTargetMinor > 0 ? tradeFxRates.get(String(offer.currency).toUpperCase()) || null : null,
       recordedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
@@ -12675,7 +12832,7 @@ async function resetTradeOpportunityUsage(input, actorId) {
     return summary;
   });
 }
-var TRADE_FEE_SETTING_KEYS, READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS, _db, _pool, tradingFxRateCache, TRADE_SETTINGS_AUDIT_ACTIONS, TRADE_SETTLEMENT_POLICY_VERSION_KEY, TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TradeTimingPolicyVersionConflictError, TradeGlobalControlVersionConflictError, DeliveryRetryPolicyVersionConflictError, ACCOUNT_CLOSURE_TICKET_SUBJECT, defaultCurrencies, PAYOUT_ASSET_CODES, AccountClosureDecisionError, TRADE_ALLOCATION_CONTROL_KEY, TradingPackageTermsVersionConflictError, OPPORTUNITY_GENERATION_CONTROL_KEY, OpportunityGenerationControlVersionConflictError, TRADING_TIER_POLICY_PATCH_KEYS, ADMIN_LEDGER_ACTIVITY_PAGE_SIZE, OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY, OPPORTUNITY_USAGE_RESET_ACTION, OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS, OPPORTUNITY_USAGE_RESET_MAX_ROWS;
+var TRADE_FEE_SETTING_KEYS, READ_ONLY_LEGACY_TRADE_FEE_SETTING_KEYS, _db, _pool, tradingFxRateCache, TRADE_SETTINGS_AUDIT_ACTIONS, TRADE_SETTLEMENT_POLICY_VERSION_KEY, TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TradeTimingPolicyVersionConflictError, TradeGlobalControlVersionConflictError, DeliveryRetryPolicyVersionConflictError, ACCOUNT_CLOSURE_TICKET_SUBJECT, defaultCurrencies, PAYOUT_ASSET_CODES, AccountClosureDecisionError, TRADE_ALLOCATION_CONTROL_KEY, WalletFundingPriorityVersionConflictError, TradingPackageTermsVersionConflictError, OPPORTUNITY_GENERATION_CONTROL_KEY, OpportunityGenerationControlVersionConflictError, TRADING_TIER_POLICY_PATCH_KEYS, ADMIN_LEDGER_ACTIVITY_PAGE_SIZE, OPPORTUNITY_USAGE_RESET_GLOBAL_KEY, OPPORTUNITY_USAGE_RESET_CUSTOMER_KEY, OPPORTUNITY_USAGE_RESET_ACTION, OPPORTUNITY_USAGE_RESET_MAX_CUSTOMERS, OPPORTUNITY_USAGE_RESET_MAX_ROWS;
 var init_db = __esm({
   "server/db.ts"() {
     "use strict";
@@ -12694,6 +12851,7 @@ var init_db = __esm({
     init_trading_popup_policy();
     init_opportunity_duration_snapshot();
     init_trading_wallet_fx();
+    init_wallet_funding_priority();
     init_marketProviders();
     init_money();
     init_exchange_providers();
@@ -12766,6 +12924,12 @@ var init_db = __esm({
       }
     };
     TRADE_ALLOCATION_CONTROL_KEY = "trading.allocations.paused";
+    WalletFundingPriorityVersionConflictError = class extends Error {
+      constructor() {
+        super("Wallet funding priority changed in another session. Refresh the saved settings before retrying.");
+        this.name = "WalletFundingPriorityVersionConflictError";
+      }
+    };
     TradingPackageTermsVersionConflictError = class extends Error {
       constructor() {
         super("This package changed in another session. Refresh the saved terms before retrying.");
@@ -17289,6 +17453,7 @@ init_db();
 init_db();
 init_db();
 init_db();
+init_db();
 
 // server/_core/systemDiagnostics.ts
 init_db();
@@ -18601,6 +18766,19 @@ var appRouter = router({
       allocationsPaused: z3.boolean(),
       reason: z3.string().trim().max(500)
     })).mutation(({ ctx, input }) => setTradeAllocationControls(ctx.user.id, input)),
+    walletFundingPriority: adminProcedure.query(() => getWalletFundingPriority()),
+    updateWalletFundingPriority: adminProcedure.input(z3.object({
+      order: z3.array(z3.string().trim().min(2).max(12)).max(50),
+      reason: z3.string().trim().min(5).max(500),
+      expectedPolicyVersion: z3.number().int().min(0)
+    }).strict()).mutation(async ({ ctx, input }) => {
+      try {
+        return await setWalletFundingPriority(ctx.user.id, input);
+      } catch (error) {
+        if (error instanceof WalletFundingPriorityVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+        throw error;
+      }
+    }),
     tradingPackages: adminProcedure.query(() => listAdminTradingPackages()),
     createTradingPackage: adminProcedure.input(z3.object({
       name: z3.string().trim().min(1).max(80),

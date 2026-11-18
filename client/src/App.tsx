@@ -1491,6 +1491,7 @@ function AdminPackageConfiguration() {
   return <div className="arb-page portal-page">
     <div className="portal-page-top"><div><div className="eyebrow">Trade Settings · single configuration owner</div><h1>Package Configuration</h1><p>Configure global eligibility and popup-delivery masters once. Per-tier terms remain in Package Settings. Enabling a tier activates delivery and automatic financial execution for qualifying customers.</p></div></div>
     <AdminGlobalTradeControls />
+    <AdminWalletFundingPriority />
     <AdminTradeAllocationControl />
   </div>;
 }
@@ -1544,6 +1545,51 @@ function AdminTradeAllocationControl(){
       {message&&<div className={messageKind==="error"?"admin-ops-empty error":"test-notice"} role={messageKind==="error"?"alert":"status"} aria-live="polite">{message}</div>}
       <button className={paused?"secondary-button":"primary-button"} type="button" disabled={save.isPending||reason.trim().length<8} onClick={()=>void saveGate()}>{save.isPending?"Saving…":paused?"Resume new allocations":"Pause new allocations"}</button>
       <small>Every pause/resume is written to the administrator audit log. Resume only after the issue is reviewed.</small>
+    </>}
+  </section>;
+}
+function AdminWalletFundingPriority(){
+  const q=trpc.adminOperations.walletFundingPriority.useQuery(undefined,{refetchInterval:30000});
+  const save=trpc.adminOperations.updateWalletFundingPriority.useMutation();
+  const data=q.data as any;
+  const [orderText,setOrderText]=useState("");
+  const [reason,setReason]=useState("");
+  const [message,setMessage]=useState("");
+  const [messageKind,setMessageKind]=useState<"success"|"error">("success");
+  useEffect(()=>{setOrderText(Array.isArray(data?.order)?data.order.join(", "):"")},[data?.order,data?.status]);
+  const parseOrder=()=>orderText.split(",").map((value:string)=>value.trim().toUpperCase()).filter(Boolean);
+  const saveOrder=async(order:string[])=>{
+    const auditReason=reason.trim();
+    if(auditReason.length<5||auditReason.length>500){setMessageKind("error");setMessage("Enter a 5–500 character reason before saving the funding priority.");return;}
+    if(!data||data.status==="malformed"){setMessageKind("error");setMessage("The saved funding priority is malformed and cannot be replaced from this screen. Repair the stored value first.");return;}
+    setMessage("");
+    try{
+      await save.mutateAsync({order,reason:auditReason,expectedPolicyVersion:Number(data.policyVersion||0)});
+      const refreshed=await q.refetch();
+      const persisted=refreshed.data as any;
+      if(refreshed.isError||!persisted||JSON.stringify(persisted.order||[])!==JSON.stringify(order)){
+        setMessageKind("error");setMessage("The save completed, but a fresh database read did not confirm the new order. Verify the saved priority before retrying.");return;
+      }
+      setMessageKind("success");setMessage("Wallet funding priority saved and verified from a fresh database read.");setReason("");
+    }catch(error){setMessageKind("error");setMessage(error instanceof Error?error.message:"Wallet funding priority save failed; the saved value could not be verified.");}
+  };
+  const effectiveOrder=Array.isArray(data?.order)&&data.order.length?data.order:(Array.isArray(data?.defaultOrder)?data.defaultOrder:["USD"]);
+  return <section className="admin-control-card" style={{marginBottom:24,padding:20}} aria-label="Wallet funding priority">
+    <div className="eyebrow">System-wide funding control</div><h2>Wallet funding priority</h2>
+    <p>When a customer's target wallet is short, source wallets are converted in this order. Never configured means the default: USD first, then the other currencies alphabetically. Wallet row locks stay in a fixed currency order so funding never deadlocks; a malformed saved value blocks cross-wallet funding until it is repaired.</p>
+    {q.isLoading?<div className="empty-state">Loading wallet funding priority…</div>:q.isError?<div className="admin-ops-empty error" role="alert">Wallet funding priority could not be loaded. The control is unavailable until its status can be verified. <button className="secondary-button" type="button" onClick={()=>void q.refetch()} disabled={q.isFetching}><RefreshCw size={14}/>{q.isFetching?"Retrying…":"Retry loading"}</button></div>:<>
+      <div className="package-detail"><span>Current order</span><b>{effectiveOrder.join(" → ")}</b></div>
+      <small>{data?.status==="configured"?"Configured order":"Default order (never configured)"} · Version {data?.policyVersion??0} · Last changed: {data?.updatedAt?new Date(data.updatedAt).toLocaleString():"No change recorded"} · Administrator ID: {data?.updatedBy??"—"}</small>
+      {data?.status==="configured"&&data?.reason&&<div className="admin-policy-note"><ShieldCheck size={14}/><span>Reason: {data.reason}</span></div>}
+      {data?.status==="malformed"&&<div className="admin-ops-empty error" role="alert">The saved funding priority is malformed{data?.detail?`: ${data.detail}`:""}. Cross-wallet funding is blocked until it is repaired; no debit will occur.</div>}
+      <label>Funding order (comma-separated currency codes; leave blank to reset to the default USD-first order)<input value={orderText} onChange={e=>setOrderText(e.target.value)} placeholder="e.g. USD, EUR, GBP, BTC" aria-label="Wallet funding priority order"/></label>
+      <label>Administrator reason / audit note (required, 5–500 characters)<textarea maxLength={500} rows={2} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Explain why the funding priority is changing."/></label>
+      {message&&<div className={messageKind==="error"?"admin-ops-empty error":"test-notice"} role={messageKind==="error"?"alert":"status"} aria-live="polite">{message}</div>}
+      <div className="form-two">
+        <button className="primary-button" type="button" disabled={save.isPending||reason.trim().length<5||data?.status==="malformed"} onClick={()=>void saveOrder(parseOrder())}>{save.isPending?"Saving…":"Save funding priority"}</button>
+        <button className="secondary-button" type="button" disabled={save.isPending||reason.trim().length<5||data?.status==="malformed"} onClick={()=>void saveOrder([])}>Reset to default (USD first)</button>
+      </div>
+      <small>Every change is written to the administrator audit log with the previous order, the new order and a new policy version. Unknown currency codes are ordered after the listed ones, alphabetically.</small>
     </>}
   </section>;
 }

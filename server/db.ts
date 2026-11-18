@@ -18,6 +18,7 @@ import { assertTradeAmountWithinBounds, chooseSecureTradeAmount } from "./module
 import { calculateConfiguredProfitMinor, chooseInclusiveInteger } from "./modules/trading-popup-policy";
 import { isOpportunityDurationWithinBounds, validateOpportunityDurationSnapshot } from "./modules/opportunity-duration-snapshot";
 import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, type FxRateSnapshot } from "./modules/trading-wallet-fx";
+import { WALLET_FUNDING_PRIORITY_SETTING_KEY, DEFAULT_WALLET_FUNDING_PRIORITY, configuredWalletFundingOrder, normalizeWalletFundingPriorityOrder, parseWalletFundingPriorityState, serializeWalletFundingPriority, type WalletFundingPriorityState } from "./modules/wallet-funding-priority";
 import { fetchCryptoRates, fetchFiatRates, fetchMostActiveStocks, fetchCurrencyUsdRate } from "./marketProviders";
 import { nativeMinorToUsd, nativeMinorToUsdMinorExact, proportionalMinorAmount, usdUnitsToNativeMinor } from "../shared/money";
 import { selectRotatingExchangeProvider } from "../shared/exchange-providers";
@@ -2820,6 +2821,94 @@ export async function setTradeAllocationControls(updatedBy: number, input: { all
   });
 }
 
+export class WalletFundingPriorityVersionConflictError extends Error {
+  constructor() { super("Wallet funding priority changed in another session. Refresh the saved settings before retrying."); this.name="WalletFundingPriorityVersionConflictError"; }
+}
+
+export type WalletFundingPriorityView = {
+  status: "not-configured" | "configured" | "malformed";
+  order: string[] | null;
+  defaultOrder: string[];
+  policyVersion: number;
+  updatedBy: number | null;
+  updatedAt: string | null;
+  reason: string;
+  detail: string | null;
+};
+
+/** Reads the raw persisted state without applying any default. */
+async function readWalletFundingPriorityState(): Promise<WalletFundingPriorityState> {
+  const db = await getDb();
+  if (!db) return { status: "malformed", detail: "Database is not available" };
+  const row = (await db.select({ settingValue: appSettings.settingValue }).from(appSettings)
+    .where(eq(appSettings.settingKey, WALLET_FUNDING_PRIORITY_SETTING_KEY)).limit(1))[0];
+  return parseWalletFundingPriorityState(row?.settingValue);
+}
+
+export async function getWalletFundingPriority(): Promise<WalletFundingPriorityView> {
+  const fallback = { defaultOrder: [...DEFAULT_WALLET_FUNDING_PRIORITY] };
+  const state = await readWalletFundingPriorityState();
+  if (state.status === "configured") return { status: "configured", order: [...state.config.order], ...fallback, policyVersion: state.config.policyVersion, updatedBy: state.config.updatedBy, updatedAt: state.config.updatedAt, reason: state.config.reason, detail: null };
+  if (state.status === "malformed") return { status: "malformed", order: null, ...fallback, policyVersion: 0, updatedBy: null, updatedAt: null, reason: "", detail: state.detail };
+  return { status: "not-configured", order: null, ...fallback, policyVersion: 0, updatedBy: null, updatedAt: null, reason: "", detail: null };
+}
+
+/**
+ * Resolves the funding priority for allocation. A malformed saved value returns
+ * a blocked state so callers fail closed rather than substituting an unapproved
+ * order; a never-configured value returns null (the USD-first default applies).
+ */
+export async function getWalletFundingPriorityForFunding(): Promise<{ order: string[] | null } | { blocked: string }> {
+  const state = await readWalletFundingPriorityState();
+  if (state.status === "malformed") return { blocked: "The saved wallet funding priority is malformed; cross-wallet funding is blocked until an administrator repairs it." };
+  return { order: configuredWalletFundingOrder(state) };
+}
+
+export async function setWalletFundingPriority(updatedBy: number, input: { order: string[]; reason: string; expectedPolicyVersion: number }) {
+  if (!Number.isSafeInteger(updatedBy) || updatedBy <= 0) throw new Error("Administrator identity is required");
+  const reason = String(input.reason ?? "").trim();
+  if (reason.length < 5 || reason.length > 500) throw new Error("Provide a wallet funding priority reason of 5–500 characters");
+  const order = normalizeWalletFundingPriorityOrder(input.order);
+  if (!order) throw new Error("Wallet funding priority must be a list of at most 50 unique 2–12 character currency codes");
+  if (!Number.isSafeInteger(input.expectedPolicyVersion) || input.expectedPolicyVersion < 0) throw new Error("A valid saved wallet funding priority version is required");
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const saved = await db.transaction(async tx => {
+    const row = (await tx.select({ settingKey: appSettings.settingKey, settingValue: appSettings.settingValue })
+      .from(appSettings).where(eq(appSettings.settingKey, WALLET_FUNDING_PRIORITY_SETTING_KEY)).limit(1).for("update"))[0];
+    const current = row ? parseWalletFundingPriorityState(row.settingValue) : ({ status: "not-configured" } as WalletFundingPriorityState);
+    if (current.status === "malformed") throw new Error("Saved wallet funding priority is malformed; no settings were changed. Repair it before saving a new order.");
+    const currentVersion = current.status === "configured" ? current.config.policyVersion : 0;
+    if (currentVersion !== input.expectedPolicyVersion) throw new WalletFundingPriorityVersionConflictError();
+    const previousOrder = current.status === "configured" ? current.config.order : null;
+    const changedAt = new Date();
+    const config = { order, policyVersion: currentVersion + 1, updatedBy, updatedAt: changedAt.toISOString(), reason };
+    const settingValue = serializeWalletFundingPriority(config);
+    if (row) {
+      await tx.update(appSettings).set({ settingValue, updatedBy, updatedAt: changedAt })
+        .where(eq(appSettings.settingKey, WALLET_FUNDING_PRIORITY_SETTING_KEY));
+    } else {
+      await tx.insert(appSettings).values({ settingKey: WALLET_FUNDING_PRIORITY_SETTING_KEY, settingValue, updatedBy });
+    }
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: updatedBy,
+      action: "trade_wallet_funding_priority_updated",
+      entityType: "trade_wallet_funding_priority",
+      entityId: String(config.policyVersion),
+      reason,
+      reference: `trade-wallet-funding-priority:${config.policyVersion}`,
+      metadataJson: JSON.stringify({ previousOrder, newOrder: order, policyVersion: config.policyVersion }),
+    });
+    return config;
+  });
+  const persisted = await getWalletFundingPriority();
+  if (persisted.status !== "configured" || persisted.policyVersion !== saved.policyVersion ||
+      JSON.stringify(persisted.order) !== JSON.stringify(saved.order) || persisted.updatedBy !== updatedBy) {
+    throw new Error("Wallet funding priority save committed, but a fresh database read did not confirm the new order and version");
+  }
+  return persisted;
+}
+
 export async function listAdminTradingPackages() {
   try {
     const db=await getDb();
@@ -5188,11 +5277,18 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   if(!bal) throw new Error("Target currency wallet could not be initialized");
   const ref="trade-"+offer.id+"-"+userId+"-"+Date.now();
   let fundingPlan:ReturnType<typeof planCrossWalletFunding>|null=null;
+  let fundingPriorityOrder:string[]|null=null;
   let convertedTargetMinor=0;
   if(Number(bal.availableMinor)<input.amountMinor){
     const targetRate=tradeFxRates.get(String(offer.currency).toUpperCase());
     if(!targetRate) throw new Error("INSUFFICIENT_BALANCE: Deposit more funds to cover this trade. Target wallet is short and no FX conversion path is available.");
     if(Number(targetRate.scale)!==Number(currencyRow.scale)) throw new Error("Target currency scale changed while the trade was being prepared; retry the opportunity");
+    // The administrator-configured funding priority decides which source wallets
+    // are considered first. A malformed saved order fails closed (no debit);
+    // wallet row locking above stays in its separate fixed currency order.
+    const fundingPriority=await getWalletFundingPriorityForFunding();
+    if("blocked" in fundingPriority) throw new Error(fundingPriority.blocked);
+    fundingPriorityOrder=fundingPriority.order;
     const sourceWallets=walletRows
       .filter(row=>String(row.currency).toUpperCase()!==String(offer.currency).toUpperCase())
       .map(row=>{
@@ -5206,6 +5302,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
       targetAvailableMinor:Number(bal.availableMinor||0),
       targetRate,
       sourceWallets,
+      priorityCurrencies:fundingPriority.order,
     });
     convertedTargetMinor=fundingPlan.targetCreditMinor;
   }
@@ -5215,6 +5312,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
     targetAvailableMinorBeforeConversion:Number(bal.availableMinor||0),
     convertedTargetMinor,
     sourceDebits:fundingPlan?.sourceDebits||[],
+    fundingPriorityOrder,
     targetRate:convertedTargetMinor>0?tradeFxRates.get(String(offer.currency).toUpperCase())||null:null,
     recordedAt:new Date().toISOString(),
   });

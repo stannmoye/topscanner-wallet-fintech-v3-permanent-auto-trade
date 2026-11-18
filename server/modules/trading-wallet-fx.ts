@@ -1,3 +1,5 @@
+import { resolveWalletFundingOrder } from "./wallet-funding-priority";
+
 export type FxRateSnapshot = {
   currency: string;
   scale: number;
@@ -79,6 +81,8 @@ export function planCrossWalletFunding(input: {
   targetAvailableMinor: number;
   targetRate: FxRateSnapshot;
   sourceWallets: AvailableWallet[];
+  /** Administrator-configured funding priority; omitted means USD first, then alphabetical. */
+  priorityCurrencies?: string[] | null;
 }): CrossWalletFundingPlan {
   assertMinor("requiredTargetMinor", input.requiredTargetMinor);
   assertMinor("targetAvailableMinor", input.targetAvailableMinor);
@@ -95,7 +99,7 @@ export function planCrossWalletFunding(input: {
   const sourceDebits: CrossWalletDebit[] = [];
 
   const seenCurrencies = new Set<string>();
-  const ordered = [...input.sourceWallets].map(wallet => {
+  const candidates = [...input.sourceWallets].map(wallet => {
     const currency = wallet.currency.trim().toUpperCase();
     if (!currency) throw new Error("Every source wallet must identify its currency");
     if (seenCurrencies.has(currency)) throw new Error(`Duplicate source wallet currency: ${currency}`);
@@ -114,9 +118,13 @@ export function planCrossWalletFunding(input: {
       }
     }
     return { ...wallet, currency };
-  })
-    .filter(wallet => wallet.currency !== targetCurrency)
-    .sort((a, b) => a.currency.localeCompare(b.currency));
+  }).filter(wallet => wallet.currency !== targetCurrency);
+
+  const byCurrency = new Map(candidates.map(wallet => [wallet.currency, wallet] as const));
+  const ordered = resolveWalletFundingOrder({
+    currencies: candidates.map(wallet => wallet.currency),
+    order: input.priorityCurrencies ?? null,
+  }).map(currency => byCurrency.get(currency)!);
 
   for (const wallet of ordered) {
     if (remainingTargetMinor <= 0) break;
