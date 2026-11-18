@@ -19580,9 +19580,12 @@ function buildContentSecurityPolicy(options = {}) {
     "manifest-src 'self'"
   ].join("; ");
 }
+function contentSecurityPolicyHeaderName(nodeEnv = process.env.NODE_ENV) {
+  return nodeEnv === "production" ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";
+}
 function buildSecurityHeaders(nodeEnv = process.env.NODE_ENV) {
   return {
-    "Content-Security-Policy": buildContentSecurityPolicy({ development: nodeEnv === "development" }),
+    [contentSecurityPolicyHeaderName(nodeEnv)]: buildContentSecurityPolicy({ development: nodeEnv === "development" }),
     // Browsers ignore HSTS over plain HTTP, so it is safe to always send it.
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "X-Frame-Options": "DENY",

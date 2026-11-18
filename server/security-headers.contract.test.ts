@@ -4,27 +4,43 @@ import type { NextFunction, Request, Response } from "express";
 import {
   buildContentSecurityPolicy,
   buildSecurityHeaders,
+  contentSecurityPolicyHeaderName,
   securityHeadersMiddleware,
 } from "./_core/securityHeaders";
 
 const serverSource = readFileSync(new URL("./_core/index.ts", import.meta.url), "utf8");
 
+const ENFORCED_HEADERS = [
+  "Strict-Transport-Security",
+  "X-Content-Type-Options",
+  "X-Frame-Options",
+  "Referrer-Policy",
+] as const;
+
 describe("baseline browser security headers (item 21)", () => {
-  it("sets CSP, HSTS, frame, referrer and nosniff on every response", () => {
+  it("enforces HSTS, frame, referrer and nosniff on every response in production", () => {
     const headers = buildSecurityHeaders("production");
     expect(Object.keys(headers).sort()).toEqual(
-      [
-        "Content-Security-Policy",
-        "Referrer-Policy",
-        "Strict-Transport-Security",
-        "X-Content-Type-Options",
-        "X-Frame-Options",
-      ].sort(),
+      ["Content-Security-Policy-Report-Only", ...ENFORCED_HEADERS].sort(),
     );
     expect(headers["Strict-Transport-Security"]).toBe("max-age=31536000; includeSubDomains");
     expect(headers["X-Frame-Options"]).toBe("DENY");
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(headers["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
+  });
+
+  it("ships the CSP report-only in production so it cannot break the live site", () => {
+    expect(contentSecurityPolicyHeaderName("production")).toBe("Content-Security-Policy-Report-Only");
+    const headers = buildSecurityHeaders("production");
+    expect(headers).not.toHaveProperty("Content-Security-Policy");
+    expect(headers).toHaveProperty("Content-Security-Policy-Report-Only");
+  });
+
+  it("enforces the CSP outside production so developers and CI see real violations", () => {
+    expect(contentSecurityPolicyHeaderName("development")).toBe("Content-Security-Policy");
+    expect(contentSecurityPolicyHeaderName("test")).toBe("Content-Security-Policy");
+    expect(contentSecurityPolicyHeaderName(undefined)).toBe("Content-Security-Policy");
+    expect(buildSecurityHeaders("test")).toHaveProperty("Content-Security-Policy");
   });
 
   it("publishes a locked-down CSP with the directives the app needs", () => {
@@ -57,7 +73,7 @@ describe("baseline browser security headers (item 21)", () => {
     securityHeadersMiddleware("production")({} as Request, { setHeader } as unknown as Response, next);
     const names = setHeader.mock.calls.map(call => call[0]);
     expect(names).toEqual(expect.arrayContaining([
-      "Content-Security-Policy",
+      "Content-Security-Policy-Report-Only",
       "Strict-Transport-Security",
       "X-Frame-Options",
       "X-Content-Type-Options",

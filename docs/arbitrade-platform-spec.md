@@ -722,7 +722,7 @@ At the end of installation the system should:
 - disable setup routes;
 - remove or quarantine the installer package where supported;
 - verify that setup files are not web-accessible;
-- set secure cookie and HTTPS headers, including the baseline browser security headers (Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, Referrer-Policy) installed by the application server on every response;
+- set secure cookie and HTTPS headers, including the baseline browser security headers (Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, Referrer-Policy) installed by the application server on every response; the Content-Security-Policy is sent in Report-Only mode in production until the authenticated customer and admin screens are browser-verified, while every other header is enforced;
 - apply least-privilege file ownership and permissions;
 - create scheduled backup and health-check jobs;
 - enable audit logging;
