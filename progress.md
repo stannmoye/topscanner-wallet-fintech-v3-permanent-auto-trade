@@ -31,7 +31,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[x]` | `Fix #21` |
 | 22 | CSRF Origin/Sec-Fetch-Site checks | `[x]` | `Fix #22` |
 | 23 | popup-execution-policy fail closed on blank status | `[x]` | `Fix #23` |
-| 24 | `updatePopupDeliveryStatus` requires leaseToken | `[ ]` | |
+| 24 | `updatePopupDeliveryStatus` requires leaseToken | `[x]` | `Fix #24` |
 | 25 | Allocation reason 8–500 chars, strict input | `[ ]` | |
 | 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[ ]` | |
 | 27 | No writes during reads in `getTradeSettlementPolicy` | `[ ]` | |
@@ -141,6 +141,13 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Production-rows check.** Because the column is `NOT NULL DEFAULT 'READY'`, no stored row can be NULL/blank while pending (existing rows were backfilled to `READY` when the column was added). The only production reader of the policy is [db.ts](file:///workspace/repo/server/db.ts#L4735), which passes the `NOT NULL` `row.executionStatus`, so failing closed on a blank status cannot make any existing pending event ineligible. No data risk; proceeding was safe (reported to the owner in the item-23 status).
 - **What changed.** (1) The insert now writes `executionStatus` explicitly as `'READY'` (no behaviour change — it matches the previous default). (2) [popup-execution-policy.ts](file:///workspace/repo/server/modules/popup-execution-policy.ts) no longer substitutes `READY` for a missing/blank execution status: `isPopupExecutionEligible` now trims and requires an explicit value, so a missing/blank status is **not** eligible and only an explicit `READY`/`RETRYING` is.
 - **Tests.** Extended [popup-execution-policy.test.ts](file:///workspace/repo/server/modules/popup-execution-policy.test.ts) with a fail-closed case over `undefined`/`null`/`""`/whitespace, while asserting explicit `ready`/`RETRYING` (case/space-insensitive) stay eligible.
+- **Protected area.** No debit/credit/settlement code touched.
+
+### Item 24 notes (`Fix #24`)
+
+- **Root cause.** `updatePopupDeliveryStatus` ([opportunityLifecycle.ts](file:///workspace/repo/server/opportunityLifecycle.ts#L340)) started with `if (!process.env.DATABASE_URL || !leaseToken) return;`. A customer acknowledgement that arrived without a lease token silently no-opped and looked successful on the client while nothing was recorded, and the tRPC input accepted `leaseToken` as optional.
+- **What changed.** (1) The customer `popupDeliveryStatus` input schema now requires `leaseToken: z.string().uuid()` (removed `.optional()`), so a missing/blank token is rejected at the validation boundary with a clear `BAD_REQUEST`. (2) The function signature requires `leaseToken: string` and throws `Popup delivery acknowledgement requires the delivery lease token.` on a missing/blank token instead of returning silently; the DB gate is evaluated after the token check. (3) The client already gates on `if(eventId<=0||!leaseToken||minimized)return` and always sends the claimed token on both `received` and `rendered` ([App.tsx](file:///workspace/repo/client/src/App.tsx#L716-L740)) — verified, no client change needed.
+- **Tests.** New [popup-delivery-lease-token.contract.test.ts](file:///workspace/repo/server/popup-delivery-lease-token.contract.test.ts) (3 tests): the router schema requires the token (and no longer optional); the function rejects `""`/whitespace/`undefined`/`null` with the clear error; the client always sends it.
 - **Protected area.** No debit/credit/settlement code touched.
 
 ### Item 19 notes (`Fix #19`)

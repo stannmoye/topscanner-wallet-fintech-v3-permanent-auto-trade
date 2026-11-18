@@ -337,8 +337,15 @@ export async function updatePopupLifecycleForOffer(userId: number, offerId: numb
   });
 }
 
-export async function updatePopupDeliveryStatus(userId: number, eventId: number, status: "received" | "rendered", leaseToken?: string) {
-  if (!process.env.DATABASE_URL || !leaseToken) return;
+export async function updatePopupDeliveryStatus(userId: number, eventId: number, status: "received" | "rendered", leaseToken: string) {
+  // Item 24: an acknowledgement must carry the lease token the server issued
+  // when it claimed the dispatch. A missing token previously caused a silent
+  // no-op that looked like a successful acknowledgement while nothing was
+  // recorded. Reject it explicitly so the client (which always sends it)
+  // surfaces a clear error instead of a false success.
+  const deliveryLeaseToken = String(leaseToken ?? "").trim();
+  if (!deliveryLeaseToken) throw new Error("Popup delivery acknowledgement requires the delivery lease token.");
+  if (!process.env.DATABASE_URL) return;
   await withConnection(async connection => {
     await connection.beginTransaction();
     try {
@@ -347,7 +354,7 @@ export async function updatePopupDeliveryStatus(userId: number, eventId: number,
       if (!row || ["failed","dismissed","expired","delivered","rendered"].includes(String(row.deliveryStatus)) || row.eventStatus === "DISMISSED") {
         await connection.commit(); return;
       }
-      if (String(row.deliveryLeaseToken || "") !== leaseToken) { await connection.commit(); return; }
+      if (String(row.deliveryLeaseToken || "") !== deliveryLeaseToken) { await connection.commit(); return; }
       if (row.offerStatus !== "open" || !row.closesAt || new Date(row.closesAt).getTime() <= Date.now()) {
         const [expiredResult] = await connection.execute<any>("UPDATE opportunity_popup_events SET deliveryStatus='expired',expiredAt=COALESCE(expiredAt,CURRENT_TIMESTAMP),deliveryRetryAfter=NULL,deliveryLeaseToken=NULL,deliveryLeaseExpiresAt=NULL,updatedAt=CURRENT_TIMESTAMP WHERE id=? AND userId=? AND deliveryStatus IN ('queued','in_progress','retry_wait')", [eventId,userId]);
         if (Number(expiredResult?.affectedRows || 0) > 0) await recordDeliveryHistory(connection, { userId, offerId: Number(row.offerId), eventKey: "delivery_expired", eventType: "delivery_expired", observedStatus: "expired", attemptNumber: Number(row.deliveryAttemptCount || 0), errorCode: "OPPORTUNITY_EXPIRED" });
@@ -356,7 +363,7 @@ export async function updatePopupDeliveryStatus(userId: number, eventId: number,
       const currentDeliveryStatus = String(row.deliveryStatus);
       const finalRenderAfterReceipt = status === "rendered" && currentDeliveryStatus === "received";
       if (currentDeliveryStatus !== "in_progress" && !finalRenderAfterReceipt) { await connection.commit(); return; }
-      const next=acknowledgeDelivery({state:{deliveryStatus:String(row.deliveryStatus) as DeliveryState["deliveryStatus"],deliveryAttemptCount:Number(row.deliveryAttemptCount||0),deliveryRetryAfter:row.deliveryRetryAfter?new Date(row.deliveryRetryAfter):null,deliveryLeaseToken:row.deliveryLeaseToken,eventStatus:String(row.eventStatus)},status,leaseToken});
+      const next=acknowledgeDelivery({state:{deliveryStatus:String(row.deliveryStatus) as DeliveryState["deliveryStatus"],deliveryAttemptCount:Number(row.deliveryAttemptCount||0),deliveryRetryAfter:row.deliveryRetryAfter?new Date(row.deliveryRetryAfter):null,deliveryLeaseToken:row.deliveryLeaseToken,eventStatus:String(row.eventStatus)},status,leaseToken:deliveryLeaseToken});
       if (next.changed) {
         const timestamp=status === "received" ? "receivedAt" : "renderedAt";
         const finalRender = status === "rendered";

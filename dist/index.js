@@ -3156,7 +3156,9 @@ async function updatePopupLifecycleForOffer(userId, offerId, action) {
   });
 }
 async function updatePopupDeliveryStatus(userId, eventId, status, leaseToken) {
-  if (!process.env.DATABASE_URL || !leaseToken) return;
+  const deliveryLeaseToken = String(leaseToken ?? "").trim();
+  if (!deliveryLeaseToken) throw new Error("Popup delivery acknowledgement requires the delivery lease token.");
+  if (!process.env.DATABASE_URL) return;
   await withConnection(async (connection) => {
     await connection.beginTransaction();
     try {
@@ -3166,7 +3168,7 @@ async function updatePopupDeliveryStatus(userId, eventId, status, leaseToken) {
         await connection.commit();
         return;
       }
-      if (String(row.deliveryLeaseToken || "") !== leaseToken) {
+      if (String(row.deliveryLeaseToken || "") !== deliveryLeaseToken) {
         await connection.commit();
         return;
       }
@@ -3182,7 +3184,7 @@ async function updatePopupDeliveryStatus(userId, eventId, status, leaseToken) {
         await connection.commit();
         return;
       }
-      const next = acknowledgeDelivery({ state: { deliveryStatus: String(row.deliveryStatus), deliveryAttemptCount: Number(row.deliveryAttemptCount || 0), deliveryRetryAfter: row.deliveryRetryAfter ? new Date(row.deliveryRetryAfter) : null, deliveryLeaseToken: row.deliveryLeaseToken, eventStatus: String(row.eventStatus) }, status, leaseToken });
+      const next = acknowledgeDelivery({ state: { deliveryStatus: String(row.deliveryStatus), deliveryAttemptCount: Number(row.deliveryAttemptCount || 0), deliveryRetryAfter: row.deliveryRetryAfter ? new Date(row.deliveryRetryAfter) : null, deliveryLeaseToken: row.deliveryLeaseToken, eventStatus: String(row.eventStatus) }, status, leaseToken: deliveryLeaseToken });
       if (next.changed) {
         const timestamp2 = status === "received" ? "receivedAt" : "renderedAt";
         const finalRender = status === "rendered";
@@ -18606,7 +18608,7 @@ var appRouter = router({
     transactionConsole: protectedProcedure.query(({ ctx }) => listTransactionConsoleEvents(ctx.user.id, ctx.req)),
     transactionConsolePulse: protectedProcedure.mutation(({ ctx }) => recordTransactionConsolePulse(ctx.user.id, ctx.req)),
     popupLifecycle: protectedProcedure.input(z3.object({ eventId: z3.number().int().positive(), action: z3.enum(["noticed", "opened", "dismissed"]) }).strict()).mutation(({ ctx, input }) => updatePopupLifecycle(ctx.user.id, input.eventId, input.action)),
-    popupDeliveryStatus: protectedProcedure.input(z3.object({ eventId: z3.number().int().positive(), status: z3.enum(["received", "rendered"]), leaseToken: z3.string().uuid().optional() }).strict()).mutation(({ ctx, input }) => updatePopupDeliveryStatus(ctx.user.id, input.eventId, input.status, input.leaseToken)),
+    popupDeliveryStatus: protectedProcedure.input(z3.object({ eventId: z3.number().int().positive(), status: z3.enum(["received", "rendered"]), leaseToken: z3.string().uuid() }).strict()).mutation(({ ctx, input }) => updatePopupDeliveryStatus(ctx.user.id, input.eventId, input.status, input.leaseToken)),
     opportunities: protectedProcedure.query(async ({ ctx }) => {
       const result = await listCustomerOpportunities(ctx.user.id, { customerSessionExecution: true, allowAutomaticExecution: true, consumeDelivery: true });
       for (const trade of result.autoTrades || []) {
