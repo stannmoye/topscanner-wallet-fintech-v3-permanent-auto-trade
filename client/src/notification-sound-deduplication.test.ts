@@ -158,6 +158,13 @@ const css = readFileSync(new URL("./index.css", import.meta.url), "utf8");
     expect(customerCss).toContain("overflow-wrap:anywhere");
   });
 
+  it("surfaces a visible tap-to-enable-sound hint and reports the silent autoplay-unlock failure", () => {
+    expect(app).toContain('dispatchNotificationAudioBlocked({kind:"autoplay"})');
+    expect(app).toContain("Tap to enable sound");
+    expect(app).toContain('className="customer-rail-sound-hint"');
+    expect(customerCss).toContain(".customer-primary-rail .customer-rail-sound-hint");
+  });
+
   it("places the compact scanner in the customer header and appearance control in the left rail", () => {
     expect(app).toContain('className="customer-header-scanner"');
     expect(app).toContain("<CustomerExchangeScanner feed={scannerFeed} connectionStatus={scannerConnectionStatus} compact />");

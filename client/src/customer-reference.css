@@ -1895,6 +1895,8 @@
 .customer-portal .customer-primary-rail .customer-rail-sound-toggle small{color:#88a8b9;font-size:9px}
 .customer-portal .customer-primary-rail .customer-rail-audio-warning{display:grid;gap:6px;padding:8px;border:1px solid rgba(247,192,101,.26);border-radius:8px;background:rgba(74,48,15,.22);color:#e8d7b4;font-size:8px;line-height:1.4;overflow-wrap:anywhere}
 .customer-portal .customer-primary-rail .customer-rail-audio-warning button{justify-self:start;padding:4px 7px;border:1px solid rgba(247,192,101,.3);border-radius:6px;background:transparent;color:inherit;font-size:8px}
+.customer-portal .customer-primary-rail .customer-rail-sound-hint{display:inline-flex;align-items:center;gap:6px;justify-self:start;padding:6px 9px;border:1px solid rgba(124,231,194,.42);border-radius:8px;background:rgba(20,58,44,.34);color:#c7f5e4;font-size:9px;font-weight:700;overflow-wrap:anywhere;cursor:pointer}
+.customer-portal .customer-primary-rail .customer-rail-sound-hint svg{flex:0 0 auto}
 @media(max-width:760px){
   .customer-portal .customer-header-scanner{flex:0 1 150px;width:clamp(72px,22vw,150px);min-width:72px;max-width:150px;margin-left:auto}
   .customer-portal .customer-header-scanner .customer-exchange-scanner--compact{height:30px;padding:3px 6px!important;gap:4px}

@@ -69,7 +69,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 59 | Remove dead code (DashboardLayout, unreachable dashboard) | `[x]` | `Fix #59` |
 | 60 | CustomerTradingEligibility hidden markup/CSS | `[x]` | Fix #60 |
 | 61 | Cancel focus rAF in CustomerSlideMenu cleanup | `[x]` | Fix #61 |
-| 62 | Visible "tap to enable sound" hint | `[ ]` | |
+| 62 | Visible "tap to enable sound" hint | `[x]` | Fix #62 |
 | 63 | Opportunities page eligibility consistency | `[ ]` | |
 | 64 | Single source of truth for `packageName` | `[ ]` | |
 
