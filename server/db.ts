@@ -382,7 +382,7 @@ export async function getPackageFeeHistory(packageId:number) {
 export async function updatePackageFeePolicy(input:{packageId:number;expectedVersion:number;feeRateBps:number;roundingMode:FeeRoundingMode;effectiveAt:string;reason:string},actorId:number) {
   if(!Number.isSafeInteger(input.packageId)||input.packageId<1||!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion<0) throw new Error("Package and expected version must be valid");
   if(!Number.isInteger(input.feeRateBps)||input.feeRateBps<0||input.feeRateBps>10000||!["half_up","down","up","half_even"].includes(input.roundingMode)) throw new Error("Package fee policy is invalid");
-  const reason=input.reason.trim(); if(reason.length<3||reason.length>2000) throw new Error("A reason of 3 to 2000 characters is required");
+  const reason=input.reason.trim(); if(reason.length<5||reason.length>500) throw new Error("A reason of 5 to 500 characters is required");
   const effectiveAt=new Date(input.effectiveAt); if(!Number.isFinite(effectiveAt.getTime())||effectiveAt.toISOString()!==input.effectiveAt) throw new Error("Effective time must be a valid UTC ISO timestamp");
   const db=await getDb(); if(!db) throw new Error("Database is not available");
   const changedAt=new Date();

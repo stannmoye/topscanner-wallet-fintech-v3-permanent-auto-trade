@@ -19,7 +19,10 @@ describe("package-specific fee administration and immutable snapshots", () => {
     expect(router).toContain("updatePackageFeePolicy: adminProcedure.input(z.object({");
     expect(router).toContain("expectedVersion: z.number().int().min(0).max(2_147_483_647)");
     expect(router).toContain("effectiveAt: z.string().datetime({ offset: false })");
-    expect(router).toContain("reason: z.string().trim().min(3).max(2000)");
+    expect(router).toContain("reason: z.string().trim().min(5).max(500)");
+    // Item 31: the fee-policy reason bounds must match the client (5-500) — the DB
+    // helper that the router delegates to enforces the same window.
+    expect(db).toContain("if(reason.length<5||reason.length>500) throw new Error(\"A reason of 5 to 500 characters is required\")");
     expect(db).toContain("resolvePackageFeePolicyWrite(current?Number(current.version):null,input.expectedVersion)");
     expect(db).toContain("await tx.insert(tradingPackageFeePolicyVersions).values(values)");
     expect(db).toContain("await tx.insert(v5AuditEvents).values({actorUserId:actorId");

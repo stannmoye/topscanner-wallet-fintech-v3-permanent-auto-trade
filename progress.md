@@ -38,7 +38,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 28 | `calculateCombinedBalanceSnapshot` error handling | `[x]` | `Fix #28` |
 | 29 | Quiet hours use admin timezone (UTC default) | `[x]` | `Fix #29` |
 | 30 | Missing source-wallet rate → stop "rate unavailable" | `[x]` | `Fix #30` |
-| 31 | Fee-policy reason limits alignment | `[ ]` | |
+| 31 | Fee-policy reason limits alignment | `[x]` | `Fix #31` |
 | 32 | Validate every per-tier editable field | `[ ]` | |
 | 33 | Docs update (spec, progress, admin guide) | `[ ]` | |
 | 34 | Delivery acknowledgement retry cap/backoff | `[ ]` | |
@@ -124,6 +124,14 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 31 notes (`Fix #31`)
+
+- **Item 20 does not make this irrelevant.** The owner skipped item 20 ("keep the package fee"), so the package-fee reason field still exists and the mismatch still matters.
+- **Mismatch.** The client fee editor and its shared validator required a **5–500** character audit reason, but the server accepted **3–2000**: the tRPC zod schema (`.min(3).max(2000)`) and the DB helper `updatePackageFeePolicy` (`reason.length<3||reason.length>2000`). A client-validated reason could therefore never be rejected by the stricter client, but a direct/other caller could persist a 3–4 or 501–2000 character reason that the UI never allows.
+- **What changed.** Both server boundaries now enforce the client's **5–500** window: [routers.ts](file:///workspace/repo/server/routers.ts) `updatePackageFeePolicy` → `z.string().trim().min(5).max(500)`, and [db.ts](file:///workspace/repo/server/db.ts) `updatePackageFeePolicy` → `if(reason.length<5||reason.length>500) throw new Error("A reason of 5 to 500 characters is required")`. This is a tightening to the codebase-wide 5–500 admin-reason standard; the client needed no change.
+- **Tests.** [trading-package-fees.contract.test.ts](file:///workspace/repo/server/trading-package-fees.contract.test.ts) now asserts the aligned router bound and the aligned DB-helper bound. The integration script's reasons are all ≥ 27 characters, so they remain valid. No docs state the numeric window, so no doc change was needed.
+- **Protected area.** Reason length only; no debit/credit/settlement module touched.
 
 ### Item 30 notes (`Fix #30`)
 

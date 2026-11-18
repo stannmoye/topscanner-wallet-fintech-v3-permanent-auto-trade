@@ -688,7 +688,7 @@ export const appRouter = router({
       feeRateBps: z.number().int().min(0).max(10000),
       roundingMode: z.enum(["half_up","down","up","half_even"]),
       effectiveAt: z.string().datetime({ offset: false }),
-      reason: z.string().trim().min(3).max(2000),
+      reason: z.string().trim().min(5).max(500),
     }).strict()).mutation(({ ctx, input }) => updatePackageFeePolicy(input, ctx.user.id)),
     tradeFeePolicy: adminProcedure.query(() => getTradeFeePolicy()),
     pendingSettlements: adminProcedure.query(() => listPendingSettlements()),

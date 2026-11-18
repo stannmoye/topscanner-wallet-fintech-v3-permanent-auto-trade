@@ -6355,7 +6355,7 @@ async function updatePackageFeePolicy(input, actorId) {
   if (!Number.isSafeInteger(input.packageId) || input.packageId < 1 || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) throw new Error("Package and expected version must be valid");
   if (!Number.isInteger(input.feeRateBps) || input.feeRateBps < 0 || input.feeRateBps > 1e4 || !["half_up", "down", "up", "half_even"].includes(input.roundingMode)) throw new Error("Package fee policy is invalid");
   const reason = input.reason.trim();
-  if (reason.length < 3 || reason.length > 2e3) throw new Error("A reason of 3 to 2000 characters is required");
+  if (reason.length < 5 || reason.length > 500) throw new Error("A reason of 5 to 500 characters is required");
   const effectiveAt = new Date(input.effectiveAt);
   if (!Number.isFinite(effectiveAt.getTime()) || effectiveAt.toISOString() !== input.effectiveAt) throw new Error("Effective time must be a valid UTC ISO timestamp");
   const db2 = await getDb();
@@ -19057,7 +19057,7 @@ var appRouter = router({
       feeRateBps: z3.number().int().min(0).max(1e4),
       roundingMode: z3.enum(["half_up", "down", "up", "half_even"]),
       effectiveAt: z3.string().datetime({ offset: false }),
-      reason: z3.string().trim().min(3).max(2e3)
+      reason: z3.string().trim().min(5).max(500)
     }).strict()).mutation(({ ctx, input }) => updatePackageFeePolicy(input, ctx.user.id)),
     tradeFeePolicy: adminProcedure.query(() => getTradeFeePolicy()),
     pendingSettlements: adminProcedure.query(() => listPendingSettlements()),
