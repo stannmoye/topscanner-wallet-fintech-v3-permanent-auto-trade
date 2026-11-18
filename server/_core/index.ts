@@ -99,9 +99,26 @@ async function startServer() {
     }
     return next();
   });
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Item 51: keep ordinary JSON and form bodies small. The only JSON route that
+  // legitimately carries a large payload is the admin compose-email tRPC procedure
+  // (base64 attachments), so it gets its own larger parser registered ahead of the
+  // global one (body-parser skips a body that was already parsed). The binary upload
+  // routes below use express.raw with their own limits and are unaffected, because
+  // express.json only parses application/json, which those requests do not send. KYC
+  // documents, ticket/support attachments and settlement evidence are uploaded as raw
+  // bytes to those scoped routes, so none of them needs a larger JSON limit here.
+  const LARGE_JSON_LIMIT = "50mb";
+  const LARGE_JSON_PROCEDURE = "adminOperations.composeEmail";
+  const largeJsonBodyParser = express.json({ limit: LARGE_JSON_LIMIT });
+  app.use((req, res, next) => {
+    if (req.method === "POST" && req.path.startsWith("/api/trpc/")) {
+      const procedures = req.path.slice("/api/trpc/".length).split("?")[0].split(",");
+      if (procedures.includes(LARGE_JSON_PROCEDURE)) return largeJsonBodyParser(req, res, next);
+    }
+    return next();
+  });
+  app.use(express.json({ limit: "1mb" }));
+  app.use(express.urlencoded({ limit: "1mb", extended: true }));
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
   const setLocalSession = (req: express.Request, res: express.Response, user: { id: number; authVersion?: number }) => {
     res.cookie(COOKIE_NAME, createLocalSession(user.id, user.authVersion || 0), { ...getSessionCookieOptions(req), maxAge: 30 * 24 * 60 * 60 * 1000 });
