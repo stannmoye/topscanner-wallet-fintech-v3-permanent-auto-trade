@@ -956,7 +956,7 @@ function CustomerOpportunities({opportunityData}:{push:(x:string)=>void;sound:bo
   const currencyScale=(currency:unknown)=>{const code=currencyCode(currency);return Number(balances.data?.currencies?.find((item:any)=>String(item.code||"").toUpperCase()===code)?.scale??(code==="BTC"||code==="ETH"?8:2));};
   const money=(minor:number,currency:unknown)=>Number(minor||0)/(10**currencyScale(currency));
   const format=(minor:number,currency:unknown)=>{const code=currencyCode(currency);if(!code)return "Currency unavailable";const scale=currencyScale(code);return money(minor,code).toLocaleString(undefined,{minimumFractionDigits:scale,maximumFractionDigits:scale})+" "+code;};
-  const refreshBalance=async()=>{if(balanceRefreshing)return;setBalanceRefreshing(true);try{await utils.customer.opportunities.invalidate();}finally{setBalanceRefreshing(false);}};
+  const refreshBalance=async()=>{if(balanceRefreshing)return;setBalanceRefreshing(true);try{await Promise.all([utils.customer.balances.invalidate(),utils.customer.opportunities.invalidate()]);}finally{setBalanceRefreshing(false);}};
   return <div className="arb-page portal-page customer-opportunities-page">
     <div className="portal-page-top">
       <div><div className="eyebrow">Automatic trading lifecycle</div><h1>Trading Opportunities</h1><p>Eligible opportunities are evaluated by the server. Capital is committed only when automatic deposit-based eligibility and available-balance checks pass.</p></div>

@@ -31,6 +31,7 @@ export default defineConfig({
       "client/src/trading-delivery-policy-*.test.ts",
       "client/src/trading-experience.styles.test.ts",
       "client/src/visibility-aware-polling.test.ts",
+      "client/src/refresh-balance-invalidation.test.ts",
     ],
   },
 });

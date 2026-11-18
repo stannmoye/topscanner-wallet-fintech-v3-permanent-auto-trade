@@ -46,7 +46,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 36 | Countdowns must not trust local clock | `[x]` | `Fix #36` |
 | 37 | Dismiss/minimize must not cancel rendered ack | `[x]` | `Fix #37` |
 | 38 | Visibility-aware polling | `[x]` | `Fix #38` |
-| 39 | Refresh balance invalidates balances + FX | `[ ]` | |
+| 39 | Refresh balance invalidates balances + FX | `[x]` | `Fix #39` |
 | 40 | Minimal customer feed payload | `[ ]` | |
 | 41 | Remove duplicate menus, keep ONE navigation | `[ ]` | |
 | 42 | Mobile admin drawer group-header close | `[ ]` | |
@@ -124,6 +124,13 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 39 notes (`Fix #39`)
+
+- **Problem.** The customer "Refresh balance" button in [App.tsx](file:///workspace/repo/client/src/App.tsx) (`CustomerOpportunities`) called only `utils.customer.opportunities.invalidate()`. The button is shown precisely when the live FX quote is unavailable ("Rate unavailable, try again… No sufficiency is assumed."), but the FX conversion rides on the **balance summary** payload (`summary.conversions`), which that invalidation did not touch — so pressing Refresh re-ran the opportunity feed while the stale/unavailable balance quote stayed on screen. There is no separate FX tRPC procedure (`customer.balances` is the query that carries `conversions`).
+- **Fix.** `refreshBalance` now invalidates both queries and awaits them together: `await Promise.all([utils.customer.balances.invalidate(),utils.customer.opportunities.invalidate()])`, so a fresh live FX quote and a re-evaluated eligibility are fetched before the "Refreshing…" state clears. Only the invalidation targets changed; the button, its label and the refreshing guard are unchanged.
+- **Tests.** New [refresh-balance-invalidation.test.ts](file:///workspace/repo/client/src/refresh-balance-invalidation.test.ts) (5 tests): the handler invalidates the balances summary (the query carrying `conversions`), still invalidates the opportunity feed, no longer invalidates opportunities alone (regression guard on the old one-call form), awaits both within one `Promise.all` before clearing `setBalanceRefreshing(false)`, and keeps the button wired. Registered the file in [vitest.config.ts](file:///workspace/repo/vitest.config.ts).
+- **Protected area.** Client display/refetch only; no server, ledger, allocation or settlement change.
 
 ### Item 38 notes (`Fix #38`)
 
