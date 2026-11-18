@@ -5,6 +5,7 @@ import { encodeCompanyCatalogueSelection } from "@shared/company-catalogue-selec
 
 const PAGE_SIZE = 10;
 type AdminCompanyStatus = "verified" | "unverified" | "disabled" | "archived";
+type CatalogueBulkStatus = "verified" | "unverified" | "disabled" | "enabled" | "archived" | "restored";
 
 export default function AdminCompanyCatalogue() {
   const [search, setSearch] = useState("");
@@ -14,6 +15,8 @@ export default function AdminCompanyCatalogue() {
   const [statusFilter, setStatusFilter] = useState<"all" | AdminCompanyStatus>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [reasonError, setReasonError] = useState<string | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<{ status: CatalogueBulkStatus; label: string; details: string } | null>(null);
+  const [reasonInput, setReasonInput] = useState("");
   const summary = trpc.companyCatalogueReference.summary.useQuery();
   // Fetch the bounded, fixed catalogue once per filter so selection can span every
   // matching record without confusing "select all" with the current visible page.
@@ -75,22 +78,33 @@ export default function AdminCompanyCatalogue() {
   });
   const clearSelection = () => setSelectedIds(new Set());
 
-  const applyStatus = async (status: "verified" | "unverified" | "disabled" | "enabled" | "archived" | "restored") => {
-    const ids = [...selectedIds];
-    if (!ids.length || updateStatus.isPending) return;
+  const applyStatus = (status: CatalogueBulkStatus) => {
+    if (!selectedIds.size || updateStatus.isPending) return;
     const label = status === "archived" ? "archive" : status === "restored" ? "restore" : status === "verified" ? "mark as admin-verified" : status === "disabled" ? "disable" : status === "enabled" ? "enable" : "mark as unverified";
     const details = status === "restored" ? " This clears only the archived status; verification and enablement are unchanged." : "";
-    const confirmed = window.confirm(`You are about to ${label} ${ids.length.toLocaleString()} selected compan${ids.length === 1 ? "y" : "ies"}.${details} Continue?`);
-    if (!confirmed) return;
-    const enteredReason = window.prompt(`Enter the case-specific reason for this ${label} action (required, 8–500 characters):`);
-    if (enteredReason === null) return;
-    const reason = enteredReason.trim();
+    setReasonError(null);
+    setReasonInput("");
+    setPendingStatus({ status, label, details });
+  };
+
+  const confirmStatusAction = async () => {
+    if (!pendingStatus || updateStatus.isPending) return;
+    const { status } = pendingStatus;
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    const reason = reasonInput.trim();
     if (reason.length < 8 || reason.length > 500) {
       setReasonError("A case-specific reason between 8 and 500 characters is required for every bulk Catalogue status action.");
       return;
     }
     setReasonError(null);
-    await updateStatus.mutateAsync({ ...encodeCompanyCatalogueSelection(ids), status, reason });
+    try {
+      await updateStatus.mutateAsync({ ...encodeCompanyCatalogueSelection(ids), status, reason });
+      setPendingStatus(null);
+      setReasonInput("");
+    } catch (error) {
+      setReasonError(error instanceof Error ? error.message : "The bulk Catalogue action failed. Please try again.");
+    }
   };
 
   return <div className="arb-page portal-page admin-company-catalogue">
@@ -198,6 +212,16 @@ export default function AdminCompanyCatalogue() {
           ? <button className="secondary-button" type="button" onClick={() => void applyStatus("restored")} disabled={!selectedCount || updateStatus.isPending}>Restore selected</button>
           : <button className="secondary-button danger-button" type="button" onClick={() => void applyStatus("archived")} disabled={!selectedCount || updateStatus.isPending}>Delete selected</button>}
       </div>
+      {pendingStatus && <div className="company-catalogue-bulk-confirm" role="group" aria-label="Confirm bulk catalogue action">
+        <p>You are about to {pendingStatus.label} {selectedCount.toLocaleString()} selected compan{selectedCount === 1 ? "y" : "ies"}.{pendingStatus.details} Continue?</p>
+        <label>Case-specific reason (required, 8–500 characters)
+          <input type="text" value={reasonInput} maxLength={500} aria-label="Case-specific reason for this bulk catalogue action" onChange={(event) => setReasonInput(event.target.value)} />
+        </label>
+        <div className="company-catalogue-bulk-actions">
+          <button className="primary-button" type="button" onClick={() => { void confirmStatusAction(); }} disabled={updateStatus.isPending}>{updateStatus.isPending ? "Saving…" : "Confirm action"}</button>
+          <button className="secondary-button" type="button" onClick={() => { setPendingStatus(null); setReasonInput(""); setReasonError(null); }} disabled={updateStatus.isPending}>Cancel</button>
+        </div>
+      </div>}
       {reasonError && <p className="admin-ops-empty error" role="alert">{reasonError}</p>}
       {updateStatus.isError && <p className="admin-ops-empty error" role="alert">{updateStatus.error.message}</p>}
       {updateStatus.isSuccess && <p className="company-catalogue-success" role="status">Catalogue changes saved.</p>}

@@ -37,7 +37,6 @@ describe("administrator company catalogue bulk controls", () => {
   });
 
   it("requires and forwards a fresh operator-entered reason for each status action", () => {
-    expect(catalogue).toContain("window.prompt(");
     expect(catalogue).toContain("case-specific reason");
     expect(catalogue).toContain("reason.length < 8 || reason.length > 500");
     expect(catalogue).toContain("8–500 characters");
@@ -49,6 +48,15 @@ describe("administrator company catalogue bulk controls", () => {
     expect(router).toContain("updateCompanyCatalogueAdminState({ ids, status: input.status, reason: input.reason, updatedBy: ctx.user.id })");
     expect(database).toContain("reason,");
     expect(database).toContain('reason,\n      reference: `company-catalogue:${input.status}:${updatedAt}`');
+  });
+
+  it("collects the bulk action confirmation and reason in an inline accessible form, not a browser dialog", () => {
+    expect(catalogue).toContain("pendingStatus");
+    expect(catalogue).toContain("confirmStatusAction");
+    expect(catalogue).toContain('role="group" aria-label="Confirm bulk catalogue action"');
+    expect(catalogue).not.toContain("window.prompt(");
+    expect(catalogue).not.toContain("window.confirm");
+    expect(catalogue).not.toContain("window.alert(");
   });
 
   it("encodes every catalogue selection compactly and validates bitset bounds", () => {
@@ -93,7 +101,7 @@ describe("administrator company catalogue bulk controls", () => {
     ]) expect(catalogue).toContain(phrase);
     expect(catalogue).toContain("selectedIds");
     expect(catalogue).toContain('<option value="disabled">Disabled</option>');
-    expect(catalogue).toContain("window.confirm");
+    expect(catalogue).not.toContain("window.confirm");
     expect(catalogue).toContain('status !== "archived"');
   });
 

@@ -33,6 +33,8 @@ export default function AdminOpportunityTemplates() {
   const [feedbackIsError, setFeedbackIsError] = useState(false);
   const [reason, setReason] = useState("Admin-reviewed opportunity generation template");
   const [controlReason, setControlReason] = useState("");
+  const [pendingTemplateAction, setPendingTemplateAction] = useState<{ id: number; action: "approve" | "disable" | "archive"; reason: string } | null>(null);
+  const [generationTarget, setGenerationTarget] = useState<boolean | null>(null);
 
   const eligibleCompanies = useMemo(() => (companyRecords.data ?? []).filter((company) =>
     companyState.data?.statusById?.[company.id]?.status === "verified"), [companyRecords.data, companyState.data]);
@@ -74,15 +76,29 @@ export default function AdminOpportunityTemplates() {
     saveTemplate.mutate({ ...(editing ? { id: editing.id, expectedVersion: editing.version } : {}), action, reason: reason.trim(), template: form });
   };
   const actionOnTemplate = (row: NonNullable<typeof templates.data>[number], action: "approve" | "disable" | "archive") => {
-    const enteredReason = window.prompt(`Enter a case-specific audit reason (5–500 characters) to ${action} template #${row.id}:`);
-    if (enteredReason === null) return;
-    if (enteredReason.trim().length < 5 || enteredReason.trim().length > 500) { setFeedback("A case-specific audit reason of 5–500 characters is required."); setFeedbackIsError(true); return; }
     setFeedback("");
-    saveTemplate.mutate({ id: row.id, expectedVersion: row.version, action, reason: enteredReason.trim(), template: {
-      templateName: row.templateName, companyReferenceId: row.companyReferenceId, symbol: row.symbol, venueFrom: row.venueFrom,
-      venueTo: row.venueTo, currency: row.currency as TemplateForm["currency"], minimumMinor: Number(row.minimumMinor),
-      sourceReference: row.sourceReference, reviewNotes: row.reviewNotes,
-    } });
+    setFeedbackIsError(false);
+    setPendingTemplateAction({ id: row.id, action, reason: "" });
+  };
+  const confirmTemplateAction = async () => {
+    if (!pendingTemplateAction) return;
+    const { id, action } = pendingTemplateAction;
+    const value = pendingTemplateAction.reason.trim();
+    if (value.length < 5 || value.length > 500) { setFeedback("A case-specific audit reason of 5–500 characters is required."); setFeedbackIsError(true); return; }
+    const row = (templates.data ?? []).find((entry) => entry.id === id);
+    if (!row) { setPendingTemplateAction(null); setFeedback("That template is no longer available. Refresh the list and try again."); setFeedbackIsError(true); return; }
+    setFeedback("");
+    try {
+      await saveTemplate.mutateAsync({ id: row.id, expectedVersion: row.version, action, reason: value, template: {
+        templateName: row.templateName, companyReferenceId: row.companyReferenceId, symbol: row.symbol, venueFrom: row.venueFrom,
+        venueTo: row.venueTo, currency: row.currency as TemplateForm["currency"], minimumMinor: Number(row.minimumMinor),
+        sourceReference: row.sourceReference, reviewNotes: row.reviewNotes,
+      } });
+      setPendingTemplateAction(null);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "The template action failed. Please try again.");
+      setFeedbackIsError(true);
+    }
   };
   const editTemplate = (row: NonNullable<typeof templates.data>[number]) => {
     setEditing({ id: row.id, version: row.version });
@@ -93,11 +109,23 @@ export default function AdminOpportunityTemplates() {
   };
   const toggleGeneration = () => {
     const next = !(control.data?.available && control.data.enabled);
-    const promptValue = window.prompt(`Enter the reason to ${next ? "resume" : "pause"} automatic informational opportunity generation (5–500 characters):`);
-    if (promptValue === null) return;
-    const value = promptValue.trim();
+    setControlReason("");
+    setFeedback("");
+    setFeedbackIsError(false);
+    setGenerationTarget(next);
+  };
+  const confirmGenerationChange = async () => {
+    if (generationTarget === null) return;
+    const value = controlReason.trim();
     if (value.length < 5 || value.length > 500) { setFeedback("A generation-control reason of 5–500 characters is required."); setFeedbackIsError(true); return; }
-    changeControl.mutate({ enabled: next, reason: value, expectedVersion: control.data?.version ?? 0 });
+    setFeedback("");
+    try {
+      await changeControl.mutateAsync({ enabled: generationTarget, reason: value, expectedVersion: control.data?.version ?? 0 });
+      setGenerationTarget(null);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "The generation control update failed. Please try again.");
+      setFeedbackIsError(true);
+    }
   };
   const statusLabel = control.data?.available ? (control.data.enabled ? "Running · generation enabled" : "Paused · generation disabled") : "Unavailable · fail-closed";
 
@@ -117,6 +145,16 @@ export default function AdminOpportunityTemplates() {
         <button className={control.data?.available && control.data.enabled ? "secondary-button" : "primary-button"} type="button" onClick={toggleGeneration} disabled={changeControl.isPending || !control.data}>
           {control.data?.available && control.data.enabled ? <><Pause size={14}/> Pause automatic generation</> : <><Play size={14}/> Enable automatic generation</>}
         </button>
+        {generationTarget !== null && <div className="opportunity-generation-confirm" role="group" aria-label="Confirm generation control change">
+          <p>Enter the reason to {generationTarget ? "resume" : "pause"} automatic informational opportunity generation (5–500 characters).</p>
+          <label>Generation-control reason
+            <input type="text" value={controlReason} maxLength={500} onChange={(event) => setControlReason(event.target.value)} />
+          </label>
+          <div className="company-catalogue-bulk-actions">
+            <button className="primary-button" type="button" onClick={() => { void confirmGenerationChange(); }} disabled={changeControl.isPending}>{changeControl.isPending ? "Saving…" : generationTarget ? "Confirm resume" : "Confirm pause"}</button>
+            <button className="secondary-button" type="button" onClick={() => { setGenerationTarget(null); setControlReason(""); }} disabled={changeControl.isPending}>Cancel</button>
+          </div>
+        </div>}
         <small>Default is ON after migration 0103. Saving OFF is preserved across restarts and stops new customer assignments; already-generated offers remain subject to their saved expiry and the independent delivery gates. New generation requires an active qualifying package, valid saved package bounds, enabled delivery, quota, schedule and an eligible company; no template is required.</small>
       </div>
       <div className="settings-card">
@@ -214,6 +252,16 @@ export default function AdminOpportunityTemplates() {
           {row.status !== "approved" && row.companyCurrentlyApproved && <button className="secondary-button" type="button" onClick={() => actionOnTemplate(row, "approve")}>Approve</button>}
           {row.status === "approved" && <button className="secondary-button" type="button" onClick={() => actionOnTemplate(row, "disable")}>Disable</button>}
           {row.status !== "archived" && <button className="secondary-button" type="button" onClick={() => actionOnTemplate(row, "archive")}>Archive</button>}
+          {pendingTemplateAction?.id === row.id && <div className="opportunity-template-confirm" role="group" aria-label={`Confirm ${pendingTemplateAction.action} for template ${row.id}`}>
+            <p>Enter a case-specific audit reason (5–500 characters) to {pendingTemplateAction.action} template #{row.id}.</p>
+            <label>Case-specific audit reason
+              <input type="text" value={pendingTemplateAction.reason} maxLength={500} onChange={(event) => setPendingTemplateAction((current) => current ? { ...current, reason: event.target.value } : current)} />
+            </label>
+            <div className="company-catalogue-bulk-actions">
+              <button className="primary-button" type="button" onClick={() => { void confirmTemplateAction(); }} disabled={saveTemplate.isPending}>{saveTemplate.isPending ? "Saving…" : `Confirm ${pendingTemplateAction.action}`}</button>
+              <button className="secondary-button" type="button" onClick={() => setPendingTemplateAction(null)} disabled={saveTemplate.isPending}>Cancel</button>
+            </div>
+          </div>}
           <small>Source: {row.sourceReference} · Review: {row.reviewNotes}</small>
         </article>)}
       </div>
