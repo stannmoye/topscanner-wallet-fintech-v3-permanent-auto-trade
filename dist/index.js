@@ -6350,44 +6350,14 @@ async function updatePackageFeePolicy(input, actorId) {
 async function getTradeSettlementPolicy() {
   const db2 = await getDb();
   const keys = [...TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TRADE_SETTLEMENT_POLICY_VERSION_KEY];
-  let rows2 = db2 ? await db2.select().from(appSettings).where(inArray2(appSettings.settingKey, keys)) : [];
-  let settings = new Map(rows2.map((row) => [row.settingKey, row.settingValue]));
+  const rows2 = db2 ? await db2.select().from(appSettings).where(inArray2(appSettings.settingKey, keys)) : [];
+  const settings = new Map(rows2.map((row) => [row.settingKey, row.settingValue]));
   const rawSettlementDelay = settings.get("trade.settlementDelaySeconds");
-  const parsedSettlementDelay = Number(rawSettlementDelay);
-  if (db2 && rawSettlementDelay !== void 0 && rawSettlementDelay !== null && (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 0 || parsedSettlementDelay > 604800)) {
-    await db2.transaction(async (tx) => {
-      await tx.insert(appSettings).values({
-        settingKey: "trade.settlementDelaySeconds",
-        settingValue: "0",
-        updatedBy: null
-      }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
-      const locked = (await tx.select().from(appSettings).where(eq3(appSettings.settingKey, "trade.settlementDelaySeconds")).limit(1).for("update"))[0];
-      const lockedValue = locked?.settingValue;
-      const lockedNumber = Number(lockedValue);
-      if (lockedValue !== void 0 && lockedValue !== null && (!Number.isSafeInteger(lockedNumber) || lockedNumber < 0 || lockedNumber > 604800)) {
-        const repairedAt = /* @__PURE__ */ new Date();
-        await tx.update(appSettings).set({
-          settingValue: "0",
-          updatedBy: null,
-          updatedAt: repairedAt
-        }).where(eq3(appSettings.settingKey, "trade.settlementDelaySeconds"));
-        await tx.insert(v5AuditEvents).values({
-          actorUserId: null,
-          action: "trade_global_timing_policy_repaired",
-          entityType: "trade_global_timing_policy",
-          entityId: "settlement-review-delay",
-          reason: "Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during policy read.",
-          reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
-          metadataJson: JSON.stringify({
-            settingKey: "trade.settlementDelaySeconds",
-            previousValue: lockedValue,
-            repairedValue: "0"
-          })
-        });
-      }
-    });
-    rows2 = await db2.select().from(appSettings).where(inArray2(appSettings.settingKey, keys));
-    settings = new Map(rows2.map((row) => [row.settingKey, row.settingValue]));
+  if (rawSettlementDelay !== void 0 && rawSettlementDelay !== null) {
+    const parsedSettlementDelay = Number(rawSettlementDelay);
+    if (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 0 || parsedSettlementDelay > 604800) {
+      settings.set("trade.settlementDelaySeconds", "0");
+    }
   }
   const policy = normalizeTradeSettlementPolicy({
     delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "0",
@@ -6404,6 +6374,42 @@ async function getTradeSettlementPolicy() {
     policyVersion: settings.get(TRADE_SETTLEMENT_POLICY_VERSION_KEY) ?? "1"
   });
   return { ...policy, settlementDelaySeconds: policy.delaySeconds };
+}
+async function repairLegacyTradeSettlementPolicy() {
+  const db2 = await getDb();
+  if (!db2) return false;
+  return db2.transaction(async (tx) => {
+    await tx.insert(appSettings).values({
+      settingKey: "trade.settlementDelaySeconds",
+      settingValue: "0",
+      updatedBy: null
+    }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
+    const locked = (await tx.select().from(appSettings).where(eq3(appSettings.settingKey, "trade.settlementDelaySeconds")).limit(1).for("update"))[0];
+    const lockedValue = locked?.settingValue;
+    if (lockedValue === void 0 || lockedValue === null) return false;
+    const lockedNumber = Number(lockedValue);
+    if (Number.isSafeInteger(lockedNumber) && lockedNumber >= 0 && lockedNumber <= 604800) return false;
+    const repairedAt = /* @__PURE__ */ new Date();
+    await tx.update(appSettings).set({
+      settingValue: "0",
+      updatedBy: null,
+      updatedAt: repairedAt
+    }).where(eq3(appSettings.settingKey, "trade.settlementDelaySeconds"));
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: null,
+      action: "trade_global_timing_policy_repaired",
+      entityType: "trade_global_timing_policy",
+      entityId: "settlement-review-delay",
+      reason: "Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during the settlement policy maintenance step.",
+      reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
+      metadataJson: JSON.stringify({
+        settingKey: "trade.settlementDelaySeconds",
+        previousValue: lockedValue,
+        repairedValue: "0"
+      })
+    });
+    return true;
+  });
 }
 function normalizeTradeSettlementPolicy(values) {
   const numeric2 = {
@@ -20216,6 +20222,9 @@ async function startServer() {
       void runTradeCycle().catch(() => void 0);
     }, 3e4);
     autoTradeTimer.unref();
+    void repairLegacyTradeSettlementPolicy().then((repaired) => {
+      if (repaired) console.log("[TradeTimingPolicy] repaired invalid legacy settlement review delay to the immediate-settlement default of 0 seconds");
+    }).catch((error) => console.error("[TradeTimingPolicy] startup repair failed", sanitizeWorkerErrorMessage(error)));
     void catchUpDueAutomaticSettlements({ limit: 250 }).then((result) => {
       if (result.settlement.settled || result.credit.credited) {
         console.log("[SettlementCatchUp] credited overdue automatic trades on startup", result);

@@ -34,7 +34,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 24 | `updatePopupDeliveryStatus` requires leaseToken | `[x]` | `Fix #24` |
 | 25 | Allocation reason 8–500 chars, strict input | `[x]` | `Fix #25` |
 | 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[x]` | `Fix #26` |
-| 27 | No writes during reads in `getTradeSettlementPolicy` | `[ ]` | |
+| 27 | No writes during reads in `getTradeSettlementPolicy` | `[x]` | `Fix #27` |
 | 28 | `calculateCombinedBalanceSnapshot` error handling | `[ ]` | |
 | 29 | Quiet hours use admin timezone (UTC default) | `[ ]` | |
 | 30 | Missing source-wallet rate → stop "rate unavailable" | `[ ]` | |
@@ -142,6 +142,14 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **What changed.** (1) The insert now writes `executionStatus` explicitly as `'READY'` (no behaviour change — it matches the previous default). (2) [popup-execution-policy.ts](file:///workspace/repo/server/modules/popup-execution-policy.ts) no longer substitutes `READY` for a missing/blank execution status: `isPopupExecutionEligible` now trims and requires an explicit value, so a missing/blank status is **not** eligible and only an explicit `READY`/`RETRYING` is.
 - **Tests.** Extended [popup-execution-policy.test.ts](file:///workspace/repo/server/modules/popup-execution-policy.test.ts) with a fail-closed case over `undefined`/`null`/`""`/whitespace, while asserting explicit `ready`/`RETRYING` (case/space-insensitive) stay eligible.
 - **Protected area.** No debit/credit/settlement code touched.
+
+### Item 27 notes (`Fix #27`)
+
+- **Root cause.** `getTradeSettlementPolicy` ([db.ts](file:///workspace/repo/server/db.ts)) was a read that wrote: when the stored `trade.settlementDelaySeconds` was out of range it opened a `db.transaction`, upserted the key, row-locked it, updated it to `"0"` and inserted a `trade_global_timing_policy_repaired` audit entry — inside the read path, so every AutoTrade policy read could mutate the database.
+- **What changed.** (1) The read no longer writes. An invalid legacy `trade.settlementDelaySeconds` is normalised to the immediate-settlement default of `0` **in memory only** (`settings.set(...)`) and a valid value is always preserved — the returned policy is identical to before. (2) The persistence and its immutable audit entry moved into a new explicit, idempotent maintenance function `repairLegacyTradeSettlementPolicy()`: it opens its own transaction, upserts + row-locks the key, rechecks, and only then updates to `"0"` and records the same `trade_global_timing_policy_repaired` audit event (now worded "during the settlement policy maintenance step"). (3) [index.ts](file:///workspace/repo/server/_core/index.ts) calls it once on startup (alongside the item-19 catch-up), so a legacy bad value is still repaired and audited, but never as a side effect of a read. Lock/recheck keeps it safe when several app instances start at once.
+- **Behaviour unchanged.** No API, no returned value, no migration, and no ledger/settlement code changed. Repairing is now a deliberate step rather than an implicit one; the stored outcome and audit trail are the same.
+- **Tests.** Rewrote the item-27 case in [trading-global-timing-policy.contract.test.ts](file:///workspace/repo/server/trading-global-timing-policy.contract.test.ts): it slices the `getTradeSettlementPolicy` body and asserts it contains **no** `.transaction(`, `.insert(`, `.update(` or `v5AuditEvents` (only the in-memory `settings.set` + select), and asserts the explicit `repairLegacyTradeSettlementPolicy` function carries the transaction, lock, audit action/entity and reason, and that startup wires it.
+- **Protected area.** No debit/credit/settlement module touched.
 
 ### Item 26 notes (`Fix #26`)
 

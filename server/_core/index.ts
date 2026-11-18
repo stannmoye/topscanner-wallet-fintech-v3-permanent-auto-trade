@@ -7,7 +7,7 @@ import { registerProviderOAuthRoutes } from "./providerOAuth";
 import { publicPlatformScript } from "./publicConfig";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
+import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { configuredAuthRateLimitStore, createAuthRateLimiter } from "./authRateLimit";
@@ -449,6 +449,12 @@ async function startServer() {
     };
     const autoTradeTimer = registerWorkerInterval(() => { void runTradeCycle().catch(() => undefined); }, 30_000);
     autoTradeTimer.unref();
+    // Item 27: reads must not write. The repair of an invalid legacy
+    // trade.settlementDelaySeconds value is an explicit one-time maintenance step that
+    // runs once on startup (idempotent, lock-guarded), never from the policy read.
+    void repairLegacyTradeSettlementPolicy()
+      .then(repaired => { if (repaired) console.log("[TradeTimingPolicy] repaired invalid legacy settlement review delay to the immediate-settlement default of 0 seconds"); })
+      .catch(error => console.error("[TradeTimingPolicy] startup repair failed", sanitizeWorkerErrorMessage(error)));
     // Item 19: one bounded startup catch-up clears any overdue automatic pop-up
     // trade before the periodic 30-second sweep takes over. It is idempotent
     // (row locks + unique settlement reference + walletUpdatedAt guard), so it is

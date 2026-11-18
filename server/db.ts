@@ -408,55 +408,22 @@ export async function updatePackageFeePolicy(input:{packageId:number;expectedVer
 export async function getTradeSettlementPolicy() {
   const db = await getDb();
   const keys = [...TRADE_SETTLEMENT_POLICY_SETTING_KEYS, TRADE_SETTLEMENT_POLICY_VERSION_KEY];
-  let rows = db ? await db.select().from(appSettings).where(inArray(appSettings.settingKey, keys)) : [];
-  let settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
-  const rawSettlementDelay = settings.get("trade.settlementDelaySeconds");
-  const parsedSettlementDelay = Number(rawSettlementDelay);
+  const rows = db ? await db.select().from(appSettings).where(inArray(appSettings.settingKey, keys)) : [];
+  const settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
 
-  // Older databases can contain a stale/out-of-range global delay even though
-  // the current API only accepts 0–604800 seconds. Do not let one bad legacy
-  // setting crash every AutoTrade cycle. Repair only this invalid key to the
-  // immediate-settlement default of 0 seconds, preserve every valid setting, and
-  // record the previous value in the immutable audit stream. Lock/recheck to make
-  // the repair safe when multiple app instances start at the same time.
-  if (db && rawSettlementDelay !== undefined && rawSettlementDelay !== null &&
-      (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 0 || parsedSettlementDelay > 604800)) {
-    await db.transaction(async tx => {
-      await tx.insert(appSettings).values({
-        settingKey: "trade.settlementDelaySeconds",
-        settingValue: "0",
-        updatedBy: null,
-      }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
-      const locked = (await tx.select().from(appSettings)
-        .where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"))
-        .limit(1).for("update"))[0];
-      const lockedValue = locked?.settingValue;
-      const lockedNumber = Number(lockedValue);
-      if (lockedValue !== undefined && lockedValue !== null &&
-          (!Number.isSafeInteger(lockedNumber) || lockedNumber < 0 || lockedNumber > 604800)) {
-        const repairedAt = new Date();
-        await tx.update(appSettings).set({
-          settingValue: "0",
-          updatedBy: null,
-          updatedAt: repairedAt,
-        }).where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"));
-        await tx.insert(v5AuditEvents).values({
-          actorUserId: null,
-          action: "trade_global_timing_policy_repaired",
-          entityType: "trade_global_timing_policy",
-          entityId: "settlement-review-delay",
-          reason: "Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during policy read.",
-          reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
-          metadataJson: JSON.stringify({
-            settingKey: "trade.settlementDelaySeconds",
-            previousValue: lockedValue,
-            repairedValue: "0",
-          }),
-        });
-      }
-    });
-    rows = await db.select().from(appSettings).where(inArray(appSettings.settingKey, keys));
-    settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
+  // Item 27: reads must not write. Older databases can contain a stale/out-of-range
+  // global delay even though the current API only accepts 0–604800 seconds. One bad
+  // legacy value must not crash every AutoTrade cycle, so an invalid
+  // trade.settlementDelaySeconds is normalised to the immediate-settlement default of
+  // 0 seconds IN MEMORY only; every valid setting is preserved. Persisting that repair
+  // (with its immutable audit entry) is an explicit one-time maintenance step:
+  // repairLegacyTradeSettlementPolicy() below.
+  const rawSettlementDelay = settings.get("trade.settlementDelaySeconds");
+  if (rawSettlementDelay !== undefined && rawSettlementDelay !== null) {
+    const parsedSettlementDelay = Number(rawSettlementDelay);
+    if (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 0 || parsedSettlementDelay > 604800) {
+      settings.set("trade.settlementDelaySeconds", "0");
+    }
   }
   const policy = normalizeTradeSettlementPolicy({
     delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "0",
@@ -473,6 +440,53 @@ export async function getTradeSettlementPolicy() {
     policyVersion: settings.get(TRADE_SETTLEMENT_POLICY_VERSION_KEY) ?? "1",
   });
   return { ...policy, settlementDelaySeconds: policy.delaySeconds };
+}
+/**
+ * Item 27: explicit one-time maintenance step that persists the repair of an invalid
+ * legacy `trade.settlementDelaySeconds` value. Reads must never write, so the persistence
+ * and its immutable audit entry live here and are invoked from a deliberate maintenance
+ * call (server startup) instead of from `getTradeSettlementPolicy`.
+ *
+ * Safe when several app instances start at once: it locks and rechecks the key and only
+ * writes when the stored value is still out of range. Returns whether a repair was made.
+ */
+export async function repairLegacyTradeSettlementPolicy(): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  return db.transaction(async tx => {
+    await tx.insert(appSettings).values({
+      settingKey: "trade.settlementDelaySeconds",
+      settingValue: "0",
+      updatedBy: null,
+    }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
+    const locked = (await tx.select().from(appSettings)
+      .where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"))
+      .limit(1).for("update"))[0];
+    const lockedValue = locked?.settingValue;
+    if (lockedValue === undefined || lockedValue === null) return false;
+    const lockedNumber = Number(lockedValue);
+    if (Number.isSafeInteger(lockedNumber) && lockedNumber >= 0 && lockedNumber <= 604800) return false;
+    const repairedAt = new Date();
+    await tx.update(appSettings).set({
+      settingValue: "0",
+      updatedBy: null,
+      updatedAt: repairedAt,
+    }).where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"));
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: null,
+      action: "trade_global_timing_policy_repaired",
+      entityType: "trade_global_timing_policy",
+      entityId: "settlement-review-delay",
+      reason: "Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during the settlement policy maintenance step.",
+      reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
+      metadataJson: JSON.stringify({
+        settingKey: "trade.settlementDelaySeconds",
+        previousValue: lockedValue,
+        repairedValue: "0",
+      }),
+    });
+    return true;
+  });
 }
 const TRADE_SETTLEMENT_POLICY_VERSION_KEY = "trade.timingPolicyVersion";
 const TRADE_SETTLEMENT_POLICY_SETTING_KEYS = [
