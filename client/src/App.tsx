@@ -839,10 +839,12 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const insufficientBalance=balanceStatus==="insufficient";
   const fallbackSymbol=String(popup.symbol||"").trim();
   const heading=String(popup.companyDisplayName||"").trim()||(fallbackSymbol.toUpperCase()!=="BRAND"?fallbackSymbol:"")||"Company opportunity";
-  const packagePolicy=popup.packagePolicy&&typeof popup.packagePolicy==="object"?popup.packagePolicy:{};
-  const packageFeePolicy=popup.packageFeePolicy&&typeof popup.packageFeePolicy==="object"?popup.packageFeePolicy:{};
+  // Item 40: the customer feed sends only the minimal customer-facing scalars the
+  // pop-up renders, never the raw administrator package/fee policy objects.
   const profitRateBps=Number(popup.configuredProfitRateBps||popup.expectedRewardBps||0);
-  const feeRateBps=Number(packageFeePolicy.feeRateBps||0);
+  const feeRateBps=Number(popup.packageFeeRateBps||0);
+  const packageMinimumTradeUnits=Number(popup.packageMinimumTradeUnits||0);
+  const packageMaximumTradeUnits=Number(popup.packageMaximumTradeUnits||0);
   const selectedMinor=Number.isSafeInteger(requiredMinor)&&requiredMinor>0?requiredMinor:0;
   const estimatedGrossProfit=selectedMinor>0?Math.round(selectedMinor*profitRateBps/10000):0;
   const estimatedFee=estimatedGrossProfit>0?Math.round(estimatedGrossProfit*feeRateBps/10000):0;
@@ -862,7 +864,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const expiryCountdown=formatExpiry(remainingSeconds);
   const connectionLabel=connectionStatus==="offline"?"Connection interrupted":connectionStatus==="updating"?"Refreshing status":"Live status connected";
   const formatPercent=(bps:number)=>Number.isFinite(bps)?`${(bps/100).toFixed(2)}%`:"Unavailable";
-  const packageAmountLabel=Number(packagePolicy.minimumTradeUnits)>0&&Number(packagePolicy.maximumTradeUnits)>0?`${Number(packagePolicy.minimumTradeUnits).toLocaleString()} – ${Number(packagePolicy.maximumTradeUnits).toLocaleString()} units`:`${formatMinor(Number(popup.packageMinimumTradeMinor))} – ${formatMinor(Number(popup.packageMaximumTradeMinor))}`;
+  const packageAmountLabel=packageMinimumTradeUnits>0&&packageMaximumTradeUnits>0?`${packageMinimumTradeUnits.toLocaleString()} – ${packageMaximumTradeUnits.toLocaleString()} units`:`${formatMinor(Number(popup.packageMinimumTradeMinor))} – ${formatMinor(Number(popup.packageMaximumTradeMinor))}`;
   const statusTone=insufficientBalance?"opportunity-trade-card--warning":"";
   const detailsId=`opportunity-details-${Number(popup.id)||"current"}`;
   const scheduledExpiry=Number.isFinite(closesAtMs)?closesAt.toLocaleString():"Unavailable";

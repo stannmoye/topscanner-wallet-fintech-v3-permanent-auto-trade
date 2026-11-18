@@ -4745,8 +4745,11 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
       opensAt:row.opensAt,closesAt:row.closesAt,rewardAt:row.rewardAt,marketObservedAt:row.marketObservedAt,
       marketSnapshotId:row.marketSnapshotId,entryPriceUsd:null,entryPriceObservedAt:null,entryPriceSource:null,sector:row.sector,industry:row.industry,listingStatus:row.listingStatus,
       executionStatus:row.executionStatus,executionAttemptCount:Number(row.executionAttemptCount||0),executionRetryAfter:row.executionRetryAfter,executionRetryDay:row.executionRetryDay,executionLastErrorCode:row.executionLastErrorCode,
-      packagePolicy:policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))||null,
-      packageFeePolicy:packageFeeByName.get(String(row.packageName))||null,
+      // Item 40: never send the raw administrator package/fee policy objects to the
+      // customer. Ship only the minimal customer-facing scalars the pop-up renders.
+      packageFeeRateBps:Number(packageFeeByName.get(String(row.packageName))?.feeRateBps||0),
+      packageMinimumTradeUnits:Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.minimumTradeUnits||0),
+      packageMaximumTradeUnits:Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.maximumTradeUnits||0),
       maxTradeAttemptsPerDay:Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.maxTradeAttemptsPerDay??5),
       tradeRetryDelaySeconds:Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.tradeRetryDelaySeconds??30),
       // A failed browser status write is retryable delivery state, not proof that
@@ -4825,7 +4828,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
       companyLogoUrl:companyDisplayAllowed(row.companyReferenceId)?row.companyLogoUrl:null,companyReferenceMetadataJson:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceMetadataJson:null,companyReferenceOnly:companyDisplayAllowed(row.companyReferenceId)&&Boolean(row.companyReferenceOnly),
       badgeLabel:row.badgeLabel??null,badgeStyle:["neutral","blue","purple","gold","green"].includes(String(row.badgeStyle))?String(row.badgeStyle):"neutral",
       policyVersion:Number(row.policyVersion||base.policyVersion||1),marketObservedAt:row.marketObservedAt,sector:row.sector,industry:row.industry,
-      listingStatus:row.listingStatus,offerStatus:row.offerStatus,entryPriceUsd:base.entryPriceUsd??null,entryPriceObservedAt:base.entryPriceObservedAt??null,entryPriceSource:base.entryPriceSource??null,packagePolicy:base.packagePolicy??null,packageFeePolicy:base.packageFeePolicy??null,
+      listingStatus:row.listingStatus,offerStatus:row.offerStatus,entryPriceUsd:base.entryPriceUsd??null,entryPriceObservedAt:base.entryPriceObservedAt??null,entryPriceSource:base.entryPriceSource??null,packageFeeRateBps:base.packageFeeRateBps??0,packageMinimumTradeUnits:base.packageMinimumTradeUnits??0,packageMaximumTradeUnits:base.packageMaximumTradeUnits??0,
       expiryStatus:row.closesAt?(new Date(row.closesAt).getTime()<=responseNow.getTime()?"expired":row.offerStatus==="open"?"active":String(row.offerStatus||"unavailable").toLowerCase()):"unavailable",
       currencyScale:Number(currencyRows.find((item:any)=>String(item.code).toUpperCase()===String(row.currency).toUpperCase())?.scale??2),
       currencySymbol:String(currencyRows.find((item:any)=>String(item.code).toUpperCase()===String(row.currency).toUpperCase())?.symbol||row.currency),

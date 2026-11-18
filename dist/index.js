@@ -10950,8 +10950,11 @@ async function listCustomerOpportunities(userId, options = {}) {
       executionRetryAfter: row.executionRetryAfter,
       executionRetryDay: row.executionRetryDay,
       executionLastErrorCode: row.executionLastErrorCode,
-      packagePolicy: policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName))) || null,
-      packageFeePolicy: packageFeeByName.get(String(row.packageName)) || null,
+      // Item 40: never send the raw administrator package/fee policy objects to the
+      // customer. Ship only the minimal customer-facing scalars the pop-up renders.
+      packageFeeRateBps: Number(packageFeeByName.get(String(row.packageName))?.feeRateBps || 0),
+      packageMinimumTradeUnits: Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.minimumTradeUnits || 0),
+      packageMaximumTradeUnits: Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.maximumTradeUnits || 0),
       maxTradeAttemptsPerDay: Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.maxTradeAttemptsPerDay ?? 5),
       tradeRetryDelaySeconds: Number(policyByName.get(normalizeTradingPackagePolicyKey(String(row.packageName)))?.tradeRetryDelaySeconds ?? 30),
       // A failed browser status write is retryable delivery state, not proof that
@@ -11060,8 +11063,9 @@ async function listCustomerOpportunities(userId, options = {}) {
       entryPriceUsd: base.entryPriceUsd ?? null,
       entryPriceObservedAt: base.entryPriceObservedAt ?? null,
       entryPriceSource: base.entryPriceSource ?? null,
-      packagePolicy: base.packagePolicy ?? null,
-      packageFeePolicy: base.packageFeePolicy ?? null,
+      packageFeeRateBps: base.packageFeeRateBps ?? 0,
+      packageMinimumTradeUnits: base.packageMinimumTradeUnits ?? 0,
+      packageMaximumTradeUnits: base.packageMaximumTradeUnits ?? 0,
       expiryStatus: row.closesAt ? new Date(row.closesAt).getTime() <= responseNow.getTime() ? "expired" : row.offerStatus === "open" ? "active" : String(row.offerStatus || "unavailable").toLowerCase() : "unavailable",
       currencyScale: Number(currencyRows.find((item) => String(item.code).toUpperCase() === String(row.currency).toUpperCase())?.scale ?? 2),
       currencySymbol: String(currencyRows.find((item) => String(item.code).toUpperCase() === String(row.currency).toUpperCase())?.symbol || row.currency),
@@ -16844,6 +16848,17 @@ function normalizeAppearanceSettings(raw) {
 
 // server/routers.ts
 init_notification_events();
+
+// server/modules/customer-feed-payload.ts
+var CUSTOMER_FEED_INTERNAL_OBJECT_FIELDS = ["packagePolicy", "packageFeePolicy"];
+function stripCustomerFeedInternalObjects(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const safe = { ...value };
+  for (const field of CUSTOMER_FEED_INTERNAL_OBJECT_FIELDS) delete safe[field];
+  return safe;
+}
+
+// server/routers.ts
 init_attachmentPolicy();
 
 // server/authSessions.ts
@@ -18669,7 +18684,7 @@ var appRouter = router({
       for (const missed of result.missed || []) await recordTransactionConsoleEvent(ctx.user.id, ctx.req, { eventType: "MISSED_OPPORTUNITY", status: "MISSED", title: `Missed opportunity \xB7 ${missed.symbol}`, message: `The opportunity was recorded because the required wallet balance was unavailable. Estimated reward only; no ledger debit occurred.`, transactionCode: `missed-opportunity:${missed.id}`, amountMinor: missed.potentialRewardMinor, asset: missed.currency });
       const safeObject = (value) => {
         if (!value || typeof value !== "object") return value;
-        const safe = { ...value };
+        const safe = stripCustomerFeedInternalObjects(value);
         delete safe.packageName;
         delete safe.packageId;
         delete safe.packageSubscriptionId;
@@ -18685,7 +18700,7 @@ var appRouter = router({
       return { ...result, offers: result.offers.map(safeObject), missed: result.missed.map(safeObject), autoTrades: result.autoTrades.map(safeObject), settled: result.settled.map(safeObject), delivery: safeObject(result.delivery) };
     }),
     trades: protectedProcedure.query(async ({ ctx }) => (await listTrades(ctx.user.id)).map((value) => {
-      const safe = { ...value };
+      const safe = stripCustomerFeedInternalObjects(value);
       delete safe.packageName;
       delete safe.packageId;
       delete safe.packageSubscriptionId;
