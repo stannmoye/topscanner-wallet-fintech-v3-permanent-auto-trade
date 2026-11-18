@@ -6716,7 +6716,7 @@ async function createLocalCustomer(input) {
   if (!db2) throw new Error("Database is not available");
   const email = input.email.toLowerCase();
   const existing = await getUserByEmail(email);
-  if (existing) throw new Error("An account with this email already exists");
+  if (existing) throw new Error("Account registration could not be completed");
   const openId = `local:customer:${email}`;
   const result = await db2.insert(users).values({ openId, email, name: input.name, loginMethod: "email", role: "user", passwordHash: input.passwordHash });
   await provisionSignupCredit(Number(result[0].insertId));
@@ -13086,6 +13086,7 @@ function passwordHash(password) {
   const digest2 = crypto9.scryptSync(password, salt, 32).toString("hex");
   return `scrypt$${salt}$${digest2}`;
 }
+var TIMING_DECOY_PASSWORD_HASH = passwordHash(crypto9.randomBytes(32).toString("hex"));
 function verifyPassword(password, stored) {
   if (!stored) return false;
   if (stored.startsWith("scrypt$")) {
@@ -19926,14 +19927,16 @@ async function startServer() {
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: safeUser });
     } catch (error) {
-      return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to register" });
+      console.error("[Auth] Customer registration failed:", error instanceof Error ? error.name : "UnknownError");
+      return res.status(400).json({ error: "We could not create your account with those details. If you already have an account, sign in or reset your password instead." });
     }
   });
   app.post("/api/customer/login", customerLoginRateLimit, async (req, res) => {
     try {
       const { email, password } = req.body || {};
       const user = await getUserByEmail(String(email || ""));
-      if (!user || user.role !== "user" && user.role !== "admin" || !verifyPassword(String(password || ""), user.passwordHash)) return res.status(401).json({ error: "Invalid email or password" });
+      const passwordMatches = verifyPassword(String(password || ""), user?.passwordHash ?? TIMING_DECOY_PASSWORD_HASH);
+      if (!user || user.role !== "user" && user.role !== "admin" || !passwordMatches) return res.status(401).json({ error: "Invalid email or password" });
       setLocalSession(req, res, user);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
@@ -19946,7 +19949,8 @@ async function startServer() {
     try {
       const { email, password } = req.body || {};
       const user = await getUserByEmail(String(email || ""));
-      if (!user || user.role !== "admin" || !verifyPassword(String(password || ""), user.passwordHash)) return res.status(401).json({ error: "Invalid administrator credentials" });
+      const passwordMatches = verifyPassword(String(password || ""), user?.passwordHash ?? TIMING_DECOY_PASSWORD_HASH);
+      if (!user || user.role !== "admin" || !passwordMatches) return res.status(401).json({ error: "Invalid email or password" });
       setLocalSession(req, res, user);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;

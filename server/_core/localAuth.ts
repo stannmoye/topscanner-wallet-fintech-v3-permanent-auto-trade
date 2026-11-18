@@ -41,6 +41,13 @@ export function passwordHash(password: string) {
   const digest = crypto.scryptSync(password, salt, 32).toString("hex");
   return `scrypt$${salt}$${digest}`;
 }
+/**
+ * A valid scrypt hash of a random value. It is never a match for any password and is
+ * not a secret; it exists only so a login attempt for an unknown email can still run a
+ * full scrypt verification, keeping response timing independent of whether the account
+ * exists (email-enumeration defense). Computed once per process.
+ */
+export const TIMING_DECOY_PASSWORD_HASH = passwordHash(crypto.randomBytes(32).toString("hex"));
 export function verifyPassword(password: string, stored: string | null | undefined) {
   if (!stored) return false;
   if (stored.startsWith("scrypt$")) {

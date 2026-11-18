@@ -13,7 +13,7 @@ import { getSessionCookieOptions } from "./cookies";
 import { configuredAuthRateLimitStore, createAuthRateLimiter } from "./authRateLimit";
 import { resolveTrustedProxyHops } from "./trustedProxy";
 import { isAllowedAttachmentRequest } from "./attachmentPolicy";
-import { createLocalSession, passwordHash, verifyPassword } from "./localAuth";
+import { createLocalSession, passwordHash, verifyPassword, TIMING_DECOY_PASSWORD_HASH } from "./localAuth";
 import { writeStorageObject } from "../storage";
 import { getTicketUploadPolicy } from "../db";
 import { ensureMarketDrivenOpportunities, refreshMarketData } from "../marketSync";
@@ -117,15 +117,21 @@ async function startServer() {
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: safeUser });
     } catch (error) {
-      return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to register" });
+      // Generic response so a registration attempt never confirms whether an email
+      // address is already registered. The real cause is logged server-side only.
+      console.error("[Auth] Customer registration failed:", error instanceof Error ? error.name : "UnknownError");
+      return res.status(400).json({ error: "We could not create your account with those details. If you already have an account, sign in or reset your password instead." });
     }
   });
   app.post("/api/customer/login", customerLoginRateLimit, async (req, res) => {
     try {
       const { email, password } = req.body || {};
       const user = await getUserByEmail(String(email || ""));
+      // Always run one password verification (against a decoy hash for an unknown email)
+      // so response timing does not reveal whether the account exists.
+      const passwordMatches = verifyPassword(String(password || ""), user?.passwordHash ?? TIMING_DECOY_PASSWORD_HASH);
       // Administrators may sign into their own customer workspace; authorization remains database-role based.
-      if (!user || (user.role !== "user" && user.role !== "admin") || !verifyPassword(String(password || ""), user.passwordHash)) return res.status(401).json({ error: "Invalid email or password" });
+      if (!user || (user.role !== "user" && user.role !== "admin") || !passwordMatches) return res.status(401).json({ error: "Invalid email or password" });
       setLocalSession(req, res, user);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
@@ -138,7 +144,10 @@ async function startServer() {
     try {
       const { email, password } = req.body || {};
       const user = await getUserByEmail(String(email || ""));
-      if (!user || user.role !== "admin" || !verifyPassword(String(password || ""), user.passwordHash)) return res.status(401).json({ error: "Invalid administrator credentials" });
+      // Identical message and one password verification for every outcome (decoy hash for an
+      // unknown email) so the response cannot reveal whether an administrator account exists.
+      const passwordMatches = verifyPassword(String(password || ""), user?.passwordHash ?? TIMING_DECOY_PASSWORD_HASH);
+      if (!user || user.role !== "admin" || !passwordMatches) return res.status(401).json({ error: "Invalid email or password" });
       setLocalSession(req, res, user);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;

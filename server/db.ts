@@ -754,7 +754,9 @@ export async function createLocalCustomer(input: { email: string; passwordHash: 
   const db = await getDb(); if (!db) throw new Error("Database is not available");
   const email = input.email.toLowerCase();
   const existing = await getUserByEmail(email);
-  if (existing) throw new Error("An account with this email already exists");
+  // Neutral message: the public registration route returns a generic response and must
+  // never confirm whether an email address is already registered (email-enumeration defense).
+  if (existing) throw new Error("Account registration could not be completed");
   const openId = `local:customer:${email}`;
   const result = await db.insert(users).values({ openId, email, name: input.name, loginMethod: "email", role: "user", passwordHash: input.passwordHash });
   await provisionSignupCredit(Number(result[0].insertId));
