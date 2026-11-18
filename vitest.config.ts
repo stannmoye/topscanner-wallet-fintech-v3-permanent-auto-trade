@@ -30,6 +30,7 @@ export default defineConfig({
       "client/src/trade-admin-guide.contract.test.ts",
       "client/src/trading-delivery-policy-*.test.ts",
       "client/src/trading-experience.styles.test.ts",
+      "client/src/visibility-aware-polling.test.ts",
     ],
   },
 });

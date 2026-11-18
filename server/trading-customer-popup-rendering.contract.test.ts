@@ -47,7 +47,11 @@ describe("customer opportunity popup retry and visibility gates", () => {
   it("retries eligible offers while the saved delivery policy is enabled", () => {
     expect(component).toContain("const canShow=()=>Boolean(delivery?.enabled&&policy)");
     expect(component).toContain("attemptNext(opportunityData?.offers||[])");
-    expect(component).toContain("window.setInterval(()=>attemptNext(opportunityData?.offers||[]),5000)");
+    // Item 38: one stable interval driven by refs (never rebuilt on each poll)
+    // that pauses while the tab is hidden.
+    expect(component).toContain("const id=window.setInterval(()=>{if(!isPollingDocumentVisible())return;attemptNextRef.current(opportunityOffersRef.current)},5000)");
+    expect(component).toContain("attemptNextRef.current=attemptNext");
+    expect(component).not.toContain("window.setInterval(()=>attemptNext(opportunityData?.offers||[]),5000)");
     expect(component).toContain("current.popupEligible===true");
     expect(component).toContain('String(offer.offerStatus||"").toLowerCase()==="open"');
   });

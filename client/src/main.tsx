@@ -40,6 +40,17 @@ queryClient.getMutationCache().subscribe(event => {
   }
 });
 
+// Item 38: bring every active query up to date the moment the tab becomes
+// visible again, instead of waiting for the next polling interval. Polling
+// itself is paused while the tab is hidden (see visibility-aware-polling.ts).
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void queryClient.refetchQueries({ type: "active" });
+    }
+  });
+}
+
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
