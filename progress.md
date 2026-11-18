@@ -62,7 +62,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 52 | `/api/platform/config.js` browser-key only | `[x]` | `Fix #52` |
 | 53 | `recordDeliveryHistory` bounded warning log | `[x]` | `Fix #53` |
 | 54 | FX rate cache single-flight | `[x]` | `Fix #54` |
-| 55 | `usdUnitsToNativeMinor` clamp + unavailable flag | `[ ]` | |
+| 55 | `usdUnitsToNativeMinor` clamp + unavailable flag | `[x]` | `Fix #55` |
 | 56 | Registry key rename + register 4 patchable fields | `[ ]` | |
 | 57 | Remove/dedupe `getAdminNavigationItem` | `[ ]` | |
 | 58 | Unify display-delay label | `[ ]` | |

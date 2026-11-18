@@ -32,6 +32,13 @@ describe("live currency conversion helpers", () => {
     expect(usdUnitsToNativeMinor(100, 2, 1.25)).toBe(8000);
     expect(usdUnitsToNativeMinor(100, 8, 50000)).toBe(200000);
   });
+  it("never raises a converted amount above its true value (item 55)", async () => {
+    const { usdUnitsToNativeMinor } = await import("./money");
+    // A tiny amount that rounds below one minor unit stays 0; the converter does not clamp up.
+    expect(usdUnitsToNativeMinor(0.001, 2, 1)).toBe(0);
+    expect(usdUnitsToNativeMinor(0, 2, 1)).toBe(0);
+    expect(usdUnitsToNativeMinor(0, 8, 50000)).toBe(0);
+  });
   it("converts USD minor units with decimal-safe half-up rounding", async () => {
     const { nativeMinorToUsdMinorExact } = await import("./money");
     expect(nativeMinorToUsdMinorExact(10000, 2, "0.5")).toBe(5000);

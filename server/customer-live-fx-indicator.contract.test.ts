@@ -36,8 +36,9 @@ describe("live FX conversion indicator (item 18)", () => {
     expect(balanceSummarySource).toContain("conversions.push({from:code,to:\"USD\",rate:String(snapshot.rateUsdPerUnit),provider:String(snapshot.provider||\"\")");
     // Only non-USD wallets that actually hold a balance and have a live rate.
     expect(balanceSummarySource).toContain("if(code!==\"USD\"&&hasBalance&&snapshot&&rate>0)");
-    // The summary returns the descriptor list alongside the existing USD totals.
-    expect(balanceSummarySource).toContain("totalUsd:availableUsd+lockedUsd,conversions}};");
+    // The summary returns the descriptor list and an unavailable flag alongside the USD totals.
+    expect(balanceSummarySource).toContain("totalUsd:availableUsd+lockedUsd,conversions,ratesUnavailable}};");
+    expect(balanceSummarySource).toContain("if(code!==\"USD\"&&hasBalance)ratesUnavailable=true;");
     // The rate is fed by the live resolver, never the stored registry value.
     expect(balanceSummarySource).toContain("snapshot=await resolveLiveCurrencyUsdRate(c)");
   });

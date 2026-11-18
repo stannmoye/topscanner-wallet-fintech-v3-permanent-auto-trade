@@ -114,10 +114,15 @@ export function proportionalMinorAmount(totalMinor: number, partMinor: number, w
   return allocated.toNumber();
 }
 
-/** Convert whole USD units into native ledger minor units using the same live registry rate. */
+/**
+ * Convert whole USD units into native ledger minor units using the same live rate.
+ * Item 55: this is a pure conversion and never raises the result. Callers that need a
+ * minimum apply an explicit floor where a minimum is actually meant; a maximum bound
+ * must never be inflated above the true converted value.
+ */
 export function usdUnitsToNativeMinor(usdUnits: number, scale: number, usdRate: number): number {
   if (!Number.isFinite(usdUnits) || usdUnits < 0 || !Number.isFinite(usdRate) || usdRate <= 0) throw new Error("Invalid currency conversion inputs");
-  return Math.max(1, Math.round((usdUnits / usdRate) * Math.pow(10, scale)));
+  return Math.round((usdUnits / usdRate) * Math.pow(10, scale));
 }
 
 /**
