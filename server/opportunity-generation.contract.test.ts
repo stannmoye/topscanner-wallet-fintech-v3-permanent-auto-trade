@@ -208,6 +208,14 @@ describe("automatic opportunity generation and package-aware customer delivery",
     expect(generator).toContain("NO_ENABLED_CURRENCY_FOR_PACKAGE");
   });
 
+  it("retires an open offer only when its entitlement is removed, never on a transient package cooldown", () => {
+    expect(generator).toContain("const entitlementSubscriptionIds=input.activeSubscriptionIds.filter(id=>Number.isSafeInteger(id)&&id>0)");
+    expect(generator).toContain('if(!entitlementSubscriptionIds.length)return skipped("NO_ACTIVE_AUTOMATIC_SUBSCRIPTION")');
+    expect(generator).toContain("!entitlementSubscriptionIds.includes(Number(row.subscriptionId))");
+    expect(generator).not.toContain("!activeSubscriptionIds.includes(Number(row.subscriptionId))");
+    expect(customerQuery).toContain("activeSubscriptionIds,");
+  });
+
   it("does not let an orphaned open offer without a generated assignment suppress new generation", () => {
     const guardStart = customerQuery.indexOf("const hasUsableAssignedOffer=");
     const guardEnd = customerQuery.indexOf("const generationGateReason=", guardStart);

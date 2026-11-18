@@ -44,7 +44,7 @@ WITH latest_popup AS (
 ), record_rows AS (
   SELECT a.userId,a.offerId,a.packageId,a.packageName,a.companyReferenceId,
     COALESCE(p.companyDisplayName,o.companyDisplayName) AS companyDisplayName,
-    a.status AS assignmentStatus,a.failureReason,a.generatedAt,a.createdAt AS assignmentPersistedAt,a.assignedAt,
+    a.status AS assignmentStatus,a.failureReason,a.generatedAt,a.assignedAt AS assignmentPersistedAt,a.assignedAt,
     a.deliveredAt AS assignmentDeliveredAt,a.expiresAt AS assignmentExpiresAt,
     p.id AS popupEventId,p.eventStatus,p.deliveryStatus,p.deliveryAttemptCount,
     p.deliveryRetryAfter,p.deliveryLeaseExpiresAt,p.lastErrorCode,p.createdAt AS popupCreatedAt,
@@ -286,7 +286,7 @@ export async function getOpportunityDeliveryDetails(customerId: number, offerId:
     const final = histories.filter(item => ["lease_expired", "retry_scheduled", "retry_exhausted"].includes(item.eventType));
     const timeline: Array<{ label: string; occurredAt: string | null; evidence: string; status?: string | null; errorCode?: string | null }> = [
       { label: "Opportunity generated", occurredAt: actual.generatedAt, evidence: actual.generatedAt ? "opportunity_generation_assignments.generatedAt" : "Historical event unavailable." },
-      { label: "Assignment persisted", occurredAt: actual.assignmentPersistedAt, evidence: actual.assignmentPersistedAt ? "opportunity_generation_assignments.createdAt" : "Historical event unavailable." },
+      { label: "Assignment persisted", occurredAt: actual.assignmentPersistedAt, evidence: actual.assignmentPersistedAt ? "opportunity_generation_assignments.assignedAt" : "Historical event unavailable." },
       { label: "Queue record created", occurredAt: iso(source.popupCreatedAt), evidence: source.popupCreatedAt ? "opportunity_popup_events.createdAt" : "Historical event unavailable." },
       { label: "First request-scoped dispatch claim", occurredAt: firstClaim ? iso(firstClaim.occurredAt) : null, evidence: firstClaim ? "Persisted dispatch_claimed event" : Number(source.deliveryAttemptCount || 0) > 0 ? "Historical event unavailable. Attempt count exists but attempt timestamps do not." : "Historical event unavailable." },
       { label: "Browser receipt acknowledgement", occurredAt: iso(source.receivedAt), evidence: source.receivedAt ? "opportunity_popup_events.receivedAt" : source.popupEventId ? "Historical event unavailable. No acknowledgement timestamp is stored." : "Historical event unavailable." },

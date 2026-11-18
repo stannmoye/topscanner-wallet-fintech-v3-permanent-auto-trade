@@ -9039,8 +9039,9 @@ async function generateAutomaticCustomerOpportunity(input) {
   if (!Number.isSafeInteger(input.userId) || input.userId < 1 || !input.batchId || input.batchId.length > 64) return skipped("INVALID_CUSTOMER_OR_BATCH_INPUT");
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
+  const entitlementSubscriptionIds = input.activeSubscriptionIds.filter((id2) => Number.isSafeInteger(id2) && id2 > 0);
+  if (!entitlementSubscriptionIds.length) return skipped("NO_ACTIVE_AUTOMATIC_SUBSCRIPTION");
   const activeSubscriptionIds = input.eligibleSubscriptions.map((row) => row.subscriptionId).filter((id2) => Number.isSafeInteger(id2) && id2 > 0);
-  if (!activeSubscriptionIds.length) return skipped("NO_ACTIVE_AUTOMATIC_SUBSCRIPTION");
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       return await db2.transaction(async (tx) => {
@@ -9056,7 +9057,7 @@ async function generateAutomaticCustomerOpportunity(input) {
         }
         if (!control || typeof control.enabled !== "boolean" || !Number.isSafeInteger(control.version) || Number(control.version) < 1) return skipped("GENERATION_CONTROL_MISSING_OR_MALFORMED");
         if (control.enabled !== true) return skipped("GENERATION_CONTROL_PAUSED");
-        const obsolete = (await tx.select({ id: opportunityOffers.id, subscriptionId: opportunityOffers.assignedPackageSubscriptionId }).from(opportunityOffers).where(and3(eq3(opportunityOffers.assignedUserId, input.userId), eq3(opportunityOffers.status, "open"), gt(opportunityOffers.closesAt, input.now))).limit(100).for("update")).filter((row) => row.subscriptionId == null || !activeSubscriptionIds.includes(Number(row.subscriptionId)));
+        const obsolete = (await tx.select({ id: opportunityOffers.id, subscriptionId: opportunityOffers.assignedPackageSubscriptionId }).from(opportunityOffers).where(and3(eq3(opportunityOffers.assignedUserId, input.userId), eq3(opportunityOffers.status, "open"), gt(opportunityOffers.closesAt, input.now))).limit(100).for("update")).filter((row) => row.subscriptionId == null || !entitlementSubscriptionIds.includes(Number(row.subscriptionId)));
         const obsoleteOfferIds = obsolete.map((row) => Number(row.id));
         if (obsoleteOfferIds.length) {
           await tx.update(opportunityOffers).set({ status: "cancelled" }).where(inArray2(opportunityOffers.id, obsoleteOfferIds));
@@ -10298,6 +10299,7 @@ async function listCustomerOpportunities(userId, options = {}) {
       batchId: options.generationBatchId,
       now,
       quotaWindowStart: quotaWindow.start,
+      activeSubscriptionIds,
       eligibleSubscriptions: eligibleSubscriptions.filter((subscription) => packageSchedules.get(String(subscription.packageName))?.cooling !== true).map((subscription) => ({ subscriptionId: Number(subscription.subscriptionId), packageId: Number(subscription.packageId), packageName: String(subscription.packageName) })),
       companyRotationEnabled: Boolean(globalPolicy.companyRotationEnabled),
       customerCompanyCountryRestrictions: normalizeCustomerCompanyCountryRestrictions(controls.companyCountryRestrictions || "")
@@ -17587,7 +17589,7 @@ WITH latest_popup AS (
 ), record_rows AS (
   SELECT a.userId,a.offerId,a.packageId,a.packageName,a.companyReferenceId,
     COALESCE(p.companyDisplayName,o.companyDisplayName) AS companyDisplayName,
-    a.status AS assignmentStatus,a.failureReason,a.generatedAt,a.createdAt AS assignmentPersistedAt,a.assignedAt,
+    a.status AS assignmentStatus,a.failureReason,a.generatedAt,a.assignedAt AS assignmentPersistedAt,a.assignedAt,
     a.deliveredAt AS assignmentDeliveredAt,a.expiresAt AS assignmentExpiresAt,
     p.id AS popupEventId,p.eventStatus,p.deliveryStatus,p.deliveryAttemptCount,
     p.deliveryRetryAfter,p.deliveryLeaseExpiresAt,p.lastErrorCode,p.createdAt AS popupCreatedAt,
@@ -17834,7 +17836,7 @@ async function getOpportunityDeliveryDetails(customerId, offerId) {
     const final = histories.filter((item) => ["lease_expired", "retry_scheduled", "retry_exhausted"].includes(item.eventType));
     const timeline = [
       { label: "Opportunity generated", occurredAt: actual.generatedAt, evidence: actual.generatedAt ? "opportunity_generation_assignments.generatedAt" : "Historical event unavailable." },
-      { label: "Assignment persisted", occurredAt: actual.assignmentPersistedAt, evidence: actual.assignmentPersistedAt ? "opportunity_generation_assignments.createdAt" : "Historical event unavailable." },
+      { label: "Assignment persisted", occurredAt: actual.assignmentPersistedAt, evidence: actual.assignmentPersistedAt ? "opportunity_generation_assignments.assignedAt" : "Historical event unavailable." },
       { label: "Queue record created", occurredAt: iso2(source.popupCreatedAt), evidence: source.popupCreatedAt ? "opportunity_popup_events.createdAt" : "Historical event unavailable." },
       { label: "First request-scoped dispatch claim", occurredAt: firstClaim ? iso2(firstClaim.occurredAt) : null, evidence: firstClaim ? "Persisted dispatch_claimed event" : Number(source.deliveryAttemptCount || 0) > 0 ? "Historical event unavailable. Attempt count exists but attempt timestamps do not." : "Historical event unavailable." },
       { label: "Browser receipt acknowledgement", occurredAt: iso2(source.receivedAt), evidence: source.receivedAt ? "opportunity_popup_events.receivedAt" : source.popupEventId ? "Historical event unavailable. No acknowledgement timestamp is stored." : "Historical event unavailable." },

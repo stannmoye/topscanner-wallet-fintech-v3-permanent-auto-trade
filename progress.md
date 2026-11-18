@@ -1,3 +1,13 @@
+## 2026-11-18 — Delivered popups were being retired by their own package cooldown
+
+- **Root cause (live-verified on `https://stan.prod.page/customer`):** `generateAutomaticCustomerOpportunity` receives a cooldown-filtered subscription list, and used that same list to decide whether an existing open offer was "obsolete". As soon as a package delivered a popup it entered its own `minIntervalSeconds` cooldown, so the next worker cycle treated that still-open, already-delivered offer as `PACKAGE_REASSIGNED` and set `opportunityOffers.status='cancelled'`. Customer popups therefore disappeared about one worker cycle after they rendered. Live evidence: 32 customer offers, 29 `cancelled` / 3 `closed`, `activeVisibleCount: 0`, while `generationDiagnostics.openGeneratedOfferAlreadyExists` stayed true.
+- **Fix:** `server/db.ts` now separates entitlement scope from generation candidates. The new `activeSubscriptionIds` input carries every active automatic subscription and is the only list consulted when retiring an open offer; the cooldown-filtered `eligibleSubscriptions` list still governs which package may generate a new opportunity this cycle. A transient cooldown can no longer cancel an open offer.
+- **Admin diagnostics:** `server/opportunityDeliveryDiagnostics.ts` selected `a.createdAt` from `opportunity_generation_assignments`, which has no such column, so `adminOperations.opportunityDeliveryDetails` returned `Unknown column 'a.createdAt' in 'SELECT'` on the live host. It now reads the real persistence timestamp `a.assignedAt` (and labels it as such in the delivery timeline).
+- **Verification:** `pnpm test` (1,320 passed, 31 skipped), `pnpm check`, `pnpm build`, and `pnpm test:popup-responsive` (18 viewports) pass. Added a focused contract assertion that retiring an offer keys off the entitlement list and never the cooldown-filtered one.
+- **Pending:** Live confirmation after deploy; rotate the portal passwords and GitHub token previously shared in chat.
+
+---
+
 ## 2026-11-18 — Trading safety remediation and release-contract verification
 
 - **Trading safeguards:** Allocation controls fail closed when missing or unreadable; saved allocation and settlement pauses are enforced; previous-settlement policy is checked inside the allocation transaction; missing fee policy blocks allocation; synthetic market prices/instruments are no longer created.

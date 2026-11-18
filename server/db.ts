@@ -3298,6 +3298,12 @@ function resolveTradingOfferPolicyRanges(policy:any){
 
 type AutomaticOpportunityGenerationInput={
   userId:number;batchId:string;now:Date;quotaWindowStart:Date;
+  // Entitlement scope: every active automatic subscription, regardless of whether
+  // its package is momentarily cooling. Only this list decides whether an existing
+  // open offer is obsolete (its entitlement was removed/expired).
+  activeSubscriptionIds:number[];
+  // Generation candidates for this cycle: entitled subscriptions whose package is
+  // not currently cooling. A cooldown must never retire an already-open offer.
   eligibleSubscriptions:Array<{subscriptionId:number;packageId:number;packageName:string}>;
   companyRotationEnabled:boolean;
   customerCompanyCountryRestrictions?:string;
@@ -3313,8 +3319,9 @@ async function generateAutomaticCustomerOpportunity(input:AutomaticOpportunityGe
   const skipped=(skipReason:string,skipDetail?:Record<string,number>):AutomaticOpportunityGenerationOutcome=>({offerId:null,skipReason,...(skipDetail?{skipDetail}:{})});
   if(!Number.isSafeInteger(input.userId)||input.userId<1||!input.batchId||input.batchId.length>64) return skipped("INVALID_CUSTOMER_OR_BATCH_INPUT");
   const db=await getDb();if(!db)throw new Error("Database is not available");
+  const entitlementSubscriptionIds=input.activeSubscriptionIds.filter(id=>Number.isSafeInteger(id)&&id>0);
+  if(!entitlementSubscriptionIds.length)return skipped("NO_ACTIVE_AUTOMATIC_SUBSCRIPTION");
   const activeSubscriptionIds=input.eligibleSubscriptions.map(row=>row.subscriptionId).filter(id=>Number.isSafeInteger(id)&&id>0);
-  if(!activeSubscriptionIds.length)return skipped("NO_ACTIVE_AUTOMATIC_SUBSCRIPTION");
   for(let attempt=0;attempt<4;attempt++){
     try{
       return await db.transaction(async tx=>{
@@ -3331,7 +3338,7 @@ async function generateAutomaticCustomerOpportunity(input:AutomaticOpportunityGe
 
     const obsolete=(await tx.select({id:opportunityOffers.id,subscriptionId:opportunityOffers.assignedPackageSubscriptionId})
       .from(opportunityOffers).where(and(eq(opportunityOffers.assignedUserId,input.userId),eq(opportunityOffers.status,"open"),gt(opportunityOffers.closesAt,input.now)))
-      .limit(100).for("update")).filter(row=>row.subscriptionId==null||!activeSubscriptionIds.includes(Number(row.subscriptionId)));
+      .limit(100).for("update")).filter(row=>row.subscriptionId==null||!entitlementSubscriptionIds.includes(Number(row.subscriptionId)));
     const obsoleteOfferIds=obsolete.map(row=>Number(row.id));
     if(obsoleteOfferIds.length){
       await tx.update(opportunityOffers).set({status:"cancelled"}).where(inArray(opportunityOffers.id,obsoleteOfferIds));
@@ -4353,6 +4360,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     generationAttempted=true;
     const outcome=await generateAutomaticCustomerOpportunity({
       userId,batchId:options.generationBatchId!,now,quotaWindowStart:quotaWindow.start,
+      activeSubscriptionIds,
       eligibleSubscriptions:eligibleSubscriptions.filter(subscription=>packageSchedules.get(String(subscription.packageName))?.cooling!==true)
         .map(subscription=>({subscriptionId:Number(subscription.subscriptionId),packageId:Number(subscription.packageId),packageName:String(subscription.packageName)})),
       companyRotationEnabled:Boolean(globalPolicy.companyRotationEnabled),
