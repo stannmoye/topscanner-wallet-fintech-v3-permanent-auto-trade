@@ -117,5 +117,7 @@ describe("administrator Trading delivery policy controls", () => {
     expect(staticGuide).toContain("Shared delivery retry policy");
     expect(staticGuide).toContain("each new opportunity receives its own trade-duration value within that range");
     expect(staticGuide).toContain("Post-completion card display delay");
+    expect(staticGuide).toContain("<strong>Post-completion Display Delay</strong>");
+    expect(staticGuide).not.toContain("Per-tier Pop-up Display");
   });
 });

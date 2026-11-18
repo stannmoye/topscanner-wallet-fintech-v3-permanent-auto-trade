@@ -331,7 +331,7 @@ All Trading configuration, publishing, monitoring and audit destinations must ap
 - **Automatic Opportunity Generation & Management** — audited generation pause/resume, durable worker batches, customer-specific assignments and generated-offer review/close. Any legacy template records are optional display overrides, not prerequisites. Manual creation and CSV import are retired; this page must not duplicate the tier/policy editor.
 - **Per-tier Delivery Schedule** — per-tier delivery spacing, randomized timing bounds and post-completion intervals.
 - **Global Trade Timing & Settlement** — global trade-duration and closing/settlement review settings.
-- **Per-tier Pop-up Display** — per-tier expanded-card and completion-card display overrides.
+- **Post-completion Display Delay** — per-tier completion-card display delay and card close policy.
 - **Per-tier Company Rotation Rules** — approved-country filters and repeat-handling configuration.
 - **Company Catalogue** — company reference records, Logo IDs and verification state; it must not render a second company-rotation editor.
 - **Capital & Wallet Funding Rules** — permitted Trading capital requirements and funding-policy review.
