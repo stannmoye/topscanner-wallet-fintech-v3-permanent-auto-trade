@@ -3690,6 +3690,24 @@ function calculateCombinedAvailableTargetMinor(input) {
   }
   return safeNumber(targetTotal, "Combined target-currency wallet balance");
 }
+function isExpectedRateOrScaleFailure(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /FX rate|FX quote|quote|below supported precision|currency scale|scale does not match|provenance|combine wallet balances/i.test(message);
+}
+function logCombinedBalanceWarning(error) {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const signature = raw.replace(/\d+/g, "#").slice(0, 120);
+  const now = Date.now();
+  if (now - (combinedBalanceWarningLog.get(signature) ?? 0) < COMBINED_BALANCE_WARNING_INTERVAL_MS) return;
+  combinedBalanceWarningLog.set(signature, now);
+  if (combinedBalanceWarningLog.size > COMBINED_BALANCE_WARNING_MAX_KEYS) {
+    for (const [key, at] of combinedBalanceWarningLog) {
+      if (now - at >= COMBINED_BALANCE_WARNING_INTERVAL_MS) combinedBalanceWarningLog.delete(key);
+    }
+  }
+  const safe = raw.replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]").replace(/\b(password|passwd|secret|token|authorization|api[_-]?key|credential)(\s*[:=]\s*)[^\s,;]+/gi, "$1$2[redacted]").replace(/\bBearer\s+\S+/gi, "Bearer [redacted]").replace(/[\r\n\t]/g, " ").slice(0, 300);
+  console.warn(`[CombinedBalance] unexpected valuation failure: ${safe}`);
+}
 async function calculateCombinedBalanceSnapshot(input) {
   const targetCurrency = input.targetCurrency.trim().toUpperCase();
   const unavailable = () => ({
@@ -3726,17 +3744,21 @@ async function calculateCombinedBalanceSnapshot(input) {
       shortfallMinor: Math.max(0, input.requiredMinor - availableMinor),
       valuationCurrency: targetCurrency
     };
-  } catch {
+  } catch (error) {
+    if (!isExpectedRateOrScaleFailure(error)) logCombinedBalanceWarning(error);
     return unavailable();
   }
 }
-var RATE_DECIMAL_PLACES, RATE_SCALE;
+var RATE_DECIMAL_PLACES, RATE_SCALE, COMBINED_BALANCE_WARNING_INTERVAL_MS, COMBINED_BALANCE_WARNING_MAX_KEYS, combinedBalanceWarningLog;
 var init_trading_wallet_fx = __esm({
   "server/modules/trading-wallet-fx.ts"() {
     "use strict";
     init_wallet_funding_priority();
     RATE_DECIMAL_PLACES = 12;
     RATE_SCALE = 10n ** BigInt(RATE_DECIMAL_PLACES);
+    COMBINED_BALANCE_WARNING_INTERVAL_MS = 6e4;
+    COMBINED_BALANCE_WARNING_MAX_KEYS = 32;
+    combinedBalanceWarningLog = /* @__PURE__ */ new Map();
   }
 });
 

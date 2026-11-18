@@ -248,6 +248,42 @@ export type CombinedBalanceSnapshot = {
 };
 
 /**
+ * Item 28: a missing/stale/mismatched rate or an invalid scale is an expected "we cannot
+ * value this yet" outcome; it is handled quietly by returning the unavailable snapshot.
+ * Anything else (a bug, an overflow, malformed wallet input) is unexpected and must be
+ * surfaced without crashing customer polling.
+ */
+function isExpectedRateOrScaleFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /FX rate|FX quote|quote|below supported precision|currency scale|scale does not match|provenance|combine wallet balances/i.test(message);
+}
+
+const COMBINED_BALANCE_WARNING_INTERVAL_MS = 60_000;
+const COMBINED_BALANCE_WARNING_MAX_KEYS = 32;
+const combinedBalanceWarningLog = new Map<string, number>();
+
+/** Bounded, rate-limited warning so a broken valuation cannot flood the logs under polling. */
+function logCombinedBalanceWarning(error: unknown): void {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const signature = raw.replace(/\d+/g, "#").slice(0, 120);
+  const now = Date.now();
+  if (now - (combinedBalanceWarningLog.get(signature) ?? 0) < COMBINED_BALANCE_WARNING_INTERVAL_MS) return;
+  combinedBalanceWarningLog.set(signature, now);
+  if (combinedBalanceWarningLog.size > COMBINED_BALANCE_WARNING_MAX_KEYS) {
+    for (const [key, at] of combinedBalanceWarningLog) {
+      if (now - at >= COMBINED_BALANCE_WARNING_INTERVAL_MS) combinedBalanceWarningLog.delete(key);
+    }
+  }
+  const safe = raw
+    .replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]")
+    .replace(/\b(password|passwd|secret|token|authorization|api[_-]?key|credential)(\s*[:=]\s*)[^\s,;]+/gi, "$1$2[redacted]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/[\r\n\t]/g, " ")
+    .slice(0, 300);
+  console.warn(`[CombinedBalance] unexpected valuation failure: ${safe}`);
+}
+
+/**
  * Revalues available wallet funds for display using the same calculator as
  * server-side funding. Quote lookup is supplied by the caller so it can reuse
  * the platform's freshness/provenance policy. Unknown quotes fail closed.
@@ -297,7 +333,11 @@ export async function calculateCombinedBalanceSnapshot(input: {
       shortfallMinor: Math.max(0, input.requiredMinor - availableMinor),
       valuationCurrency: targetCurrency,
     };
-  } catch {
+  } catch (error) {
+    // Item 28: expected rate/scale failures stay quiet (a normal unavailable state).
+    // Unexpected failures are logged with a bounded warning, then still downgraded to
+    // the unavailable snapshot so customer polling never crashes.
+    if (!isExpectedRateOrScaleFailure(error)) logCombinedBalanceWarning(error);
     return unavailable();
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, type FxRateSnapshot } from "./trading-wallet-fx";
 
 const rate = (currency: string, scale: number, rateUsdPerUnit: string): FxRateSnapshot => ({
@@ -38,6 +38,43 @@ describe("combined spendable wallet balance", () => {
       getFreshRate: async () => null })).resolves.toEqual(unavailable);
     await expect(calculateCombinedBalanceSnapshot({ targetCurrency: "USD", targetScale: 2, requiredMinor: 150, wallets,
       getFreshRate: async () => { throw new Error("stale quote"); } })).resolves.toEqual(unavailable);
+  });
+
+  it("stays quiet for expected rate and scale failures (item 28)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await calculateCombinedBalanceSnapshot({
+        targetCurrency: "USD", targetScale: 2, requiredMinor: 150,
+        wallets: [{ currency: "EUR", scale: 2, availableMinor: 100 }],
+        getFreshRate: async () => { throw new Error("A current FX quote is unavailable for EUR"); },
+      });
+      expect(result.balanceStatus).toBe("unknown");
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("logs unexpected valuation failures with a bounded warning and never throws (item 28)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const input = {
+      targetCurrency: "USD", targetScale: 2, requiredMinor: 100,
+      // Duplicate currency is an unexpected (non rate/scale) failure.
+      wallets: [{ currency: "USD", scale: 2, availableMinor: 100 }, { currency: "usd", scale: 2, availableMinor: 100 }],
+      getFreshRate: async () => null,
+    };
+    try {
+      await expect(calculateCombinedBalanceSnapshot(input)).resolves.toEqual({
+        availableMinor: 0, balanceStatus: "unknown", shortfallMinor: 0, valuationCurrency: "USD",
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("[CombinedBalance]");
+      // A repeat of the same failure within the bounded window is suppressed.
+      await calculateCombinedBalanceSnapshot(input);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("values a foreign-only wallet in an opportunity currency with no matching wallet", async () => {

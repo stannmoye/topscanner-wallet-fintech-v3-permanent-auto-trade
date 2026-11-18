@@ -35,7 +35,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 25 | Allocation reason 8–500 chars, strict input | `[x]` | `Fix #25` |
 | 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[x]` | `Fix #26` |
 | 27 | No writes during reads in `getTradeSettlementPolicy` | `[x]` | `Fix #27` |
-| 28 | `calculateCombinedBalanceSnapshot` error handling | `[ ]` | |
+| 28 | `calculateCombinedBalanceSnapshot` error handling | `[x]` | `Fix #28` |
 | 29 | Quiet hours use admin timezone (UTC default) | `[ ]` | |
 | 30 | Missing source-wallet rate → stop "rate unavailable" | `[ ]` | |
 | 31 | Fee-policy reason limits alignment | `[ ]` | |
@@ -142,6 +142,13 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **What changed.** (1) The insert now writes `executionStatus` explicitly as `'READY'` (no behaviour change — it matches the previous default). (2) [popup-execution-policy.ts](file:///workspace/repo/server/modules/popup-execution-policy.ts) no longer substitutes `READY` for a missing/blank execution status: `isPopupExecutionEligible` now trims and requires an explicit value, so a missing/blank status is **not** eligible and only an explicit `READY`/`RETRYING` is.
 - **Tests.** Extended [popup-execution-policy.test.ts](file:///workspace/repo/server/modules/popup-execution-policy.test.ts) with a fail-closed case over `undefined`/`null`/`""`/whitespace, while asserting explicit `ready`/`RETRYING` (case/space-insensitive) stay eligible.
 - **Protected area.** No debit/credit/settlement code touched.
+
+### Item 28 notes (`Fix #28`)
+
+- **Root cause.** `calculateCombinedBalanceSnapshot` ([trading-wallet-fx.ts](file:///workspace/repo/server/modules/trading-wallet-fx.ts)) ended in a bare `catch { return unavailable(); }`, so a genuine bug (a duplicate wallet currency, a safe-integer overflow, malformed wallet input) was indistinguishable from a normal "no quote yet" outcome and left no trace in the logs.
+- **What changed.** The catch now classifies the failure. An expected rate/scale problem (missing/stale/mismatched FX quote, invalid currency scale, missing provenance) stays quiet and returns the same `unknown` snapshot. Anything else is logged with `logCombinedBalanceWarning` — a bounded, rate-limited warning (at most once per minute per distinct message signature, at most 32 tracked signatures, sanitised and truncated to 300 chars) — and the function **still** returns the `unknown` snapshot, so customer polling never crashes. No amount, rate or ledger code changed.
+- **Tests.** Extended [trading-wallet-fx.test.ts](file:///workspace/repo/server/modules/trading-wallet-fx.test.ts): an expected `FX quote is unavailable` failure emits no warning and resolves to `unknown`; an unexpected duplicate-currency failure resolves to `unknown`, warns exactly once, and a repeat within the window is suppressed.
+- **Protected area.** Display-only valuation; no debit/credit/settlement module touched.
 
 ### Item 27 notes (`Fix #27`)
 
