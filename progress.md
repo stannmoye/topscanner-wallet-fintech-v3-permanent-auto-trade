@@ -32,7 +32,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 22 | CSRF Origin/Sec-Fetch-Site checks | `[x]` | `Fix #22` |
 | 23 | popup-execution-policy fail closed on blank status | `[x]` | `Fix #23` |
 | 24 | `updatePopupDeliveryStatus` requires leaseToken | `[x]` | `Fix #24` |
-| 25 | Allocation reason 8–500 chars, strict input | `[ ]` | |
+| 25 | Allocation reason 8–500 chars, strict input | `[x]` | `Fix #25` |
 | 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[ ]` | |
 | 27 | No writes during reads in `getTradeSettlementPolicy` | `[ ]` | |
 | 28 | `calculateCombinedBalanceSnapshot` error handling | `[ ]` | |
@@ -141,6 +141,13 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Production-rows check.** Because the column is `NOT NULL DEFAULT 'READY'`, no stored row can be NULL/blank while pending (existing rows were backfilled to `READY` when the column was added). The only production reader of the policy is [db.ts](file:///workspace/repo/server/db.ts#L4735), which passes the `NOT NULL` `row.executionStatus`, so failing closed on a blank status cannot make any existing pending event ineligible. No data risk; proceeding was safe (reported to the owner in the item-23 status).
 - **What changed.** (1) The insert now writes `executionStatus` explicitly as `'READY'` (no behaviour change — it matches the previous default). (2) [popup-execution-policy.ts](file:///workspace/repo/server/modules/popup-execution-policy.ts) no longer substitutes `READY` for a missing/blank execution status: `isPopupExecutionEligible` now trims and requires an explicit value, so a missing/blank status is **not** eligible and only an explicit `READY`/`RETRYING` is.
 - **Tests.** Extended [popup-execution-policy.test.ts](file:///workspace/repo/server/modules/popup-execution-policy.test.ts) with a fail-closed case over `undefined`/`null`/`""`/whitespace, while asserting explicit `ready`/`RETRYING` (case/space-insensitive) stay eligible.
+- **Protected area.** No debit/credit/settlement code touched.
+
+### Item 25 notes (`Fix #25`)
+
+- **Root cause.** `updateTradeAllocationControls` ([routers.ts](file:///workspace/repo/server/routers.ts#L466)) accepted `reason: z.string().trim().max(500)` — no minimum and not strict — and `setTradeAllocationControls` ([db.ts](file:///workspace/repo/server/db.ts#L2784)) only enforced the 8-character minimum when *pausing*, defaulting a resume to the literal `"Resumed by administrator"`. The client already required 8+ chars for both.
+- **What changed.** (1) The router input is now `reason: z.string().trim().min(8).max(500)` in a `.strict()` object, so a short/unknown-key request is rejected at the boundary. (2) `setTradeAllocationControls` applies `reason.length < 8` unconditionally (pause **and** resume) and stores the administrator's reason verbatim; the dead `"Resumed by administrator"` fallback is removed.
+- **Tests.** Extended [trade-allocation-controls.contract.test.ts](file:///workspace/repo/server/trade-allocation-controls.contract.test.ts) asserting the strict 8-500 router bound and the unconditional DB minimum.
 - **Protected area.** No debit/credit/settlement code touched.
 
 ### Item 24 notes (`Fix #24`)

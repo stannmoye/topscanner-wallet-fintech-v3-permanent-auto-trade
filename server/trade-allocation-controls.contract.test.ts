@@ -51,6 +51,24 @@ describe("global trade allocation pause", () => {
     expect(implementation).toContain("apply the migration before resuming new allocations");
   });
 
+  it("requires an 8-500 character reason for both pause and resume, with a strict input (item 25)", () => {
+    const index = router.indexOf("updateTradeAllocationControls: adminProcedure.input");
+    expect(index).toBeGreaterThanOrEqual(0);
+    const declarationEnd = router.indexOf("setTradeAllocationControls(ctx.user.id, input)", index);
+    expect(declarationEnd).toBeGreaterThan(index);
+    const declaration = router.slice(index, declarationEnd);
+    expect(declaration).toContain("reason: z.string().trim().min(8).max(500)");
+    expect(declaration).toContain("}).strict())");
+    const start = db.indexOf("export async function setTradeAllocationControls(");
+    const end = db.indexOf("export async function listAdminTradingPackages(", start);
+    const implementation = db.slice(start, end);
+    // The minimum is unconditional now (pause AND resume), not pause-only.
+    expect(implementation).toContain("if (reason.length < 8)");
+    expect(implementation).not.toContain("input.allocationsPaused && reason.length < 8");
+    expect(implementation).toContain("if (reason.length > 500)");
+    expect(implementation).not.toContain("Resumed by administrator");
+  });
+
   it("filters automatic candidates and enforces the pause transactionally", () => {
     expect(db).toContain("offer.executionEligible!==true || allocationControls.allocationsPaused");
     const start = db.indexOf("export async function createTrade(");

@@ -2784,8 +2784,8 @@ export async function getTradeAllocationControls(): Promise<TradeAllocationContr
 export async function setTradeAllocationControls(updatedBy: number, input: { allocationsPaused: boolean; reason: string }) {
   if (!Number.isSafeInteger(updatedBy) || updatedBy <= 0) throw new Error("Administrator identity is required");
   const reason = String(input.reason ?? "").trim();
-  if (input.allocationsPaused && reason.length < 8) throw new Error("Provide a reason of at least 8 characters before pausing new allocations");
-  if (reason.length > 500) throw new Error("Pause reason must be 500 characters or fewer");
+  if (reason.length < 8) throw new Error("Provide a reason of at least 8 characters before pausing or resuming allocations");
+  if (reason.length > 500) throw new Error("Allocation reason must be 500 characters or fewer");
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   return db.transaction(async tx => {
@@ -2797,7 +2797,7 @@ export async function setTradeAllocationControls(updatedBy: number, input: { all
     const previous = parseTradeAllocationControls(row?.settingValue);
     const next: TradeAllocationControls = {
       allocationsPaused: input.allocationsPaused,
-      reason: input.allocationsPaused ? reason : (reason || "Resumed by administrator"),
+      reason,
       updatedAt: new Date().toISOString(),
       updatedBy,
     };

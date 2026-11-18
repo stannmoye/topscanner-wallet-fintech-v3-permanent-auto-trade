@@ -465,8 +465,8 @@ export const appRouter = router({
     tradeAllocationControls: adminProcedure.query(() => getTradeAllocationControls()),
     updateTradeAllocationControls: adminProcedure.input(z.object({
       allocationsPaused: z.boolean(),
-      reason: z.string().trim().max(500),
-    })).mutation(({ ctx, input }) => setTradeAllocationControls(ctx.user.id, input)),
+      reason: z.string().trim().min(8).max(500),
+    }).strict()).mutation(({ ctx, input }) => setTradeAllocationControls(ctx.user.id, input)),
     walletFundingPriority: adminProcedure.query(() => getWalletFundingPriority()),
     updateWalletFundingPriority: adminProcedure.input(z.object({
       order: z.array(z.string().trim().min(2).max(12)).max(50),

@@ -8738,8 +8738,8 @@ async function getTradeAllocationControls() {
 async function setTradeAllocationControls(updatedBy, input) {
   if (!Number.isSafeInteger(updatedBy) || updatedBy <= 0) throw new Error("Administrator identity is required");
   const reason = String(input.reason ?? "").trim();
-  if (input.allocationsPaused && reason.length < 8) throw new Error("Provide a reason of at least 8 characters before pausing new allocations");
-  if (reason.length > 500) throw new Error("Pause reason must be 500 characters or fewer");
+  if (reason.length < 8) throw new Error("Provide a reason of at least 8 characters before pausing or resuming allocations");
+  if (reason.length > 500) throw new Error("Allocation reason must be 500 characters or fewer");
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
   return db2.transaction(async (tx) => {
@@ -8750,7 +8750,7 @@ async function setTradeAllocationControls(updatedBy, input) {
     const previous = parseTradeAllocationControls(row?.settingValue);
     const next = {
       allocationsPaused: input.allocationsPaused,
-      reason: input.allocationsPaused ? reason : reason || "Resumed by administrator",
+      reason,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       updatedBy
     };
@@ -18782,8 +18782,8 @@ var appRouter = router({
     tradeAllocationControls: adminProcedure.query(() => getTradeAllocationControls()),
     updateTradeAllocationControls: adminProcedure.input(z3.object({
       allocationsPaused: z3.boolean(),
-      reason: z3.string().trim().max(500)
-    })).mutation(({ ctx, input }) => setTradeAllocationControls(ctx.user.id, input)),
+      reason: z3.string().trim().min(8).max(500)
+    }).strict()).mutation(({ ctx, input }) => setTradeAllocationControls(ctx.user.id, input)),
     walletFundingPriority: adminProcedure.query(() => getWalletFundingPriority()),
     updateWalletFundingPriority: adminProcedure.input(z3.object({
       order: z3.array(z3.string().trim().min(2).max(12)).max(50),
