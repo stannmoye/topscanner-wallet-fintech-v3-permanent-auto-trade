@@ -10,9 +10,11 @@ import { COOKIE_NAME } from "../shared/const";
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("self-hosted platform integrations", () => {
-  it("exposes only an explicitly configured browser-safe Google Maps key", () => {
+  const VALID_MAPS_KEY = "AIza" + "b".repeat(35);
+
+  it("exposes only a valid, browser-safe Google Maps key and never falls back to another variable", () => {
     const env = {
-      GOOGLE_MAPS_BROWSER_KEY: "public-browser-test",
+      GOOGLE_MAPS_BROWSER_KEY: VALID_MAPS_KEY,
       GOOGLE_MAPS_SERVER_KEY: "server-only-test",
       DATABASE_URL: "db-only-test",
       SESSION_SECRET: "session-only-test",
@@ -20,7 +22,7 @@ describe("self-hosted platform integrations", () => {
       AI_API_KEY: "ai-secret-test",
       EMAIL_CREDENTIAL_SECRET: "mail-secret-test",
     };
-    expect(publicPlatformConfig(env)).toEqual({ googleMapsBrowserKey: "public-browser-test" });
+    expect(publicPlatformConfig(env)).toEqual({ googleMapsBrowserKey: VALID_MAPS_KEY });
     const script = publicPlatformScript(env);
     for (const value of [env.GOOGLE_MAPS_SERVER_KEY, env.DATABASE_URL, env.SESSION_SECRET, env.PASSWORD_PEPPER, env.AI_API_KEY, env.EMAIL_CREDENTIAL_SECRET]) {
       expect(script).not.toContain(value);
@@ -28,14 +30,25 @@ describe("self-hosted platform integrations", () => {
     expect(script).toContain("window.__ARBITRADE_CONFIG__=");
   });
 
-  it("escapes HTML-sensitive configuration before emitting executable runtime configuration", () => {
+  it("never falls back to another variable and drops a malformed browser key", () => {
+    expect(publicPlatformConfig({ GOOGLE_MAPS_SERVER_KEY: "server-only-test" })).toEqual({ googleMapsBrowserKey: "" });
+    expect(publicPlatformConfig({ GOOGLE_MAPS_BROWSER_KEY: "public-browser-test" })).toEqual({ googleMapsBrowserKey: "" });
+    expect(publicPlatformConfig({ GOOGLE_MAPS_BROWSER_KEY: "AIza-short" })).toEqual({ googleMapsBrowserKey: "" });
+  });
+
+  it("emits only a valid key and never lets non-key input reach the public script", () => {
     const payload = "</script><script>window.pwned=true</script>";
     const script = publicPlatformScript({ GOOGLE_MAPS_BROWSER_KEY: payload });
     expect(script).not.toContain("<");
-    expect(script).toContain("\\u003c/script>");
+    expect(script).toContain('"googleMapsBrowserKey":""');
     const fakeWindow: { __ARBITRADE_CONFIG__?: Record<string, string> } = {};
     new Function("window", script)(fakeWindow);
-    expect(fakeWindow.__ARBITRADE_CONFIG__?.googleMapsBrowserKey).toBe(payload);
+    expect(fakeWindow.__ARBITRADE_CONFIG__?.googleMapsBrowserKey).toBe("");
+
+    const validScript = publicPlatformScript({ GOOGLE_MAPS_BROWSER_KEY: VALID_MAPS_KEY });
+    const validWindow: { __ARBITRADE_CONFIG__?: Record<string, string> } = {};
+    new Function("window", validScript)(validWindow);
+    expect(validWindow.__ARBITRADE_CONFIG__?.googleMapsBrowserKey).toBe(VALID_MAPS_KEY);
   });
 
   it("fails closed when a remote AI provider has no key and never guesses a hosted endpoint", async () => {
