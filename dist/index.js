@@ -17622,6 +17622,9 @@ function validId(value) {
 function escapeLikePrefix(value) {
   return value.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_") + "%";
 }
+function escapeLikeContains(value) {
+  return "%" + value.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_") + "%";
+}
 function safeCode(value) {
   if (value == null || value === "") return null;
   const code = String(value).trim().toUpperCase();
@@ -17885,13 +17888,14 @@ async function searchOpportunityDeliveryCustomers(query) {
   if (!process.env.DATABASE_URL) return { sourceAvailable: false, customers: [], generatedAt: null };
   return withConnection4(async (connection) => {
     const searchById = /^\d{1,10}$/.test(term) ? Number(term) : null;
+    const like = escapeLikeContains(term);
     const [rows2] = await connection.query(
-      `SELECT id,name,packageName FROM users
-      WHERE role='user' AND (name LIKE ? ESCAPE '!'${searchById ? " OR id=?" : ""})
+      `SELECT id,name,email,packageName FROM users
+      WHERE role='user' AND (LOWER(name) LIKE LOWER(?) ESCAPE '!' OR LOWER(email) LIKE LOWER(?) ESCAPE '!'${searchById ? " OR id=?" : ""})
       ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END, name, id LIMIT 20`,
-      searchById ? [escapeLikePrefix(term), searchById, searchById] : [escapeLikePrefix(term), 0]
+      searchById ? [like, like, searchById, searchById] : [like, like, 0]
     );
-    return { sourceAvailable: true, customers: rows2.map((row) => ({ id: Number(row.id), name: String(row.name || `Customer ${row.id}`), packageName: String(row.packageName || "Unavailable") })), generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    return { sourceAvailable: true, customers: rows2.map((row) => ({ id: Number(row.id), name: String(row.name || `Customer ${row.id}`), email: row.email == null || row.email === "" ? null : String(row.email), packageName: String(row.packageName || "Unavailable") })), generatedAt: (/* @__PURE__ */ new Date()).toISOString() };
   });
 }
 async function getOpportunityDeliveryCustomer(userId) {

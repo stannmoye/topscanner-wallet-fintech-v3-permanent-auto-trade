@@ -13,7 +13,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[x]` | `Fix #3` |
 | 4 | Test covering item 3 on every UNION branch | `[x]` | `Fix #4` |
 | 5 | Delivery queue diagnostics ambiguous `createdAt` | `[x]` | `Fix #5` |
-| 6 | `opportunityDeliveryCustomerSearch` email/name search | `[ ]` | |
+| 6 | `opportunityDeliveryCustomerSearch` email/name search | `[x]` | `Fix #6` |
 | 7 | SQL text in 500 responses | `[-]` | owner: leave alone |
 | 8 | Replace `1/x` float inversion with exact decimal | `[ ]` | |
 | 9 | Use live API rates everywhere a calc reads a stored rate | `[ ]` | |
@@ -86,6 +86,14 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 ### Item 4 notes (`Fix #4`)
 
 - Added a regression test (`server/opportunity-delivery-diagnostics.test.ts`) that extracts the generated `RECORD_CTES` SQL and fails if any `NULL` literal is followed by `COLLATE` (the item-3 defect), while asserting both `UNION ALL` branches still pin every unioned string column. Verified the guard matches the pre-fix text and rejects the fixed text. The test would run against a real MariaDB if one were available; the sandbox has none, so it validates the SQL texturally.
+
+### Item 6 notes (`Fix #6`)
+
+- `searchOpportunityDeliveryCustomers` only matched `name` (prefix), so an email such as `info` never found `info@wisebond.org`. The query now matches a partial, case-insensitive `name` OR `email` using `LOWER(col) LIKE LOWER(?)` (case-insensitivity is guaranteed regardless of the column collation) with an `escapeLikeContains` helper (`%term%`, `!`-escaped). An all-digit term still matches an exact customer id. The endpoint remains `adminProcedure`; the result also returns `email` and the admin screen shows it, with the search label/empty-state/note updated.
+
+### Batch 2 summary (items 4–6)
+
+Item 4 added the UNION-branch regression test for item 3; item 5 fixed the ambiguous `createdAt` in the delivery queue diagnostics; item 6 made the admin customer search match partial, case-insensitive name or email. Tests/typecheck/build green (1330 passed, 31 skipped).
 
 ### Item 5 notes (`Fix #5`)
 

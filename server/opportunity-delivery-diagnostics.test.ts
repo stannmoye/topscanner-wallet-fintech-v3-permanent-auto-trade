@@ -123,6 +123,25 @@ describe("Opportunity delivery diagnostics", () => {
     expect(queueSql).not.toMatch(/[\s,(=]deliveryRetryAfter\b/);
   });
 
+  it("searches customers by partial, case-insensitive name or email and stays admin-only", () => {
+    // Regression guard for item 6: opportunityDeliveryCustomerSearch only matched
+    // `name`, so searching an email such as "info" never found info@wisebond.org.
+    // The query now matches a partial, case-insensitive name OR email. The sandbox
+    // has no MySQL/MariaDB server binary, so this asserts the generated SQL textually.
+    expect(routerSource).toContain("opportunityDeliveryCustomerSearch: adminProcedure");
+    const start = diagnosticsSource.indexOf("export async function searchOpportunityDeliveryCustomers");
+    const end = diagnosticsSource.indexOf("export async function getOpportunityDeliveryCustomer");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const sql = diagnosticsSource.slice(start, end);
+    expect(sql).toContain("escapeLikeContains(term)");
+    expect(sql).toMatch(/LOWER\(name\) LIKE LOWER\(\?\) ESCAPE '!'/);
+    expect(sql).toMatch(/LOWER\(email\) LIKE LOWER\(\?\) ESCAPE '!'/);
+    expect(sql).toContain("role='user'");
+    expect(sql).toContain("LIMIT 20");
+    expect(diagnosticsSource).toContain('return "%" + value.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_") + "%";');
+  });
+
   it("pins an explicit collation on the cross-table UNION columns so delivery records never fail with a collation error", () => {
     // opportunity_generation_assignments and opportunity_popup_events are created
     // independently, and several of their string columns were added later with an
