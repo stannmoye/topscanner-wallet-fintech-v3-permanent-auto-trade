@@ -1,3 +1,12 @@
+## 2026-11-18 — Public trade ID implementation and verification
+
+- **Implementation:** Added stable `TX-XXXX-XXXX-XXXX` public references for popup events and their eventual trades, backed by a unique registry with collision retries. Numeric ledger IDs remain unchanged. Added one-click copy controls in popups, minimized alerts, opportunity/trade views, and history details; updated the trading specification and added migration `drizzle/0115_trade_public_id_registry.sql`.
+- **Checks:** Focused ID/history tests pass (15 tests); `pnpm check` and `pnpm build` pass. `pnpm test:popup-responsive` passes across all 18 viewport sizes.
+- **Full suite:** 24 tests fail across older popup-rendering, policy/schema, and theme contract checks; 1,266 tests pass and 31 are skipped. These failures are outside the new Trade ID assertions, but a clean-baseline run was not available to establish whether they predate this change.
+- **Pending:** The migration is not applied to a database; no authenticated live-portal validation, deployment, or remote GitHub write was performed. Rotate the credentials and token previously shared in chat.
+
+---
+
 ## 2026-11-18 — Separate the customer dashboard bands
 
 - **Layout fix:** Added a shared responsive 14–20px top-band gap for the wallet, workspace menu and welcome panel in `client/src/customer-theme-overrides.css`. Removed the wallet ribbon's duplicate bottom margin so spacing stays consistent.

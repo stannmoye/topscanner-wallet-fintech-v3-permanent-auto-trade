@@ -242,6 +242,7 @@ export const opportunityDeliveryIdempotency = mysqlTable("opportunity_delivery_i
 export const opportunityPopupEvents = mysqlTable("opportunity_popup_events", {
   id: int("id").autoincrement().primaryKey(),
   eventKey: varchar("eventKey", { length: 180 }).notNull().unique(),
+  publicTradeId: varchar("publicTradeId", { length: 17 }),
   userId: int("userId").notNull(),
   offerId: int("offerId").notNull(),
   quotaDay: varchar("quotaDay", { length: 10 }).notNull(),
@@ -299,6 +300,7 @@ export const opportunityPopupEvents = mysqlTable("opportunity_popup_events", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
+  publicTradeIdUnique: uniqueIndex("opportunity_popup_public_trade_id_uq").on(table.publicTradeId),
   dailyAttemptUserDayIdx: index("opportunity_popup_user_daily_attempt_day_idx").on(table.userId, table.executionDailyAttemptDay),
   pendingPackageIdIdx: index("opportunity_popup_pending_package_id_idx").on(table.userId, table.packageId, table.deliveryStatus),
   retryDueIdx: index("opportunity_popup_retry_due_idx").on(table.deliveryStatus, table.deliveryRetryAfter),
@@ -704,6 +706,7 @@ export const settlementEvidenceAuditEvents = mysqlTable("settlement_evidence_aud
 
 export const tradePositions = mysqlTable("trade_positions", {
   id: int("id").autoincrement().primaryKey(),
+  publicTradeId: varchar("publicTradeId", { length: 17 }),
   userId: int("userId").notNull(),
   offerId: int("offerId").notNull(),
   packageSubscriptionId: int("packageSubscriptionId"),
@@ -758,9 +761,14 @@ export const tradePositions = mysqlTable("trade_positions", {
   settlementNotes: varchar("settlementNotes", { length: 2000 }),
   policyVersion: int("policyVersion").default(1).notNull(),
 }, (table) => ({
+  publicTradeIdUnique: uniqueIndex("trade_positions_public_trade_id_uq").on(table.publicTradeId),
   statusSettlementUserCurrencyIdx: index("trade_positions_status_settlement_user_currency_idx").on(table.status, table.settlementStatus, table.userId, table.currency),
   settlementReferenceIdx: index("trade_positions_settlement_reference_idx").on(table.settlementReference),
 }));
+export const tradePublicIds = mysqlTable("trade_public_ids", {
+  publicId: varchar("publicId", { length: 17 }).primaryKey(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
 export const tradeLifecycleEvents = mysqlTable("trade_lifecycle_events", {
   id: int("id").autoincrement().primaryKey(),
   tradeId: int("tradeId").notNull(),

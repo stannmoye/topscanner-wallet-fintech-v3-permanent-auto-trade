@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { TradeIdCopyButton } from "@/components/TradeIdCopyButton";
 
 export type CustomerOpportunityHistoryKind = "available" | "missed" | "allocated" | "settled" | "dismissed" | "expired";
 
@@ -11,6 +12,7 @@ export type CustomerOpportunityHistoryEntry = {
   status: string;
   occurredAt: string | null;
   searchable: string;
+  publicTradeId: string | null;
 };
 
 export type CustomerOpportunityHistoryGroup = {
@@ -64,27 +66,31 @@ export function buildCustomerOpportunityHistory(input: HistoryInput): CustomerOp
 
     if (deliveryStatus === "dismissed") {
       const occurredAt = dateValue(offer?.dismissedAt);
-      entries.push({ id: "dismissed:" + id, reference: id, kind: "dismissed", title, subtitle: "Opportunity " + id + " · notice dismissed", status: "Dismissed · presentation only", occurredAt, searchable: (title + " " + id + " dismissed presentation notice").toLowerCase() });
+      const publicTradeId = offer?.publicTradeId ? String(offer.publicTradeId) : null;
+      entries.push({ id: "dismissed:" + id, reference: id, kind: "dismissed", title, subtitle: (publicTradeId ? "Trade ID " + publicTradeId + " · " : "") + "Opportunity " + id + " · notice dismissed", status: "Dismissed · presentation only", occurredAt, searchable: (title + " " + id + " " + (publicTradeId || "") + " dismissed presentation notice").toLowerCase(), publicTradeId });
       continue;
     }
     if (deliveryStatus === "expired") {
       const occurredAt = dateValue(offer?.expiredAt || offer?.closesAt);
-      entries.push({ id: "expired:" + id, reference: id, kind: "expired", title, subtitle: "Opportunity " + id + " · delivery window ended", status: "Expired · delivery ended", occurredAt, searchable: (title + " " + id + " expired delivery ended").toLowerCase() });
+      const publicTradeId = offer?.publicTradeId ? String(offer.publicTradeId) : null;
+      entries.push({ id: "expired:" + id, reference: id, kind: "expired", title, subtitle: (publicTradeId ? "Trade ID " + publicTradeId + " · " : "") + "Opportunity " + id + " · delivery window ended", status: "Expired · delivery ended", occurredAt, searchable: (title + " " + id + " " + (publicTradeId || "") + " expired delivery ended").toLowerCase(), publicTradeId });
       continue;
     }
 
     const offerStatus = String(offer?.offerStatus ?? offer?.status ?? "").toLowerCase();
     if (offerStatus !== "open") continue;
     const occurredAt = dateValue(offer?.opensAt || offer?.createdAt);
+    const publicTradeId = offer?.publicTradeId ? String(offer.publicTradeId) : null;
     entries.push({
       id: "available:" + id,
       reference: id,
       kind: "available",
       title,
-      subtitle: [offer?.venueFrom, offer?.venueTo].filter((part: unknown) => typeof part === "string" && part && part !== "Informational").join(" → ") || ("Opportunity " + id),
+      subtitle: (publicTradeId ? "Trade ID " + publicTradeId + " · " : "") + ([offer?.venueFrom, offer?.venueTo].filter((part: unknown) => typeof part === "string" && part && part !== "Informational").join(" → ") || ("Opportunity " + id)),
       status: "Open · available for review",
       occurredAt,
-      searchable: (title + " " + id + " " + (offer?.symbol || "") + " available open").toLowerCase(),
+      searchable: (title + " " + id + " " + (offer?.symbol || "") + " " + (publicTradeId || "") + " available open").toLowerCase(),
+      publicTradeId,
     });
   }
 
@@ -94,7 +100,8 @@ export function buildCustomerOpportunityHistory(input: HistoryInput): CustomerOp
     const title = displayName(item);
     const reason = String(item?.reason || "reason not supplied").replaceAll("_", " ").toLowerCase();
     const occurredAt = dateValue(item?.createdAt || item?.occurredAt);
-    entries.push({ id: "missed:" + id, reference: String(item?.offerId ?? id), kind: "missed", title, subtitle: "Opportunity " + (item?.offerId ?? id) + " · " + reason, status: "Missed · not allocated", occurredAt, searchable: (title + " " + id + " " + (item?.offerId || "") + " " + reason + " missed").toLowerCase() });
+    const publicTradeId = item?.publicTradeId ? String(item.publicTradeId) : null;
+    entries.push({ id: "missed:" + id, reference: String(item?.offerId ?? id), kind: "missed", title, subtitle: (publicTradeId ? "Trade ID " + publicTradeId + " · " : "") + "Opportunity " + (item?.offerId ?? id) + " · " + reason, status: "Missed · not allocated", occurredAt, searchable: (title + " " + id + " " + (item?.offerId || "") + " " + (publicTradeId || "") + " " + reason + " missed").toLowerCase(), publicTradeId });
   }
 
   for (const trade of trades) {
@@ -106,7 +113,8 @@ export function buildCustomerOpportunityHistory(input: HistoryInput): CustomerOp
     const title = displayName(trade);
     const occurredAt = dateValue(trade?.settledAt || trade?.confirmedAt || trade?.createdAt);
     const stage = String(trade?.stage || (settled ? "Settlement recorded" : "Awaiting settlement"));
-    entries.push({ id: "trade:" + id, reference: id, kind: settled ? "settled" : "allocated", title, subtitle: "Trade #" + id + " · " + stage, status: settled ? "Settled · server recorded" : "Allocated · settlement pending", occurredAt, searchable: (title + " " + id + " " + stage + " " + (settled ? "settled" : "allocated")).toLowerCase() });
+    const publicTradeId = trade?.publicTradeId ? String(trade.publicTradeId) : null;
+    entries.push({ id: "trade:" + id, reference: id, kind: settled ? "settled" : "allocated", title, subtitle: publicTradeId ? "Trade ID " + publicTradeId + " · " + stage : "Trade #" + id + " · " + stage, status: settled ? "Settled · server recorded" : "Allocated · settlement pending", occurredAt, searchable: (title + " " + id + " " + (publicTradeId || "") + " " + stage + " " + (settled ? "settled" : "allocated")).toLowerCase(), publicTradeId });
   }
 
   return entries.sort((left, right) => {
@@ -216,6 +224,7 @@ export function CustomerOpportunityHistoryPanel({ offers, missed, trades }: Hist
                     <summary>View record details</summary>
                     <dl>
                       <div><dt>Record reference</dt><dd>{entry.reference}</dd></div>
+                      {entry.publicTradeId&&<div><dt>Trade ID</dt><dd><TradeIdCopyButton tradeId={entry.publicTradeId}/></dd></div>}
                       <div><dt>Recorded category</dt><dd>{entry.kind}</dd></div>
                       <div><dt>Recorded status</dt><dd>{entry.status}</dd></div>
                       <div><dt>Server timestamp</dt><dd>{entry.occurredAt ? new Date(entry.occurredAt).toLocaleString() : "Not supplied"}</dd></div>

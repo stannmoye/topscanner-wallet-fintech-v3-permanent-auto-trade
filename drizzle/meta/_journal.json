@@ -589,6 +589,13 @@
       "when": 1794484800001,
       "tag": "0114_enable_automatic_financial_execution_all_packages",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1794484800002,
+      "tag": "0115_trade_public_id_registry",
+      "breakpoints": true
     }
   ]
 }

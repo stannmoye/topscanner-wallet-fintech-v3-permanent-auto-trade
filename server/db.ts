@@ -3,7 +3,7 @@ import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, not
 import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
 import { createPool, type Pool } from "mysql2/promise";
 import { ENV } from "./_core/env";
-import { InsertUser, appSettings, authEmailTokens, customerBalances, customerEmailPreferences, customerNotifications, customerPackageSubscriptions, packages, customerSessions, customerTotpAuthenticators, customerWalletPreferences, currencyRegistry, fxRateSnapshots, customerControls, emailOutbox, kycProfiles, payoutRequests, notificationCampaigns, notificationCampaignDeliveries, customerOpportunityRules, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityOffers, opportunityPackagePolicies, opportunityPopupEvents, opportunityGenerationTemplates, opportunityGenerationAssignments, opportunityGenerationBatches, balanceLedger, tradingTierQualificationJobs, tradingPackageFeePolicyVersions, adminWalletAdjustmentIdempotency, stakePositions, tradePositions, tradeRewardReservations, tradeSettlementReferenceClaims, tradeLifecycleEvents, settlementEvidenceRecords, settlementEvidenceAuditEvents, users, v5AuditEvents, v5Wallets, missedOpportunities, marketSnapshots } from "../drizzle/schema";
+import { InsertUser, appSettings, authEmailTokens, customerBalances, customerEmailPreferences, customerNotifications, customerPackageSubscriptions, packages, customerSessions, customerTotpAuthenticators, customerWalletPreferences, currencyRegistry, fxRateSnapshots, customerControls, emailOutbox, kycProfiles, payoutRequests, notificationCampaigns, notificationCampaignDeliveries, customerOpportunityRules, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityOffers, opportunityPackagePolicies, opportunityPopupEvents, opportunityGenerationTemplates, opportunityGenerationAssignments, opportunityGenerationBatches, balanceLedger, tradingTierQualificationJobs, tradingPackageFeePolicyVersions, adminWalletAdjustmentIdempotency, stakePositions, tradePositions, tradePublicIds, tradeRewardReservations, tradeSettlementReferenceClaims, tradeLifecycleEvents, settlementEvidenceRecords, settlementEvidenceAuditEvents, users, v5AuditEvents, v5Wallets, missedOpportunities, marketSnapshots } from "../drizzle/schema";
 import { consumeTotpRecoveryCode, decryptTotpSecret, encryptTotpSecret, generateTotpRecoveryCodes, generateTotpSecret, hashTotpRecoveryCode, totpProvisioningUri, verifyTotpCode } from "./modules/totp";
 import { calculateTradeSettlement } from "./modules/trade-settlement";
 import { calculateAutomaticTradeDebit, calculateAutomaticTradeCredit } from "./modules/automatic-trade-lifecycle-math";
@@ -38,6 +38,7 @@ import { deliveryAdmissionLockKey } from "./modules/opportunity-delivery-lifecyc
 import { assertExactlyOneAffectedRow } from "./db-mutation-guards";
 import { isValidSettlementEvidenceReference, isValidSettlementEvidenceStorageKey, type SettlementEvidenceType } from "./settlement-evidence";
 import { isTradingTierEnablingTransition } from "./modules/trading-tier-activation";
+import { reserveUniquePublicTradeId } from "./modules/public-trade-id";
 import { FAIL_CLOSED_TRADE_GLOBAL_CONTROLS, TRADE_GLOBAL_CONTROL_MIGRATION_DIAGNOSTIC_KEY, TRADE_GLOBAL_CONTROL_SETTINGS_KEY, TRADE_GLOBAL_MASTER_KEYS, parseTradeGlobalControlPolicy, requiresPreviousSettlementForAllocation, type TradeGlobalMasterKey, type TradeGlobalControlStatus } from "./trading-global-policy";
 import { classifyTradeFeeSnapshot, normalizeImmutableTradeFeeSnapshot, normalizeLegacyTradeFeePolicy, resolvePackageFeePolicyWrite, selectLatestEffectivePackageFeePolicy } from "./modules/package-fee-policy";
 const TRADE_FEE_SETTING_KEYS = ["trade.platformFeeBps", "trade.feeRoundingMode", "trade.feePolicyVersion"] as const;
@@ -3887,7 +3888,19 @@ export async function updateOpportunityPackagePolicies(updatedBy:number, policie
   });
   return listOpportunityPackagePolicies();
 }
-async function listMissedOpportunities(userId:number){const db=await getDb();if(!db)throw new Error("Database is not available");return db.select().from(missedOpportunities).where(and(eq(missedOpportunities.userId,userId),eq(missedOpportunities.status,"MISSED"))).orderBy(desc(missedOpportunities.createdAt)).limit(50);}
+async function listMissedOpportunities(userId:number){
+  const db=await getDb();if(!db)throw new Error("Database is not available");
+  return db.select({
+    id:missedOpportunities.id,userId:missedOpportunities.userId,offerId:missedOpportunities.offerId,
+    symbol:missedOpportunities.symbol,currency:missedOpportunities.currency,amountMinor:missedOpportunities.amountMinor,
+    availableMinorAtOpportunity:missedOpportunities.availableMinorAtOpportunity,shortfallMinor:missedOpportunities.shortfallMinor,
+    potentialRewardMinor:missedOpportunities.potentialRewardMinor,expectedRewardBps:missedOpportunities.expectedRewardBps,
+    reason:missedOpportunities.reason,status:missedOpportunities.status,createdAt:missedOpportunities.createdAt,
+    updatedAt:missedOpportunities.updatedAt,
+    publicTradeId:sql<string|null>`(SELECT publicTradeId FROM opportunity_popup_events WHERE userId=${userId} AND offerId=${missedOpportunities.offerId} ORDER BY deliveredAt DESC LIMIT 1)`,
+  }).from(missedOpportunities).where(and(eq(missedOpportunities.userId,userId),eq(missedOpportunities.status,"MISSED")))
+    .orderBy(desc(missedOpportunities.createdAt)).limit(50);
+}
 async function markMissedOpportunity(userId:number,offer:any,amountMinor:number,reason:string){
   const db=await getDb(); if(!db) throw new Error("Database is not available");
   const terms=calculateTradeTerms(userId,offer,amountMinor);
@@ -4182,6 +4195,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   };
   const activePopupRows=await db.select({
     eventId:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,packageId:opportunityPopupEvents.packageId,packageName:opportunityPopupEvents.packageName,
+    publicTradeId:opportunityPopupEvents.publicTradeId,
     policyVersion:opportunityPopupEvents.policyVersion,
     symbol:opportunityPopupEvents.symbol,currency:opportunityPopupEvents.currency,popupMinimumMinor:opportunityPopupEvents.minimumMinor,
     expectedRewardBps:opportunityPopupEvents.expectedRewardBps,balanceAvailableMinor:opportunityPopupEvents.balanceAvailableMinor,
@@ -4500,6 +4514,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   }
   const popupRows=await db.select({
     eventId:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,packageId:opportunityPopupEvents.packageId,packageName:opportunityPopupEvents.packageName,
+    publicTradeId:opportunityPopupEvents.publicTradeId,
     executionStatus:opportunityPopupEvents.executionStatus,executionAttemptCount:opportunityPopupEvents.executionAttemptCount,executionRetryAfter:opportunityPopupEvents.executionRetryAfter,executionRetryDay:opportunityPopupEvents.executionRetryDay,executionLastErrorCode:opportunityPopupEvents.executionLastErrorCode,
     symbol:opportunityPopupEvents.symbol,currency:opportunityPopupEvents.currency,popupMinimumMinor:opportunityPopupEvents.minimumMinor,
     expectedRewardBps:opportunityPopupEvents.expectedRewardBps,policyVersion:opportunityPopupEvents.policyVersion,
@@ -4557,7 +4572,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     const offerMinimum=Number(row.offerMinimumMinor??row.popupMinimumMinor);
     const configuredMinimum=configured&&currencyRow?packageUsdUnitsToNativeMinor(Number(configured.minimumTradeUnits),String(row.currency),currencyRows):offerMinimum;
     const configuredMaximum=configured&&currencyRow?Math.max(configuredMinimum,packageUsdUnitsToNativeMinor(Number(configured.maximumTradeUnits),String(row.currency),currencyRows)):Number.MAX_SAFE_INTEGER;
-    return {id:Number(row.offerId),offerId:Number(row.offerId),deliveryEventId:Number(row.eventId),packageId:Number(subscription.packageId),packageName:subscription.packageName,packageSubscriptionId:Number(subscription.subscriptionId),
+    return {id:Number(row.offerId),offerId:Number(row.offerId),deliveryEventId:Number(row.eventId),publicTradeId:String(row.publicTradeId||""),packageId:Number(subscription.packageId),packageName:subscription.packageName,packageSubscriptionId:Number(subscription.subscriptionId),
       symbol:row.symbol,companySymbol,exchangeCountry,exchangeProviderName:exchangeProvider?.name||null,exchangeProviderCode:exchangeProvider?.code||null,exchangeProviderFlag:exchangeProvider?.flag||null,venueFrom:row.venueFrom||"",venueTo:row.venueTo||"",currency:row.currency,minimumMinor:Math.max(offerMinimum,Number(row.popupMinimumMinor||0),configuredMinimum),
       packageMinimumTradeMinor:configuredMinimum,packageMaximumTradeMinor:configuredMaximum,expectedRewardBps:Number(row.expectedRewardBps||0),
       durationSeconds:Number(row.popupDurationSeconds??row.durationSeconds??0),configuredProfitRateBps:Number(row.configuredProfitRateBps||row.expectedRewardBps||0),configuredDurationSeconds:Number(row.configuredDurationSeconds||row.popupDurationSeconds||row.durationSeconds||0),configuredPopupDisplaySeconds:Number(row.configuredPopupDisplaySeconds||0),packagePolicyVersionSnapshot:Number(row.packagePolicyVersionSnapshot||row.policyVersion||1),packageBadgeLabel:row.packageBadgeLabel??row.badgeLabel??null,companyReferenceId:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceId:null,companyDisplayName:companyDisplayAllowed(row.companyReferenceId)?row.companyDisplayName:null,companyLogoUrl:companyDisplayAllowed(row.companyReferenceId)?row.companyLogoUrl:null,companyReferenceMetadataJson:companyDisplayAllowed(row.companyReferenceId)?row.companyReferenceMetadataJson:null,companyReferenceOnly:companyDisplayAllowed(row.companyReferenceId)&&Boolean(row.companyReferenceOnly),badgeLabel:row.badgeLabel??null,badgeStyle:["neutral","blue","purple","gold","green"].includes(String(row.badgeStyle))?String(row.badgeStyle):"neutral",policyVersion:Number(row.policyVersion||1),
@@ -4653,7 +4668,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
       popupEligible:row.offerStatus==="open"&&Boolean(row.closesAt&&new Date(row.closesAt).getTime()>now.getTime())&&
         ["DELIVERED","NOTICED","OPENED"].includes(row.eventStatus)&&["queued","in_progress","retry_wait","delivered","received","rendered","failed"].includes(String(row.deliveryStatus)),
       deliveryStatus:row.deliveryStatus,deliveryAttemptCount:Number(row.deliveryAttemptCount||0),deliveryRetryAfter:row.deliveryRetryAfter,deliveryLeaseToken:row.deliveryLeaseToken,
-      automaticTrade:executed};
+      publicTradeId:String(executed?.publicTradeId||row.publicTradeId||""),automaticTrade:executed};
   });
   if(options.workerCycle!==true){
     const dispatches=await claimPopupDeliveryDispatches(userId);
@@ -4862,6 +4877,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
    await tx.execute(sql`SELECT id FROM opportunity_popup_events WHERE id=${input.deliveryEventId} AND userId=${userId} FOR UPDATE`);
    const event=(await tx.select({
      id:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,eventStatus:opportunityPopupEvents.eventStatus,tradeId:opportunityPopupEvents.tradeId,
+     publicTradeId:opportunityPopupEvents.publicTradeId,
      expectedRewardBps:opportunityPopupEvents.expectedRewardBps,configuredProfitRateBps:opportunityPopupEvents.configuredProfitRateBps,
      configuredDurationSeconds:opportunityPopupEvents.configuredDurationSeconds,configuredPopupDisplaySeconds:opportunityPopupEvents.configuredPopupDisplaySeconds,
      packagePolicyVersionSnapshot:opportunityPopupEvents.packagePolicyVersionSnapshot,packageBadgeLabel:opportunityPopupEvents.packageBadgeLabel,
@@ -4906,7 +4922,18 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
       expectedProfitMinor=sim.expectedGrossProfitMinor;
       expectedCreditMinor=sim.expectedCreditMinor;
     } catch { /* keep defaults on edge cases */ }
-    return {tradeId:Number(existing.id),rewardMinor:Number(existing.expectedRewardMinor),rewardBps:replayBps,minimumMinor:0,calculationMethod:"idempotent-replay",settlesAt:existing.settlesAt,creditAt:existing.creditAt,currency:existing.currency,amountMinor,rateUsd:Number(rate.usdRate),rateUpdatedAt:rate.updatedAt,amountUsd:nativeMinorToUsd(amountMinor,Number(rate.scale),Number(rate.usdRate)),idempotentReplay:true,debitTransitionText,expectedProfitMinor,expectedCreditMinor,lifecycleStage:"capital_locked"};
+    return {tradeId:Number(existing.id),publicTradeId:String(existing.publicTradeId||""),rewardMinor:Number(existing.expectedRewardMinor),rewardBps:replayBps,minimumMinor:0,calculationMethod:"idempotent-replay",settlesAt:existing.settlesAt,creditAt:existing.creditAt,currency:existing.currency,amountMinor,rateUsd:Number(rate.usdRate),rateUpdatedAt:rate.updatedAt,amountUsd:nativeMinorToUsd(amountMinor,Number(rate.scale),Number(rate.usdRate)),idempotentReplay:true,debitTransitionText,expectedProfitMinor,expectedCreditMinor,lifecycleStage:"capital_locked"};
+   }
+  }
+  let publicTradeId=String(popupSnapshot?.publicTradeId||"");
+  if(!publicTradeId){
+   publicTradeId=await reserveUniquePublicTradeId(async candidate=>{
+    const inserted=await tx.execute(sql`INSERT IGNORE INTO trade_public_ids (publicId) VALUES (${candidate})`) as any;
+    return Number(inserted?.[0]?.affectedRows||0)===1;
+   });
+   if(input.deliveryEventId!==undefined){
+    await tx.update(opportunityPopupEvents).set({publicTradeId}).where(and(eq(opportunityPopupEvents.id,input.deliveryEventId),eq(opportunityPopupEvents.userId,userId)));
+    if(popupSnapshot) popupSnapshot.publicTradeId=publicTradeId;
    }
   }
   // Serialize every new allocation against the administrator's global pause.
@@ -5210,7 +5237,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   const settlementReviewAt=new Date(settlesAt.getTime()+settlementDelaySeconds*1000);
   const creditAt=new Date(settlementReviewAt.getTime()+settlementPolicy.creditDelaySeconds*1000);
   const snapshotVersion=Number(popupSnapshot?.packagePolicyVersionSnapshot||packagePolicy.policyVersion||activePackageSubscription.termsVersion||1);
-  const result=await tx.insert(tradePositions).values({userId,offerId:offer.id,packageSubscriptionId:selectedSubscriptionId,currency:offer.currency,principalMinor:input.amountMinor,expectedRewardMinor:reward,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,companyLogoUrl:popupSnapshot?.companyLogoUrl||null,companyReferenceMetadataJson:popupSnapshot?.companyReferenceMetadataJson||null,companyReferenceOnly:Boolean(popupSnapshot?.companyReferenceOnly??false),walletFundingPlanJson,instrumentIdSnapshot:Number(instrumentIdForTrade),entryMarketSnapshotId:Number(entrySnapshot.id),entryPriceUsd:String(entryPrice),settlementResultSource:null,settlementProvider:null,settlementObservedAt:null,packageIdSnapshot:feePackageId,packageFeeRateBpsSnapshot:packageFeePolicy.feeRateBps,packageFeeRoundingModeSnapshot:packageFeePolicy.roundingMode,packageFeePolicyVersionSnapshot:packageFeePolicy.version,packageFeeEffectiveAtSnapshot:new Date(packageFeePolicy.effectiveAt),feePolicyVersion:packageFeePolicy.version,platformFeeRateBps:packageFeePolicy.feeRateBps,platformFeeRoundingMode:packageFeePolicy.roundingMode,transactionReference:ref,rewardReservedMinor:reward,settlesAt,settlementReviewAt,creditAt,lifecycleStage:"Trade Allocated",settlementStatus:"pending",policyVersion:snapshotVersion} as any);
+  const result=await tx.insert(tradePositions).values({publicTradeId,userId,offerId:offer.id,packageSubscriptionId:selectedSubscriptionId,currency:offer.currency,principalMinor:input.amountMinor,expectedRewardMinor:reward,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,companyLogoUrl:popupSnapshot?.companyLogoUrl||null,companyReferenceMetadataJson:popupSnapshot?.companyReferenceMetadataJson||null,companyReferenceOnly:Boolean(popupSnapshot?.companyReferenceOnly??false),walletFundingPlanJson,instrumentIdSnapshot:Number(instrumentIdForTrade),entryMarketSnapshotId:Number(entrySnapshot.id),entryPriceUsd:String(entryPrice),settlementResultSource:null,settlementProvider:null,settlementObservedAt:null,packageIdSnapshot:feePackageId,packageFeeRateBpsSnapshot:packageFeePolicy.feeRateBps,packageFeeRoundingModeSnapshot:packageFeePolicy.roundingMode,packageFeePolicyVersionSnapshot:packageFeePolicy.version,packageFeeEffectiveAtSnapshot:new Date(packageFeePolicy.effectiveAt),feePolicyVersion:packageFeePolicy.version,platformFeeRateBps:packageFeePolicy.feeRateBps,platformFeeRoundingMode:packageFeePolicy.roundingMode,transactionReference:ref,rewardReservedMinor:reward,settlesAt,settlementReviewAt,creditAt,lifecycleStage:"Trade Allocated",settlementStatus:"pending",policyVersion:snapshotVersion} as any);
   const tradeId=Number(result[0].insertId);
   // Simulated popup-trade mathematics: debit side (amount deducted while popup / trade is live)
   const automaticDebit = calculateAutomaticTradeDebit({
@@ -5219,10 +5246,10 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
     profitRateBps: effectiveRateBps,
   });
   await tx.insert(tradeLifecycleEvents).values({tradeId,userId,eventType:"trade_allocated",stage:"Trade Allocated",payloadJson:JSON.stringify({amountMinor:input.amountMinor,currency:offer.currency,packageSubscriptionId:selectedSubscriptionId,packageId:Number(activePackageSubscription.packageId),termsVersion:Number(activePackageSubscription.termsVersion||1),policyVersion:snapshotVersion,configuredProfitRateBps:effectiveRateBps,configuredDurationSeconds:effectiveDurationSeconds,companyReferenceId:popupSnapshot?.companyReferenceId||null,companyDisplayName:popupSnapshot?.companyDisplayName||null,debitTransitionText:automaticDebit.transitionText,expectedProfitMinor:automaticDebit.expectedGrossProfitMinor,lifecycleStage:automaticDebit.stage})});
-  if(input.deliveryEventId!==undefined) await tx.update(opportunityPopupEvents).set({tradeId,eventStatus:"TRADED",executionStatus:"SUCCEEDED",executionRetryAfter:null,executionLastErrorCode:null,tradedAt:new Date(),updatedAt:new Date()}).where(and(eq(opportunityPopupEvents.id,input.deliveryEventId),eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.offerId,offer.id)));
-  else await tx.execute(sql`UPDATE opportunity_popup_events SET tradeId=${tradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
+  if(input.deliveryEventId!==undefined) await tx.update(opportunityPopupEvents).set({tradeId,publicTradeId,eventStatus:"TRADED",executionStatus:"SUCCEEDED",executionRetryAfter:null,executionLastErrorCode:null,tradedAt:new Date(),updatedAt:new Date()}).where(and(eq(opportunityPopupEvents.id,input.deliveryEventId),eq(opportunityPopupEvents.userId,userId),eq(opportunityPopupEvents.offerId,offer.id)));
+  else await tx.execute(sql`UPDATE opportunity_popup_events SET tradeId=${tradeId},publicTradeId=${publicTradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
   await tx.insert(tradeRewardReservations).values({userId,tradeId,packageName:activePackageSubscription.packageName,windowKey:today,currency:offer.currency,reservedMinor:reward,status:"reserved"});
-  return {tradeId,rewardMinor:reward,rewardBps:effectiveRateBps,minimumMinor:terms.minimumMinor,calculationMethod:"saved-tier-policy",configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,settlesAt,settlementReviewAt,creditAt,currency:offer.currency,amountMinor:input.amountMinor,rateUsd:nativeRate,rateUpdatedAt:currencyRow.updatedAt,amountUsd:nativeMinorToUsd(input.amountMinor,Number(currencyRow.scale),nativeRate),debitTransitionText:automaticDebit.transitionText,expectedProfitMinor:automaticDebit.expectedGrossProfitMinor,lifecycleStage:automaticDebit.stage,expectedCreditMinor:automaticDebit.expectedCreditMinor};
+  return {tradeId,publicTradeId,rewardMinor:reward,rewardBps:effectiveRateBps,minimumMinor:terms.minimumMinor,calculationMethod:"saved-tier-policy",configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,settlesAt,settlementReviewAt,creditAt,currency:offer.currency,amountMinor:input.amountMinor,rateUsd:nativeRate,rateUpdatedAt:currencyRow.updatedAt,amountUsd:nativeMinorToUsd(input.amountMinor,Number(currencyRow.scale),nativeRate),debitTransitionText:automaticDebit.transitionText,expectedProfitMinor:automaticDebit.expectedGrossProfitMinor,lifecycleStage:automaticDebit.stage,expectedCreditMinor:automaticDebit.expectedCreditMinor};
  });
 }
 export async function listTrades(userId:number){
@@ -5230,6 +5257,7 @@ export async function listTrades(userId:number){
   if(!db)throw new Error("Database is not available");
   const rows=await db.select({
     id:tradePositions.id,
+    publicTradeId:tradePositions.publicTradeId,
     userId:tradePositions.userId,
     offerId:tradePositions.offerId,
     currency:tradePositions.currency,

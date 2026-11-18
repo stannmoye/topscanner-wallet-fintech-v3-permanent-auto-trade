@@ -42,6 +42,19 @@ describe("customer opportunity history", () => {
     expect(entries[2].occurredAt).toBe("2026-11-06T11:00:00.000Z");
   });
 
+  it("keeps a public trade ID visible from an opportunity through allocated trade history", () => {
+    const publicTradeId = "TX-9F3K-21BQ-7XLM";
+    const entries = buildCustomerOpportunityHistory({
+      offers: [{ id: 71, status: "open", publicTradeId }],
+      trades: [{ id: 72, status: "confirmed", publicTradeId, stage: "Awaiting settlement" }],
+    });
+
+    expect(entries.map(entry => entry.publicTradeId)).toEqual([publicTradeId, publicTradeId]);
+    expect(entries[0].subtitle).toContain(publicTradeId);
+    expect(entries[1].subtitle).toContain(publicTradeId);
+    expect(entries.every(entry => entry.searchable.includes(publicTradeId.toLowerCase()))).toBe(true);
+  });
+
   it("includes dismissed and expired only from explicit persisted delivery statuses", () => {
     const entries = buildCustomerOpportunityHistory({ offers: [
       { id: 30, status: "open", deliveryStatus: "dismissed", symbol: "DISMISSED", dismissedAt: "2026-11-06T14:00:00.000Z" },

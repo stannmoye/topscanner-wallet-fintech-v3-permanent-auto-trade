@@ -7,6 +7,7 @@ import { notificationPollingInterval } from "./notification-polling-policy";
 import { createNotificationAudioController } from "./notification-audio-controller";
 import PortalRenderBoundary from "@/components/PortalRenderBoundary";
 import { OpportunityCloseAction } from "@/components/OpportunityCloseAction";
+import { TradeIdCopyButton } from "@/components/TradeIdCopyButton";
 import type { TradingDeliveryPolicyRow } from "@/components/TradingDeliveryPolicyEditor";
 import { formatFeeBpsAsPercent, parseFeePercentToBps, resolvePackageFeePolicy, type FeeRoundingMode } from "./trading-settings-client-contracts";
 import { getPageCount, paginateItems } from "./trading-catalogue-pagination";
@@ -818,7 +819,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const statusTone=insufficientBalance?"opportunity-trade-card--warning":"";
 
   if(minimized)return <div className="opportunity-popup-dock" role="region" aria-label="Minimized opportunity alert" aria-live="polite">
-    <div className="opportunity-popup-dock__content"><strong>{insufficientBalance?"Missed — insufficient balance":"Automatic trade in progress"}</strong><span>{heading} · {popup.packageName||"Assigned package"} · {formatPercent(profitRateBps)} configured return</span><span>{expiryLabel}: {expiryCountdown}</span></div>
+    <div className="opportunity-popup-dock__content"><strong>{insufficientBalance?"Missed — insufficient balance":"Automatic trade in progress"}</strong><span>{heading} · {popup.packageName||"Assigned package"} · {formatPercent(profitRateBps)} configured return</span><span>{expiryLabel}: {expiryCountdown}</span>{popup.publicTradeId&&<div className="opportunity-popup-dock__trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(popup.publicTradeId)} className="trade-id-copy--compact"/></div>}</div>
     <div className="opportunity-popup-dock__actions"><button type="button" aria-label="Maximize opportunity alert" onClick={()=>setMinimized(false)}>Maximize</button><button type="button" className="opportunity-popup-dock__dismiss" onClick={dismiss}>Dismiss</button></div>
   </div>;
 
@@ -842,6 +843,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
     <div className="reference-popup-metrics"><div><span>Required to invest</span><strong>{requiredMoney}</strong></div><div><span>Amount to gain</span><strong className="positive">+{profitAmount}</strong></div><div className="positive-card"><span>Profit</span><strong className="positive">{formatPercent(profitRateBps)}</strong></div></div>
     <div className="reference-popup-details"><div><span>Assigned package</span><strong>{packageName}</strong></div><div><span>Package limits</span><strong>{packageAmountLabel}</strong></div><div><span>Platform fee</span><strong>{formatPercent(feeRateBps)}</strong></div><div><span>Amount deducted by platform</span><strong className="negative">−{feeAmount}</strong></div></div>
     <div className="reference-popup-net"><div><span>Amount earned after deduction</span><small>Net profit credited only after an actual recorded settlement</small></div><strong>{netProfitAmount}</strong></div>
+    {popup.publicTradeId&&<div className="reference-popup-trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(popup.publicTradeId)}/></div>}
     <div className="reference-popup-route"><div className="reference-popup-provider-card"><span className="reference-popup-provider-flag" aria-label={`${exchangeCountry} flag`}>{exchangeProviderFlag}</span><Building2 size={28}/><div><span>Exchange provider · {exchangeCountry}</span><strong>{exchangeProviderName}{exchangeProviderCode&&<em className="reference-popup-provider-code">{exchangeProviderCode}</em>}</strong></div></div><div><Globe2 size={26}/><div><span>Exchange route</span><strong>{buyVenue} → {exchangeProviderName}</strong></div></div></div>
     <div className="reference-popup-flow"><div><span>BUY</span> {buyPrice} <em>{buyVenue}</em></div><div className="reference-popup-arrows"><b>›</b><b>›</b><b>›</b></div><div><span>SELL</span> {sellPrice} <em>{sellVenue}</em></div><div className="reference-popup-window"><span>Opportunity window</span><span>{expiryLabel} · {expiryCountdown}</span></div><div className="reference-popup-drain"><i style={{width:`${expiryProgress}%`}}/></div></div>
     <div className="reference-popup-wallet"><div><WalletCards size={22}/><span>Combined available</span><strong>{availableMoney}</strong></div><div><Lock size={22}/><span>Auto-locked capital</span><strong>{requiredMoney}</strong></div><div><CircleDollarSign size={22}/><span>Auto-credit at settlement</span><strong>{formatMinor(estimatedTotal)}</strong></div></div>
@@ -923,6 +925,7 @@ function CustomerOpportunities({opportunityData}:{push:(x:string)=>void;sound:bo
               {balanceKnown&&balanceStatus==="insufficient"&&<div><span>Shortfall · {valuationCurrency}</span><strong>{format(shortfall,valuationCurrency)}</strong></div>}
               <div><span>Status</span><strong>{offer.automaticTrade?"Allocated automatically":balanceKnown?balanceLabel:balanceLabel+" · eligibility not confirmed"}</strong></div>
             </div>
+            {offer.publicTradeId&&<div className="customer-public-trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(offer.publicTradeId)}/></div>}
             {!balanceKnown&&<div className="admin-ops-empty error" role="status"><span>We could not currently calculate your combined balance because a current FX quote or balance response is unavailable. No sufficiency is assumed.</span><button type="button" className="portal-action" disabled={balanceRefreshing} onClick={()=>void refreshBalance()}>{balanceRefreshing?"Refreshing…":"Refresh balance"}</button></div>}
             <small>Combined balance and shortfall are valued in {valuationCurrency} using server-provided wallet and FX data. They update with the opportunity feed and do not authorize or execute spending. Opportunity opened: {offer.opensAt?new Date(offer.opensAt).toLocaleString():"Recorded by server"} · Configured trade duration: {Number(offer.configuredDurationSeconds??offer.durationSeconds??0)} seconds · Configured return rate: {(Number(offer.configuredProfitRateBps??offer.expectedRewardBps??0)/100).toFixed(2)}% · not a guarantee of market performance.</small>
           </article>;
@@ -940,6 +943,7 @@ function CustomerOpportunities({opportunityData}:{push:(x:string)=>void;sound:bo
               <div><span>Available at opportunity</span><strong>{format(Number(item.availableMinorAtOpportunity||0),item.currency)}</strong></div>
               <div><span>Shortfall</span><strong>{format(Number(item.shortfallMinor??Math.max(0,Number(item.amountMinor||0)-Number(item.availableMinorAtOpportunity||0))),item.currency)}</strong></div>
             </div>
+            {item.publicTradeId&&<div className="customer-public-trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(item.publicTradeId)}/></div>}
             <small>Recorded: {item.createdAt?new Date(item.createdAt).toLocaleString():"Timestamp unavailable"} · Reason: {item.reason||"INSUFFICIENT_AVAILABLE_BALANCE"} · No trade was allocated and no capital was debited.</small>
           </article>
         ))}</div>}
@@ -960,6 +964,7 @@ function CustomerOpportunities({opportunityData}:{push:(x:string)=>void;sound:bo
               </>}
               {trade.status!=="settled"&&<div><span>Expected reward</span><strong>Estimate only: {format(Number(trade.expectedRewardMinor||0),trade.currency)}</strong></div>}
             </div>
+            {trade.publicTradeId&&<div className="customer-public-trade-id"><span>Trade ID</span><TradeIdCopyButton tradeId={String(trade.publicTradeId)}/></div>}
             <small>{trade.status==="settled"&&trade.settlementOutcome==="legacy_unrecorded"?"Historical settlement: gross result and fee were not recorded; no estimate is shown as realized.":"Allocated "+(trade.confirmedAt?new Date(trade.confirmedAt).toLocaleString():"time unavailable")+" · Configured return rate "+(Number(trade.configuredProfitRateBps||0)/100).toFixed(2)+"% · Duration "+Number(trade.configuredDurationSeconds||0)+"s · "+(trade.status==="settled"?"Settled "+(trade.settledAt?new Date(trade.settledAt).toLocaleString():"time unavailable"):"Waiting for actual settlement confirmation")}</small>
           </article>
         ))}</div>}

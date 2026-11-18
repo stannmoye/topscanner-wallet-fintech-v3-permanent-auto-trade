@@ -6,6 +6,7 @@ import { getCompanyReferenceById } from "./modules/company-catalogue-reference";
 import { acknowledgeDelivery, claimDeliveryDispatch, deliveryAdmissionLockKey, deliveryIdempotencyKey, failDeliveryAttempt, type DeliveryState } from "./modules/opportunity-delivery-lifecycle";
 import { DELIVERY_RETRY_POLICY_SETTING_KEY, FAIL_CLOSED_DELIVERY_RETRY_POLICY, parseDeliveryRetryPolicy } from "./modules/opportunity-delivery-retry-policy";
 import { isRetryableMySqlTransactionError, mysqlTransactionRetryDelayMs, MYSQL_TRANSACTION_RETRY_MAX_ATTEMPTS } from "./modules/mysql-transaction-retry";
+import { reserveUniquePublicTradeId } from "./modules/public-trade-id";
 
 type PopupDelivery = {
   userId: number;
@@ -238,17 +239,24 @@ export async function ensurePopupDeliveries(deliveries: PopupDelivery[]) {
           }
         }
 
+        const publicTradeId = await reserveUniquePublicTradeId(async candidate => {
+          const [registryResult] = await connection.execute<any>(
+            "INSERT IGNORE INTO trade_public_ids (publicId) VALUES (?)",
+            [candidate],
+          );
+          return Number(registryResult?.affectedRows || 0) === 1;
+        });
         const [insertResult] = await connection.execute<any>(
           `INSERT INTO opportunity_popup_events
-            (eventKey,userId,offerId,quotaDay,packageId,packageName,symbol,currency,minimumMinor,expectedRewardBps,
+            (eventKey,publicTradeId,userId,offerId,quotaDay,packageId,packageName,symbol,currency,minimumMinor,expectedRewardBps,
              configuredProfitRateBps,configuredDurationSeconds,configuredPopupDisplaySeconds,packagePolicyVersionSnapshot,packageBadgeLabel,
              companyReferenceId,companyDisplayName,companyLogoUrl,companyReferenceMetadataJson,companyReferenceOnly,
              balanceAvailableMinor,balanceStatus,marketObservedAt,marketSnapshotJson,durationSeconds,badgeLabel,badgeStyle,policyVersion,
              eventStatus,deliveredAt,deliveryStatus,deliveryAttemptCount,deliveryPolicyVersionSnapshot,createdAt,updatedAt)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
            ON DUPLICATE KEY UPDATE updatedAt=CURRENT_TIMESTAMP`,
           [
-            eventKey, item.userId, item.offerId, item.quotaDay, item.packageId, item.packageName, item.symbol, item.currency,
+            eventKey, publicTradeId, item.userId, item.offerId, item.quotaDay, item.packageId, item.packageName, item.symbol, item.currency,
             item.minimumMinor, item.expectedRewardBps, item.configuredProfitRateBps, item.configuredDurationSeconds,
             item.configuredPopupDisplaySeconds, item.packagePolicyVersionSnapshot, item.packageBadgeLabel || null,
             company?.id || null, company?.name || null, company?.logoUrl || null, company?.metadataJson || null, company ? 1 : 0,

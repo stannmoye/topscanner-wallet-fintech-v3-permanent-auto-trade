@@ -54,7 +54,7 @@ var init_env = __esm({
 // drizzle/schema.ts
 import { bigint, int, longtext, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, index, uniqueIndex, foreignKey } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
-var users, customerControls, kycProfiles, payoutRequests, customerTotpAuthenticators, customerSessions, riskReports, supportTickets, supportMessages, supportAttachments, customerNotifications, notificationCampaigns, notificationCampaignDeliveries, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityPopupEvents, opportunityPopupDaily, appSettings, opportunityPackagePolicies, customerBalances, currencyRegistry, balanceLedger, opportunityOffers, opportunityGenerationTemplates, opportunityGenerationBatches, opportunityGenerationAssignments, opportunityDeliveryHistory, marketInstruments, marketSnapshots, fxRateSnapshots, missedOpportunities, tradeSettlementReferenceClaims, tradeSettlementRecoveryCases, settlementEvidenceRecords, settlementEvidenceAuditEvents, tradePositions, tradeLifecycleEvents, tradeRewardReservations, assetPrecisions, companies, packages, tradingPackageFeePolicyVersions, packageEntitlements, customerPackageSubscriptions, v5Opportunities, v5Purchases, v5SuccessfulPurchaseKeys, v5Wallets, v5WalletLedger, v5IdempotencyKeys, v5AuditEvents, v5FundingPlans, v5FxQuotes, v5Conversions, v5Investments, v5Settlements, v5Reports, v5EmailJobs, customerTimezoneHistory, customerEmailPreferences, emailOutbox, authEmailTokens, customerWalletPreferences, customerOpportunityRules, v5FailedJobs, stakeProducts, stakePositions, stakeTransactions, stakeRewards, stakeEvents, transactionConsoleEvents, consoleActivityPhrases, privacyPolicyVersions, privacyRequests, privacyRequestEvents, privacyAuditEvents, localScheduledJobs, workerHealthRegistry, tradingTierQualificationJobs, adminWalletAdjustmentIdempotency;
+var users, customerControls, kycProfiles, payoutRequests, customerTotpAuthenticators, customerSessions, riskReports, supportTickets, supportMessages, supportAttachments, customerNotifications, notificationCampaigns, notificationCampaignDeliveries, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityPopupEvents, opportunityPopupDaily, appSettings, opportunityPackagePolicies, customerBalances, currencyRegistry, balanceLedger, opportunityOffers, opportunityGenerationTemplates, opportunityGenerationBatches, opportunityGenerationAssignments, opportunityDeliveryHistory, marketInstruments, marketSnapshots, fxRateSnapshots, missedOpportunities, tradeSettlementReferenceClaims, tradeSettlementRecoveryCases, settlementEvidenceRecords, settlementEvidenceAuditEvents, tradePositions, tradePublicIds, tradeLifecycleEvents, tradeRewardReservations, assetPrecisions, companies, packages, tradingPackageFeePolicyVersions, packageEntitlements, customerPackageSubscriptions, v5Opportunities, v5Purchases, v5SuccessfulPurchaseKeys, v5Wallets, v5WalletLedger, v5IdempotencyKeys, v5AuditEvents, v5FundingPlans, v5FxQuotes, v5Conversions, v5Investments, v5Settlements, v5Reports, v5EmailJobs, customerTimezoneHistory, customerEmailPreferences, emailOutbox, authEmailTokens, customerWalletPreferences, customerOpportunityRules, v5FailedJobs, stakeProducts, stakePositions, stakeTransactions, stakeRewards, stakeEvents, transactionConsoleEvents, consoleActivityPhrases, privacyPolicyVersions, privacyRequests, privacyRequestEvents, privacyAuditEvents, localScheduledJobs, workerHealthRegistry, tradingTierQualificationJobs, adminWalletAdjustmentIdempotency;
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     "use strict";
@@ -277,6 +277,7 @@ var init_schema = __esm({
     opportunityPopupEvents = mysqlTable("opportunity_popup_events", {
       id: int("id").autoincrement().primaryKey(),
       eventKey: varchar("eventKey", { length: 180 }).notNull().unique(),
+      publicTradeId: varchar("publicTradeId", { length: 17 }),
       userId: int("userId").notNull(),
       offerId: int("offerId").notNull(),
       quotaDay: varchar("quotaDay", { length: 10 }).notNull(),
@@ -334,6 +335,7 @@ var init_schema = __esm({
       createdAt: timestamp("createdAt").defaultNow().notNull(),
       updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
     }, (table) => ({
+      publicTradeIdUnique: uniqueIndex("opportunity_popup_public_trade_id_uq").on(table.publicTradeId),
       dailyAttemptUserDayIdx: index("opportunity_popup_user_daily_attempt_day_idx").on(table.userId, table.executionDailyAttemptDay),
       pendingPackageIdIdx: index("opportunity_popup_pending_package_id_idx").on(table.userId, table.packageId, table.deliveryStatus),
       retryDueIdx: index("opportunity_popup_retry_due_idx").on(table.deliveryStatus, table.deliveryRetryAfter),
@@ -727,6 +729,7 @@ var init_schema = __esm({
     }));
     tradePositions = mysqlTable("trade_positions", {
       id: int("id").autoincrement().primaryKey(),
+      publicTradeId: varchar("publicTradeId", { length: 17 }),
       userId: int("userId").notNull(),
       offerId: int("offerId").notNull(),
       packageSubscriptionId: int("packageSubscriptionId"),
@@ -781,9 +784,14 @@ var init_schema = __esm({
       settlementNotes: varchar("settlementNotes", { length: 2e3 }),
       policyVersion: int("policyVersion").default(1).notNull()
     }, (table) => ({
+      publicTradeIdUnique: uniqueIndex("trade_positions_public_trade_id_uq").on(table.publicTradeId),
       statusSettlementUserCurrencyIdx: index("trade_positions_status_settlement_user_currency_idx").on(table.status, table.settlementStatus, table.userId, table.currency),
       settlementReferenceIdx: index("trade_positions_settlement_reference_idx").on(table.settlementReference)
     }));
+    tradePublicIds = mysqlTable("trade_public_ids", {
+      publicId: varchar("publicId", { length: 17 }).primaryKey(),
+      createdAt: timestamp("createdAt").defaultNow().notNull()
+    });
     tradeLifecycleEvents = mysqlTable("trade_lifecycle_events", {
       id: int("id").autoincrement().primaryKey(),
       tradeId: int("tradeId").notNull(),
@@ -2800,8 +2808,38 @@ var init_mysql_transaction_retry = __esm({
   }
 });
 
-// server/opportunityLifecycle.ts
+// server/modules/public-trade-id.ts
 import crypto3 from "node:crypto";
+function generatePublicTradeId(randomIndex = crypto3.randomInt) {
+  let payload = "";
+  for (let index2 = 0; index2 < TRADE_ID_PAYLOAD_LENGTH; index2 += 1) {
+    payload += TRADE_ID_ALPHABET[randomIndex(TRADE_ID_ALPHABET.length)];
+  }
+  return `TX-${payload.slice(0, 4)}-${payload.slice(4, 8)}-${payload.slice(8, 12)}`;
+}
+async function reserveUniquePublicTradeId(insertIfUnique, generate = generatePublicTradeId) {
+  for (let attempt = 0; attempt < MAX_ALLOCATION_ATTEMPTS; attempt += 1) {
+    const publicTradeId = generate();
+    if (!PUBLIC_TRADE_ID_PATTERN.test(publicTradeId)) {
+      throw new Error("Generated public trade ID does not match the required format.");
+    }
+    if (await insertIfUnique(publicTradeId)) return publicTradeId;
+  }
+  throw new Error("Could not reserve a unique public trade ID after repeated collisions.");
+}
+var TRADE_ID_ALPHABET, TRADE_ID_PAYLOAD_LENGTH, MAX_ALLOCATION_ATTEMPTS, PUBLIC_TRADE_ID_PATTERN;
+var init_public_trade_id = __esm({
+  "server/modules/public-trade-id.ts"() {
+    "use strict";
+    TRADE_ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    TRADE_ID_PAYLOAD_LENGTH = 12;
+    MAX_ALLOCATION_ATTEMPTS = 8;
+    PUBLIC_TRADE_ID_PATTERN = /^TX-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+  }
+});
+
+// server/opportunityLifecycle.ts
+import crypto4 from "node:crypto";
 import mysql from "mysql2/promise";
 async function withConnection(fn) {
   const pool2 = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 3 });
@@ -2986,17 +3024,25 @@ async function ensurePopupDeliveries(deliveries) {
               );
             }
           }
+          const publicTradeId = await reserveUniquePublicTradeId(async (candidate) => {
+            const [registryResult] = await connection.execute(
+              "INSERT IGNORE INTO trade_public_ids (publicId) VALUES (?)",
+              [candidate]
+            );
+            return Number(registryResult?.affectedRows || 0) === 1;
+          });
           const [insertResult] = await connection.execute(
             `INSERT INTO opportunity_popup_events
-            (eventKey,userId,offerId,quotaDay,packageId,packageName,symbol,currency,minimumMinor,expectedRewardBps,
+            (eventKey,publicTradeId,userId,offerId,quotaDay,packageId,packageName,symbol,currency,minimumMinor,expectedRewardBps,
              configuredProfitRateBps,configuredDurationSeconds,configuredPopupDisplaySeconds,packagePolicyVersionSnapshot,packageBadgeLabel,
              companyReferenceId,companyDisplayName,companyLogoUrl,companyReferenceMetadataJson,companyReferenceOnly,
              balanceAvailableMinor,balanceStatus,marketObservedAt,marketSnapshotJson,durationSeconds,badgeLabel,badgeStyle,policyVersion,
              eventStatus,deliveredAt,deliveryStatus,deliveryAttemptCount,deliveryPolicyVersionSnapshot,createdAt,updatedAt)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
            ON DUPLICATE KEY UPDATE updatedAt=CURRENT_TIMESTAMP`,
             [
               eventKey,
+              publicTradeId,
               item.userId,
               item.offerId,
               item.quotaDay,
@@ -3163,7 +3209,7 @@ async function claimPopupDeliveryDispatches(userId) {
           state = failed.state;
           if (state.deliveryStatus !== "retry_wait") continue;
         }
-        const token = crypto3.randomUUID();
+        const token = crypto4.randomUUID();
         const transition2 = claimDeliveryDispatch({ state, now, leaseToken: token, offerOpen: true, offerClosesAt: new Date(row.closesAt), retrySchedule: schedule });
         if (!transition2.claimed) {
           if (transition2.reason === "attempts-exhausted") {
@@ -3276,6 +3322,7 @@ var init_opportunityLifecycle = __esm({
     init_opportunity_delivery_lifecycle();
     init_opportunity_delivery_retry_policy();
     init_mysql_transaction_retry();
+    init_public_trade_id();
   }
 });
 
@@ -4568,14 +4615,14 @@ var init_db_mutation_guards = __esm({
 });
 
 // server/settlement-evidence.ts
-import crypto4 from "node:crypto";
+import crypto5 from "node:crypto";
 function isValidSettlementEvidenceReference(value) {
   return /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,159}$/.test(value.trim());
 }
 function sanitizeSettlementEvidenceFilename(value) {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "evidence";
 }
-function settlementEvidenceStorageKey(tradeId, filename, nonce = crypto4.randomBytes(24).toString("hex")) {
+function settlementEvidenceStorageKey(tradeId, filename, nonce = crypto5.randomBytes(24).toString("hex")) {
   if (!Number.isSafeInteger(tradeId) || tradeId < 1 || !/^[a-f0-9]{48}$/.test(nonce)) throw new Error("Invalid settlement evidence storage identity");
   return `settlement-evidence/${tradeId}/${nonce}-${sanitizeSettlementEvidenceFilename(filename)}`;
 }
@@ -4602,7 +4649,7 @@ function validateSettlementEvidenceUpload(input) {
   if (!SETTLEMENT_EVIDENCE_MIME_TYPES.includes(declared)) throw new Error("Settlement evidence file type is not allowed");
   const detected = detectSettlementEvidenceMime(input.content);
   if (!detected || (declared === "text/csv" ? detected !== "text/plain" : detected !== declared)) throw new Error("Settlement evidence content does not match its declared file type");
-  return { mimeType: declared === "text/csv" ? "text/csv" : detected, sha256: crypto4.createHash("sha256").update(input.content).digest("hex") };
+  return { mimeType: declared === "text/csv" ? "text/csv" : detected, sha256: crypto5.createHash("sha256").update(input.content).digest("hex") };
 }
 var SETTLEMENT_EVIDENCE_MAX_BYTES, SETTLEMENT_EVIDENCE_MIME_TYPES;
 var init_settlement_evidence = __esm({
@@ -4796,7 +4843,7 @@ var init_notification_pagination = __esm({
 });
 
 // server/emailAdmin.ts
-import crypto5 from "node:crypto";
+import crypto6 from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import nodemailer from "nodemailer";
@@ -4806,11 +4853,11 @@ import { sql as sql2 } from "drizzle-orm";
 function configEncryptionKey() {
   const secret2 = process.env.SESSION_SECRET || process.env.PASSWORD_PEPPER;
   if (!secret2 || secret2.length < 16) throw new Error("A strong SESSION_SECRET or PASSWORD_PEPPER is required to protect SMTP credentials.");
-  return crypto5.scryptSync(secret2, "arbitrade-email-config-v1", 32);
+  return crypto6.scryptSync(secret2, "arbitrade-email-config-v1", 32);
 }
 function encryptConfigPassword(value) {
-  const iv = crypto5.randomBytes(12);
-  const cipher = crypto5.createCipheriv("aes-256-gcm", configEncryptionKey(), iv);
+  const iv = crypto6.randomBytes(12);
+  const cipher = crypto6.createCipheriv("aes-256-gcm", configEncryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   return `v1:${iv.toString("base64url")}:${cipher.getAuthTag().toString("base64url")}:${encrypted.toString("base64url")}`;
 }
@@ -4818,7 +4865,7 @@ function decryptConfigPassword(value) {
   if (!value.startsWith("v1:")) return value;
   const [, ivText, tagText, encryptedText] = value.split(":");
   if (!ivText || !tagText || !encryptedText) throw new Error("Saved SMTP credential is malformed.");
-  const decipher = crypto5.createDecipheriv("aes-256-gcm", configEncryptionKey(), Buffer.from(ivText, "base64url"));
+  const decipher = crypto6.createDecipheriv("aes-256-gcm", configEncryptionKey(), Buffer.from(ivText, "base64url"));
   decipher.setAuthTag(Buffer.from(tagText, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(encryptedText, "base64url")), decipher.final()]).toString("utf8");
 }
@@ -5597,22 +5644,22 @@ __export(emailQueue_exports, {
   startEmailWorkers: () => startEmailWorkers,
   updateCustomerEmailPreferences: () => updateCustomerEmailPreferences
 });
-import crypto6 from "node:crypto";
+import crypto7 from "node:crypto";
 import { and as and2, eq as eq2, gte as gte2, inArray, isNull, lte, or as or2, sql as sql4 } from "drizzle-orm";
 function encryptionKey2(secret2 = process.env.SESSION_SECRET) {
   if (!secret2 && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required to encrypt queued email payloads");
-  return crypto6.createHash("sha256").update(`wisebond-email-outbox:${secret2 || "development-only-email-key"}`).digest();
+  return crypto7.createHash("sha256").update(`wisebond-email-outbox:${secret2 || "development-only-email-key"}`).digest();
 }
 function encryptEmailPayload(payload, secret2) {
-  const iv = crypto6.randomBytes(12);
-  const cipher = crypto6.createCipheriv("aes-256-gcm", encryptionKey2(secret2), iv);
+  const iv = crypto7.randomBytes(12);
+  const cipher = crypto7.createCipheriv("aes-256-gcm", encryptionKey2(secret2), iv);
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), "utf8"), cipher.final()]);
   return [iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), encrypted.toString("base64url")].join(".");
 }
 function decryptEmailPayload(value, secret2) {
   const [ivText, tagText, bodyText] = value.split(".");
   if (!ivText || !tagText || !bodyText) throw new Error("Invalid encrypted email payload");
-  const decipher = crypto6.createDecipheriv("aes-256-gcm", encryptionKey2(secret2), Buffer.from(ivText, "base64url"));
+  const decipher = crypto7.createDecipheriv("aes-256-gcm", encryptionKey2(secret2), Buffer.from(ivText, "base64url"));
   decipher.setAuthTag(Buffer.from(tagText, "base64url"));
   const json2 = Buffer.concat([decipher.update(Buffer.from(bodyText, "base64url")), decipher.final()]).toString("utf8");
   return JSON.parse(json2);
@@ -5652,7 +5699,7 @@ async function enqueueWalletAdjustmentEmail(userId, mode, amount, currency, refe
   if (!user) return { queued: false, reason: "recipient_unverified_or_opted_out" };
   return enqueueEmail(user.email, "wallet_adjustment", { mode, amount, currency, reference }, `wallet-adjustment:${reference}`);
 }
-async function enqueueAdminMessage(userId, subject, body, idempotencyKey2 = crypto6.randomUUID()) {
+async function enqueueAdminMessage(userId, subject, body, idempotencyKey2 = crypto7.randomUUID()) {
   const user = await canEmailUser(userId, "adminMessages");
   if (!user || user.role !== "user") throw new Error("Customer email must be verified before admin messaging");
   return enqueueEmail(user.email, "admin_message", { subject, body }, `admin-message:${idempotencyKey2}`);
@@ -5663,7 +5710,7 @@ async function sendEmailTest(userId) {
   if (!db2) throw new Error("Database is not available");
   const user = (await db2.select({ email: users.email, role: users.role }).from(users).where(eq2(users.id, userId)).limit(1))[0];
   if (!user?.email || user.role === "user" && !await canEmailUser(userId, "systemAlerts")) throw new Error("A verified email recipient is required");
-  return enqueueEmail(user.email, "email_test", { testId: crypto6.randomUUID() }, `email-test:${userId}:${crypto6.randomUUID()}`);
+  return enqueueEmail(user.email, "email_test", { testId: crypto7.randomUUID() }, `email-test:${userId}:${crypto7.randomUUID()}`);
 }
 async function getCustomerEmailPreferences(userId) {
   const db2 = await getDb();
@@ -5792,7 +5839,7 @@ var init_emailQueue = __esm({
 });
 
 // server/db.ts
-import crypto7 from "node:crypto";
+import crypto8 from "node:crypto";
 import { and as and3, count, desc as desc2, eq as eq3, gt, gte as gte3, inArray as inArray2, isNotNull, isNull as isNull2, lt, lte as lte2, notInArray, or as or3, sql as sql5 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { createPool } from "mysql2/promise";
@@ -6401,7 +6448,7 @@ async function getTicketUploadPolicy() {
 function closedAccountIdentityKey(openId) {
   const secret2 = ENV.cookieSecret;
   if (!secret2) return null;
-  const digest2 = crypto7.createHmac("sha256", secret2).update(openId).digest("hex").slice(0, 57);
+  const digest2 = crypto8.createHmac("sha256", secret2).update(openId).digest("hex").slice(0, 57);
   return `closed:${digest2}`;
 }
 async function upsertUser(user) {
@@ -6543,7 +6590,7 @@ async function createTicket(userId, input) {
   const subject = normalizeNotificationText(input.subject, 200, "ticket subject");
   const body = normalizeNotificationText(input.body, 2e4, "ticket message");
   if (subject.length < 3) throw new Error("Ticket subject must contain at least 3 characters");
-  const ticketNumber = `ARB-${Date.now().toString(36).toUpperCase()}-${crypto7.randomBytes(3).toString("hex").toUpperCase()}`;
+  const ticketNumber = `ARB-${Date.now().toString(36).toUpperCase()}-${crypto8.randomBytes(3).toString("hex").toUpperCase()}`;
   const ticketId = await db2.transaction(async (tx) => {
     const result = await tx.insert(supportTickets).values({ ticketNumber, customerId: userId, subject, category: input.category || "account", priority: input.priority });
     const id2 = Number(result[0].insertId);
@@ -6606,7 +6653,7 @@ async function createAccountClosureTicket(userId, reasons) {
       inArray2(supportTickets.status, ["open", "answered"])
     )).limit(1).for("update"))[0];
     if (pending) return { ...pending, alreadyPending: true };
-    const ticketNumber = `ARB-${Date.now().toString(36).toUpperCase()}-${crypto7.randomBytes(3).toString("hex").toUpperCase()}`;
+    const ticketNumber = `ARB-${Date.now().toString(36).toUpperCase()}-${crypto8.randomBytes(3).toString("hex").toUpperCase()}`;
     const inserted = await tx.insert(supportTickets).values({
       ticketNumber,
       customerId: userId,
@@ -7472,7 +7519,7 @@ function normalizePayoutDestinationDetails(value) {
 function payoutIdempotencyKey(userId, rawKey) {
   const value = String(rawKey ?? "").trim();
   if (!/^[A-Za-z0-9._:-]{8,160}$/.test(value)) throw new Error("A valid payout idempotency key is required.");
-  return `payout:${userId}:${crypto7.createHash("sha256").update(value).digest("hex")}`;
+  return `payout:${userId}:${crypto8.createHash("sha256").update(value).digest("hex")}`;
 }
 async function assertPayoutPolicyAllowsRequest(tx, userId, totpCode) {
   const policyRow = (await tx.select({ settingValue: appSettings.settingValue }).from(appSettings).where(eq3(appSettings.settingKey, "policy.defaults")).limit(1).for("update"))[0];
@@ -7683,7 +7730,7 @@ async function createCustomerPayoutRequest(userId, input) {
       throw new Error("Payout amount exceeds the available non-promotional balance.");
     }
     if (!Number.isSafeInteger(locked + input.amountMinor)) throw new Error("Payout reservation exceeds the supported balance amount.");
-    const requestReference = `payout-${crypto7.randomUUID()}`;
+    const requestReference = `payout-${crypto8.randomUUID()}`;
     const walletUpdate = await tx.update(customerBalances).set({
       availableMinor: sql5`${customerBalances.availableMinor} - ${input.amountMinor}`,
       lockedMinor: sql5`${customerBalances.lockedMinor} + ${input.amountMinor}`,
@@ -7970,9 +8017,9 @@ async function createAdminCustomer(input) {
   if (input.password.length < 10) throw new Error("Customer password must be at least 10 characters");
   const existing = (await db2.select({ id: users.id }).from(users).where(eq3(users.email, email)).limit(1))[0];
   if (existing) throw new Error("A customer with this email already exists");
-  const salt = crypto7.randomBytes(16).toString("hex");
-  const digest2 = crypto7.scryptSync(input.password, salt, 32).toString("hex");
-  const result = await db2.insert(users).values({ openId: `local:customer:${crypto7.randomUUID()}`, name: input.name.trim(), email, loginMethod: "password", role: "user", passwordHash: `scrypt$${salt}$${digest2}`, packageName: "No active package" });
+  const salt = crypto8.randomBytes(16).toString("hex");
+  const digest2 = crypto8.scryptSync(input.password, salt, 32).toString("hex");
+  const result = await db2.insert(users).values({ openId: `local:customer:${crypto8.randomUUID()}`, name: input.name.trim(), email, loginMethod: "password", role: "user", passwordHash: `scrypt$${salt}$${digest2}`, packageName: "No active package" });
   const id2 = Number(result[0].insertId);
   await db2.insert(customerControls).values({ userId: id2 });
   return { id: id2, email, name: input.name.trim(), packageName: "No active package" };
@@ -8231,7 +8278,7 @@ async function adjustCustomerBalance(adminId, input) {
     reversalLedgerId: input.reversalLedgerId ?? null,
     reason: String(input.reason).trim()
   };
-  const requestHash = crypto7.createHash("sha256").update(JSON.stringify(normalizedRequest)).digest("hex");
+  const requestHash = crypto8.createHash("sha256").update(JSON.stringify(normalizedRequest)).digest("hex");
   const restoreCommittedResponse = (stored) => {
     let replay;
     try {
@@ -8269,7 +8316,7 @@ async function adjustCustomerBalance(adminId, input) {
       creditTimeRate = await fetchCurrencyUsdRate({ code: creditTimeCurrency.code, assetType, externalCode: creditTimeCurrency.externalCode });
     }
   }
-  const ledgerReference = `admin-${adminId}-${input.userId}-${crypto7.randomUUID()}`;
+  const ledgerReference = `admin-${adminId}-${input.userId}-${crypto8.randomUUID()}`;
   const result = await db2.transaction(async (tx) => {
     await tx.insert(adminWalletAdjustmentIdempotency).values({ adminId, idempotencyKey: idempotencyKey2, requestHash, responseJson: null }).onDuplicateKeyUpdate({ set: { requestHash: sql5`${adminWalletAdjustmentIdempotency.requestHash}` } });
     const idempotencyRecord = (await tx.select().from(adminWalletAdjustmentIdempotency).where(
@@ -8531,7 +8578,7 @@ async function setTradeAllocationControls(updatedBy, input) {
       entityType: "trade_allocation_controls",
       entityId: "global",
       reason: next.reason,
-      reference: "trade-allocation-control:" + crypto7.randomUUID(),
+      reference: "trade-allocation-control:" + crypto8.randomUUID(),
       metadataJson: JSON.stringify({ old: previous, new: next })
     });
     return next;
@@ -8742,7 +8789,7 @@ async function ensureAutomaticTradingTierEntitlements(userId) {
           entityType: "customer_package_subscription",
           entityId: String(entitlement.id),
           reason: "A qualifying deposit reversal reduced cumulative qualifying deposits below the threshold recorded in this entitlement's terms snapshot.",
-          reference: "trading-tier-revoked:" + userId + ":" + tier.id + ":" + now.getTime() + ":" + crypto7.randomUUID().slice(0, 8),
+          reference: "trading-tier-revoked:" + userId + ":" + tier.id + ":" + now.getTime() + ":" + crypto8.randomUUID().slice(0, 8),
           metadataJson: JSON.stringify({ userId, packageId: Number(tier.id), subscriptionId: Number(entitlement.id), qualifyingDepositUsdMinor: qualifyingTotal, thresholdUsdMinor: assignedThreshold, configuredThresholdUsdMinor: threshold, termsVersion: Number(tier.termsVersion), source: "scheduled_worker_reconciliation" })
         });
       }
@@ -8754,7 +8801,7 @@ async function ensureAutomaticTradingTierEntitlements(userId) {
       const latest = tierHistory[0];
       if (latest && Number(latest.qualifyingBalanceUsdMinor) >= qualifyingTotal && Number(latest.packageTermsVersion) === Number(tier.termsVersion)) continue;
       const expiresAt = addCalendarMonths(now, Number(tier.durationMonths));
-      const activationKey = "auto-tier:" + userId + ":" + tier.id + ":" + now.getTime() + ":" + crypto7.randomUUID().slice(0, 8);
+      const activationKey = "auto-tier:" + userId + ":" + tier.id + ":" + now.getTime() + ":" + crypto8.randomUUID().slice(0, 8);
       const snapshot = { id: Number(tier.id), name: tier.name, minimumQualifyingBalanceUsdMinor: threshold, durationMonths: Number(tier.durationMonths), opportunitiesPerDay: Number(tier.opportunitiesPerDay), maxPopupsPerDay: Number(tier.maxPopupsPerDay || 0), maxActiveInvestments: Number(tier.maxActiveInvestments || 0), startsAt: tier.startsAt ? new Date(tier.startsAt).toISOString() : null, expiresAt: tier.expiresAt ? new Date(tier.expiresAt).toISOString() : null, termsVersion: Number(tier.termsVersion), qualificationSource: "cumulative_authorized_admin_manual_deposit_credits", qualifyingDepositUsdMinor: qualifyingTotal };
       const inserted = await tx.insert(customerPackageSubscriptions).values({
         userId,
@@ -8776,7 +8823,7 @@ async function ensureAutomaticTradingTierEntitlements(userId) {
         entityType: "customer_package_subscription",
         entityId: String(subscriptionId),
         reason: "Scheduled worker reconciled tier eligibility from cumulative qualifying administrator manual deposit credits.",
-        reference: "trading-auto-tier:" + userId + ":" + tier.id + ":" + now.getTime() + ":" + crypto7.randomUUID().slice(0, 8),
+        reference: "trading-auto-tier:" + userId + ":" + tier.id + ":" + now.getTime() + ":" + crypto8.randomUUID().slice(0, 8),
         metadataJson: JSON.stringify({ subscriptionId, userId, packageId: Number(tier.id), qualifyingDepositUsdMinor: qualifyingTotal, thresholdUsdMinor: threshold, dailyQuota: Number(tier.opportunitiesPerDay), termsVersion: Number(tier.termsVersion), expiresAt: expiresAt.toISOString(), source: "scheduled_worker" })
       });
       history.unshift({ id: subscriptionId, userId, packageId: Number(tier.id), startsAt: now, expiresAt, status: "active", activationKey, termsSnapshotJson: JSON.stringify(snapshot), qualifyingBalanceUsdMinor: qualifyingTotal, packageTermsVersion: Number(tier.termsVersion), activatedAt: now, createdAt: now });
@@ -9190,7 +9237,7 @@ async function generateAutomaticCustomerOpportunity(input) {
           rotationStateKey = stateKey;
           nextRotationState = selection.state;
         } else {
-          company = approvedPool[crypto7.randomInt(0, approvedPool.length)];
+          company = approvedPool[crypto8.randomInt(0, approvedPool.length)];
         }
         const template = (await tx.select().from(opportunityGenerationTemplates).where(and3(eq3(opportunityGenerationTemplates.status, "approved"), eq3(opportunityGenerationTemplates.companyReferenceId, company.id))).orderBy(opportunityGenerationTemplates.id).limit(1).for("update"))[0] || null;
         const currencyCode = template ? String(template.currency) : "USD";
@@ -9382,7 +9429,7 @@ async function generateAutomaticCustomerOpportunity(input) {
       const errno = Number(failure.errno ?? failure.cause?.errno ?? 0);
       const retryable = code === "ER_LOCK_DEADLOCK" || code === "ER_LOCK_WAIT_TIMEOUT" || errno === 1213 || errno === 1205;
       if (!retryable || attempt === 3) throw error;
-      await new Promise((resolve4) => setTimeout(resolve4, 20 * (attempt + 1) + crypto7.randomInt(0, 25)));
+      await new Promise((resolve4) => setTimeout(resolve4, 20 * (attempt + 1) + crypto8.randomInt(0, 25)));
     }
   }
   return skipped("GENERATION_RETRY_LOOP_EXHAUSTED");
@@ -9734,7 +9781,23 @@ async function updateOpportunityPackagePolicies(updatedBy, policies, reason) {
 async function listMissedOpportunities(userId) {
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
-  return db2.select().from(missedOpportunities).where(and3(eq3(missedOpportunities.userId, userId), eq3(missedOpportunities.status, "MISSED"))).orderBy(desc2(missedOpportunities.createdAt)).limit(50);
+  return db2.select({
+    id: missedOpportunities.id,
+    userId: missedOpportunities.userId,
+    offerId: missedOpportunities.offerId,
+    symbol: missedOpportunities.symbol,
+    currency: missedOpportunities.currency,
+    amountMinor: missedOpportunities.amountMinor,
+    availableMinorAtOpportunity: missedOpportunities.availableMinorAtOpportunity,
+    shortfallMinor: missedOpportunities.shortfallMinor,
+    potentialRewardMinor: missedOpportunities.potentialRewardMinor,
+    expectedRewardBps: missedOpportunities.expectedRewardBps,
+    reason: missedOpportunities.reason,
+    status: missedOpportunities.status,
+    createdAt: missedOpportunities.createdAt,
+    updatedAt: missedOpportunities.updatedAt,
+    publicTradeId: sql5`(SELECT publicTradeId FROM opportunity_popup_events WHERE userId=${userId} AND offerId=${missedOpportunities.offerId} ORDER BY deliveredAt DESC LIMIT 1)`
+  }).from(missedOpportunities).where(and3(eq3(missedOpportunities.userId, userId), eq3(missedOpportunities.status, "MISSED"))).orderBy(desc2(missedOpportunities.createdAt)).limit(50);
 }
 async function markMissedOpportunity(userId, offer, amountMinor, reason) {
   const db2 = await getDb();
@@ -9824,7 +9887,7 @@ async function claimOpportunityExecutionAttempt(userId, offer) {
         return { claimed: false, reason: "daily-attempt-limit", usedAttempts, dailyAttemptLimit };
       }
     }
-    const executionLeaseToken = crypto7.randomUUID();
+    const executionLeaseToken = crypto8.randomUUID();
     const transientAttemptNumber = transientAttempts + 1;
     await tx.update(opportunityPopupEvents).set({
       executionStatus: "RUNNING",
@@ -10064,6 +10127,7 @@ async function listCustomerOpportunities(userId, options = {}) {
     offerId: opportunityPopupEvents.offerId,
     packageId: opportunityPopupEvents.packageId,
     packageName: opportunityPopupEvents.packageName,
+    publicTradeId: opportunityPopupEvents.publicTradeId,
     policyVersion: opportunityPopupEvents.policyVersion,
     symbol: opportunityPopupEvents.symbol,
     currency: opportunityPopupEvents.currency,
@@ -10426,6 +10490,7 @@ async function listCustomerOpportunities(userId, options = {}) {
     offerId: opportunityPopupEvents.offerId,
     packageId: opportunityPopupEvents.packageId,
     packageName: opportunityPopupEvents.packageName,
+    publicTradeId: opportunityPopupEvents.publicTradeId,
     executionStatus: opportunityPopupEvents.executionStatus,
     executionAttemptCount: opportunityPopupEvents.executionAttemptCount,
     executionRetryAfter: opportunityPopupEvents.executionRetryAfter,
@@ -10517,6 +10582,7 @@ async function listCustomerOpportunities(userId, options = {}) {
       id: Number(row.offerId),
       offerId: Number(row.offerId),
       deliveryEventId: Number(row.eventId),
+      publicTradeId: String(row.publicTradeId || ""),
       packageId: Number(subscription.packageId),
       packageName: subscription.packageName,
       packageSubscriptionId: Number(subscription.subscriptionId),
@@ -10683,6 +10749,7 @@ async function listCustomerOpportunities(userId, options = {}) {
       deliveryAttemptCount: Number(row.deliveryAttemptCount || 0),
       deliveryRetryAfter: row.deliveryRetryAfter,
       deliveryLeaseToken: row.deliveryLeaseToken,
+      publicTradeId: String(executed?.publicTradeId || row.publicTradeId || ""),
       automaticTrade: executed
     };
   });
@@ -10802,7 +10869,7 @@ async function runAutoTradeCycle(input = {}) {
   void settlementPolicy;
   const { customers, batchSize } = await claimAutoTradeCycleCustomers(input);
   const generationControl = await getOpportunityGenerationControl();
-  const generationBatchId = crypto7.randomUUID();
+  const generationBatchId = crypto8.randomUUID();
   const db2 = await getDb();
   if (!db2) throw new Error("Database is not available");
   const staleBatchCutoff = new Date(Date.now() - 5 * 6e4);
@@ -10938,6 +11005,7 @@ async function createTrade(userId, input) {
         offerId: opportunityPopupEvents.offerId,
         eventStatus: opportunityPopupEvents.eventStatus,
         tradeId: opportunityPopupEvents.tradeId,
+        publicTradeId: opportunityPopupEvents.publicTradeId,
         expectedRewardBps: opportunityPopupEvents.expectedRewardBps,
         configuredProfitRateBps: opportunityPopupEvents.configuredProfitRateBps,
         configuredDurationSeconds: opportunityPopupEvents.configuredDurationSeconds,
@@ -10984,7 +11052,18 @@ async function createTrade(userId, input) {
           expectedCreditMinor = sim.expectedCreditMinor;
         } catch {
         }
-        return { tradeId: Number(existing.id), rewardMinor: Number(existing.expectedRewardMinor), rewardBps: replayBps, minimumMinor: 0, calculationMethod: "idempotent-replay", settlesAt: existing.settlesAt, creditAt: existing.creditAt, currency: existing.currency, amountMinor, rateUsd: Number(rate.usdRate), rateUpdatedAt: rate.updatedAt, amountUsd: nativeMinorToUsd(amountMinor, Number(rate.scale), Number(rate.usdRate)), idempotentReplay: true, debitTransitionText, expectedProfitMinor, expectedCreditMinor, lifecycleStage: "capital_locked" };
+        return { tradeId: Number(existing.id), publicTradeId: String(existing.publicTradeId || ""), rewardMinor: Number(existing.expectedRewardMinor), rewardBps: replayBps, minimumMinor: 0, calculationMethod: "idempotent-replay", settlesAt: existing.settlesAt, creditAt: existing.creditAt, currency: existing.currency, amountMinor, rateUsd: Number(rate.usdRate), rateUpdatedAt: rate.updatedAt, amountUsd: nativeMinorToUsd(amountMinor, Number(rate.scale), Number(rate.usdRate)), idempotentReplay: true, debitTransitionText, expectedProfitMinor, expectedCreditMinor, lifecycleStage: "capital_locked" };
+      }
+    }
+    let publicTradeId = String(popupSnapshot?.publicTradeId || "");
+    if (!publicTradeId) {
+      publicTradeId = await reserveUniquePublicTradeId(async (candidate) => {
+        const inserted = await tx.execute(sql5`INSERT IGNORE INTO trade_public_ids (publicId) VALUES (${candidate})`);
+        return Number(inserted?.[0]?.affectedRows || 0) === 1;
+      });
+      if (input.deliveryEventId !== void 0) {
+        await tx.update(opportunityPopupEvents).set({ publicTradeId }).where(and3(eq3(opportunityPopupEvents.id, input.deliveryEventId), eq3(opportunityPopupEvents.userId, userId)));
+        if (popupSnapshot) popupSnapshot.publicTradeId = publicTradeId;
       }
     }
     const allocationSetting = (await tx.select({ settingValue: appSettings.settingValue }).from(appSettings).where(eq3(appSettings.settingKey, "trading.allocations.paused")).limit(1).for("update"))[0];
@@ -11275,7 +11354,7 @@ async function createTrade(userId, input) {
     const settlementReviewAt = new Date(settlesAt.getTime() + settlementDelaySeconds * 1e3);
     const creditAt = new Date(settlementReviewAt.getTime() + settlementPolicy.creditDelaySeconds * 1e3);
     const snapshotVersion = Number(popupSnapshot?.packagePolicyVersionSnapshot || packagePolicy.policyVersion || activePackageSubscription.termsVersion || 1);
-    const result = await tx.insert(tradePositions).values({ userId, offerId: offer.id, packageSubscriptionId: selectedSubscriptionId, currency: offer.currency, principalMinor: input.amountMinor, expectedRewardMinor: reward, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, companyLogoUrl: popupSnapshot?.companyLogoUrl || null, companyReferenceMetadataJson: popupSnapshot?.companyReferenceMetadataJson || null, companyReferenceOnly: Boolean(popupSnapshot?.companyReferenceOnly ?? false), walletFundingPlanJson, instrumentIdSnapshot: Number(instrumentIdForTrade), entryMarketSnapshotId: Number(entrySnapshot.id), entryPriceUsd: String(entryPrice), settlementResultSource: null, settlementProvider: null, settlementObservedAt: null, packageIdSnapshot: feePackageId, packageFeeRateBpsSnapshot: packageFeePolicy.feeRateBps, packageFeeRoundingModeSnapshot: packageFeePolicy.roundingMode, packageFeePolicyVersionSnapshot: packageFeePolicy.version, packageFeeEffectiveAtSnapshot: new Date(packageFeePolicy.effectiveAt), feePolicyVersion: packageFeePolicy.version, platformFeeRateBps: packageFeePolicy.feeRateBps, platformFeeRoundingMode: packageFeePolicy.roundingMode, transactionReference: ref, rewardReservedMinor: reward, settlesAt, settlementReviewAt, creditAt, lifecycleStage: "Trade Allocated", settlementStatus: "pending", policyVersion: snapshotVersion });
+    const result = await tx.insert(tradePositions).values({ publicTradeId, userId, offerId: offer.id, packageSubscriptionId: selectedSubscriptionId, currency: offer.currency, principalMinor: input.amountMinor, expectedRewardMinor: reward, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, companyLogoUrl: popupSnapshot?.companyLogoUrl || null, companyReferenceMetadataJson: popupSnapshot?.companyReferenceMetadataJson || null, companyReferenceOnly: Boolean(popupSnapshot?.companyReferenceOnly ?? false), walletFundingPlanJson, instrumentIdSnapshot: Number(instrumentIdForTrade), entryMarketSnapshotId: Number(entrySnapshot.id), entryPriceUsd: String(entryPrice), settlementResultSource: null, settlementProvider: null, settlementObservedAt: null, packageIdSnapshot: feePackageId, packageFeeRateBpsSnapshot: packageFeePolicy.feeRateBps, packageFeeRoundingModeSnapshot: packageFeePolicy.roundingMode, packageFeePolicyVersionSnapshot: packageFeePolicy.version, packageFeeEffectiveAtSnapshot: new Date(packageFeePolicy.effectiveAt), feePolicyVersion: packageFeePolicy.version, platformFeeRateBps: packageFeePolicy.feeRateBps, platformFeeRoundingMode: packageFeePolicy.roundingMode, transactionReference: ref, rewardReservedMinor: reward, settlesAt, settlementReviewAt, creditAt, lifecycleStage: "Trade Allocated", settlementStatus: "pending", policyVersion: snapshotVersion });
     const tradeId = Number(result[0].insertId);
     const automaticDebit = calculateAutomaticTradeDebit({
       capitalMinor: input.amountMinor,
@@ -11283,10 +11362,10 @@ async function createTrade(userId, input) {
       profitRateBps: effectiveRateBps
     });
     await tx.insert(tradeLifecycleEvents).values({ tradeId, userId, eventType: "trade_allocated", stage: "Trade Allocated", payloadJson: JSON.stringify({ amountMinor: input.amountMinor, currency: offer.currency, packageSubscriptionId: selectedSubscriptionId, packageId: Number(activePackageSubscription.packageId), termsVersion: Number(activePackageSubscription.termsVersion || 1), policyVersion: snapshotVersion, configuredProfitRateBps: effectiveRateBps, configuredDurationSeconds: effectiveDurationSeconds, companyReferenceId: popupSnapshot?.companyReferenceId || null, companyDisplayName: popupSnapshot?.companyDisplayName || null, debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage }) });
-    if (input.deliveryEventId !== void 0) await tx.update(opportunityPopupEvents).set({ tradeId, eventStatus: "TRADED", executionStatus: "SUCCEEDED", executionRetryAfter: null, executionLastErrorCode: null, tradedAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(and3(eq3(opportunityPopupEvents.id, input.deliveryEventId), eq3(opportunityPopupEvents.userId, userId), eq3(opportunityPopupEvents.offerId, offer.id)));
-    else await tx.execute(sql5`UPDATE opportunity_popup_events SET tradeId=${tradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
+    if (input.deliveryEventId !== void 0) await tx.update(opportunityPopupEvents).set({ tradeId, publicTradeId, eventStatus: "TRADED", executionStatus: "SUCCEEDED", executionRetryAfter: null, executionLastErrorCode: null, tradedAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(and3(eq3(opportunityPopupEvents.id, input.deliveryEventId), eq3(opportunityPopupEvents.userId, userId), eq3(opportunityPopupEvents.offerId, offer.id)));
+    else await tx.execute(sql5`UPDATE opportunity_popup_events SET tradeId=${tradeId},publicTradeId=${publicTradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
     await tx.insert(tradeRewardReservations).values({ userId, tradeId, packageName: activePackageSubscription.packageName, windowKey: today, currency: offer.currency, reservedMinor: reward, status: "reserved" });
-    return { tradeId, rewardMinor: reward, rewardBps: effectiveRateBps, minimumMinor: terms.minimumMinor, calculationMethod: "saved-tier-policy", configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, settlesAt, settlementReviewAt, creditAt, currency: offer.currency, amountMinor: input.amountMinor, rateUsd: nativeRate, rateUpdatedAt: currencyRow.updatedAt, amountUsd: nativeMinorToUsd(input.amountMinor, Number(currencyRow.scale), nativeRate), debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage, expectedCreditMinor: automaticDebit.expectedCreditMinor };
+    return { tradeId, publicTradeId, rewardMinor: reward, rewardBps: effectiveRateBps, minimumMinor: terms.minimumMinor, calculationMethod: "saved-tier-policy", configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, settlesAt, settlementReviewAt, creditAt, currency: offer.currency, amountMinor: input.amountMinor, rateUsd: nativeRate, rateUpdatedAt: currencyRow.updatedAt, amountUsd: nativeMinorToUsd(input.amountMinor, Number(currencyRow.scale), nativeRate), debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage, expectedCreditMinor: automaticDebit.expectedCreditMinor };
   });
 }
 async function listTrades(userId) {
@@ -11294,6 +11373,7 @@ async function listTrades(userId) {
   if (!db2) throw new Error("Database is not available");
   const rows2 = await db2.select({
     id: tradePositions.id,
+    publicTradeId: tradePositions.publicTradeId,
     userId: tradePositions.userId,
     offerId: tradePositions.offerId,
     currency: tradePositions.currency,
@@ -12000,7 +12080,7 @@ async function manuallySettleTrade(tradeId, adminId, input) {
       platformFeeRateBps: feePolicy.feeRateBps,
       platformFeeRoundingMode: feePolicy.roundingMode,
       settlementOutcome: accounting.outcome,
-      transactionReference: reference.length <= 120 ? reference : `trade-${tradeId}-${crypto7.createHash("sha256").update(reference).digest("hex").slice(0, 32)}`,
+      transactionReference: reference.length <= 120 ? reference : `trade-${tradeId}-${crypto8.createHash("sha256").update(reference).digest("hex").slice(0, 32)}`,
       settlementReference: reference,
       settlementConfirmedAt: now,
       settlementConfirmedBy: adminId,
@@ -12112,7 +12192,7 @@ async function processConfirmedTradeCredits(input) {
         throw new Error("Settlement wallet totals are outside the safe minor-unit range");
       }
       const reference = trade.settlementReference;
-      const ledgerBase = reference.length <= 60 ? reference : `trade-${trade.id}-${crypto7.createHash("sha256").update(reference).digest("hex").slice(0, 24)}`;
+      const ledgerBase = reference.length <= 60 ? reference : `trade-${trade.id}-${crypto8.createHash("sha256").update(reference).digest("hex").slice(0, 24)}`;
       await tx.insert(balanceLedger).values({ userId: trade.userId, currency: trade.currency, amountMinor: principal, entryType: "trade_principal_release", reference: `${ledgerBase}:principal`, withdrawable: false });
       if (grossProfit > 0) await tx.insert(balanceLedger).values({ userId: trade.userId, currency: trade.currency, amountMinor: grossProfit, entryType: "trade_reward", reference: `${ledgerBase}:gross-profit`, withdrawable: false });
       if (savedFee > 0) await tx.insert(balanceLedger).values({ userId: trade.userId, currency: trade.currency, amountMinor: -savedFee, entryType: "trade_platform_fee", reference: `${ledgerBase}:platform-fee`, withdrawable: false });
@@ -12540,6 +12620,7 @@ var init_db = __esm({
     init_db_mutation_guards();
     init_settlement_evidence();
     init_trading_tier_activation();
+    init_public_trade_id();
     init_trading_global_policy();
     init_package_fee_policy();
     init_opportunity_delivery_retry_policy();
@@ -12622,7 +12703,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
 // server/_core/providerOAuth.ts
 init_db();
-import crypto10 from "node:crypto";
+import crypto11 from "node:crypto";
 import { parse as parseCookieHeader3 } from "cookie";
 
 // shared/const.ts
@@ -12646,7 +12727,7 @@ init_db();
 import { parse as parseCookieHeader2 } from "cookie";
 
 // server/_core/localAuth.ts
-import crypto8 from "node:crypto";
+import crypto9 from "node:crypto";
 import { parse as parseCookieHeader } from "cookie";
 var SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 function secret() {
@@ -12655,7 +12736,7 @@ function secret() {
   return value || "development-only-session-secret";
 }
 function sign(value) {
-  return crypto8.createHmac("sha256", secret()).update(value).digest("base64url");
+  return crypto9.createHmac("sha256", secret()).update(value).digest("base64url");
 }
 function createLocalSession(userId, authVersion = 0) {
   const exp = Math.floor(Date.now() / 1e3) + SESSION_TTL_SECONDS;
@@ -12672,7 +12753,7 @@ function verifyLocalSession(token) {
   const expected = sign(payload);
   const a = Buffer.from(signature);
   const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto8.timingSafeEqual(a, b)) return null;
+  if (a.length !== b.length || !crypto9.timingSafeEqual(a, b)) return null;
   if (Number(expText) <= Math.floor(Date.now() / 1e3)) return null;
   return { userId: Number(userIdText), expiresAt: Number(expText), authVersion: Number(versionText) };
 }
@@ -12681,8 +12762,8 @@ function getLocalSessionFromRequest(req) {
   return verifyLocalSession(cookies[COOKIE_NAME]);
 }
 function passwordHash(password) {
-  const salt = crypto8.randomBytes(16).toString("hex");
-  const digest2 = crypto8.scryptSync(password, salt, 32).toString("hex");
+  const salt = crypto9.randomBytes(16).toString("hex");
+  const digest2 = crypto9.scryptSync(password, salt, 32).toString("hex");
   return `scrypt$${salt}$${digest2}`;
 }
 function verifyPassword(password, stored) {
@@ -12690,12 +12771,12 @@ function verifyPassword(password, stored) {
   if (stored.startsWith("scrypt$")) {
     const [, salt, expected] = stored.split("$");
     if (!salt || !expected) return false;
-    const actual2 = crypto8.scryptSync(password, salt, 32).toString("hex");
-    return crypto8.timingSafeEqual(Buffer.from(actual2), Buffer.from(expected));
+    const actual2 = crypto9.scryptSync(password, salt, 32).toString("hex");
+    return crypto9.timingSafeEqual(Buffer.from(actual2), Buffer.from(expected));
   }
   const legacyPepper = process.env.PASSWORD_PEPPER || "arbitrade-local-pepper";
-  const actual = crypto8.scryptSync(password, legacyPepper, 32).toString("hex");
-  return crypto8.timingSafeEqual(Buffer.from(actual), Buffer.from(stored));
+  const actual = crypto9.scryptSync(password, legacyPepper, 32).toString("hex");
+  return crypto9.timingSafeEqual(Buffer.from(actual), Buffer.from(stored));
 }
 
 // server/_core/localIdentityService.ts
@@ -12759,7 +12840,7 @@ function getSessionCookieOptions(req) {
 }
 
 // server/_core/authRateLimit.ts
-import crypto9 from "node:crypto";
+import crypto10 from "node:crypto";
 var UPSTASH_INCREMENT_SCRIPT = [
   "local count = redis.call('INCR', KEYS[1])",
   "if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end",
@@ -12781,7 +12862,7 @@ function createUpstashAuthRateLimitStore(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
   return {
     async consume(key, windowMs) {
-      const redisKey = `arbitrade:auth-rate-limit:${crypto9.createHash("sha256").update(key).digest("hex")}`;
+      const redisKey = `arbitrade:auth-rate-limit:${crypto10.createHash("sha256").update(key).digest("hex")}`;
       let response;
       try {
         response = await fetchImpl(endpoint.toString(), {
@@ -12932,9 +13013,9 @@ function registerProviderOAuthRoutes(app) {
     if (!provider) return safeError(res, 404, "Unsupported OAuth provider");
     const c = config(provider);
     if (!c.clientId || !c.clientSecret) return safeError(res, 503, `${provider} OAuth is not configured. Complete the installer credentials first.`);
-    const state = crypto10.randomBytes(32).toString("base64url");
-    const verifier = crypto10.randomBytes(32).toString("base64url");
-    const challenge = crypto10.createHash("sha256").update(verifier).digest("base64url");
+    const state = crypto11.randomBytes(32).toString("base64url");
+    const verifier = crypto11.randomBytes(32).toString("base64url");
+    const challenge = crypto11.createHash("sha256").update(verifier).digest("base64url");
     res.cookie(STATE_COOKIE, JSON.stringify({ state, verifier, provider }), { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 10 * 60 * 1e3 });
     const params = new URLSearchParams({ client_id: c.clientId, redirect_uri: redirectUri(req, provider), response_type: "code", scope: c.scope, state, code_challenge: challenge, code_challenge_method: "S256", access_type: "offline", prompt: "select_account" });
     return res.redirect(302, `${c.authorize}?${params.toString()}`);
@@ -13361,7 +13442,7 @@ import { TRPCError as TRPCError5 } from "@trpc/server";
 
 // server/stakeEarn.ts
 init_mysql();
-import crypto11 from "node:crypto";
+import crypto12 from "node:crypto";
 import mysql2 from "mysql2/promise";
 var productSeed = [
   ["Core Staking", "CORE_STAKING", "USD", 620, 30, 1e4, 1e8, "DAILY", 30, "MODERATE", 1],
@@ -13391,7 +13472,7 @@ async function ensureProducts(conn) {
 function idempotencyKey(input, userId) {
   const value = String(input || "").trim();
   if (!/^[A-Za-z0-9._:-]{8,160}$/.test(value)) throw new Error("A valid idempotency key is required");
-  return `stake:${userId}:${crypto11.createHash("sha256").update(value).digest("hex")}`;
+  return `stake:${userId}:${crypto12.createHash("sha256").update(value).digest("hex")}`;
 }
 function rewardFor(principal, annualRateBps, durationDays) {
   return Math.floor(principal * annualRateBps * durationDays / (1e4 * 365));
@@ -13488,13 +13569,13 @@ async function allocateStake(userId, input) {
       if (!balance || Number(balance.availableMinor) < input.amountMinor) throw new Error("Insufficient available wallet balance");
       const now = /* @__PURE__ */ new Date();
       const maturity = new Date(now.getTime() + product.durationDays * 864e5);
-      const positionCode = `STK-${crypto11.randomBytes(4).toString("hex").toUpperCase()}`;
+      const positionCode = `STK-${crypto12.randomBytes(4).toString("hex").toUpperCase()}`;
       const reference = `stake-allocation:${positionCode}`;
       await conn.execute(`INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`, [userId, product.asset, -input.amountMinor, "stake_allocation", reference]);
       await conn.execute(`UPDATE customer_balances SET availableMinor=availableMinor-?, lockedMinor=lockedMinor+?, updatedAt=NOW() WHERE id=?`, [input.amountMinor, input.amountMinor, balance.id]);
       const [positionResult] = await conn.execute(`INSERT INTO stake_positions (positionCode,userId,productId,asset,principalMinor,rewardMinor,status,openedAt,updatedAt,maturityAt,nextRewardAt,originalLedgerReference) VALUES (?,?,?,?,?,0,'ACTIVE',NOW(),NOW(),?,?,?)`, [positionCode, userId, product.id, product.asset, input.amountMinor, maturity, nextRewardAt(now, product.rewardFrequency), reference]);
       const positionId = Number(positionResult.insertId);
-      await conn.execute(`INSERT INTO stake_transactions (transactionCode,userId,positionId,type,amountMinor,asset,status,ledgerReference,idempotencyKey) VALUES (?,?,?,?,?,?, 'COMPLETED', ?, ?)`, [`TX-${crypto11.randomBytes(5).toString("hex").toUpperCase()}`, userId, positionId, "STAKE_ALLOCATION", input.amountMinor, product.asset, reference, key]);
+      await conn.execute(`INSERT INTO stake_transactions (transactionCode,userId,positionId,type,amountMinor,asset,status,ledgerReference,idempotencyKey) VALUES (?,?,?,?,?,?, 'COMPLETED', ?, ?)`, [`TX-${crypto12.randomBytes(5).toString("hex").toUpperCase()}`, userId, positionId, "STAKE_ALLOCATION", input.amountMinor, product.asset, reference, key]);
       await conn.execute(`INSERT INTO stake_events (userId,positionId,eventType,previousState,newState,amountMinor,asset,metadataJson) VALUES (?,?,?,?,?,?,?,?)`, [userId, positionId, "position.created", "PENDING", "ACTIVE", input.amountMinor, product.asset, JSON.stringify({ ledgerReference: reference, productId: product.id })]);
       await conn.execute(`INSERT INTO customer_notifications (userId,title,body,eventKey,category,priority) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE eventKey=VALUES(eventKey)`, [
         userId,
@@ -13559,7 +13640,7 @@ function projectStake(input) {
 
 // server/transactionConsole.ts
 init_mysql();
-import crypto12 from "node:crypto";
+import crypto13 from "node:crypto";
 import mysql3 from "mysql2/promise";
 var TRANSACTION_CONSOLE_COOKIE = "arbitrade_transaction_console";
 var SESSION_TTL_SECONDS2 = 60 * 60 * 24;
@@ -13585,7 +13666,7 @@ function readCookie(req) {
   return req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)${TRANSACTION_CONSOLE_COOKIE}=([^;]+)`))?.[1];
 }
 function openTransactionConsoleSession(req, res, userId) {
-  const sessionKey = crypto12.randomBytes(32).toString("base64url");
+  const sessionKey = crypto13.randomBytes(32).toString("base64url");
   res.cookie(TRANSACTION_CONSOLE_COOKIE, sessionKey, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: SESSION_TTL_SECONDS2 * 1e3 });
   return withConnection3(async (connection) => {
     await connection.execute("DELETE FROM transaction_console_events WHERE userId=?", [userId]);
@@ -13602,7 +13683,7 @@ async function closeTransactionConsoleSession(req, res, userId) {
   res.clearCookie(TRANSACTION_CONSOLE_COOKIE, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 0 });
 }
 function transactionConsoleEventLockName(userId, sessionKey, transactionCode) {
-  const digest2 = crypto12.createHash("sha256").update(JSON.stringify([userId, sessionKey, transactionCode])).digest("hex").slice(0, 56);
+  const digest2 = crypto13.createHash("sha256").update(JSON.stringify([userId, sessionKey, transactionCode])).digest("hex").slice(0, 56);
   return `arb_evt:${digest2}`;
 }
 async function withTransactionConsoleEventLock(connection, lockName, work) {
@@ -13653,7 +13734,7 @@ init_opportunityLifecycle();
 
 // server/emailAuth.ts
 init_db();
-import crypto13 from "node:crypto";
+import crypto14 from "node:crypto";
 import { and as and4, eq as eq4, gt as gt2, isNull as isNull3, lt as lt2, sql as sql6 } from "drizzle-orm";
 init_schema();
 init_emailQueue();
@@ -13661,10 +13742,10 @@ init_email();
 var RESEND_COOLDOWN_MS = 6e4;
 var MAX_ATTEMPTS = 5;
 function generateOneTimeCode() {
-  return crypto13.randomInt(0, 1e8).toString().padStart(8, "0");
+  return crypto14.randomInt(0, 1e8).toString().padStart(8, "0");
 }
 function hashOneTimeCode(code, salt) {
-  return crypto13.createHash("sha256").update(`${salt}:${code}`).digest("hex");
+  return crypto14.createHash("sha256").update(`${salt}:${code}`).digest("hex");
 }
 function isWithinResendCooldown(lastRequestedAt, now = /* @__PURE__ */ new Date()) {
   return now.getTime() - lastRequestedAt.getTime() < RESEND_COOLDOWN_MS;
@@ -13675,7 +13756,7 @@ function canAttemptOneTimeCode(attempts) {
 function codeMatches(code, salt, expected) {
   const actual = Buffer.from(hashOneTimeCode(code, salt), "hex");
   const wanted = Buffer.from(expected, "hex");
-  return actual.length === wanted.length && crypto13.timingSafeEqual(actual, wanted);
+  return actual.length === wanted.length && crypto14.timingSafeEqual(actual, wanted);
 }
 async function issueCode(userId, purpose) {
   const db2 = await getDb();
@@ -13688,7 +13769,7 @@ async function issueCode(userId, purpose) {
   const now = /* @__PURE__ */ new Date();
   if (previous && isWithinResendCooldown(previous.lastRequestedAt, now)) return { issued: false, delivered: false, throttled: true };
   const code = generateOneTimeCode();
-  const salt = crypto13.randomBytes(16).toString("hex");
+  const salt = crypto14.randomBytes(16).toString("hex");
   const expiresAt = new Date(now.getTime() + (purpose === "EMAIL_VERIFY" ? 15 : 30) * 6e4);
   await db2.insert(authEmailTokens).values({ userId, purpose, tokenSalt: salt, tokenHash: hashOneTimeCode(code, salt), expiresAt, attempts: 0, lastRequestedAt: now, consumedAt: null }).onDuplicateKeyUpdate({ set: { tokenSalt: salt, tokenHash: hashOneTimeCode(code, salt), expiresAt, attempts: 0, lastRequestedAt: now, consumedAt: null } });
   const template = purpose === "EMAIL_VERIFY" ? "email_verification" : "password_reset";
@@ -13764,7 +13845,7 @@ init_db();
 // server/kyc.ts
 init_email();
 init_mysql();
-import crypto14 from "node:crypto";
+import crypto15 from "node:crypto";
 import mysql4 from "mysql2/promise";
 var STAGES = ["EMAIL", "PHONE", "ADDRESS", "IDENTITY_DOCUMENT", "FACE_LIVENESS"];
 var stageNames = { EMAIL: "Email", PHONE: "Phone", ADDRESS: "Address", IDENTITY_DOCUMENT: "Identity document", FACE_LIVENESS: "Live face & liveness" };
@@ -13782,13 +13863,13 @@ async function exec(sql10, params = []) {
   return result;
 }
 function hmac(value) {
-  return crypto14.createHmac("sha256", process.env.PASSWORD_PEPPER || process.env.SESSION_SECRET || "development-only").update(value).digest("hex");
+  return crypto15.createHmac("sha256", process.env.PASSWORD_PEPPER || process.env.SESSION_SECRET || "development-only").update(value).digest("hex");
 }
 function hash(value) {
-  return crypto14.createHash("sha256").update(value).digest("hex");
+  return crypto15.createHash("sha256").update(value).digest("hex");
 }
 function id() {
-  return crypto14.randomBytes(24).toString("hex");
+  return crypto15.randomBytes(24).toString("hex");
 }
 function safeJson(value) {
   return JSON.stringify(value).slice(0, 1e5);
@@ -13899,7 +13980,7 @@ async function startStage(userId, stage, idempotencyKey2, deviceMetadata) {
 }
 async function issueEmail(userId) {
   const profile = await profileFor(userId);
-  const token = crypto14.randomBytes(24).toString("hex");
+  const token = crypto15.randomBytes(24).toString("hex");
   await exec("UPDATE kyc_email_verifications SET usedAt=NOW() WHERE profileId=? AND usedAt IS NULL", [profile.id]);
   await exec("INSERT INTO kyc_email_verifications (profileId,tokenHash,expiresAt) VALUES (?,?,DATE_ADD(NOW(),INTERVAL 15 MINUTE))", [profile.id, hash(token)]);
   const userRows = await rows("SELECT u.email,u.name FROM users u JOIN kyc_profiles p ON p.userId=u.id WHERE p.id=? LIMIT 1", [profile.id]);
@@ -13927,7 +14008,7 @@ async function verifyEmail(userId, token) {
 }
 async function issuePhone(userId, phone) {
   const profile = await profileFor(userId);
-  const otp = String(crypto14.randomInt(1e5, 1e6));
+  const otp = String(crypto15.randomInt(1e5, 1e6));
   await exec("UPDATE kyc_phone_verifications SET usedAt=NOW() WHERE profileId=? AND usedAt IS NULL", [profile.id]);
   await exec("INSERT INTO kyc_phone_verifications (profileId,phone,otpHmac,expiresAt,resendAfter) VALUES (?,?,?,DATE_ADD(NOW(),INTERVAL 10 MINUTE),DATE_ADD(NOW(),INTERVAL 60 SECOND))", [profile.id, phone, hmac(`${profile.id}:${otp}`)]);
   if (process.env.NODE_ENV !== "production") console.log(`[KYC DEV SMS] ${phone}: ${otp}`);
@@ -13939,7 +14020,7 @@ async function verifyPhone(userId, otp) {
   const found = await rows("SELECT * FROM kyc_phone_verifications WHERE profileId=? AND usedAt IS NULL AND expiresAt>NOW() ORDER BY id DESC LIMIT 1", [profile.id]);
   if (!found[0] || found[0].attempts >= 5) throw new Error("Invalid or expired phone verification code");
   const supplied = hmac(`${profile.id}:${otp}`);
-  if (!crypto14.timingSafeEqual(Buffer.from(supplied), Buffer.from(found[0].otpHmac))) {
+  if (!crypto15.timingSafeEqual(Buffer.from(supplied), Buffer.from(found[0].otpHmac))) {
     await exec("UPDATE kyc_phone_verifications SET attempts=attempts+1 WHERE id=?", [found[0].id]);
     throw new Error("Invalid or expired phone verification code");
   }
@@ -14215,7 +14296,7 @@ init_emailAdmin();
 
 // server/mining.ts
 init_db();
-import crypto16 from "node:crypto";
+import crypto17 from "node:crypto";
 import Decimal4 from "decimal.js";
 
 // server/mining-rules.ts
@@ -14313,7 +14394,7 @@ function isRateWithinDeviation(currentRate, previousRate, maxDeviationBps) {
 }
 
 // server/mining-store.ts
-import crypto15 from "node:crypto";
+import crypto16 from "node:crypto";
 import Decimal3 from "decimal.js";
 import mysql5 from "mysql2/promise";
 init_mysql();
@@ -14352,7 +14433,7 @@ function assertMiningAsset(asset, allowToken = true) {
 function requestKey(prefix, userId, input) {
   const value = String(input || "").trim();
   if (!/^[A-Za-z0-9._:-]{8,160}$/.test(value)) throw new MiningError("A valid idempotency key is required");
-  const digest2 = crypto15.createHash("sha256").update(value).digest("hex");
+  const digest2 = crypto16.createHash("sha256").update(value).digest("hex");
   return `${prefix}:${userId}:${digest2}`;
 }
 async function withMiningConnection(fn) {
@@ -14525,7 +14606,7 @@ async function writeMiningAudit(conn, input) {
   ]);
 }
 async function createMiningLedgerTransaction(conn, input) {
-  const referenceCode = `MIN-${crypto15.randomBytes(8).toString("hex").toUpperCase()}`;
+  const referenceCode = `MIN-${crypto16.randomBytes(8).toString("hex").toUpperCase()}`;
   const [result] = await conn.execute(`INSERT INTO mining_ledger_transactions
     (userId,actorUserId,transactionType,status,idempotencyKey,referenceCode,reversalOfId,reason,metadataJson)
     VALUES (?,?,?,?,?,?,?,?,?)`, [input.userId, input.actorUserId, input.transactionType, input.status || "posted", input.idempotencyKey, referenceCode, input.reversalOfId ?? null, input.reason || null, input.metadata === void 0 ? null : JSON.stringify(input.metadata)]);
@@ -14760,7 +14841,7 @@ async function insertFxQuote(conn, input) {
   const quotedAt = nowSql();
   const validUntil = new Date(quotedAt.getTime() + input.quoteTtlSeconds * 1e3);
   const ratio = decimal(input.targetAmount).div(decimal(input.sourceAmount));
-  const reference = `MINING:${input.purpose}:${input.userId}:${crypto16.randomBytes(8).toString("hex")}`;
+  const reference = `MINING:${input.purpose}:${input.userId}:${crypto17.randomBytes(8).toString("hex")}`;
   const [result] = await conn.execute(`INSERT INTO v5_fx_quotes
     (provider,fromAsset,toAsset,sourceAmount,destinationAmount,rate,fee,spread,quotedAt,validUntil,status,reference)
     VALUES (?,?,?,?,?,?,?,?,?,?,'QUOTED',?)`, [
@@ -16843,7 +16924,7 @@ async function updatePrivacyRequest(adminId, input) {
 // server/_core/heartbeat.ts
 init_db();
 init_schema();
-import crypto17 from "node:crypto";
+import crypto18 from "node:crypto";
 import { and as and7, eq as eq8, lte as lte4, or as or4, isNull as isNull4, sql as sql8 } from "drizzle-orm";
 import { TRPCError as TRPCError4 } from "@trpc/server";
 init_workerHealth();
@@ -16951,7 +17032,7 @@ async function createHeartbeatJob(job, userSession = "") {
   const callbackPath = validateCallbackPath(job.path);
   if (job.method && job.method !== "POST" && job.method !== "PUT") throw new TRPCError4({ code: "BAD_REQUEST", message: "Only POST and PUT callback methods are supported." });
   const nextExecutionAt = computeNextExecution(job.cron);
-  const taskUid = crypto17.randomUUID();
+  const taskUid = crypto18.randomUUID();
   const ownerUserId = await resolveActor(userSession);
   await db2.insert(localScheduledJobs).values({
     taskUid,
@@ -17016,7 +17097,7 @@ async function listHeartbeatJobs(userSession = "", pagination) {
 function callbackSignature(taskUid, timestamp2, body) {
   const key = process.env.SESSION_SECRET;
   if (!key && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required to sign scheduled callbacks.");
-  return crypto17.createHmac("sha256", key || "development-only-session-secret").update(`${taskUid}.${timestamp2}.${body}`).digest("hex");
+  return crypto18.createHmac("sha256", key || "development-only-session-secret").update(`${taskUid}.${timestamp2}.${body}`).digest("hex");
 }
 function describeSchedulerError(error) {
   if (!(error instanceof Error)) {
