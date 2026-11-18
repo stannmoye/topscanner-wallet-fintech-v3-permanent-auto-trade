@@ -42,9 +42,11 @@ WITH latest_popup AS (
     GROUP BY userId,offerId
   ) latest ON latest.id=e.id
 ), record_rows AS (
-  SELECT a.userId,a.offerId,a.packageId,a.packageName,a.companyReferenceId,
-    COALESCE(p.companyDisplayName,o.companyDisplayName) AS companyDisplayName,
-    a.status AS assignmentStatus,a.failureReason,a.generatedAt,a.assignedAt AS assignmentPersistedAt,a.assignedAt,
+  SELECT a.userId,a.offerId,a.packageId,
+    a.packageName COLLATE utf8mb4_unicode_ci AS packageName,
+    a.companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId,
+    COALESCE(p.companyDisplayName,o.companyDisplayName) COLLATE utf8mb4_unicode_ci AS companyDisplayName,
+    a.status AS assignmentStatus,a.failureReason COLLATE utf8mb4_unicode_ci AS failureReason,a.generatedAt,a.assignedAt AS assignmentPersistedAt,a.assignedAt,
     a.deliveredAt AS assignmentDeliveredAt,a.expiresAt AS assignmentExpiresAt,
     p.id AS popupEventId,p.eventStatus,p.deliveryStatus,p.deliveryAttemptCount,
     p.deliveryRetryAfter,p.deliveryLeaseExpiresAt,p.lastErrorCode,p.createdAt AS popupCreatedAt,
@@ -54,9 +56,11 @@ WITH latest_popup AS (
   LEFT JOIN latest_popup p ON p.userId=a.userId AND p.offerId=a.offerId
   LEFT JOIN opportunity_offers o ON o.id=a.offerId AND o.assignedUserId=a.userId
   UNION ALL
-  SELECT p.userId,p.offerId,p.packageId,p.packageName,p.companyReferenceId,
-    COALESCE(p.companyDisplayName,o.companyDisplayName) AS companyDisplayName,
-    NULL AS assignmentStatus,NULL AS failureReason,NULL AS generatedAt,NULL AS assignmentPersistedAt,NULL AS assignedAt,
+  SELECT p.userId,p.offerId,p.packageId,
+    p.packageName COLLATE utf8mb4_unicode_ci AS packageName,
+    p.companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId,
+    COALESCE(p.companyDisplayName,o.companyDisplayName) COLLATE utf8mb4_unicode_ci AS companyDisplayName,
+    NULL AS assignmentStatus,NULL AS failureReason COLLATE utf8mb4_unicode_ci,NULL AS generatedAt,NULL AS assignmentPersistedAt,NULL AS assignedAt,
     NULL AS assignmentDeliveredAt,NULL AS assignmentExpiresAt,
     p.id AS popupEventId,p.eventStatus,p.deliveryStatus,p.deliveryAttemptCount,
     p.deliveryRetryAfter,p.deliveryLeaseExpiresAt,p.lastErrorCode,p.createdAt AS popupCreatedAt,

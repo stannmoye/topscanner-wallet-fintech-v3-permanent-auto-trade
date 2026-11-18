@@ -101,4 +101,17 @@ describe("Opportunity delivery diagnostics", () => {
     expect(uiSource).toContain("user-scoped customer requests");
     expect(uiSource).toContain("filters: \"filters\" in activeFilters ? activeFilters.filters as any : {}");
   });
+
+  it("pins an explicit collation on the cross-table UNION columns so delivery records never fail with a collation error", () => {
+    // opportunity_generation_assignments and opportunity_popup_events are created
+    // independently, and several of their string columns were added later with an
+    // unqualified ALTER TABLE ... ADD COLUMN. Their collations can therefore
+    // diverge, and a bare UNION raises
+    // "Illegal mix of collations for operation 'UNION'" (-32603).
+    expect(diagnosticsSource).toContain("a.packageName COLLATE utf8mb4_unicode_ci AS packageName");
+    expect(diagnosticsSource).toContain("p.packageName COLLATE utf8mb4_unicode_ci AS packageName");
+    expect(diagnosticsSource).toContain("a.companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId");
+    expect(diagnosticsSource).toContain("p.companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId");
+    expect(diagnosticsSource).toContain("COALESCE(p.companyDisplayName,o.companyDisplayName) COLLATE utf8mb4_unicode_ci AS companyDisplayName");
+  });
 });
