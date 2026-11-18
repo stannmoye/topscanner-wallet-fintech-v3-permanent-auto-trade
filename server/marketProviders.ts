@@ -22,6 +22,23 @@ const json = async (url: string, init?: RequestInit) => {
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
   return response.json() as Promise<any>;
 };
+/**
+ * FX freshness windows, checked against the provider's own timestamp.
+ *
+ * Fiat: the primary feed is the ECB via Frankfurter. The ECB publishes reference
+ * rates only on TARGET business days (about 16:00 CET) and not on weekends or
+ * TARGET holidays, so a genuinely current rate can be a full weekend plus one
+ * holiday old. A 4-day window covers the normal Friday -> Monday/Tuesday gap;
+ * a rate outside it is not accepted from this feed. The daily open.er-api feed
+ * is used as the fallback and is held to 24 hours. If neither source yields a
+ * rate inside its window, the conversion is refused (fail closed) — a stale or
+ * stored rate is never substituted. Crypto must be current to the minute.
+ */
+const FIAT_ECB_RATE_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000;
+const FIAT_FALLBACK_RATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const CRYPTO_RATE_MAX_AGE_MS = 5 * 60 * 1000;
+const RATE_FUTURE_TOLERANCE_MS = 60_000;
+
 const numeric = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value !== "string") return null;
@@ -90,7 +107,7 @@ export async function fetchCurrencyUsdRate(input: {
       const sourceDate = row?.date ? String(row.date) : "";
       const sourceMs = sourceDate ? new Date(sourceDate).getTime() : NaN;
       if (Number.isFinite(usdToNative) && usdToNative > 0 && Number.isFinite(sourceMs) &&
-        sourceMs <= Date.now() + 60_000 && Date.now() - sourceMs <= 4 * 24 * 60 * 60 * 1000) {
+        sourceMs <= Date.now() + RATE_FUTURE_TOLERANCE_MS && Date.now() - sourceMs <= FIAT_ECB_RATE_MAX_AGE_MS) {
         return { rate: invertDecimalRate(row?.rate), provider: "frankfurter-ecb", sourceDate, fetchedAt };
       }
     } catch {
@@ -106,7 +123,7 @@ export async function fetchCurrencyUsdRate(input: {
       const sourceDate = Number.isFinite(sourceSeconds) && sourceSeconds > 0 ? new Date(sourceSeconds * 1000).toISOString() : "";
       const sourceMs = sourceDate ? new Date(sourceDate).getTime() : NaN;
       if (!Number.isFinite(usdToNative) || usdToNative <= 0 || !Number.isFinite(sourceMs) ||
-        sourceMs > Date.now() + 60_000 || Date.now() - sourceMs > 24 * 60 * 60 * 1000) {
+        sourceMs > Date.now() + RATE_FUTURE_TOLERANCE_MS || Date.now() - sourceMs > FIAT_FALLBACK_RATE_MAX_AGE_MS) {
         throw new Error(`ExchangeRate-API returned no fresh rate for ${code}.`);
       }
       return { rate: invertDecimalRate(payload?.rates?.[code]), provider: "open-er-api", sourceDate, fetchedAt };
@@ -124,7 +141,7 @@ export async function fetchCurrencyUsdRate(input: {
   const sourceDate = Number.isFinite(sourceSeconds) && sourceSeconds > 0 ? new Date(sourceSeconds * 1000).toISOString() : "";
   const sourceMs = sourceDate ? new Date(sourceDate).getTime() : NaN;
   if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(sourceMs) ||
-    sourceMs > Date.now() + 60_000 || Date.now() - sourceMs > 5 * 60 * 1000) {
+    sourceMs > Date.now() + RATE_FUTURE_TOLERANCE_MS || Date.now() - sourceMs > CRYPTO_RATE_MAX_AGE_MS) {
     throw new Error(`A current CoinGecko USD rate for wallet ${code} is unavailable.`);
   }
   return { rate: String(rate), provider: "coingecko", sourceDate, fetchedAt };

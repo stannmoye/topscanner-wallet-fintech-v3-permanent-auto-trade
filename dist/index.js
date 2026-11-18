@@ -3827,7 +3827,7 @@ async function fetchCurrencyUsdRate(input) {
       const usdToNative = Number(row2?.rate);
       const sourceDate2 = row2?.date ? String(row2.date) : "";
       const sourceMs2 = sourceDate2 ? new Date(sourceDate2).getTime() : NaN;
-      if (Number.isFinite(usdToNative) && usdToNative > 0 && Number.isFinite(sourceMs2) && sourceMs2 <= Date.now() + 6e4 && Date.now() - sourceMs2 <= 4 * 24 * 60 * 60 * 1e3) {
+      if (Number.isFinite(usdToNative) && usdToNative > 0 && Number.isFinite(sourceMs2) && sourceMs2 <= Date.now() + RATE_FUTURE_TOLERANCE_MS && Date.now() - sourceMs2 <= FIAT_ECB_RATE_MAX_AGE_MS) {
         return { rate: invertDecimalRate(row2?.rate), provider: "frankfurter-ecb", sourceDate: sourceDate2, fetchedAt };
       }
     } catch {
@@ -3838,7 +3838,7 @@ async function fetchCurrencyUsdRate(input) {
       const sourceSeconds2 = Number(payload2?.time_last_update_unix);
       const sourceDate2 = Number.isFinite(sourceSeconds2) && sourceSeconds2 > 0 ? new Date(sourceSeconds2 * 1e3).toISOString() : "";
       const sourceMs2 = sourceDate2 ? new Date(sourceDate2).getTime() : NaN;
-      if (!Number.isFinite(usdToNative) || usdToNative <= 0 || !Number.isFinite(sourceMs2) || sourceMs2 > Date.now() + 6e4 || Date.now() - sourceMs2 > 24 * 60 * 60 * 1e3) {
+      if (!Number.isFinite(usdToNative) || usdToNative <= 0 || !Number.isFinite(sourceMs2) || sourceMs2 > Date.now() + RATE_FUTURE_TOLERANCE_MS || Date.now() - sourceMs2 > FIAT_FALLBACK_RATE_MAX_AGE_MS) {
         throw new Error(`ExchangeRate-API returned no fresh rate for ${code}.`);
       }
       return { rate: invertDecimalRate(payload2?.rates?.[code]), provider: "open-er-api", sourceDate: sourceDate2, fetchedAt };
@@ -3854,12 +3854,12 @@ async function fetchCurrencyUsdRate(input) {
   const sourceSeconds = Number(row?.last_updated_at);
   const sourceDate = Number.isFinite(sourceSeconds) && sourceSeconds > 0 ? new Date(sourceSeconds * 1e3).toISOString() : "";
   const sourceMs = sourceDate ? new Date(sourceDate).getTime() : NaN;
-  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(sourceMs) || sourceMs > Date.now() + 6e4 || Date.now() - sourceMs > 5 * 60 * 1e3) {
+  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(sourceMs) || sourceMs > Date.now() + RATE_FUTURE_TOLERANCE_MS || Date.now() - sourceMs > CRYPTO_RATE_MAX_AGE_MS) {
     throw new Error(`A current CoinGecko USD rate for wallet ${code} is unavailable.`);
   }
   return { rate: String(rate), provider: "coingecko", sourceDate, fetchedAt };
 }
-var json, numeric;
+var json, FIAT_ECB_RATE_MAX_AGE_MS, FIAT_FALLBACK_RATE_MAX_AGE_MS, CRYPTO_RATE_MAX_AGE_MS, RATE_FUTURE_TOLERANCE_MS, numeric;
 var init_marketProviders = __esm({
   "server/marketProviders.ts"() {
     "use strict";
@@ -3869,6 +3869,10 @@ var init_marketProviders = __esm({
       if (!response.ok) throw new Error(`${url} returned ${response.status}`);
       return response.json();
     };
+    FIAT_ECB_RATE_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1e3;
+    FIAT_FALLBACK_RATE_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+    CRYPTO_RATE_MAX_AGE_MS = 5 * 60 * 1e3;
+    RATE_FUTURE_TOLERANCE_MS = 6e4;
     numeric = (value) => {
       if (typeof value === "number" && Number.isFinite(value)) return String(value);
       if (typeof value !== "string") return null;
@@ -7405,22 +7409,31 @@ async function getCustomerBalanceSummary(userId) {
   const balances = await listBalances(userId);
   const byCode = new Map(balances.map((x) => [x.currency, x]));
   let availableUsd = 0, lockedUsd = 0, promotionalUsd = 0, earnedUsd = 0;
+  const conversions = [];
   for (const c of currencies) {
     const b = byCode.get(c.code);
     const factor = Math.pow(10, c.scale);
     let rate = 0;
+    let snapshot = null;
     try {
-      rate = Number((await resolveLiveCurrencyUsdRate(c)).rateUsdPerUnit);
+      snapshot = await resolveLiveCurrencyUsdRate(c);
+      rate = Number(snapshot.rateUsdPerUnit);
     } catch {
       rate = 0;
+      snapshot = null;
     }
     if (!Number.isFinite(rate) || rate <= 0) rate = 0;
     availableUsd += Number(b?.availableMinor || 0) / factor * rate;
     lockedUsd += Number(b?.lockedMinor || 0) / factor * rate;
     promotionalUsd += Number(b?.promotionalMinor || 0) / factor * rate;
     earnedUsd += Number(b?.earnedMinor || 0) / factor * rate;
+    const code = String(c.code).toUpperCase();
+    const hasBalance = Number(b?.availableMinor || 0) !== 0 || Number(b?.lockedMinor || 0) !== 0 || Number(b?.promotionalMinor || 0) !== 0 || Number(b?.earnedMinor || 0) !== 0;
+    if (code !== "USD" && hasBalance && snapshot && rate > 0) {
+      conversions.push({ from: code, to: "USD", rate: String(snapshot.rateUsdPerUnit), provider: String(snapshot.provider || ""), updatedAt: snapshot.fetchedAt ? new Date(snapshot.fetchedAt).toISOString() : snapshot.sourceDate || null });
+    }
   }
-  return { balances, currencies, summary: { availableUsd, lockedUsd, promotionalUsd, earnedUsd, totalUsd: availableUsd + lockedUsd } };
+  return { balances, currencies, summary: { availableUsd, lockedUsd, promotionalUsd, earnedUsd, totalUsd: availableUsd + lockedUsd, conversions } };
 }
 async function listCustomerWalletLedger(userId, limit = 50) {
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");

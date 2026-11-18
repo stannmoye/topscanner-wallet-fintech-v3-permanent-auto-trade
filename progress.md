@@ -25,7 +25,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 15 | `customer.opportunities` auto-trades in query | `[-]` | owner: intentional |
 | 16 | Float math in balance summary / min-max / exit P&L | `[-]` | owner: intentional |
 | 17 | Admin wallet priority order | `[x]` | `Fix #17` |
-| 18 | Live fiat FX + customer conversion indicator | `[ ]` | |
+| 18 | Live fiat FX + customer conversion indicator | `[x]` | `Fix #18` |
 | 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[ ]` | |
 | 20 | Remove package fee entirely | `[ ]` | |
 | 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[ ]` | |
@@ -102,6 +102,18 @@ Item 9 made every rate that feeds a calculation come from a live API fetch; item
 ### Batch 4 summary (items 12–14)
 
 Only item 14 was actionable (items 12 and 13 are owner-ignored). Item 14 replaced the hardcoded `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED = true` with a persisted, versioned and audited administrator master in the canonical `trade.globalControls` policy, added it to the Global Trade Controls screen, and audited every other administrator Trade switch (persist → reload → behaviour). Tests/typecheck/build green (1363 passed, 31 skipped).
+
+### Batch 5 summary (items 15–17)
+
+Only item 17 was actionable (items 15 and 16 are owner-ignored). Item 17 replaced the alphabetical cross-wallet funding order with a persisted, versioned and audited administrator **wallet funding priority** list (default: USD first, then the other currencies alphabetically; malformed config fails closed; wallet row locks keep a fixed currency order so funding never deadlocks). Tests/typecheck/build green (1373 passed, 31 skipped).
+
+### Item 18 notes (`Fix #18`)
+
+- **What changed.** (a) The FX freshness windows in [marketProviders.ts](file:///workspace/server/marketProviders.ts) were inline magic numbers; they are now named, documented constants checked against the **provider's own timestamp**: `FIAT_ECB_RATE_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000`, `FIAT_FALLBACK_RATE_MAX_AGE_MS = 24 * 60 * 60 * 1000`, `CRYPTO_RATE_MAX_AGE_MS = 5 * 60 * 1000`, `RATE_FUTURE_TOLERANCE_MS = 60_000`. Behavior is unchanged (the values are identical); the primary fiat feed is the ECB via Frankfurter, which publishes on TARGET business days only, so the 4-day window covers the normal Friday→Monday/Tuesday weekend-and-holiday gap. (b) `getCustomerBalanceSummary` in [db.ts](file:///workspace/server/db.ts) now returns a minimal `summary.conversions` list, and [App.tsx](file:///workspace/client/src/App.tsx) renders a `.customer-fx-indicator` live region.
+- **Fiat acceptance window chosen: 4 days** for the ECB/Frankfurter primary feed (covers the ECB's weekend+TARGET-holiday non-publication), **24 hours** for the open.er-api daily fallback, and **5 minutes** (strict) for crypto (CoinGecko). A quote dated more than 60 s in the future is rejected. If neither source yields a rate inside its window the conversion is refused — never a stale or stored fallback.
+- **Customer indicator is minimal and honest.** It appears **only** when a non-USD wallet with a real balance is actually converted into the USD summary using a live rate, and it carries only `{from, to, rate, provider, updatedAt}` — no policy or internal objects (item 40 extends this audit). USD and zero-balance wallets never trigger it. Debit/credit amounts are untouched (protected area respected).
+- **Docs.** Added a "Live-rate freshness" bullet and a "Customer conversion indicator" bullet to `docs/TRADING_SYSTEM_SPECIFICATION.md` §5A.
+- **Tests.** New `server/customer-live-fx-indicator.contract.test.ts` (4 tests): named freshness constants + provider-timestamp checks and no residual inline magic numbers; the minimal `summary.conversions` shape (non-USD + balance + live rate only); the client live-region render; and the stylesheet class. `server/trading-auto-tier-qualification.contract.test.ts` (which pins `4 * 24 * 60 * 60 * 1000` / `5 * 60 * 1000`) still passes because the constant definitions keep those literal expressions. Characterization tests (item 9) still pass unchanged.
 
 ### Item 14 notes (`Fix #14`)
 
