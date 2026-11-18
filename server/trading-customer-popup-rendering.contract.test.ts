@@ -66,7 +66,10 @@ describe("customer opportunity popup retry and visibility gates", () => {
     expect(component).not.toContain("configuredSeconds*1000");
     expect(database).toContain("const closesAt=new Date(rewardAt.getTime()+completionDisplaySeconds*1000)");
     expect(database).toContain("const displaySeconds=terms.tradeDurationSeconds+completionDisplaySeconds");
-    expect(database).toContain("const settlesAt=new Date(tradeStartedAt.getTime()+effectiveDurationSeconds*1000)");
+    // The mapped trade's completion instant is anchored to the pop-up's own
+    // reward instant, so the pop-up always closes at or after trade completion.
+    expect(database).toContain("const offerRewardAtMs=offer.rewardAt?new Date(offer.rewardAt).getTime():Number.NaN");
+    expect(database).toContain("?Math.max(offerRewardAtMs,tradeStartedAt.getTime())");
     expect(database).toContain("const configuredPopupDisplaySeconds=configuredDurationSeconds+completionDisplaySeconds");
     expect(database).not.toContain("Math.max(86_400");
     expect(component).toContain("setMinimized(true)");

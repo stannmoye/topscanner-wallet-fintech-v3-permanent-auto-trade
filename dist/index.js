@@ -11331,7 +11331,8 @@ async function createTrade(userId, input) {
     await tx.insert(balanceLedger).values({ userId, currency: offer.currency, amountMinor: -input.amountMinor, entryType: "trade_reservation", reference: ref, withdrawable: false });
     const settlementDelaySeconds = Math.max(Number(packagePolicy.minSettlementDelaySeconds || 0), Math.min(Number(packagePolicy.maxSettlementDelaySeconds || settlementPolicy.delaySeconds), settlementPolicy.delaySeconds));
     const tradeStartedAt = /* @__PURE__ */ new Date();
-    const settlesAt = new Date(tradeStartedAt.getTime() + effectiveDurationSeconds * 1e3);
+    const offerRewardAtMs = offer.rewardAt ? new Date(offer.rewardAt).getTime() : Number.NaN;
+    const settlesAt = new Date(Number.isFinite(offerRewardAtMs) ? Math.max(offerRewardAtMs, tradeStartedAt.getTime()) : tradeStartedAt.getTime() + effectiveDurationSeconds * 1e3);
     const settlementReviewAt = new Date(settlesAt.getTime() + settlementDelaySeconds * 1e3);
     const creditAt = new Date(settlementReviewAt.getTime() + settlementPolicy.creditDelaySeconds * 1e3);
     const snapshotVersion = Number(popupSnapshot?.packagePolicyVersionSnapshot || packagePolicy.policyVersion || activePackageSubscription.termsVersion || 1);

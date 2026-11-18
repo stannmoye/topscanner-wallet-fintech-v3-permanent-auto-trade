@@ -38,7 +38,10 @@ describe("administrator-configured Trading pop-up policy", () => {
     expect(database).toContain("validateOpportunityDurationSnapshot(packageSnapshot");
     expect(database).toContain("Saved opportunity duration or timestamps are inconsistent");
     expect(database).toContain("Saved pop-up duration is outside its original package range");
-    expect(database).toContain("const settlesAt=new Date(tradeStartedAt.getTime()+effectiveDurationSeconds*1000)");
+    // The trade's completion instant is anchored to the delivered pop-up's own
+    // immutable reward instant so the pop-up never closes before the trade settles.
+    expect(database).toContain("const offerRewardAtMs=offer.rewardAt?new Date(offer.rewardAt).getTime():Number.NaN");
+    expect(database).toContain("?Math.max(offerRewardAtMs,tradeStartedAt.getTime())");
     expect(database).toContain("popupSnapshot?.packagePolicyVersionSnapshot");
     expect(lifecycle).toContain("configuredProfitRateBps,configuredDurationSeconds,configuredPopupDisplaySeconds");
     expect(lifecycle).toContain("packagePolicyVersionSnapshot");

@@ -5209,7 +5209,16 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   await tx.insert(balanceLedger).values({userId,currency:offer.currency,amountMinor:-input.amountMinor,entryType:"trade_reservation",reference:ref,withdrawable:false});
   const settlementDelaySeconds=Math.max(Number(packagePolicy.minSettlementDelaySeconds||0),Math.min(Number(packagePolicy.maxSettlementDelaySeconds||settlementPolicy.delaySeconds),settlementPolicy.delaySeconds));
   const tradeStartedAt=new Date();
-  const settlesAt=new Date(tradeStartedAt.getTime()+effectiveDurationSeconds*1000);
+  // The delivered pop-up's immutable reward instant governs when the mapped
+  // trade completes. Anchoring to it (instead of "now + duration") guarantees
+  // the pop-up never closes before the trade it delivered reaches settlement,
+  // even when a worker allocates a few seconds after delivery. If the trade is
+  // created after that instant (for example a retry inside the display grace
+  // window) the completion instant is already due and settlement proceeds now.
+  const offerRewardAtMs=offer.rewardAt?new Date(offer.rewardAt).getTime():Number.NaN;
+  const settlesAt=new Date(Number.isFinite(offerRewardAtMs)
+    ?Math.max(offerRewardAtMs,tradeStartedAt.getTime())
+    :tradeStartedAt.getTime()+effectiveDurationSeconds*1000);
   const settlementReviewAt=new Date(settlesAt.getTime()+settlementDelaySeconds*1000);
   const creditAt=new Date(settlementReviewAt.getTime()+settlementPolicy.creditDelaySeconds*1000);
   const snapshotVersion=Number(popupSnapshot?.packagePolicyVersionSnapshot||packagePolicy.policyVersion||activePackageSubscription.termsVersion||1);
