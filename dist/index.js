@@ -12807,9 +12807,9 @@ import crypto9 from "node:crypto";
 import { parse as parseCookieHeader } from "cookie";
 var SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 function secret() {
-  const value = process.env.SESSION_SECRET;
-  if (!value && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required in production");
-  return value || "development-only-session-secret";
+  const value = process.env.SESSION_SECRET?.trim();
+  if (!value) throw new Error("SESSION_SECRET is required to sign and verify local sessions.");
+  return value;
 }
 function sign(value) {
   return crypto9.createHmac("sha256", secret()).update(value).digest("base64url");
@@ -17172,9 +17172,9 @@ async function listHeartbeatJobs(userSession = "", pagination) {
   return { total: totals.length, actorUserId: String(ownerUserId), jobs: rows2.map(toJobInfo) };
 }
 function callbackSignature(taskUid, timestamp2, body) {
-  const key = process.env.SESSION_SECRET;
-  if (!key && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required to sign scheduled callbacks.");
-  return crypto18.createHmac("sha256", key || "development-only-session-secret").update(`${taskUid}.${timestamp2}.${body}`).digest("hex");
+  const key = process.env.SESSION_SECRET?.trim();
+  if (!key) throw new Error("SESSION_SECRET is required to sign scheduled callbacks.");
+  return crypto18.createHmac("sha256", key).update(`${taskUid}.${timestamp2}.${body}`).digest("hex");
 }
 function describeSchedulerError(error) {
   if (!(error instanceof Error)) {
@@ -19490,6 +19490,10 @@ async function startServer() {
       console.error("[Session] A stable session secret is missing and could not be persisted securely. Refusing to start.");
       throw new Error("Production session-secret initialization failed.");
     }
+  }
+  if (!process.env.SESSION_SECRET?.trim()) {
+    console.error("[Session] SESSION_SECRET is required to sign and verify sessions. Refusing to start.");
+    throw new Error("SESSION_SECRET is required.");
   }
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: (/* @__PURE__ */ new Date()).toISOString(), event: "session-secret-initialization-complete" }));
   const app = express2();

@@ -5,9 +5,11 @@ import { COOKIE_NAME } from "@shared/const";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 function secret() {
-  const value = process.env.SESSION_SECRET;
-  if (!value && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required in production");
-  return value || "development-only-session-secret";
+  const value = process.env.SESSION_SECRET?.trim();
+  // No fallback in any environment: a shared public secret would let anyone
+  // forge a session token. Startup fails fast when it is missing.
+  if (!value) throw new Error("SESSION_SECRET is required to sign and verify local sessions.");
+  return value;
 }
 function sign(value: string) { return crypto.createHmac("sha256", secret()).update(value).digest("base64url"); }
 export function createLocalSession(userId: number, authVersion = 0) {

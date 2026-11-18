@@ -18,7 +18,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 8 | Replace `1/x` float inversion with exact decimal | `[x]` | `Fix #8` |
 | 9 | Use live API rates everywhere a calc reads a stored rate | `[x]` | `Fix #9` |
 | 10 | Allocation fail-open — enforce tier/quota caps | `[x]` | `Fix #10` |
-| 11 | Remove fallback session secret | `[ ]` | |
+| 11 | Remove fallback session secret | `[x]` | `Fix #11` |
 | 12 | database.sql / Git LFS dump | `[-]` | owner: ignore |
 | 13 | General .gitignore | `[-]` | owner: ignore (except item 50) |
 | 14 | Persist `AUTOMATIC_FINANCIAL_EXECUTION_ENABLED` + audit switches | `[ ]` | |
@@ -95,9 +95,21 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 
 Item 4 added the UNION-branch regression test for item 3; item 5 fixed the ambiguous `createdAt` in the delivery queue diagnostics; item 6 made the admin customer search match partial, case-insensitive name or email. Tests/typecheck/build green (1330 passed, 31 skipped).
 
+### Batch 3 summary (items 9–11)
+
+Item 9 made every rate that feeds a calculation come from a live API fetch; item 10 made allocation fail closed and enforced the tier/quota/concurrency/success/reward caps; item 11 removed the public fallback session secret and made startup require a real `SESSION_SECRET` in every environment. Items 12 and 13 are owner-ignored, so this batch is 9–11. Tests/typecheck/build green (1352 passed, 31 skipped).
+
 ### Item 8 notes (`Fix #8`)
 
 - `marketSync.ts` line 25 stored `String(1 / Number(row.rate))` and `marketProviders.ts` lines 92/110 stored `String(1 / usdToNative)`, producing binary-float reciprocals such as `1.0998922105633648`. Added `invertDecimalRate(rate, decimalPlaces = 12)` to `shared/money.ts` (decimal.js, half-up, fixed 12 decimals — matching the scale `rateToScaled` parses) and used it at all three sites. The stored `currencyRegistry.usdRate` is now an exact-decimal string. Unit tests live in `server/fx-rate-inversion.test.ts` (the `shared/**` glob is not collected by `vitest.config.ts`, so tests must live under `server/`), plus a contract assertion in `market-sync-no-synthetic-economics.contract.test.ts` that no `1/x` float inversion remains.
+
+### Item 11 notes (`Fix #11`)
+
+- Removed the public fallback secret `"development-only-session-secret"` from [localAuth.ts](file:///workspace/server/_core/localAuth.ts#L7-L13) and [heartbeat.ts](file:///workspace/server/_core/heartbeat.ts#L206-L212). `secret()`/`callbackSignature()` now require a non-empty, trimmed `SESSION_SECRET` and throw a clear error otherwise — in **every** environment (the previous production-only gate is gone).
+- [index.ts](file:///workspace/server/_core/index.ts#L45-L67) startup now refuses to start when `SESSION_SECRET` is missing in all environments. Production still runs `ensureSessionSecret` first (unchanged, required by the installer contract test), which generates+persists a real secret when absent — so production cannot lock out; any non-production environment must supply one.
+- **Lockout safety (STOP-AND-ASK issue):** evidence that production runs with `NODE_ENV=production` (so the provision step executes): `Dockerfile` `ENV NODE_ENV=production`, `installer/index.php` writes `NODE_ENV="production"`, `package.json` start script, and `installer/runtime-status.mjs` all require it. Combined with the startup `ensureSessionSecret` guarantee, the live host has a real secret before serving any request.
+- **Decision:** a strict all-environment assertion was added but the production auto-provision path was kept, so no environment can silently use a shared public secret while production remains unable to lock out. Non-production (`pnpm dev`) now requires `SESSION_SECRET` to be set (item 11's requirement); tests set one.
+- Tests: `server/_core/localAuth.test.ts` gains two: signing/verifying throws without a secret, and a source scan asserting the fallback string is gone from `localAuth.ts`/`heartbeat.ts`/`index.ts` plus the strict startup guard is present. `server/auth.logout.test.ts` and `server/appearance-settings-persistence.integration.test.ts` now set `SESSION_SECRET`; `platform.test.ts`/`local-scheduler.test.ts` already stubbed it. Characterization tests (item 9) unaffected.
 
 ### Item 10 notes (`Fix #10`)
 

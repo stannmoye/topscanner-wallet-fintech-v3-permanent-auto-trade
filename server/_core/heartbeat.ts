@@ -204,9 +204,11 @@ export async function listHeartbeatJobs(userSession = "", pagination?: { page?: 
 }
 
 function callbackSignature(taskUid: string, timestamp: string, body: string): string {
-  const key = process.env.SESSION_SECRET;
-  if (!key && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required to sign scheduled callbacks.");
-  return crypto.createHmac("sha256", key || "development-only-session-secret").update(`${taskUid}.${timestamp}.${body}`).digest("hex");
+  const key = process.env.SESSION_SECRET?.trim();
+  // No fallback in any environment: a shared public key would let anyone forge a
+  // scheduler callback. Startup fails fast when it is missing.
+  if (!key) throw new Error("SESSION_SECRET is required to sign scheduled callbacks.");
+  return crypto.createHmac("sha256", key).update(`${taskUid}.${timestamp}.${body}`).digest("hex");
 }
 
 /** Callback routes can use this to authenticate scheduler-originated requests. */

@@ -56,6 +56,14 @@ async function startServer() {
       throw new Error("Production session-secret initialization failed.");
     }
   }
+  // Every environment requires a real, persistent session-signing secret. The
+  // shared development fallback was removed because a public secret lets anyone
+  // forge a session token; production provisions one above, any other
+  // environment must supply one.
+  if (!process.env.SESSION_SECRET?.trim()) {
+    console.error("[Session] SESSION_SECRET is required to sign and verify sessions. Refusing to start.");
+    throw new Error("SESSION_SECRET is required.");
+  }
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: new Date().toISOString(), event: "session-secret-initialization-complete" }));
   const app = express();
   registerLocalStorageRoutes(app);

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import { COOKIE_NAME } from "../shared/const";
 import type { TrpcContext } from "./_core/context";
@@ -6,6 +6,14 @@ import { invalidateUserSessions } from "./authSessions";
 import { applyAccountClosureDecision, createAccountClosureTicket, getUserById, getUserForSessionRevocation } from "./db";
 import { createLocalSession } from "./_core/localAuth";
 import { localIdentityService } from "./_core/localIdentityService";
+
+// Session signing now requires a real secret in every environment (item 11).
+const originalSessionSecret = process.env.SESSION_SECRET;
+beforeAll(() => { process.env.SESSION_SECRET = "auth-logout-test-signing-secret"; });
+afterAll(() => {
+  if (originalSessionSecret === undefined) delete process.env.SESSION_SECRET;
+  else process.env.SESSION_SECRET = originalSessionSecret;
+});
 
 vi.mock("./authSessions", () => ({
   invalidateUserSessions: vi.fn().mockResolvedValue(undefined),

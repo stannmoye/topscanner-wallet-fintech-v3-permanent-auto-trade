@@ -13,6 +13,8 @@ import { isAllowedAttachmentRequest } from "./_core/attachmentPolicy";
 // to a developer's configured database. CI enables it only after provisioning
 // the disposable fresh-install MariaDB fixture.
 const enabled = process.env.RUN_APPEARANCE_SETTINGS_DB_INTEGRATION === "1";
+// Session signing now requires a real secret in every environment (item 11).
+process.env.SESSION_SECRET = process.env.SESSION_SECRET || "appearance-settings-integration-signing-secret";
 const missingValue = `__stage2_missing_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
 const administratorId = 1;
 
