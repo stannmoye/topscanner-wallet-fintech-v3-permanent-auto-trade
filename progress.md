@@ -33,7 +33,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 23 | popup-execution-policy fail closed on blank status | `[x]` | `Fix #23` |
 | 24 | `updatePopupDeliveryStatus` requires leaseToken | `[x]` | `Fix #24` |
 | 25 | Allocation reason 8–500 chars, strict input | `[x]` | `Fix #25` |
-| 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[ ]` | |
+| 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[x]` | `Fix #26` |
 | 27 | No writes during reads in `getTradeSettlementPolicy` | `[ ]` | |
 | 28 | `calculateCombinedBalanceSnapshot` error handling | `[ ]` | |
 | 29 | Quiet hours use admin timezone (UTC default) | `[ ]` | |
@@ -142,6 +142,12 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **What changed.** (1) The insert now writes `executionStatus` explicitly as `'READY'` (no behaviour change — it matches the previous default). (2) [popup-execution-policy.ts](file:///workspace/repo/server/modules/popup-execution-policy.ts) no longer substitutes `READY` for a missing/blank execution status: `isPopupExecutionEligible` now trims and requires an explicit value, so a missing/blank status is **not** eligible and only an explicit `READY`/`RETRYING` is.
 - **Tests.** Extended [popup-execution-policy.test.ts](file:///workspace/repo/server/modules/popup-execution-policy.test.ts) with a fail-closed case over `undefined`/`null`/`""`/whitespace, while asserting explicit `ready`/`RETRYING` (case/space-insensitive) stay eligible.
 - **Protected area.** No debit/credit/settlement code touched.
+
+### Item 26 notes (`Fix #26`)
+
+- **What changed.** (1) `adjustCustomerBalance.amountMinor` ([routers.ts](file:///workspace/repo/server/routers.ts#L744)) is now `z.number().int().positive().max(Number.MAX_SAFE_INTEGER)` and the object is `.strict()`. (2) `confirmManualSettlement.grossProfitMinor` ([routers.ts](file:///workspace/repo/server/routers.ts#L718)) is now `z.number().int().safe()` and the object is `.strict()`. The principal-dependent lower bound is enforced server-side by `calculateRealizedProfitSettlement` (`grossProfitMinor < -principalMinor` ⇒ rejected) inside `manuallySettleTrade`, and `manuallySettleTrade` independently re-checks `Number.isSafeInteger`.
+- **Tests.** New [admin-balance-input-bounds.contract.test.ts](file:///workspace/repo/server/admin-balance-input-bounds.contract.test.ts) (3 tests): the strict positive-safe-integer amount bound, the strict safe-integer gross-profit bound, and the Zod semantics + the minus-principal guard.
+- **Protected area.** No debit/credit amount behaviour changed for legitimate values; admin manual settlement logic untouched (only the input schema tightened).
 
 ### Item 25 notes (`Fix #25`)
 

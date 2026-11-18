@@ -715,11 +715,11 @@ export const appRouter = router({
     }).optional()).query(({ input }) => listWalletLedgerReconciliation(input)),
     confirmManualSettlement: adminProcedure.input(z.object({
       tradeId: z.number().int().positive(),
-      grossProfitMinor: z.number().int(),
+      grossProfitMinor: z.number().int().safe(),
       settlementReference: z.string().trim().min(3).max(160),
       evidenceId: z.number().int().positive(),
       notes: z.string().trim().max(2000).optional(),
-    })).mutation(async ({ ctx, input }) => {
+    }).strict()).mutation(async ({ ctx, input }) => {
       // Confirmation records the evidence-backed result; wallet-credit notices are
       // intentionally not sent until the delayed posting worker commits the ledger.
       return await manuallySettleTrade(input.tradeId,ctx.user.id,input);
@@ -741,14 +741,14 @@ export const appRouter = router({
     adjustCustomerBalance: adminProcedure.input(z.object({
       userId: z.number().int().positive(),
       currency: z.string().min(2).max(32),
-      amountMinor: z.number().int().positive(),
+      amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       mode: z.enum(["credit","debit"]),
       creditClassification: z.enum(["qualifying_deposit","non_qualifying_credit"]).optional(),
       debitClassification: z.enum(["ordinary_debit","qualifying_deposit_reversal"]).optional(),
       reversalLedgerId: z.number().int().positive().optional(),
       reason: z.string().trim().min(3).max(500),
       idempotencyKey: z.string().trim().regex(/^[A-Za-z0-9._:-]{8,160}$/),
-    })
+    }).strict()
       .refine(input => input.mode !== "credit" || Boolean(input.creditClassification), {
         message: "Choose whether this manual credit is a qualifying deposit or a non-qualifying credit.",
         path: ["creditClassification"],

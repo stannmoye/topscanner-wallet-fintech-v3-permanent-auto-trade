@@ -19045,11 +19045,11 @@ var appRouter = router({
     }).optional()).query(({ input }) => listWalletLedgerReconciliation(input)),
     confirmManualSettlement: adminProcedure.input(z3.object({
       tradeId: z3.number().int().positive(),
-      grossProfitMinor: z3.number().int(),
+      grossProfitMinor: z3.number().int().safe(),
       settlementReference: z3.string().trim().min(3).max(160),
       evidenceId: z3.number().int().positive(),
       notes: z3.string().trim().max(2e3).optional()
-    })).mutation(async ({ ctx, input }) => {
+    }).strict()).mutation(async ({ ctx, input }) => {
       return await manuallySettleTrade(input.tradeId, ctx.user.id, input);
     }),
     customerBalances: adminProcedure.input(z3.object({ userId: z3.number().int().positive() })).query(({ input }) => listBalances(input.userId)),
@@ -19069,14 +19069,14 @@ var appRouter = router({
     adjustCustomerBalance: adminProcedure.input(z3.object({
       userId: z3.number().int().positive(),
       currency: z3.string().min(2).max(32),
-      amountMinor: z3.number().int().positive(),
+      amountMinor: z3.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       mode: z3.enum(["credit", "debit"]),
       creditClassification: z3.enum(["qualifying_deposit", "non_qualifying_credit"]).optional(),
       debitClassification: z3.enum(["ordinary_debit", "qualifying_deposit_reversal"]).optional(),
       reversalLedgerId: z3.number().int().positive().optional(),
       reason: z3.string().trim().min(3).max(500),
       idempotencyKey: z3.string().trim().regex(/^[A-Za-z0-9._:-]{8,160}$/)
-    }).refine((input) => input.mode !== "credit" || Boolean(input.creditClassification), {
+    }).strict().refine((input) => input.mode !== "credit" || Boolean(input.creditClassification), {
       message: "Choose whether this manual credit is a qualifying deposit or a non-qualifying credit.",
       path: ["creditClassification"]
     }).refine((input) => input.mode !== "debit" || Boolean(input.debitClassification), {
