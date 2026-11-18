@@ -21,6 +21,7 @@ export default defineConfig({
       "client/src/notification-sound-*.test.ts",
       "client/src/lib/**/*.test.ts",
       "client/src/admin-navigation.test.ts",
+      "client/src/admin-navigation-drawer.contract.test.ts",
       "client/src/customer-navigation-consolidation.contract.test.ts",
       "client/src/opportunity-*.test.ts",
       "client/src/customer-opportunity-countdown.test.ts",

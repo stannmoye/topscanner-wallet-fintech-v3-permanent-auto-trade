@@ -299,7 +299,7 @@ describe("Trading navigation focus and plain-language controls", () => {
     expect(navigation).not.toContain('id: "trade-capital-wallet"');
     expect(navigation).not.toContain('id: "trade-notifications"');
     expect(adminApp).toContain('section===item.target && focus===item.focus');
-    expect(adminApp).toContain('setFocus(item.focus)');
+    expect(adminApp).toContain('navigateAdmin(item.target,item.focus)');
     expect(adminApp).toContain('group.items.some((item)=>item.target===section && item.focus===focus)');
     expect(adminApp).toContain('const [expandedGroups,setExpandedGroups]=useState<Record<string,boolean>>({});');
     expect(adminApp).toContain('section!=="overview" && group.items.some((item)=>item.target===section && item.focus===focus)');

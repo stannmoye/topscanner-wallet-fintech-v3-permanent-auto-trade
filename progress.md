@@ -49,7 +49,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 39 | Refresh balance invalidates balances + FX | `[x]` | `Fix #39` |
 | 40 | Minimal customer feed payload | `[x]` | `Fix #40` |
 | 41 | Remove duplicate menus, keep ONE navigation | `[x]` | `Fix #41` |
-| 42 | Mobile admin drawer group-header close | `[ ]` | |
+| 42 | Mobile admin drawer group-header close | `[x]` | `Fix #42` |
 | 43 | `AdminSlideMenu` label/active resolution | `[ ]` | |
 | 44 | Replace `window.prompt`/`confirm` | `[ ]` | |
 | 45 | Generic registration/login responses | `[ ]` | |
@@ -124,6 +124,14 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 42 notes (`Fix #42`)
+
+- **Problem.** The mobile admin drawer wiredup `onClickCapture={()=>setMobileNavOpen(false)}` on the `<aside id="admin-main-navigation">`. Because it captured *every* click inside the rail, tapping a group header to expand/collapse a group (e.g. "Trade Settings") also closed the drawer, so the user could never open a group on mobile.
+- **Fix.** The blanket capture is removed. [App.tsx](file:///workspace/repo/client/src/App.tsx) `AdminPortal` now defines `navigateAdmin(target,nextFocus)` which runs `setSection(target); setFocus(nextFocus); setMobileNavOpen(false)`, and the drawer closes **only** from that helper — called by the real navigation buttons (both the nav item buttons and the submenu child buttons). The group header keeps its pure `setExpandedGroups(...)` toggle and no longer touches `mobileNavOpen`.
+- **Behaviour.** On mobile, tapping a group header expands/collapses the group and leaves the drawer open; tapping an actual destination navigates and closes the drawer. The backdrop button (`onClick={()=>setMobileNavOpen(false)}`) still closes it, and the `AdminSlideMenu` portaled drawer's own `onNavigate` is unchanged.
+- **Tests.** New [admin-navigation-drawer.contract.test.ts](file:///workspace/repo/client/src/admin-navigation-drawer.contract.test.ts) (4 tests): the aside no longer carries the blanket `onClickCapture` close; `navigateAdmin` exists and closes the drawer; every nav/submenu button routes through `navigateAdmin(item.target,item.focus)` and the old inline `setSection/setFocus` handler is gone; and the group header remains a pure `setExpandedGroups` toggle with no `setMobileNavOpen`/`navigateAdmin`. Updated [trading-admin-navigation.contract.test.ts](file:///workspace/repo/server/trading-admin-navigation.contract.test.ts) line 302 (it pinned the removed inline `setFocus(item.focus)` string) to assert the equivalent `navigateAdmin(item.target,item.focus)` handler — same intent (nav items set section + focus), new mechanism. Registered the new file in [vitest.config.ts](file:///workspace/repo/vitest.config.ts).
+- **Protected area.** Client navigation wiring only; no server, ledger, allocation or settlement change.
 
 ### Item 41 notes (`Fix #41`)
 
