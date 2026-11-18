@@ -3597,7 +3597,8 @@ function planCrossWalletFunding(input) {
   for (const wallet of ordered) {
     if (remainingTargetMinor <= 0) break;
     assertMinor(`${wallet.currency} availableMinor`, wallet.availableMinor);
-    if (wallet.availableMinor === 0 || !wallet.rate) continue;
+    if (wallet.availableMinor === 0) continue;
+    if (!wallet.rate) throw new FxRateUnavailableError(wallet.currency);
     const sourceRateScaled = rateToScaled(wallet.rate.rateUsdPerUnit);
     const sourceScaleFactor = pow10(wallet.scale);
     const remaining = BigInt(remainingTargetMinor);
@@ -3749,11 +3750,21 @@ async function calculateCombinedBalanceSnapshot(input) {
     return unavailable();
   }
 }
-var RATE_DECIMAL_PLACES, RATE_SCALE, COMBINED_BALANCE_WARNING_INTERVAL_MS, COMBINED_BALANCE_WARNING_MAX_KEYS, combinedBalanceWarningLog;
+var FxRateUnavailableError, RATE_DECIMAL_PLACES, RATE_SCALE, COMBINED_BALANCE_WARNING_INTERVAL_MS, COMBINED_BALANCE_WARNING_MAX_KEYS, combinedBalanceWarningLog;
 var init_trading_wallet_fx = __esm({
   "server/modules/trading-wallet-fx.ts"() {
     "use strict";
     init_wallet_funding_priority();
+    FxRateUnavailableError = class extends Error {
+      code = "FX_RATE_UNAVAILABLE";
+      currency;
+      constructor(currency) {
+        const normalized = String(currency ?? "").trim().toUpperCase() || "unknown";
+        super(`Rate unavailable, try again. No current live ${normalized} exchange rate is available for wallet funding.`);
+        this.name = "FxRateUnavailableError";
+        this.currency = normalized;
+      }
+    };
     RATE_DECIMAL_PLACES = 12;
     RATE_SCALE = 10n ** BigInt(RATE_DECIMAL_PLACES);
     COMBINED_BALANCE_WARNING_INTERVAL_MS = 6e4;
@@ -10254,6 +10265,10 @@ async function autoTradeOpenOpportunities(userId, offers, controls) {
       }
       if (/previous trade settlement is still pending/i.test(message)) {
         await recordOpportunityExecutionFailure(userId, Number(claim.eventId), { status: "RETRYING", retryAt: new Date(Date.now() + Math.max(5, Math.min(3600, Number(offer.tradeRetryDelaySeconds) || 30)) * 1e3), errorCode: "PREVIOUS_SETTLEMENT_PENDING", attemptNumber: claim.attemptNumber, releaseAttempt: true, executionLeaseToken });
+        continue;
+      }
+      if (error instanceof FxRateUnavailableError || /rate unavailable, try again/i.test(message)) {
+        await recordOpportunityExecutionFailure(userId, Number(claim.eventId), { status: "RETRYING", retryAt: new Date(Date.now() + Math.max(5, Math.min(3600, Number(offer.tradeRetryDelaySeconds) || 30)) * 1e3), errorCode: "FX_RATE_UNAVAILABLE", attemptNumber: claim.attemptNumber, releaseAttempt: true, executionLeaseToken });
         continue;
       }
       const decision = decideTradeExecutionRetry(error, Number(claim.transientAttemptNumber), MAX_TRANSIENT_ATTEMPTS_PER_OPPORTUNITY, /* @__PURE__ */ new Date(), Math.max(5, Math.min(3600, Number(offer.tradeRetryDelaySeconds) || 30)));

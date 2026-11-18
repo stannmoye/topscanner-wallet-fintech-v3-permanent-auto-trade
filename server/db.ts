@@ -17,7 +17,7 @@ import { claimPopupDeliveryDispatches, ensurePopupDeliveries, updatePopupLifecyc
 import { assertTradeAmountWithinBounds, chooseSecureTradeAmount } from "./modules/package-trade-allocation";
 import { calculateConfiguredProfitMinor, chooseInclusiveInteger } from "./modules/trading-popup-policy";
 import { isOpportunityDurationWithinBounds, validateOpportunityDurationSnapshot } from "./modules/opportunity-duration-snapshot";
-import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, type FxRateSnapshot } from "./modules/trading-wallet-fx";
+import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, FxRateUnavailableError, type FxRateSnapshot } from "./modules/trading-wallet-fx";
 import { WALLET_FUNDING_PRIORITY_SETTING_KEY, DEFAULT_WALLET_FUNDING_PRIORITY, configuredWalletFundingOrder, normalizeWalletFundingPriorityOrder, parseWalletFundingPriorityState, serializeWalletFundingPriority, type WalletFundingPriorityState } from "./modules/wallet-funding-priority";
 import { fetchCryptoRates, fetchFiatRates, fetchMostActiveStocks, fetchCurrencyUsdRate } from "./marketProviders";
 import { nativeMinorToUsd, nativeMinorToUsdMinorExact, proportionalMinorAmount, usdUnitsToNativeMinor } from "../shared/money";
@@ -4200,6 +4200,13 @@ async function autoTradeOpenOpportunities(userId:number,offers:any[],controls:an
       // opportunity. Defer it and release both attempt budgets until settlement.
       if(/previous trade settlement is still pending/i.test(message)){
         await recordOpportunityExecutionFailure(userId,Number(claim.eventId),{status:"RETRYING",retryAt:new Date(Date.now()+Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30))*1000),errorCode:"PREVIOUS_SETTLEMENT_PENDING",attemptNumber:claim.attemptNumber,releaseAttempt:true,executionLeaseToken});
+        continue;
+      }
+      // Item 30: a temporarily missing live FX rate for a needed source wallet fails
+      // closed inside createTrade (no debit, no silent skip), and releases both
+      // attempt budgets so the opportunity is retried instead of permanently missed.
+      if(error instanceof FxRateUnavailableError||/rate unavailable, try again/i.test(message)){
+        await recordOpportunityExecutionFailure(userId,Number(claim.eventId),{status:"RETRYING",retryAt:new Date(Date.now()+Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30))*1000),errorCode:"FX_RATE_UNAVAILABLE",attemptNumber:claim.attemptNumber,releaseAttempt:true,executionLeaseToken});
         continue;
       }
       const decision=decideTradeExecutionRetry(error,Number(claim.transientAttemptNumber),MAX_TRANSIENT_ATTEMPTS_PER_OPPORTUNITY,new Date(),Math.max(5,Math.min(3600,Number(offer.tradeRetryDelaySeconds)||30)));

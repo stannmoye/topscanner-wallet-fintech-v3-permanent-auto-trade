@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, type FxRateSnapshot } from "./trading-wallet-fx";
+import { calculateCombinedAvailableTargetMinor, calculateCombinedBalanceSnapshot, planCrossWalletFunding, FxRateUnavailableError, type FxRateSnapshot } from "./trading-wallet-fx";
 
 const rate = (currency: string, scale: number, rateUsdPerUnit: string): FxRateSnapshot => ({
   currency, scale, rateUsdPerUnit, provider: "test-api", sourceDate: "2026-10-29T10:00:00.000Z",
@@ -178,11 +178,45 @@ describe("multi-wallet Trading funding plan", () => {
       targetRate: rate("USD", 2, "1"),
       sourceWallets: [{ currency: "BTC", scale: 30, availableMinor: 100, rate: rate("BTC", 30, "100000") }],
     })).toThrow(/scale/);
-    expect(() => planCrossWalletFunding({
+  });
+
+  it("fails closed with a rate-unavailable error when a needed source wallet has no live rate (item 30)", () => {
+    let caught: unknown = null;
+    try {
+      planCrossWalletFunding({
+        requiredTargetMinor: 100, targetAvailableMinor: 0,
+        targetRate: rate("USD", 2, "1"),
+        sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 100, rate: null }],
+      });
+    } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(FxRateUnavailableError);
+    expect((caught as FxRateUnavailableError).code).toBe("FX_RATE_UNAVAILABLE");
+    expect((caught as FxRateUnavailableError).currency).toBe("EUR");
+    expect((caught as Error).message).toMatch(/Rate unavailable, try again/);
+    // It must not fall through to the misleading "insufficient combined balance" state.
+    expect((caught as Error).message).not.toMatch(/Insufficient combined/);
+  });
+
+  it("does not fail when a no-rate wallet holds no funds or is never actually needed (item 30)", () => {
+    // A zero-balance wallet needs no quote: nothing to convert.
+    expect(planCrossWalletFunding({
       requiredTargetMinor: 100, targetAvailableMinor: 0,
       targetRate: rate("USD", 2, "1"),
-      sourceWallets: [{ currency: "EUR", scale: 2, availableMinor: 100, rate: null }],
-    })).toThrow(/Insufficient combined/);
+      sourceWallets: [
+        { currency: "EUR", scale: 2, availableMinor: 0, rate: null },
+        { currency: "GBP", scale: 2, availableMinor: 1_000, rate: rate("GBP", 2, "1.25") },
+      ],
+    }).targetCreditMinor).toBe(100);
+    // An earlier priority wallet covers the target, so a later no-rate wallet is never needed.
+    expect(planCrossWalletFunding({
+      requiredTargetMinor: 100, targetAvailableMinor: 0,
+      targetRate: rate("USD", 2, "1"),
+      sourceWallets: [
+        { currency: "GBP", scale: 2, availableMinor: 1_000, rate: rate("GBP", 2, "1.25") },
+        { currency: "EUR", scale: 2, availableMinor: 1_000, rate: null },
+      ],
+      priorityCurrencies: ["GBP", "EUR"],
+    }).targetCreditMinor).toBe(100);
   });
 
   it("rejects FX snapshots whose currency or scale does not match the wallet", () => {

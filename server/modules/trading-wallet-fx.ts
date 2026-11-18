@@ -30,6 +30,24 @@ export type CrossWalletFundingPlan = {
   sourceDebits: CrossWalletDebit[];
 };
 
+/**
+ * Item 30: a source wallet that must fund a conversion had no live rate.
+ *
+ * This is a transient, fail-closed condition. The caller must not debit any
+ * wallet (a lower-priority wallet must never be debited in place of the wallet
+ * that could not be converted) and shows the customer "Rate unavailable, try again.".
+ */
+export class FxRateUnavailableError extends Error {
+  readonly code = "FX_RATE_UNAVAILABLE";
+  readonly currency: string;
+  constructor(currency: string) {
+    const normalized = String(currency ?? "").trim().toUpperCase() || "unknown";
+    super(`Rate unavailable, try again. No current live ${normalized} exchange rate is available for wallet funding.`);
+    this.name = "FxRateUnavailableError";
+    this.currency = normalized;
+  }
+}
+
 const RATE_DECIMAL_PLACES = 12;
 const RATE_SCALE = 10n ** BigInt(RATE_DECIMAL_PLACES);
 
@@ -129,7 +147,11 @@ export function planCrossWalletFunding(input: {
   for (const wallet of ordered) {
     if (remainingTargetMinor <= 0) break;
     assertMinor(`${wallet.currency} availableMinor`, wallet.availableMinor);
-    if (wallet.availableMinor === 0 || !wallet.rate) continue;
+    // A wallet with no funds contributes nothing and needs no quote. A wallet that
+    // does hold funds but has no live rate must NOT be silently skipped (item 30):
+    // fail closed so a lower-priority wallet is never debited in its place.
+    if (wallet.availableMinor === 0) continue;
+    if (!wallet.rate) throw new FxRateUnavailableError(wallet.currency);
     const sourceRateScaled = rateToScaled(wallet.rate.rateUsdPerUnit);
     const sourceScaleFactor = pow10(wallet.scale);
     const remaining = BigInt(remainingTargetMinor);
