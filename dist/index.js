@@ -19561,6 +19561,43 @@ function serveStatic(app) {
   });
 }
 
+// server/_core/securityHeaders.ts
+function buildContentSecurityPolicy(options = {}) {
+  const scriptSrc = options.development ? "'self' 'unsafe-inline' https://maps.googleapis.com" : "'self' https://maps.googleapis.com";
+  const connectSrc = options.development ? "'self' ws: wss: https://maps.googleapis.com https://*.googleapis.com" : "'self' https://maps.googleapis.com https://*.googleapis.com";
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    `script-src ${scriptSrc}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `connect-src ${connectSrc}`,
+    "worker-src 'self' blob:",
+    "manifest-src 'self'"
+  ].join("; ");
+}
+function buildSecurityHeaders(nodeEnv = process.env.NODE_ENV) {
+  return {
+    "Content-Security-Policy": buildContentSecurityPolicy({ development: nodeEnv === "development" }),
+    // Browsers ignore HSTS over plain HTTP, so it is safe to always send it.
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+  };
+}
+function securityHeadersMiddleware(nodeEnv = process.env.NODE_ENV) {
+  const headers = buildSecurityHeaders(nodeEnv);
+  return (_req, res, next) => {
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+    next();
+  };
+}
+
 // server/_core/index.ts
 init_opportunityLifecycle();
 init_emailQueue();
@@ -19706,6 +19743,7 @@ async function startServer() {
   }
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: (/* @__PURE__ */ new Date()).toISOString(), event: "session-secret-initialization-complete" }));
   const app = express2();
+  app.use(securityHeadersMiddleware());
   registerLocalStorageRoutes(app);
   if (process.env.NODE_ENV === "production" && !configuredAuthRateLimitStore) {
     console.warn("[AuthRateLimit] Using process-local counters. Configure AUTH_RATE_LIMIT_REDIS_REST_URL and AUTH_RATE_LIMIT_REDIS_REST_TOKEN for multi-instance deployments.");

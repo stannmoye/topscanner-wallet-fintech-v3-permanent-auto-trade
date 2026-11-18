@@ -28,7 +28,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 18 | Live fiat FX + customer conversion indicator | `[x]` | `Fix #18` |
 | 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[x]` | `Fix #19` |
 | 20 | Remove package fee entirely | `[-]` | owner: keep the package fee |
-| 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[ ]` | |
+| 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[x]` | `Fix #21` |
 | 22 | CSRF Origin/Sec-Fetch-Site checks | `[ ]` | |
 | 23 | popup-execution-policy fail closed on blank status | `[ ]` | |
 | 24 | `updatePopupDeliveryStatus` requires leaseToken | `[ ]` | |
@@ -114,6 +114,15 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 ### Item 20 skipped (`[-]`, owner instruction)
 
 - The audit item "Remove package fee entirely" was scoped (it would have removed the per-package platform fee from settlement and touched the protected ledger/credit path). The owner reviewed the scope question and instructed: **keep the package fee, skip item 20 and move to item 21**. No code or behaviour changed; no commit was made for it. The package fee (per-package fee-policy versions, the settlement fee deduction, and the `trade_platform_fee` ledger posting) stays exactly as-is. The item-9 characterization suite at [trade-ledger-characterization.test.ts](file:///workspace/server/modules/trade-ledger-characterization.test.ts) keeps its fee expectations unchanged.
+
+### Item 21 notes (`Fix #21`)
+
+- **What changed.** New [securityHeaders.ts](file:///workspace/server/_core/securityHeaders.ts) exports `buildContentSecurityPolicy`, `buildSecurityHeaders` and `securityHeadersMiddleware`. [index.ts](file:///workspace/server/_core/index.ts) installs it once with `app.use(securityHeadersMiddleware())` immediately after `const app = express()` and **before** `registerLocalStorageRoutes(app)`, the JSON parser and every other route, so every response — tRPC API, `/storage/*`, static asset and the SPA fallback — carries the headers.
+- **Headers set on every response:** `Content-Security-Policy`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. HSTS is always sent because browsers ignore it over plain HTTP, so it cannot break a local/HTTP install.
+- **CSP is locked down but cannot break a live page.** `default-src 'self'`, `base-uri 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `form-action 'self'`; `script-src 'self'` (no inline scripts) plus `https://maps.googleapis.com` for the Google Maps loader; `img-src 'self' data: blob: https:` (remote logos/avatars/generated images); `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com` (React inline `style` + UI kit); `font-src 'self' data: https://fonts.gstatic.com`; `connect-src 'self' …googleapis`; `worker-src 'self' blob:`; `manifest-src 'self'`. In development only, `script-src` adds `'unsafe-inline'` and `connect-src` adds `ws:`/`wss:` for the Vite HMR client; production never allows inline script.
+- **No dependency added.** No `helmet`; the header set is hand-rolled and unit-testable, so there is no new supply-chain surface and no behavior change to any route, ledger or settlement path (protected area untouched).
+- **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (5 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
+- **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 
 ### Item 19 notes (`Fix #19`)
 

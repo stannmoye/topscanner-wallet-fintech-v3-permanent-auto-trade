@@ -18,6 +18,7 @@ import { writeStorageObject } from "../storage";
 import { getTicketUploadPolicy } from "../db";
 import { ensureMarketDrivenOpportunities, refreshMarketData } from "../marketSync";
 import { serveStatic, setupVite } from "./vite";
+import { securityHeadersMiddleware } from "./securityHeaders";
 import { openTransactionConsoleSession } from "../transactionConsole";
 import { runOpportunityRetention } from "../opportunityLifecycle";
 import { getLocalSessionFromRequest } from "./localAuth";
@@ -66,6 +67,10 @@ async function startServer() {
   }
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: new Date().toISOString(), event: "session-secret-initialization-complete" }));
   const app = express();
+  // Item 21: install the baseline browser security headers (CSP, HSTS, frame,
+  // referrer, nosniff) before any route is registered so every response — API,
+  // static asset and SPA fallback — carries them.
+  app.use(securityHeadersMiddleware());
   registerLocalStorageRoutes(app);
   if (process.env.NODE_ENV === "production" && !configuredAuthRateLimitStore) {
     console.warn("[AuthRateLimit] Using process-local counters. Configure AUTH_RATE_LIMIT_REDIS_REST_URL and AUTH_RATE_LIMIT_REDIS_REST_TOKEN for multi-instance deployments.");

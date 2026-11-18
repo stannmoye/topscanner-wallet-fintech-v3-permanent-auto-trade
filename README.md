@@ -64,6 +64,8 @@ Follow [`cpanel/README.md`](cpanel/README.md). The browser-assisted setup wizard
 
 Customer and administrator accounts, roles, packages, opportunities, balances, ledger entries, support tickets, notifications, and operational settings are stored in MySQL. Local passwords use salted scrypt hashes; sessions are signed, httpOnly cookies. Financial values use decimal-safe server-side rules and immutable ledger records.
 
+Every response carries the baseline browser security headers: `Content-Security-Policy` (a strict same-origin policy that still allows the Google Maps origins and React inline styles), `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: strict-origin-when-cross-origin`. They are installed by `server/_core/securityHeaders.ts` before any route is registered.
+
 Before production launch, configure HTTPS, SMTP, rate limiting, CSRF protections appropriate to the deployment, admin 2FA, backups, reconciliation, and provider secrets through the host environment.
 
 The trading workflow records real-money trading allocations, capital movements, realized results, fees, and settlement in the customer's internal ledger. Financial changes must be supported by recorded trade lifecycle/result data and posted transactionally and idempotently; configured estimates alone must never be recorded as realized profit.
