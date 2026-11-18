@@ -23,8 +23,8 @@ describe("popup delivery acknowledgement requires a lease token (item 24)", () =
   });
 
   it("always sends the lease token from the customer client", () => {
-    expect(app).toContain('const leaseToken=String(popup?.deliveryLeaseToken||"")');
-    expect(app).toContain("if(eventId<=0||!leaseToken||minimized)return");
+    expect(app).toContain('const leaseToken=String(ackTarget?.leaseToken||"")');
+    expect(app).toContain("if(eventId<=0||!leaseToken)return;");
     expect(app).toContain('status:"received",leaseToken');
     expect(app).toContain('status:"rendered",leaseToken');
   });

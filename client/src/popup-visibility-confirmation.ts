@@ -37,9 +37,13 @@ export function waitForPopupVisibility(
     };
     const check = () => {
       if (signal?.aborted || !isCurrent()) return finish(false);
+      // If the popup was dismissed/minimised and its surface unmounted before it
+      // was ever confirmed visible, stop waiting (the receipt still stands, but
+      // there is nothing to render) instead of polling forever.
+      if (!element.isConnected) return finish(false);
       if (isVisibleNow()) return confirmAfterPaint();
       // Keep checking while entrance transitions complete; do not acknowledge a hidden popup.
-      if (element.isConnected && document.visibilityState === "visible" && timer === null) {
+      if (document.visibilityState === "visible" && timer === null) {
         timer = window.setTimeout(() => { timer = null; check(); }, 100);
       }
     };

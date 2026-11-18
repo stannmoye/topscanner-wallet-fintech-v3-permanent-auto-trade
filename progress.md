@@ -44,7 +44,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 34 | Delivery acknowledgement retry cap/backoff | `[x]` | `Fix #34` |
 | 35 | Fix sounds for all sounds (per-sound enabled) | `[x]` | `Fix #35` |
 | 36 | Countdowns must not trust local clock | `[x]` | `Fix #36` |
-| 37 | Dismiss/minimize must not cancel rendered ack | `[ ]` | |
+| 37 | Dismiss/minimize must not cancel rendered ack | `[x]` | `Fix #37` |
 | 38 | Visibility-aware polling | `[ ]` | |
 | 39 | Refresh balance invalidates balances + FX | `[ ]` | |
 | 40 | Minimal customer feed payload | `[ ]` | |
@@ -124,6 +124,15 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 37 notes (`Fix #37`)
+
+- **Problem.** The acknowledgement effect in [App.tsx](file:///workspace/repo/client/src/App.tsx) was keyed on the live `popup` state (`[popup?.deliveryEventId,popup?.deliveryLeaseToken,...]`) and returned early when `minimized` (`if(eventId<=0||!leaseToken||minimized)return;`). Because `stop()`/dismiss clears `popup`, dismissing, minimising or closing the notice re-ran the effect with an empty id and cancelled the in-flight receipt/render round — the "rendered" acknowledgement could be lost.
+- **Acknowledgement as its own job.** A new `ackTarget` state + `ackTargetRef` (`{eventId, leaseToken}`) is set in `display()` when the notice is shown, bound to the delivered event (`offer.deliveryEventId` + `offer.deliveryLeaseToken`). The effect is now keyed on `[ackTarget?.eventId, ackTarget?.leaseToken, deliveryStatus.mutateAsync]`, so it keeps running independently of the popup's live state; `stop()` deliberately does **not** clear it. The per-round `isCurrent` guard is `!cancelled && ackTargetRef.current?.eventId === eventId`.
+- **Visibility guard on unmount.** [popup-visibility-confirmation.ts](file:///workspace/repo/client/src/popup-visibility-confirmation.ts) `check` now returns `finish(false)` when `!element.isConnected`, so a notice dismissed/minimised before it was ever confirmed visible stops the render wait (nothing to render) instead of polling forever; the receipt still stands.
+- **Bounded by item 34.** The job still runs through `runPopupDeliveryAcknowledgement` with the item-34 limits (6 attempts / 45 s, 1 s→15 s back-off). Render is only sent after the surface was confirmed visible; if it was never visible the receipt is kept and render is skipped. Ambiguous network errors retry idempotently and never become `FAILED`.
+- **Tests.** [popup-delivery-acknowledgement.test.ts](file:///workspace/repo/client/src/popup-delivery-acknowledgement.test.ts) gained an item-37 suite: the job is bound to the delivered event (not the live popup), the target is set on show and never cleared by `stop()`, the `isCurrent` guard is event-based, and the visibility wait stops on unmount. [trading-customer-popup-rendering.contract.test.ts](file:///workspace/repo/server/trading-customer-popup-rendering.contract.test.ts) and [popup-delivery-lease-token.contract.test.ts](file:///workspace/repo/server/popup-delivery-lease-token.contract.test.ts) updated to the `ackTarget` wiring.
+- **Protected area.** Client display/acknowledgement only; no server, ledger, allocation or settlement change.
 
 ### Item 36 notes (`Fix #36`)
 

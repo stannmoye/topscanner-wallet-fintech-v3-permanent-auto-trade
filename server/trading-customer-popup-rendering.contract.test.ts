@@ -121,7 +121,7 @@ describe("customer opportunity popup retry and visibility gates", () => {
     const displayStart = component.indexOf("const showOffer=(offer:any)=>");
     const displayEnd = component.indexOf("const consider=(offer:any)=>", displayStart);
     const displayBody = component.slice(displayStart, displayEnd);
-    const acknowledgementEffect = component.indexOf("useEffect(()=>{\n    const eventId=Number(popup?.deliveryEventId||0)");
+    const acknowledgementEffect = component.indexOf("useEffect(()=>{\n    const eventId=Number(ackTarget?.eventId||0)");
     expect(displayBody).toContain("setPopup(offer)");
     expect(displayBody).not.toContain("deliveryStatus.mutateAsync");
     expect(acknowledgementEffect).toBeGreaterThanOrEqual(0);

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   acknowledgePopupDelivery,
@@ -5,6 +6,9 @@ import {
   runPopupDeliveryAcknowledgement,
   POPUP_ACKNOWLEDGEMENT_RETRY_LIMITS,
 } from "./popup-delivery-acknowledgement";
+
+const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const visibility = readFileSync(new URL("./popup-visibility-confirmation.ts", import.meta.url), "utf8");
 
 describe("popup delivery receipt and rendering acknowledgements", () => {
   it("records receipt before rendered after the browser has displayed the notice", async () => {
@@ -158,3 +162,34 @@ describe("bounded acknowledgement back-off", () => {
     expect(popupAcknowledgementBackoffMs(Number.NaN)).toBe(1_000);
   });
 });
+
+describe("acknowledgement survives dismiss/minimize (item 37)", () => {
+  it("binds the acknowledgement job to the delivered event, not the live popup", () => {
+    expect(app).toContain("const eventId=Number(ackTarget?.eventId||0)");
+    // The job must not be keyed on the popup or minimized state, and must not
+    // bail out when the popup is minimized.
+    expect(app).not.toContain("const eventId=Number(popup?.deliveryEventId||0)");
+    expect(app).not.toContain("if(eventId<=0||!leaseToken||minimized)return;");
+    expect(app).toContain("},[ackTarget?.eventId,ackTarget?.leaseToken,deliveryStatus.mutateAsync]);");
+  });
+
+  it("sets the acknowledgement target when the popup is shown and never clears it on stop", () => {
+    const displayStart = app.indexOf("const display=()=>");
+    const displayEnd = app.indexOf("const locks=", displayStart);
+    const displayBody = app.slice(displayStart, displayEnd);
+    expect(displayBody).toContain("ackTargetRef.current=target;setAckTarget(target);");
+    const stopStart = app.indexOf("const stop=()=>");
+    const stopEnd = app.indexOf("const scheduleCollapse=", stopStart);
+    const stopBody = app.slice(stopStart, stopEnd);
+    expect(stopBody).not.toContain("ackTarget");
+  });
+
+  it("is current while its own event is the acknowledgement target", () => {
+    expect(app).toContain("const isCurrent=()=>!cancelled&&Number(ackTargetRef.current?.eventId||0)===eventId;");
+  });
+
+  it("stops waiting for visibility when the popup unmounts instead of hanging", () => {
+    expect(visibility).toContain("if (!element.isConnected) return finish(false);");
+  });
+});
+

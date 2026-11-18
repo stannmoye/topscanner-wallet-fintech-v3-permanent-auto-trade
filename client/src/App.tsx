@@ -580,6 +580,12 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
   const [clockNow,setClockNow]=useState<number>(()=>Date.now());
   const serverClockAnchorRef=useRef<ReturnType<typeof createServerClockAnchor>>(null);
   const readServerNow=()=>serverNowMilliseconds(serverClockAnchorRef.current,typeof performance!=="undefined"?performance.now():Date.now())??Date.now();
+  // Item 37: the delivery acknowledgement is its own job bound to the delivered
+  // event (eventId + leaseToken), not to the popup's live state. Dismissing,
+  // minimising or closing the popup must not cancel the receipt, so this target
+  // is set when the popup is shown and is NOT cleared by stop().
+  const [ackTarget,setAckTarget]=useState<{eventId:number;leaseToken:string}|null>(null);
+  const ackTargetRef=useRef<{eventId:number;leaseToken:string}|null>(null);
   const popupRef=useRef<any>(null);
   const popupSurfaceRef=useRef<HTMLDivElement|null>(null);
   const seen=useRef<Set<number>>(new Set());
@@ -697,6 +703,9 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
       setDetailsExpanded(false);
       if(offer.deliveryEventId){
         void lifecycle.mutateAsync({eventId:offer.deliveryEventId,action:"noticed"}).catch(()=>{});
+        const ackEventId=Number(offer.deliveryEventId);
+        const ackLeaseToken=String(offer.deliveryLeaseToken||"");
+        if(ackEventId>0&&ackLeaseToken){const target={eventId:ackEventId,leaseToken:ackLeaseToken};ackTargetRef.current=target;setAckTarget(target);}
       }
       unlockNotificationAudio();
       playConfiguredSound(soundSettings,"opportunity");
@@ -749,17 +758,18 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
     }
   },[delivery?.pausedUntilSettled,delivery?.cooldownActive]);
   useEffect(()=>{
-    const eventId=Number(popup?.deliveryEventId||0);
-    const leaseToken=String(popup?.deliveryLeaseToken||"");
-    if(eventId<=0||!leaseToken||minimized)return;
+    const eventId=Number(ackTarget?.eventId||0);
+    const leaseToken=String(ackTarget?.leaseToken||"");
+    if(eventId<=0||!leaseToken)return;
     let cancelled=false;
     const visibilityAbort=new AbortController();
-    const isCurrent=()=>!cancelled&&Number(popupRef.current?.deliveryEventId)===eventId&&String(popupRef.current?.deliveryLeaseToken||"")===leaseToken;
-    // Receipt is recorded first; render is acknowledged only after the popup
-    // is connected, visible in the foreground viewport, and survives two paint frames.
+    // Item 37: this runs as its own job bound to the delivered event, so
+    // dismissing, minimising or closing the popup does not cancel the receipt.
+    // The render is acknowledged only after the popup surface was actually
+    // confirmed visible; if it was never visible the receipt still stands and
+    // render is skipped. The job stays bounded by the item-34 retry limits.
     // Ambiguous network errors retry idempotently and never become FAILED.
-    // Item 34: retries are bounded (attempts + wall-clock) with back-off, and the
-    // job reports a terminal "unconfirmed" state instead of retrying forever.
+    const isCurrent=()=>!cancelled&&Number(ackTargetRef.current?.eventId||0)===eventId;
     void runPopupDeliveryAcknowledgement({
       received:()=>deliveryStatus.mutateAsync({eventId,status:"received",leaseToken}),
       rendered:async()=>{
@@ -773,7 +783,7 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
       },
     });
     return()=>{cancelled=true;visibilityAbort.abort();};
-  },[popup?.deliveryEventId,popup?.deliveryLeaseToken,deliveryStatus.mutateAsync,minimized]);
+  },[ackTarget?.eventId,ackTarget?.leaseToken,deliveryStatus.mutateAsync]);
   useEffect(()=>{
     if(!popup||!Array.isArray(opportunityData?.offers))return;
     const current=opportunityData.offers.find((offer:any)=>Number(offer.id)===Number(popup.id));
