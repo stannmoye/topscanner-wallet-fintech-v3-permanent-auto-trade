@@ -53,9 +53,9 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 43 | `AdminSlideMenu` label/active resolution | `[x]` | `Fix #43` |
 | 44 | Replace `window.prompt`/`confirm` | `[x]` | `Fix #44` |
 | 45 | Generic registration/login responses | `[x]` | `Fix #45` |
-| 46 | Remove password pepper | `[ ]` | |
-| 47 | Shorten sessions with sliding renewal | `[ ]` | |
-| 48 | Remove legacy 3-part session tokens | `[ ]` | |
+| 46 | Remove password pepper | `[x]` | owner decision: keep |
+| 47 | Shorten sessions with sliding renewal | `[x]` | owner decision: keep current |
+| 48 | Remove legacy 3-part session tokens | `[x]` | owner decision: keep legacy |
 | 49 | Strengthen admin checks (keep `/ops-console-7f3a`) | `[ ]` | |
 | 50 | Stop tracking dist/ + 2 zips (add narrow .gitignore) | `[ ]` | |
 | 51 | Lower global body limits per route | `[ ]` | |
@@ -124,6 +124,13 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Items 46–48 notes (owner decision: no change)
+
+- **These three are on the STOP-AND-ASK list and, after read-only investigation, the owner decided to keep current behaviour. No code was changed.**
+- **Item 46 (password pepper).** Every current write path stores `scrypt$salt$digest` ([localAuth.ts](file:///workspace/repo/server/_core/localAuth.ts), [db.ts](file:///workspace/repo/server/db.ts) `createLocalCustomer`/`createAdminCustomer`, [emailAdmin.ts](file:///workspace/repo/server/emailAdmin.ts) reset). The legacy non-scrypt verify path is the only consumer of `PASSWORD_PEPPER`. Whether any production account (incl. admin id 1) still holds a legacy bare-hex hash could not be confirmed without DB access. Owner decision: **keep the pepper for now** (zero lockout risk). `PASSWORD_PEPPER` remains in [localAuth.ts](file:///workspace/repo/server/_core/localAuth.ts).
+- **Item 47 (session lifetimes).** Owner decision: **keep current** — local sessions 30 days (token `SESSION_TTL_SECONDS` and cookie `maxAge`), OAuth cookie 1 year ([localAuth.ts](file:///workspace/repo/server/_core/localAuth.ts#L6), [index.ts](file:///workspace/repo/server/_core/index.ts#L107), [providerOAuth.ts](file:///workspace/repo/server/_core/providerOAuth.ts#L76-L77)). No sliding-renewal change made.
+- **Item 48 (legacy 3-part tokens).** Issuance is confirmed 4-part (`userId.exp.authVersion.sig`). Owner decision: **keep accepting legacy 3-part tokens**, so [verifyLocalSession](file:///workspace/repo/server/_core/localAuth.ts#L20-L34) is unchanged and existing sessions are not invalidated.
 
 ### Item 45 notes (`Fix #45`)
 
