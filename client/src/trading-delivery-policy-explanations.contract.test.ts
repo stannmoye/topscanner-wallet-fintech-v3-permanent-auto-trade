@@ -33,8 +33,8 @@ describe("tier policy field explanation contract", () => {
     ["Trade retry delay (seconds)", ["5–3,600 whole seconds", "already scheduled retry time", "does not reset", "enable financial execution"]],
     ["Maximum successful trades per day", ["customer-wide daily ceiling", "0–10,000", "0 = no extra cap", "UTC-day"]],
     ["Maximum concurrent active trades", ["customer-wide active-trade limit", "1–1,000", "not the number of informational pop-ups"]],
-    ["Minimum settlement delay (seconds)", ["900–604,800 whole seconds", "15 minutes–7 days", "not exceed the maximum", "existing trades remain unchanged"]],
-    ["Maximum settlement delay (seconds)", ["900–604,800 whole seconds", "at least the minimum", "trade duration", "wallet-credit delay"]],
+    ["Minimum settlement delay (seconds)", ["0–604,800 whole seconds", "0 = settle immediately at completion", "must not exceed the maximum", "existing trades remain unchanged"]],
+    ["Maximum settlement delay (seconds)", ["0–604,800 whole seconds", "at least the minimum", "trade duration", "wallet-credit delay"]],
     ["Badge label", ["visual label", "40 characters", "never changes eligibility", "already delivered pop-up"]],
     ["Badge style", ["Visual style", "built-in styles", "cannot grant eligibility"]],
     ["Minimum configured return rate (%)", ["0.01%–50.00%", "basis points", "Set both bounds", "not market profit"]],
@@ -82,7 +82,7 @@ describe("tier policy field explanation contract", () => {
     expect(fieldBlock("Minimum interval between deliveries (seconds)")).toContain('min="0" max="604800" step="1"');
     expect(fieldBlock("Post-completion card display delay (seconds)")).toContain('min="1" max="3600" step="1"');
     expect(fieldBlock("Trade retry delay (seconds)")).toContain('min="5" max="3600" step="1"');
-    expect(fieldBlock("Minimum settlement delay (seconds)")).toContain('min="900" max="604800" step="1"');
+    expect(fieldBlock("Minimum settlement delay (seconds)")).toContain('min="0" max="604800" step="1"');
     expect(fieldBlock("Minimum configured return rate (%)")).toContain('min="0.01" max="50" step="0.01"');
     expect(fieldBlock("Minimum opportunity / pop-up duration (seconds)")).toContain('min="10" max="86400" step="1"');
     expect(retrySource).toContain("from 5 to 3,600 seconds");

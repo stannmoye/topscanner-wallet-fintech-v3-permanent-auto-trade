@@ -207,7 +207,7 @@ export function normalizeGlobalTradeTimingSettings(value: unknown): GlobalTradeT
     return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
   };
   return {
-    settlementMinutes: Math.ceil(boundedIntegerOrDefault("settlementDelaySeconds", 900, 900, 604_800) / 60),
+    settlementMinutes: Math.ceil(boundedIntegerOrDefault("settlementDelaySeconds", 0, 0, 604_800) / 60),
     creditDelaySeconds: boundedIntegerOrDefault("creditDelaySeconds", 0, 0, 604_800),
     cooldownSeconds: boundedIntegerOrDefault("cooldownSeconds", 30, 0, 604_800),
     nextPopupFormulaDelaySeconds: boundedIntegerOrDefault("nextPopupFormulaDelaySeconds", 30, 0, 604_800),

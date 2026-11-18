@@ -400,18 +400,18 @@ export async function getTradeSettlementPolicy() {
   const rawSettlementDelay = settings.get("trade.settlementDelaySeconds");
   const parsedSettlementDelay = Number(rawSettlementDelay);
 
-  // Older Blitz databases can contain a stale/out-of-range global delay even
-  // though the current API only accepts 900–604800 seconds. Do not let one bad
-  // legacy setting crash every AutoTrade cycle. Repair only this invalid key to
-  // the documented 15-minute minimum, preserve every valid setting, and record
-  // the previous value in the immutable audit stream. Lock/recheck to make the
-  // repair safe when multiple app instances start at the same time.
+  // Older databases can contain a stale/out-of-range global delay even though
+  // the current API only accepts 0–604800 seconds. Do not let one bad legacy
+  // setting crash every AutoTrade cycle. Repair only this invalid key to the
+  // immediate-settlement default of 0 seconds, preserve every valid setting, and
+  // record the previous value in the immutable audit stream. Lock/recheck to make
+  // the repair safe when multiple app instances start at the same time.
   if (db && rawSettlementDelay !== undefined && rawSettlementDelay !== null &&
-      (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 900 || parsedSettlementDelay > 604800)) {
+      (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 0 || parsedSettlementDelay > 604800)) {
     await db.transaction(async tx => {
       await tx.insert(appSettings).values({
         settingKey: "trade.settlementDelaySeconds",
-        settingValue: "900",
+        settingValue: "0",
         updatedBy: null,
       }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
       const locked = (await tx.select().from(appSettings)
@@ -420,10 +420,10 @@ export async function getTradeSettlementPolicy() {
       const lockedValue = locked?.settingValue;
       const lockedNumber = Number(lockedValue);
       if (lockedValue !== undefined && lockedValue !== null &&
-          (!Number.isSafeInteger(lockedNumber) || lockedNumber < 900 || lockedNumber > 604800)) {
+          (!Number.isSafeInteger(lockedNumber) || lockedNumber < 0 || lockedNumber > 604800)) {
         const repairedAt = new Date();
         await tx.update(appSettings).set({
-          settingValue: "900",
+          settingValue: "0",
           updatedBy: null,
           updatedAt: repairedAt,
         }).where(eq(appSettings.settingKey, "trade.settlementDelaySeconds"));
@@ -432,12 +432,12 @@ export async function getTradeSettlementPolicy() {
           action: "trade_global_timing_policy_repaired",
           entityType: "trade_global_timing_policy",
           entityId: "settlement-review-delay",
-          reason: "Invalid persisted settlement review delay repaired to the documented safe minimum of 900 seconds during policy read.",
+          reason: "Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during policy read.",
           reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
           metadataJson: JSON.stringify({
             settingKey: "trade.settlementDelaySeconds",
             previousValue: lockedValue,
-            repairedValue: "900",
+            repairedValue: "0",
           }),
         });
       }
@@ -446,7 +446,7 @@ export async function getTradeSettlementPolicy() {
     settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
   }
   const policy = normalizeTradeSettlementPolicy({
-    delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "900",
+    delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "0",
     creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
     cooldownSeconds: settings.get("trade.interTradeCooldownSeconds") ?? "30",
     nextPopupFormulaDelaySeconds: settings.get("opportunity.nextPopupFormulaDelaySeconds") ?? "30",
@@ -482,7 +482,7 @@ function normalizeTradeSettlementPolicy(values: Record<string, unknown> & { poli
     popupMaxPerHour: Number(values.popupMaxPerHour), marketRefreshIntervalMinutes: Number(values.marketRefreshIntervalMinutes),
   };
   const bounds = [
-    ["settlement review delay", numeric.delaySeconds, 900, 604800], ["credit delay", numeric.creditDelaySeconds, 0, 604800],
+    ["settlement review delay", numeric.delaySeconds, 0, 604800], ["credit delay", numeric.creditDelaySeconds, 0, 604800],
     ["inter-trade cooldown", numeric.cooldownSeconds, 0, 604800], ["formula delay", numeric.nextPopupFormulaDelaySeconds, 0, 604800],
     ["popup cooldown", numeric.popupCooldownSeconds, 0, 604800], ["popup display", numeric.popupDisplaySeconds, 1, 3600],
     ["popup pre-alert", numeric.popupPreAlertSeconds, 0, 3600], ["popup jitter", numeric.popupJitterSeconds, 0, 604800],
@@ -511,7 +511,7 @@ export async function setTradeSettlementPolicy(input:TradeSettlementPolicyInput,
     const rows = await tx.select().from(appSettings).where(inArray(appSettings.settingKey, keys)).for("update");
     const settings = new Map(rows.map(row => [row.settingKey, row.settingValue]));
     const current = normalizeTradeSettlementPolicy({
-      delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "900", creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
+      delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "0", creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
       cooldownSeconds: settings.get("trade.interTradeCooldownSeconds") ?? "30", nextPopupFormulaDelaySeconds: settings.get("opportunity.nextPopupFormulaDelaySeconds") ?? "30",
       popupCooldownSeconds: settings.get("opportunity.popup.minGapSeconds") ?? "45", popupDisplaySeconds: settings.get("opportunity.popup.displaySeconds") ?? "8",
       popupPreAlertSeconds: settings.get("opportunity.popup.preAlertSeconds") ?? "4", popupJitterSeconds: settings.get("opportunity.popup.jitterSeconds") ?? "90",

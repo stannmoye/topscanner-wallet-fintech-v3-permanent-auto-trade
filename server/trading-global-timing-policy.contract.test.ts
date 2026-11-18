@@ -24,9 +24,9 @@ describe("global Trade timing policy contract", () => {
   });
 
   it("repairs invalid legacy settlement review delay before AutoTrade reads the policy", () => {
-    expect(db).toContain("Invalid persisted settlement review delay repaired to the documented safe minimum of 900 seconds");
+    expect(db).toContain("Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during policy read.");
     expect(db).toContain('settingKey: "trade.settlementDelaySeconds"');
-    expect(db).toContain('settingValue: "900"');
+    expect(db).toContain('settingValue: "0"');
     expect(db).toContain('action: "trade_global_timing_policy_repaired"');
     expect(db).toContain('entityId: "settlement-review-delay"');
     expect(db).toContain('.limit(1).for("update")');
@@ -38,7 +38,7 @@ describe("global Trade timing policy contract", () => {
     expect(router).toContain("reason: z.string().trim().min(5).max(500), expectedPolicyVersion: z.number().int().min(1)");
     expect(router).toContain("input.trade.reason, input.trade.expectedPolicyVersion");
     expect(router).toContain('code: "CONFLICT", message: error.message');
-    expect(router).toContain("settlementDelaySeconds: z.number().int().min(900).max(604800)");
+    expect(router).toContain("settlementDelaySeconds: z.number().int().min(0).max(604800)");
     expect(router).toContain("Trade timing settings must be saved on their own.");
   });
 
@@ -48,7 +48,7 @@ describe("global Trade timing policy contract", () => {
     expect(ui).toContain("Number(stored?.policyVersion)===expectedPolicyVersion+1");
     expect(ui).toContain("fresh server read did not confirm every saved value");
     expect(ui).toContain("hydratedSettings.current");
-    expect(ui).toContain('min="15" max="10080"');
+    expect(ui).toContain('min="0" max="10080"');
   });
 
   it("registers migration 0099 in the journal, portal runner, and installer recovery list", () => {

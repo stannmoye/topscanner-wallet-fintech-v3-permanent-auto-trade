@@ -22,7 +22,7 @@ const operationsUiSource = readFileSync(new URL("./components/AdminOperationsPag
 describe("global Trade timing settings hydration", () => {
   it("preserves explicitly saved zero-second delay and cooldown values", () => {
     const form = normalizeGlobalTradeTimingSettings({
-      settlementDelaySeconds: 900,
+      settlementDelaySeconds: 0,
       creditDelaySeconds: 0,
       cooldownSeconds: 0,
       nextPopupFormulaDelaySeconds: 0,
@@ -35,7 +35,7 @@ describe("global Trade timing settings hydration", () => {
       blockUntilSettled: false,
     });
     expect(form).toMatchObject({
-      settlementMinutes: 15,
+      settlementMinutes: 0,
       creditDelaySeconds: 0,
       cooldownSeconds: 0,
       nextPopupFormulaDelaySeconds: 0,
@@ -48,7 +48,7 @@ describe("global Trade timing settings hydration", () => {
 
   it("uses safe defaults only for missing or malformed values and is wired to the editor", () => {
     expect(normalizeGlobalTradeTimingSettings({ cooldownSeconds: "invalid" })).toMatchObject({
-      settlementMinutes: 15,
+      settlementMinutes: 0,
       creditDelaySeconds: 0,
       cooldownSeconds: 30,
       nextPopupFormulaDelaySeconds: 30,
@@ -65,7 +65,7 @@ describe("global Trade timing settings hydration", () => {
  
   it("replaces out-of-range and fractional persisted values with safe defaults", () => {
     expect(normalizeGlobalTradeTimingSettings({
-      settlementDelaySeconds: 899,
+      settlementDelaySeconds: 604801,
       creditDelaySeconds: -1,
       cooldownSeconds: 0.5,
       nextPopupFormulaDelaySeconds: 604801,
@@ -76,7 +76,7 @@ describe("global Trade timing settings hydration", () => {
       popupMaxPerHour: 0,
       marketRefreshIntervalMinutes: 10081,
     })).toMatchObject({
-      settlementMinutes: 15,
+      settlementMinutes: 0,
       creditDelaySeconds: 0,
       cooldownSeconds: 30,
       nextPopupFormulaDelaySeconds: 30,

@@ -332,14 +332,14 @@ const registryEntries: readonly RegistryEntry[] = [
   }),
   tierPolicyField({
     field: "minSettlementDelaySeconds", key: "trade.policy.minimumSettlementDelaySeconds", section: "retries", label: "Minimum settlement delay",
-    explanation: "Lower per-tier bound for the interval from scheduled trade completion to settlement review.", units: "seconds; minimum 900 seconds (15 minutes)",
-    validation: "Integer from 900 through 604,800 seconds; cannot exceed the maximum bound.", runtimeConsumer: "server/db.ts saved settlement-review deadline calculation for created trades.",
+    explanation: "Lower per-tier bound for the interval from scheduled trade completion to settlement review.", units: "seconds; minimum 0 (settle immediately at completion)",
+    validation: "Integer from 0 through 604,800 seconds; cannot exceed the maximum bound.", runtimeConsumer: "server/db.ts saved settlement-review deadline calculation for created trades.",
     customerImpact: "Defines a future review deadline only; elapsed time is not evidence of a result or wallet posting.", risk: "high",
   }),
   tierPolicyField({
     field: "maxSettlementDelaySeconds", key: "trade.policy.maximumSettlementDelaySeconds", section: "retries", label: "Maximum settlement delay",
-    explanation: "Upper per-tier bound for the interval from scheduled trade completion to settlement review.", units: "seconds; 900–604,800 seconds (15 minutes–7 days)",
-    validation: "Integer from 900 through 604,800 seconds; must be at least the minimum bound.", runtimeConsumer: "server/db.ts saved settlement-review deadline calculation for created trades.",
+    explanation: "Upper per-tier bound for the interval from scheduled trade completion to settlement review.", units: "seconds; 0–604,800 seconds (immediate–7 days)",
+    validation: "Integer from 0 through 604,800 seconds; must be at least the minimum bound.", runtimeConsumer: "server/db.ts saved settlement-review deadline calculation for created trades.",
     customerImpact: "Defines a future review deadline only; it does not post funds or determine the trade result.", risk: "high",
   }),
   tierPolicyField({

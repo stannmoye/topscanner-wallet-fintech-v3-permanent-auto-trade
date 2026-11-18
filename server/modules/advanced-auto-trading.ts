@@ -44,8 +44,8 @@ export function validatePackageAutomationPolicy(policy: PackageAutomationPolicy)
     ["minimum reward rate", policy.minimumRewardBps, 0, 10000],
     ["daily reward cap", policy.maxDailyRewardMinor, 0, 2147483647],
     ["maximum reward per trade", policy.maxRewardPerTradeMinor, 0, 2147483647],
-    ["minimum settlement delay", policy.minSettlementDelaySeconds, 900, 604800],
-    ["maximum settlement delay", policy.maxSettlementDelaySeconds, 900, 604800],
+    ["minimum settlement delay", policy.minSettlementDelaySeconds, 0, 604800],
+    ["maximum settlement delay", policy.maxSettlementDelaySeconds, 0, 604800],
   ] as const;
   for (const [label, value, min, max] of bounded) {
     if (!Number.isSafeInteger(value) || value < min || value > max) errors.push(`${label} must be an integer between ${min} and ${max}`);

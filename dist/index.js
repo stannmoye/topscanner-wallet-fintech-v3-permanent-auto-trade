@@ -417,8 +417,8 @@ var init_schema = __esm({
       maxSuccessfulTradesPerDay: int("maxSuccessfulTradesPerDay").default(5).notNull(),
       maxConcurrentActiveTrades: int("maxConcurrentActiveTrades").default(1).notNull(),
       requirePreviousSettlement: boolean("requirePreviousSettlement").default(true).notNull(),
-      minSettlementDelaySeconds: int("minSettlementDelaySeconds").default(900).notNull(),
-      maxSettlementDelaySeconds: int("maxSettlementDelaySeconds").default(900).notNull(),
+      minSettlementDelaySeconds: int("minSettlementDelaySeconds").default(0).notNull(),
+      maxSettlementDelaySeconds: int("maxSettlementDelaySeconds").default(0).notNull(),
       minimumRewardBps: int("minimumRewardBps").default(0).notNull(),
       allowedOpportunityTypes: text("allowedOpportunityTypes"),
       maxDailyRewardMinor: bigint("maxDailyRewardMinor", { mode: "number" }).default(0).notNull(),
@@ -4028,8 +4028,8 @@ function validatePackageAutomationPolicy(policy) {
     ["minimum reward rate", policy.minimumRewardBps, 0, 1e4],
     ["daily reward cap", policy.maxDailyRewardMinor, 0, 2147483647],
     ["maximum reward per trade", policy.maxRewardPerTradeMinor, 0, 2147483647],
-    ["minimum settlement delay", policy.minSettlementDelaySeconds, 900, 604800],
-    ["maximum settlement delay", policy.maxSettlementDelaySeconds, 900, 604800]
+    ["minimum settlement delay", policy.minSettlementDelaySeconds, 0, 604800],
+    ["maximum settlement delay", policy.maxSettlementDelaySeconds, 0, 604800]
   ];
   for (const [label, value, min, max] of bounded) {
     if (!Number.isSafeInteger(value) || value < min || value > max) errors.push(`${label} must be an integer between ${min} and ${max}`);
@@ -4165,8 +4165,8 @@ var init_package_opportunity_policy = __esm({
       maxSuccessfulTradesPerDay: 0,
       maxConcurrentActiveTrades: 1,
       requirePreviousSettlement: true,
-      minSettlementDelaySeconds: 900,
-      maxSettlementDelaySeconds: 900,
+      minSettlementDelaySeconds: 0,
+      maxSettlementDelaySeconds: 0,
       minimumRewardBps: 0,
       allowedOpportunityTypes: null,
       maxDailyRewardMinor: 0,
@@ -6199,20 +6199,20 @@ async function getTradeSettlementPolicy() {
   let settings = new Map(rows2.map((row) => [row.settingKey, row.settingValue]));
   const rawSettlementDelay = settings.get("trade.settlementDelaySeconds");
   const parsedSettlementDelay = Number(rawSettlementDelay);
-  if (db2 && rawSettlementDelay !== void 0 && rawSettlementDelay !== null && (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 900 || parsedSettlementDelay > 604800)) {
+  if (db2 && rawSettlementDelay !== void 0 && rawSettlementDelay !== null && (!Number.isSafeInteger(parsedSettlementDelay) || parsedSettlementDelay < 0 || parsedSettlementDelay > 604800)) {
     await db2.transaction(async (tx) => {
       await tx.insert(appSettings).values({
         settingKey: "trade.settlementDelaySeconds",
-        settingValue: "900",
+        settingValue: "0",
         updatedBy: null
       }).onDuplicateKeyUpdate({ set: { settingKey: "trade.settlementDelaySeconds" } });
       const locked = (await tx.select().from(appSettings).where(eq3(appSettings.settingKey, "trade.settlementDelaySeconds")).limit(1).for("update"))[0];
       const lockedValue = locked?.settingValue;
       const lockedNumber = Number(lockedValue);
-      if (lockedValue !== void 0 && lockedValue !== null && (!Number.isSafeInteger(lockedNumber) || lockedNumber < 900 || lockedNumber > 604800)) {
+      if (lockedValue !== void 0 && lockedValue !== null && (!Number.isSafeInteger(lockedNumber) || lockedNumber < 0 || lockedNumber > 604800)) {
         const repairedAt = /* @__PURE__ */ new Date();
         await tx.update(appSettings).set({
-          settingValue: "900",
+          settingValue: "0",
           updatedBy: null,
           updatedAt: repairedAt
         }).where(eq3(appSettings.settingKey, "trade.settlementDelaySeconds"));
@@ -6221,12 +6221,12 @@ async function getTradeSettlementPolicy() {
           action: "trade_global_timing_policy_repaired",
           entityType: "trade_global_timing_policy",
           entityId: "settlement-review-delay",
-          reason: "Invalid persisted settlement review delay repaired to the documented safe minimum of 900 seconds during policy read.",
+          reason: "Invalid persisted settlement review delay repaired to the immediate-settlement default of 0 seconds during policy read.",
           reference: `trade-global-timing-repair:${repairedAt.toISOString()}`,
           metadataJson: JSON.stringify({
             settingKey: "trade.settlementDelaySeconds",
             previousValue: lockedValue,
-            repairedValue: "900"
+            repairedValue: "0"
           })
         });
       }
@@ -6235,7 +6235,7 @@ async function getTradeSettlementPolicy() {
     settings = new Map(rows2.map((row) => [row.settingKey, row.settingValue]));
   }
   const policy = normalizeTradeSettlementPolicy({
-    delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "900",
+    delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "0",
     creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
     cooldownSeconds: settings.get("trade.interTradeCooldownSeconds") ?? "30",
     nextPopupFormulaDelaySeconds: settings.get("opportunity.nextPopupFormulaDelaySeconds") ?? "30",
@@ -6264,7 +6264,7 @@ function normalizeTradeSettlementPolicy(values) {
     marketRefreshIntervalMinutes: Number(values.marketRefreshIntervalMinutes)
   };
   const bounds = [
-    ["settlement review delay", numeric2.delaySeconds, 900, 604800],
+    ["settlement review delay", numeric2.delaySeconds, 0, 604800],
     ["credit delay", numeric2.creditDelaySeconds, 0, 604800],
     ["inter-trade cooldown", numeric2.cooldownSeconds, 0, 604800],
     ["formula delay", numeric2.nextPopupFormulaDelaySeconds, 0, 604800],
@@ -6296,7 +6296,7 @@ async function setTradeSettlementPolicy(input, updatedBy, reason, expectedPolicy
     const rows2 = await tx.select().from(appSettings).where(inArray2(appSettings.settingKey, keys)).for("update");
     const settings = new Map(rows2.map((row) => [row.settingKey, row.settingValue]));
     const current = normalizeTradeSettlementPolicy({
-      delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "900",
+      delaySeconds: settings.get("trade.settlementDelaySeconds") ?? "0",
       creditDelaySeconds: settings.get("trade.creditDelaySeconds") ?? "0",
       cooldownSeconds: settings.get("trade.interTradeCooldownSeconds") ?? "30",
       nextPopupFormulaDelaySeconds: settings.get("opportunity.nextPopupFormulaDelaySeconds") ?? "30",
@@ -18804,7 +18804,7 @@ var appRouter = router({
         return {};
       }
     })(), appearance: await normalizeAppearanceSettings(await getAppSetting("appearance.settings")), trade: await getTradeSettlementPolicy() })),
-    updateSettings: adminProcedure.input(z3.object({ ticket: z3.object({ maxAttachmentMb: z3.number().int().min(1).max(100), allowedMimeTypes: z3.array(z3.string().min(1).max(120)).min(1).max(50) }).optional(), email: z3.object({ provider: z3.enum(["smtp", "sendgrid", "disabled"]), fromName: z3.string().min(1).max(120), fromAddress: z3.string().email(), replyTo: z3.string().email().or(z3.literal("")) }).optional(), opportunity: z3.object({ countdownSeconds: z3.number().int().min(10).max(86400), signupCreditMinor: z3.number().int().min(0).max(1e8), signupCreditCurrency: z3.enum(["USD", "EUR", "GBP", "BTC", "ETH"]) }).optional(), sounds: z3.object({ default: z3.string().min(1).max(80), opportunity: z3.string().min(1).max(80), deposit: z3.string().min(1).max(80), credit: z3.string().min(1).max(80), debit: z3.string().min(1).max(80), withdrawal: z3.string().min(1).max(80), trading: z3.string().min(1).max(80), mining: z3.string().min(1).max(80), support: z3.string().min(1).max(80), announcement: z3.string().min(1).max(80), failure: z3.string().min(1).max(80), enabled: z3.boolean(), loopOpportunity: z3.boolean(), volume: z3.number().int().min(0).max(100).default(80) }).optional(), policy: z3.object({ kyc: z3.boolean(), withdrawals: z3.boolean(), twofa: z3.boolean(), facial: z3.boolean() }).optional(), branding: z3.record(z3.string(), z3.string()).optional(), appearance: z3.object({ defaultTheme: z3.enum(["original", "midnight-premium", "clean-light", "emerald-finance", "aurora-modern", "gold-luxe"]), enabledThemes: z3.array(z3.enum(["original", "midnight-premium", "clean-light", "emerald-finance", "aurora-modern", "gold-luxe"])).min(1).max(6), customerCanSelect: z3.boolean() }).optional(), trade: z3.object({ settlementDelaySeconds: z3.number().int().min(900).max(604800), creditDelaySeconds: z3.number().int().min(0).max(604800), cooldownSeconds: z3.number().int().min(0).max(604800), nextPopupFormulaDelaySeconds: z3.number().int().min(0).max(604800), popupCooldownSeconds: z3.number().int().min(0).max(604800), popupDisplaySeconds: z3.number().int().min(1).max(3600), popupPreAlertSeconds: z3.number().int().min(0).max(3600), popupJitterSeconds: z3.number().int().min(0).max(604800), popupMaxPerHour: z3.number().int().min(1).max(1e4), marketRefreshIntervalMinutes: z3.number().int().min(1).max(10080), blockUntilSettled: z3.boolean(), reason: z3.string().trim().min(5).max(500), expectedPolicyVersion: z3.number().int().min(1) }).optional() }).refine((sections) => !sections.trade || Object.entries(sections).every(([key, value]) => key === "trade" || value === void 0), { message: "Trade timing settings must be saved on their own." })).mutation(async ({ ctx, input }) => {
+    updateSettings: adminProcedure.input(z3.object({ ticket: z3.object({ maxAttachmentMb: z3.number().int().min(1).max(100), allowedMimeTypes: z3.array(z3.string().min(1).max(120)).min(1).max(50) }).optional(), email: z3.object({ provider: z3.enum(["smtp", "sendgrid", "disabled"]), fromName: z3.string().min(1).max(120), fromAddress: z3.string().email(), replyTo: z3.string().email().or(z3.literal("")) }).optional(), opportunity: z3.object({ countdownSeconds: z3.number().int().min(10).max(86400), signupCreditMinor: z3.number().int().min(0).max(1e8), signupCreditCurrency: z3.enum(["USD", "EUR", "GBP", "BTC", "ETH"]) }).optional(), sounds: z3.object({ default: z3.string().min(1).max(80), opportunity: z3.string().min(1).max(80), deposit: z3.string().min(1).max(80), credit: z3.string().min(1).max(80), debit: z3.string().min(1).max(80), withdrawal: z3.string().min(1).max(80), trading: z3.string().min(1).max(80), mining: z3.string().min(1).max(80), support: z3.string().min(1).max(80), announcement: z3.string().min(1).max(80), failure: z3.string().min(1).max(80), enabled: z3.boolean(), loopOpportunity: z3.boolean(), volume: z3.number().int().min(0).max(100).default(80) }).optional(), policy: z3.object({ kyc: z3.boolean(), withdrawals: z3.boolean(), twofa: z3.boolean(), facial: z3.boolean() }).optional(), branding: z3.record(z3.string(), z3.string()).optional(), appearance: z3.object({ defaultTheme: z3.enum(["original", "midnight-premium", "clean-light", "emerald-finance", "aurora-modern", "gold-luxe"]), enabledThemes: z3.array(z3.enum(["original", "midnight-premium", "clean-light", "emerald-finance", "aurora-modern", "gold-luxe"])).min(1).max(6), customerCanSelect: z3.boolean() }).optional(), trade: z3.object({ settlementDelaySeconds: z3.number().int().min(0).max(604800), creditDelaySeconds: z3.number().int().min(0).max(604800), cooldownSeconds: z3.number().int().min(0).max(604800), nextPopupFormulaDelaySeconds: z3.number().int().min(0).max(604800), popupCooldownSeconds: z3.number().int().min(0).max(604800), popupDisplaySeconds: z3.number().int().min(1).max(3600), popupPreAlertSeconds: z3.number().int().min(0).max(3600), popupJitterSeconds: z3.number().int().min(0).max(604800), popupMaxPerHour: z3.number().int().min(1).max(1e4), marketRefreshIntervalMinutes: z3.number().int().min(1).max(10080), blockUntilSettled: z3.boolean(), reason: z3.string().trim().min(5).max(500), expectedPolicyVersion: z3.number().int().min(1) }).optional() }).refine((sections) => !sections.trade || Object.entries(sections).every(([key, value]) => key === "trade" || value === void 0), { message: "Trade timing settings must be saved on their own." })).mutation(async ({ ctx, input }) => {
       if (input.appearance && !input.appearance.enabledThemes.includes(input.appearance.defaultTheme)) throw new TRPCError5({ code: "BAD_REQUEST", message: "The default theme must be enabled." });
       if (input.ticket) {
         await setAppSetting("ticket.maxAttachmentMb", String(input.ticket.maxAttachmentMb), ctx.user.id);
@@ -18914,8 +18914,8 @@ var appRouter = router({
         tradeRetryDelaySeconds: z3.number().int().min(5).max(3600).optional(),
         maxSuccessfulTradesPerDay: z3.number().int().min(0).max(1e4).optional(),
         maxConcurrentActiveTrades: z3.number().int().min(1).max(1e3).optional(),
-        minSettlementDelaySeconds: z3.number().int().min(900).max(604800).optional(),
-        maxSettlementDelaySeconds: z3.number().int().min(900).max(604800).optional(),
+        minSettlementDelaySeconds: z3.number().int().min(0).max(604800).optional(),
+        maxSettlementDelaySeconds: z3.number().int().min(0).max(604800).optional(),
         minimumRewardBps: z3.number().int().min(0).max(1e4).optional(),
         maxDailyRewardMinor: z3.number().int().min(0).max(2147483647).optional(),
         maxRewardPerTradeMinor: z3.number().int().min(0).max(2147483647).optional(),

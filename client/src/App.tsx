@@ -1453,7 +1453,7 @@ function AdminTradingPolicySettings({focus}:{focus?:"policy"|"quotas"|"delivery"
   const policyRowValid=(row:TradingDeliveryPolicyRow)=>{
     const settlementBaseline=policyBaseline.find(item=>item.packageName===row.packageName);
     const settlementTimingChanged=Boolean(settlementBaseline&&(row.minSettlementDelaySeconds!==settlementBaseline.minSettlementDelaySeconds||row.maxSettlementDelaySeconds!==settlementBaseline.maxSettlementDelaySeconds));
-    const settlementTimingSafe=!settlementTimingChanged||(row.minSettlementDelaySeconds>=900&&row.maxSettlementDelaySeconds>=900);
+    const settlementTimingSafe=!settlementTimingChanged||(row.minSettlementDelaySeconds>=0&&row.maxSettlementDelaySeconds>=0);
     const minRate=row.minimumPayoutRateBps,maxRate=row.maximumPayoutRateBps;
     const validRateBounds=minRate!==null&&maxRate!==null&&Number.isSafeInteger(minRate)&&Number.isSafeInteger(maxRate)&&minRate>=1&&maxRate>=minRate&&maxRate<=5000;
     const minDuration=row.minimumTradeDurationSeconds,maxDuration=row.maximumTradeDurationSeconds;

@@ -166,7 +166,7 @@ The server owns package entitlement, informational delivery scheduling/quota che
 The settlement timing controls and manual settlement queue represent separate stages:
 
 - Trade duration ends at the persisted `settlesAt`.
-- The configured settlement delay produces `settlementReviewAt = settlesAt + settlementDelaySeconds`. Administrators can review and confirm the actual result only at or after this timestamp.
+- The configured settlement delay produces `settlementReviewAt = settlesAt + settlementDelaySeconds`. Administrators can review and confirm the actual result only at or after this timestamp. The delay defaults to `0`, so settlement is due as soon as the trade completes or the pop-up closes; set a non-zero value only to deliberately hold settlement for review.
 - The wallet-credit delay produces `creditAt = settlementReviewAt + creditDelaySeconds`. This is the earliest time the server may post the confirmed result to the wallet.
 - A legacy trade without `settlementReviewAt` uses its prior `creditAt` as the review deadline when present, preserving the old review gate; if both are absent, it uses `settlesAt`. A legacy trade without `creditAt` uses its review deadline as the credit deadline. Historical rows are not rewritten to invent missing delays.
 

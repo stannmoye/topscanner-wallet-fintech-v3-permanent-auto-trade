@@ -19,8 +19,8 @@ const base: PackageAutomationPolicy = {
   maxSuccessfulTradesPerDay: 5,
   maxConcurrentActiveTrades: 1,
   requirePreviousSettlement: true,
-  minSettlementDelaySeconds: 900,
-  maxSettlementDelaySeconds: 900,
+  minSettlementDelaySeconds: 0,
+  maxSettlementDelaySeconds: 0,
   minimumRewardBps: 0,
   maxDailyRewardMinor: 10000,
   maxRewardPerTradeMinor: 3000,
@@ -38,7 +38,7 @@ describe("Trading tier timing and runtime bounds", () => {
       maxPendingDeliveries: 1000,
       maxDeliveryAttempts: 20,
       maxConcurrentActiveTrades: 1000,
-      minSettlementDelaySeconds: 900,
+      minSettlementDelaySeconds: 0,
       maxSettlementDelaySeconds: 604800,
     })).toMatchObject({ dailyPopupTarget: 10000, maxIntervalSeconds: 604800, completionDisplaySeconds: 3600 });
   });
@@ -47,7 +47,7 @@ describe("Trading tier timing and runtime bounds", () => {
     ["max interval", { maxIntervalSeconds: 604801 }],
     ["delivery attempts", { maxDeliveryAttempts: 0 }],
     ["retry delay", { tradeRetryDelaySeconds: 4 }],
-    ["settlement delay", { minSettlementDelaySeconds: 899 }],
+    ["settlement delay", { minSettlementDelaySeconds: -1 }],
     ["concurrency", { maxConcurrentActiveTrades: 0 }],
   ])("rejects an unsafe %s bound", (_label, change) => {
     expect(() => validatePackageAutomationPolicy({ ...base, ...change })).toThrow(/Invalid package automation policy/);

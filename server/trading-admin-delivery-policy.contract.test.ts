@@ -91,7 +91,7 @@ describe("administrator Trading delivery policy controls", () => {
     expect(database).toContain("const nextVersion=current?currentVersion+1:1");
     expect(database).toContain('action:"trading_delivery_policy_updated"');
     expect(database).toContain("validatePackageAutomationPolicy(automation)");
-    expect(router).toContain("minSettlementDelaySeconds: z.number().int().min(900).max(604800).optional()");
+    expect(router).toContain("minSettlementDelaySeconds: z.number().int().min(0).max(604800).optional()");
     expect(router).toContain("updatePackagePolicies: adminProcedure.input");
     expect(app).toContain('onError:error=>{setPolicyMessageKind("error");setPolicyMessage(error.message)}');
     expect(app).toContain('setPolicyMessage("Enter at least 5 characters explaining this policy change.");');
