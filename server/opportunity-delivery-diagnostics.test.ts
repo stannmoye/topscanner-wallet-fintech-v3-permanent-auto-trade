@@ -102,6 +102,27 @@ describe("Opportunity delivery diagnostics", () => {
     expect(uiSource).toContain("filters: \"filters\" in activeFilters ? activeFilters.filters as any : {}");
   });
 
+  it("qualifies every popup-event column in the queue diagnostics query so createdAt is never ambiguous", () => {
+    // Regression guard for item 5: opportunity_popup_events and opportunity_offers
+    // both expose a createdAt column, so an unqualified `createdAt` in the queue
+    // diagnostics SELECT raised "Column 'createdAt' in SELECT is ambiguous" and the
+    // admin endpoint returned HTTP 500. The sandbox has no MySQL/MariaDB server
+    // binary, so the project test setup cannot execute the query; this asserts the
+    // generated SQL texturally instead.
+    const queueStart = diagnosticsSource.indexOf("export async function getOpportunityDeliveryQueueDiagnostics");
+    const queueEnd = diagnosticsSource.indexOf("export async function exportOpportunityDeliveryRecords");
+    expect(queueStart).toBeGreaterThanOrEqual(0);
+    expect(queueEnd).toBeGreaterThan(queueStart);
+    const queueSql = diagnosticsSource.slice(queueStart, queueEnd);
+    expect(queueSql).toContain("SUM(e.deliveryStatus='queued') AS queued");
+    expect(queueSql).toContain("MIN(CASE WHEN e.deliveryStatus='queued' THEN e.createdAt END) AS oldestQueuedAt");
+    expect(queueSql).toContain("MIN(CASE WHEN e.deliveryStatus='in_progress' THEN e.createdAt END) AS oldestProcessingAt");
+    // No bare column reference may remain; every popup-event column is alias-qualified.
+    expect(queueSql).not.toMatch(/[\s,(=]createdAt\b/);
+    expect(queueSql).not.toMatch(/[\s,(=]deliveryStatus\b/);
+    expect(queueSql).not.toMatch(/[\s,(=]deliveryRetryAfter\b/);
+  });
+
   it("pins an explicit collation on the cross-table UNION columns so delivery records never fail with a collation error", () => {
     // opportunity_generation_assignments and opportunity_popup_events are created
     // independently, and several of their string columns were added later with an

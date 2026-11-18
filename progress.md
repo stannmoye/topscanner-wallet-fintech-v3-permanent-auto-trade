@@ -12,7 +12,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 2 | `walletLedgerReconciliation` 500 — sequential queries | `[x]` | `Fix #2` |
 | 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[x]` | `Fix #3` |
 | 4 | Test covering item 3 on every UNION branch | `[x]` | `Fix #4` |
-| 5 | Delivery queue diagnostics ambiguous `createdAt` | `[ ]` | |
+| 5 | Delivery queue diagnostics ambiguous `createdAt` | `[x]` | `Fix #5` |
 | 6 | `opportunityDeliveryCustomerSearch` email/name search | `[ ]` | |
 | 7 | SQL text in 500 responses | `[-]` | owner: leave alone |
 | 8 | Replace `1/x` float inversion with exact decimal | `[ ]` | |
@@ -86,6 +86,10 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 ### Item 4 notes (`Fix #4`)
 
 - Added a regression test (`server/opportunity-delivery-diagnostics.test.ts`) that extracts the generated `RECORD_CTES` SQL and fails if any `NULL` literal is followed by `COLLATE` (the item-3 defect), while asserting both `UNION ALL` branches still pin every unioned string column. Verified the guard matches the pre-fix text and rejects the fixed text. The test would run against a real MariaDB if one were available; the sandbox has none, so it validates the SQL texturally.
+
+### Item 5 notes (`Fix #5`)
+
+- `getOpportunityDeliveryQueueDiagnostics` selected `deliveryStatus`, `createdAt`, `deliveryRetryAfter`, `deliveryLeaseExpiresAt` and `deliveryAttemptCount` unqualified while the query joins `opportunity_popup_events e` to `opportunity_offers offer`. Both tables expose `createdAt`, so MariaDB raised "Column 'createdAt' in SELECT is ambiguous" and the admin endpoint returned HTTP 500. Every popup-event column in the queue SELECT is now alias-qualified with `e.` (the already-qualified `offer.closesAt` is unchanged). A regression test asserts the queue query pins the qualification and contains no bare column reference.
 
 ### Item 3 notes (`Fix #3`)
 

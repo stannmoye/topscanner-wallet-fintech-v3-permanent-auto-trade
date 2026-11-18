@@ -17935,19 +17935,19 @@ async function getOpportunityDeliveryQueueDiagnostics() {
   if (!process.env.DATABASE_URL) return { sourceAvailable: false, generatedAt: null, counts: null, latency: null, backlogGrowth: null };
   return withConnection4(async (connection) => {
     const [queueRows] = await connection.query(`SELECT
-      SUM(deliveryStatus='queued') AS queued,
-      SUM(deliveryStatus='in_progress') AS processing,
-      SUM(deliveryStatus='retry_wait') AS waitingRetry,
-      SUM(deliveryStatus='failed') AS failed,
-      SUM(deliveryStatus='expired') AS expired,
-      MIN(CASE WHEN deliveryStatus='queued' THEN createdAt END) AS oldestQueuedAt,
-      MIN(CASE WHEN deliveryStatus='in_progress' THEN createdAt END) AS oldestProcessingAt,
-      SUM(deliveryStatus='retry_wait' AND deliveryRetryAfter IS NOT NULL AND deliveryRetryAfter<=UTC_TIMESTAMP()) AS overdueRetries,
-      SUM(deliveryStatus='in_progress' AND deliveryLeaseExpiresAt IS NOT NULL AND deliveryLeaseExpiresAt<=UTC_TIMESTAMP()) AS expiredLeases,
-      SUM(deliveryStatus IN ('queued','in_progress','retry_wait') AND COALESCE(lease_events.expiredCount,0)>=2) AS repeatedLeaseExpiries,
-      SUM(deliveryStatus IN ('queued','in_progress','retry_wait') AND deliveryAttemptCount>0 AND offer.closesAt<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 60 SECOND)) AS approachingExpiration,
-      SUM(deliveryStatus IN ('queued','in_progress','retry_wait') AND offer.closesAt<=UTC_TIMESTAMP()) AS pendingPastDeadline,
-      SUM((deliveryStatus='retry_wait' AND deliveryRetryAfter IS NOT NULL AND deliveryRetryAfter>=offer.closesAt) OR (deliveryStatus='in_progress' AND deliveryLeaseExpiresAt IS NOT NULL AND deliveryLeaseExpiresAt>=offer.closesAt)) AS retryOrLeaseBeyondDeadline
+      SUM(e.deliveryStatus='queued') AS queued,
+      SUM(e.deliveryStatus='in_progress') AS processing,
+      SUM(e.deliveryStatus='retry_wait') AS waitingRetry,
+      SUM(e.deliveryStatus='failed') AS failed,
+      SUM(e.deliveryStatus='expired') AS expired,
+      MIN(CASE WHEN e.deliveryStatus='queued' THEN e.createdAt END) AS oldestQueuedAt,
+      MIN(CASE WHEN e.deliveryStatus='in_progress' THEN e.createdAt END) AS oldestProcessingAt,
+      SUM(e.deliveryStatus='retry_wait' AND e.deliveryRetryAfter IS NOT NULL AND e.deliveryRetryAfter<=UTC_TIMESTAMP()) AS overdueRetries,
+      SUM(e.deliveryStatus='in_progress' AND e.deliveryLeaseExpiresAt IS NOT NULL AND e.deliveryLeaseExpiresAt<=UTC_TIMESTAMP()) AS expiredLeases,
+      SUM(e.deliveryStatus IN ('queued','in_progress','retry_wait') AND COALESCE(lease_events.expiredCount,0)>=2) AS repeatedLeaseExpiries,
+      SUM(e.deliveryStatus IN ('queued','in_progress','retry_wait') AND e.deliveryAttemptCount>0 AND offer.closesAt<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 60 SECOND)) AS approachingExpiration,
+      SUM(e.deliveryStatus IN ('queued','in_progress','retry_wait') AND offer.closesAt<=UTC_TIMESTAMP()) AS pendingPastDeadline,
+      SUM((e.deliveryStatus='retry_wait' AND e.deliveryRetryAfter IS NOT NULL AND e.deliveryRetryAfter>=offer.closesAt) OR (e.deliveryStatus='in_progress' AND e.deliveryLeaseExpiresAt IS NOT NULL AND e.deliveryLeaseExpiresAt>=offer.closesAt)) AS retryOrLeaseBeyondDeadline
       FROM opportunity_popup_events e
       INNER JOIN (SELECT userId,offerId,MAX(id) AS id FROM opportunity_popup_events GROUP BY userId,offerId) latest ON latest.id=e.id
       LEFT JOIN opportunity_offers offer ON offer.id=e.offerId
