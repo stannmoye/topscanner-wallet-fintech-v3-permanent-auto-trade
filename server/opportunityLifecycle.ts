@@ -47,7 +47,47 @@ async function withConnection<T>(fn: (connection: mysql.PoolConnection) => Promi
   try { return await fn(connection); } finally { connection.release(); await pool.end(); }
 }
 
-async function recordDeliveryHistory(connection: mysql.PoolConnection, input: {
+const DELIVERY_HISTORY_WARNING_INTERVAL_MS = 60_000;
+const DELIVERY_HISTORY_WARNING_MAX_SIGNATURES = 64;
+const deliveryHistoryWarningState = new Map<string, number>();
+
+/**
+ * Item 53: history storage is deliberately fail-soft (it must never change the delivery
+ * decision or stop a customer opportunity being served), but a persistent failure must
+ * not be invisible. Emit at most one bounded warning per failure signature per window,
+ * carrying the event id and the MySQL error code. Never throws, and never logs secrets.
+ */
+function logDeliveryHistoryFailure(
+  input: { userId: number; offerId: number; eventKey: string; eventType: string; errorCode?: string | null },
+  error: unknown,
+): void {
+  try {
+    const rawCode = (error as { code?: unknown } | null)?.code;
+    const code = typeof rawCode === "string" && /^[A-Za-z0-9_]+$/.test(rawCode)
+      ? rawCode.toUpperCase()
+      : (input.errorCode ?? "UNKNOWN_ERROR");
+    const signature = `${input.eventType}:${code}`;
+    const now = Date.now();
+    if (now - (deliveryHistoryWarningState.get(signature) ?? 0) < DELIVERY_HISTORY_WARNING_INTERVAL_MS) return;
+    deliveryHistoryWarningState.set(signature, now);
+    if (deliveryHistoryWarningState.size > DELIVERY_HISTORY_WARNING_MAX_SIGNATURES) {
+      for (const [key, at] of deliveryHistoryWarningState) {
+        if (now - at >= DELIVERY_HISTORY_WARNING_INTERVAL_MS) deliveryHistoryWarningState.delete(key);
+      }
+    }
+    const message = (error instanceof Error ? error.message : String(error))
+      .replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]")
+      .replace(/\b(password|passwd|secret|token|authorization|api[_-]?key|credential)(\s*[:=]\s*)[^\s,;]+/gi, "$1$2[redacted]")
+      .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+      .replace(/[\r\n\t]/g, " ")
+      .slice(0, 240);
+    console.warn(`[OpportunityDeliveryHistory] could not record '${input.eventType}' (event ${input.eventKey}, offer ${input.offerId}, user ${input.userId}) [${code}]: ${message}`);
+  } catch {
+    // Logging must never change delivery behaviour.
+  }
+}
+
+export async function recordDeliveryHistory(connection: mysql.PoolConnection, input: {
   userId: number;
   offerId: number;
   eventKey: string;
@@ -63,9 +103,11 @@ async function recordDeliveryHistory(connection: mysql.PoolConnection, input: {
        VALUES (?,?,?,?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP)) ON DUPLICATE KEY UPDATE id=id`,
       [input.userId, input.offerId, input.eventKey, input.eventType, input.observedStatus ?? null, input.attemptNumber ?? null, input.errorCode ?? null, input.occurredAt ?? null],
     );
-  } catch {
+  } catch (error) {
     // Diagnostics are deliberately fail-soft: history storage must never change
     // the delivery decision or prevent a customer opportunity from being served.
+    // Item 53: still surface a bounded, rate-limited warning (event id + error code).
+    logDeliveryHistoryFailure(input, error);
   }
 }
 

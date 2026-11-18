@@ -60,7 +60,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 50 | Stop tracking dist/ + 2 zips (add narrow .gitignore) | `[x]` | `Fix #50` |
 | 51 | Lower global body limits per route | `[x]` | `Fix #51` |
 | 52 | `/api/platform/config.js` browser-key only | `[x]` | `Fix #52` |
-| 53 | `recordDeliveryHistory` bounded warning log | `[ ]` | |
+| 53 | `recordDeliveryHistory` bounded warning log | `[x]` | `Fix #53` |
 | 54 | FX rate cache single-flight | `[ ]` | |
 | 55 | `usdUnitsToNativeMinor` clamp + unavailable flag | `[ ]` | |
 | 56 | Registry key rename + register 4 patchable fields | `[ ]` | |
