@@ -3057,8 +3057,8 @@ async function ensurePopupDeliveries(deliveries) {
              configuredProfitRateBps,configuredDurationSeconds,configuredPopupDisplaySeconds,packagePolicyVersionSnapshot,packageBadgeLabel,
              companyReferenceId,companyDisplayName,companyLogoUrl,companyReferenceMetadataJson,companyReferenceOnly,
              balanceAvailableMinor,balanceStatus,marketObservedAt,marketSnapshotJson,durationSeconds,badgeLabel,badgeStyle,policyVersion,
-             eventStatus,deliveredAt,deliveryStatus,deliveryAttemptCount,deliveryPolicyVersionSnapshot,createdAt,updatedAt)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+             executionStatus,eventStatus,deliveredAt,deliveryStatus,deliveryAttemptCount,deliveryPolicyVersionSnapshot,createdAt,updatedAt)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'READY','DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
            ON DUPLICATE KEY UPDATE updatedAt=CURRENT_TIMESTAMP`,
             [
               eventKey,
@@ -4128,8 +4128,8 @@ var init_exchange_providers = __esm({
 
 // server/modules/popup-execution-policy.ts
 function isPopupExecutionEligible(input) {
-  const eventStatus = String(input.eventStatus ?? "").toUpperCase();
-  const executionStatus = String(input.executionStatus ?? "READY").trim().toUpperCase() || "READY";
+  const eventStatus = String(input.eventStatus ?? "").trim().toUpperCase();
+  const executionStatus = String(input.executionStatus ?? "").trim().toUpperCase();
   return ["DELIVERED", "NOTICED", "OPENED", "DISMISSED"].includes(eventStatus) && ["READY", "RETRYING"].includes(executionStatus);
 }
 var init_popup_execution_policy = __esm({

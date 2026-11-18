@@ -252,8 +252,8 @@ export async function ensurePopupDeliveries(deliveries: PopupDelivery[]) {
              configuredProfitRateBps,configuredDurationSeconds,configuredPopupDisplaySeconds,packagePolicyVersionSnapshot,packageBadgeLabel,
              companyReferenceId,companyDisplayName,companyLogoUrl,companyReferenceMetadataJson,companyReferenceOnly,
              balanceAvailableMinor,balanceStatus,marketObservedAt,marketSnapshotJson,durationSeconds,badgeLabel,badgeStyle,policyVersion,
-             eventStatus,deliveredAt,deliveryStatus,deliveryAttemptCount,deliveryPolicyVersionSnapshot,createdAt,updatedAt)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+             executionStatus,eventStatus,deliveredAt,deliveryStatus,deliveryAttemptCount,deliveryPolicyVersionSnapshot,createdAt,updatedAt)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'READY','DELIVERED',CURRENT_TIMESTAMP,'queued',0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
            ON DUPLICATE KEY UPDATE updatedAt=CURRENT_TIMESTAMP`,
           [
             eventKey, publicTradeId, item.userId, item.offerId, item.quotaDay, item.packageId, item.packageName, item.symbol, item.currency,

@@ -23,4 +23,13 @@ describe("popup presentation and execution isolation",()=>{
   it("does not make an unrecognized lifecycle status eligible",()=>{
     expect(isPopupExecutionEligible({...delivered,eventStatus:"WITHDRAWN"})).toBe(false);
   });
+  it("fails closed when the execution status is missing or blank (item 23)",()=>{
+    for (const executionStatus of [undefined, null, "", "   ", "\t\n"]) {
+      expect(isPopupExecutionEligible({ eventStatus: "DELIVERED", deliveryStatus: "rendered", executionStatus })).toBe(false);
+      expect(isPopupExecutionEligible({ eventStatus: "DISMISSED", deliveryStatus: "rendered", executionStatus })).toBe(false);
+    }
+    // An explicit READY/RETRYING is still eligible.
+    expect(isPopupExecutionEligible({ eventStatus: "DELIVERED", deliveryStatus: "rendered", executionStatus: "ready" })).toBe(true);
+    expect(isPopupExecutionEligible({ eventStatus: "DELIVERED", deliveryStatus: "rendered", executionStatus: " RETRYING " })).toBe(true);
+  });
 });

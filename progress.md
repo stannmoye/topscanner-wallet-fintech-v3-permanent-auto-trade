@@ -30,7 +30,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 20 | Remove package fee entirely | `[-]` | owner: keep the package fee |
 | 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[x]` | `Fix #21` |
 | 22 | CSRF Origin/Sec-Fetch-Site checks | `[x]` | `Fix #22` |
-| 23 | popup-execution-policy fail closed on blank status | `[ ]` | |
+| 23 | popup-execution-policy fail closed on blank status | `[x]` | `Fix #23` |
 | 24 | `updatePopupDeliveryStatus` requires leaseToken | `[ ]` | |
 | 25 | Allocation reason 8–500 chars, strict input | `[ ]` | |
 | 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[ ]` | |
@@ -134,6 +134,14 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [csrf-protection.contract.test.ts](file:///workspace/repo/server/csrf-protection.contract.test.ts) (13 tests): safe methods, `Sec-Fetch-Site` allow/reject, `Origin` match/mismatch, `Referer` fallback + precedence, fail-closed on missing evidence, the scheduled/HMAC exemptions, the TLS-terminating-proxy case, strictness when `PUBLIC_APP_URL` is configured, the dev/preview host-only fallback, origin normalisation, the middleware returning 403/next, and a source-contract check that the middleware sits after the security headers and before the first route.
 - **Docs.** [README.md](file:///workspace/repo/README.md) security section documents the CSRF check and the `PUBLIC_APP_URL` requirement.
 - **Protected area untouched.** No change to any ledger, allocation or settlement module.
+
+### Item 23 notes (`Fix #23`)
+
+- **Confirmed the delivery flow.** `ensurePopupDeliveries` ([opportunityLifecycle.ts](file:///workspace/repo/server/opportunityLifecycle.ts#L249-L266)) inserts into `opportunity_popup_events` and, before this change, relied on the schema default rather than setting `executionStatus` in the statement. The column is declared `executionStatus` … `.default("READY").notNull()` ([schema.ts](file:///workspace/repo/drizzle/schema.ts#L281)), so a newly delivered popup is always stored as `READY` — but it was the *database* that supplied that, not the flow.
+- **Production-rows check.** Because the column is `NOT NULL DEFAULT 'READY'`, no stored row can be NULL/blank while pending (existing rows were backfilled to `READY` when the column was added). The only production reader of the policy is [db.ts](file:///workspace/repo/server/db.ts#L4735), which passes the `NOT NULL` `row.executionStatus`, so failing closed on a blank status cannot make any existing pending event ineligible. No data risk; proceeding was safe (reported to the owner in the item-23 status).
+- **What changed.** (1) The insert now writes `executionStatus` explicitly as `'READY'` (no behaviour change — it matches the previous default). (2) [popup-execution-policy.ts](file:///workspace/repo/server/modules/popup-execution-policy.ts) no longer substitutes `READY` for a missing/blank execution status: `isPopupExecutionEligible` now trims and requires an explicit value, so a missing/blank status is **not** eligible and only an explicit `READY`/`RETRYING` is.
+- **Tests.** Extended [popup-execution-policy.test.ts](file:///workspace/repo/server/modules/popup-execution-policy.test.ts) with a fail-closed case over `undefined`/`null`/`""`/whitespace, while asserting explicit `ready`/`RETRYING` (case/space-insensitive) stay eligible.
+- **Protected area.** No debit/credit/settlement code touched.
 
 ### Item 19 notes (`Fix #19`)
 
