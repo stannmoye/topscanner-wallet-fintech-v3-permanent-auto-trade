@@ -38,19 +38,39 @@ describe("isCustomerOpportunityAllowed", () => {
 });
 
 describe("isWithinQuietHours", () => {
-  it("recognizes quiet hours that cross midnight", () => {
-    expect(isWithinQuietHours(new Date(2026, 0, 1, 23, 30), "22:00", "07:00")).toBe(true);
-    expect(isWithinQuietHours(new Date(2026, 0, 1, 6, 59), "22:00", "07:00")).toBe(true);
-    expect(isWithinQuietHours(new Date(2026, 0, 1, 7, 0), "22:00", "07:00")).toBe(false);
+  it("evaluates the window in UTC by default, independent of the server clock", () => {
+    expect(isWithinQuietHours(new Date("2026-01-01T23:30:00Z"), "22:00", "07:00")).toBe(true);
+    expect(isWithinQuietHours(new Date("2026-01-01T06:59:00Z"), "22:00", "07:00")).toBe(true);
+    expect(isWithinQuietHours(new Date("2026-01-01T07:00:00Z"), "22:00", "07:00")).toBe(false);
   });
 
   it("recognizes daytime quiet hours and excludes the end time", () => {
-    expect(isWithinQuietHours(new Date(2026, 0, 1, 12, 0), "11:00", "13:00")).toBe(true);
-    expect(isWithinQuietHours(new Date(2026, 0, 1, 13, 0), "11:00", "13:00")).toBe(false);
+    expect(isWithinQuietHours(new Date("2026-01-01T12:00:00Z"), "11:00", "13:00")).toBe(true);
+    expect(isWithinQuietHours(new Date("2026-01-01T13:00:00Z"), "11:00", "13:00")).toBe(false);
+  });
+
+  it("evaluates the window in an explicit admin-configured timezone", () => {
+    // January: America/New_York is UTC-5. 03:00Z = 22:00 EST (quiet start), 11:59Z = 06:59 EST (still quiet).
+    expect(isWithinQuietHours(new Date("2026-01-01T03:00:00Z"), "22:00", "07:00", "America/New_York")).toBe(true);
+    expect(isWithinQuietHours(new Date("2026-01-01T11:59:00Z"), "22:00", "07:00", "America/New_York")).toBe(true);
+    // 12:00Z = 07:00 EST (end excluded) and 16:00Z = 11:00 EST (daytime) are outside the window.
+    expect(isWithinQuietHours(new Date("2026-01-01T12:00:00Z"), "22:00", "07:00", "America/New_York")).toBe(false);
+    expect(isWithinQuietHours(new Date("2026-01-01T16:00:00Z"), "22:00", "07:00", "America/New_York")).toBe(false);
+  });
+
+  it("tracks the DST offset for the same timezone", () => {
+    // July: America/New_York is UTC-4. 02:00Z = 22:00 EDT (quiet); the same instant is 21:00 in winter.
+    expect(isWithinQuietHours(new Date("2026-07-01T02:00:00Z"), "22:00", "07:00", "America/New_York")).toBe(true);
+    expect(isWithinQuietHours(new Date("2026-01-01T02:00:00Z"), "22:00", "07:00", "America/New_York")).toBe(false);
+  });
+
+  it("falls back to UTC when the configured timezone is missing or invalid", () => {
+    expect(isWithinQuietHours(new Date("2026-01-01T23:30:00Z"), "22:00", "07:00", "")).toBe(true);
+    expect(isWithinQuietHours(new Date("2026-01-01T23:30:00Z"), "22:00", "07:00", "Not/AZone")).toBe(true);
   });
 
   it("treats equal or invalid times as no quiet-hours window", () => {
-    const now = new Date(2026, 0, 1, 23, 30);
+    const now = new Date("2026-01-01T23:30:00Z");
     expect(isWithinQuietHours(now, "22:00", "22:00")).toBe(false);
     expect(isWithinQuietHours(now, "invalid", "07:00")).toBe(false);
   });

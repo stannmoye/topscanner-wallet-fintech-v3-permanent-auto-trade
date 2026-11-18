@@ -36,7 +36,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 26 | Bounds on `adjustCustomerBalance` / `confirmManualSettlement` | `[x]` | `Fix #26` |
 | 27 | No writes during reads in `getTradeSettlementPolicy` | `[x]` | `Fix #27` |
 | 28 | `calculateCombinedBalanceSnapshot` error handling | `[x]` | `Fix #28` |
-| 29 | Quiet hours use admin timezone (UTC default) | `[ ]` | |
+| 29 | Quiet hours use admin timezone (UTC default) | `[x]` | `Fix #29` |
 | 30 | Missing source-wallet rate → stop "rate unavailable" | `[ ]` | |
 | 31 | Fee-policy reason limits alignment | `[ ]` | |
 | 32 | Validate every per-tier editable field | `[ ]` | |
@@ -124,6 +124,16 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 29 notes (`Fix #29`)
+
+- **Root cause.** `isWithinQuietHours` ([opportunityEligibility.ts](file:///workspace/repo/server/opportunityEligibility.ts)) computed the current minute with `now.getHours() * 60 + now.getMinutes()`, i.e. the **server's local clock**. A customer's saved `quietHoursStart`/`quietHoursEnd` (per-customer `customer_opportunity_rules`) were therefore evaluated in whatever timezone the host happened to run in, and a host/offset change silently shifted every window.
+- **What changed.** The window is now evaluated in an explicit IANA timezone using `Intl.DateTimeFormat` (`hourCycle: "h23"`), the same zone-aware-minute pattern already used by `getZonedMinute` in `emailQueue.ts`. New exports: `DEFAULT_QUIET_HOURS_TIME_ZONE = "UTC"` and `resolveQuietHoursTimeZone(value)`, which trims the admin-configured value, validates it and falls back to **UTC** when it is missing or invalid. `isWithinQuietHours(now, start, end, timeZone = "UTC")` keeps its original semantics (cross-midnight window, start inclusive / end exclusive, equal-or-invalid times ⇒ disabled) and only changes *which* clock defines "now".
+- **Decision — the timezone value.** No admin-configurable platform timezone setting exists in this source (`getAppSetting` has no timezone key; the only timezone env var is `EMAIL_DAILY_DIGEST_TIMEZONE`, which is the email digest's, not the platform's). Per the work order ("if there is no timezone setting, use UTC, label it 'UTC' in the admin UI"), the effective zone is **UTC**. The resolver accepts a configured zone the moment one is added, so no rework is needed then.
+- **Admin UI label.** [TradeSettingsAdminGuide.tsx](file:///workspace/repo/client/src/components/TradeSettingsAdminGuide.tsx) now states, on the Trade Settings Guide, that quiet hours are evaluated server-side in the platform timezone and that with no administrator timezone configured the window uses **UTC**.
+- **Scope note (reported to the owner).** `isWithinQuietHours` currently has no production call site (it is imported in `db.ts` but never invoked; quiet-hours UI also does not exist), so this fix corrects the computation itself and is exercised by tests rather than by a live route.
+- **Tests.** Rewrote the quiet-hours cases in [opportunityEligibility.test.ts](file:///workspace/repo/server/opportunityEligibility.test.ts) to use explicit UTC instants instead of local-time `Date` constructors: UTC-default window, non-UTC admin zone (`America/New_York`, winter), a DST case (summer UTC-4 vs winter UTC-5 for the same instant), the missing/invalid-zone → UTC fallback, and the equal/invalid-time disable case. 12 tests in the file pass.
+- **Protected area.** No debit/credit/settlement module touched.
 
 ### Item 22 notes (`Fix #22`)
 
