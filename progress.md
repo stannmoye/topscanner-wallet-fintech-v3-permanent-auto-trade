@@ -10,7 +10,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 |---|------|--------|--------|
 | 1 | `settlementIntegrityIssues` 500 — surface cause, fix collation drift | `[x]` | `Fix #1` |
 | 2 | `walletLedgerReconciliation` 500 — sequential queries | `[x]` | `Fix #2` |
-| 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[ ]` | |
+| 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[x]` | `Fix #3` |
 | 4 | Test covering item 3 on every UNION branch | `[ ]` | |
 | 5 | Delivery queue diagnostics ambiguous `createdAt` | `[ ]` | |
 | 6 | `opportunityDeliveryCustomerSearch` email/name search | `[ ]` | |
@@ -82,6 +82,14 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 ### Item 2 notes (`Fix #2`)
 
 - `listWalletLedgerReconciliation` ran four aggregate reads with `Promise.all` inside one `db.transaction`. A Drizzle transaction is bound to a single MySQL connection and mysql2 cannot pipeline overlapping commands, so the report 500'd (the reported failing statement was the `payout_requests` aggregate). The four aggregates are now `await`ed in series.
+
+### Item 3 notes (`Fix #3`)
+
+- `server/opportunityDeliveryDiagnostics.ts` applied `COLLATE utf8mb4_unicode_ci` to a `NULL` literal (`NULL AS failureReason COLLATE ...`) in the second `UNION ALL` branch. A `NULL` literal has no character set, so MariaDB rejects the whole statement — every delivery-records surface (`opportunityDeliveryRecords`/`Details`/`Customer`/`export`) 500'd. Removed the stray `COLLATE`; the explicit collations on the real columns in both branches remain. Item 4 adds the regression test.
+
+### Batch 1 summary (items 1–3)
+
+Fixed the three admin-monitoring 500s: settlement integrity collation drift (`Fix #1`), wallet-ledger reconciliation concurrency (`Fix #2`), delivery-records invalid `COLLATE` on NULL (`Fix #3`); plus surfaced dropped tRPC DB causes in server logs. All tests/typecheck/build green.
 
 ---
 

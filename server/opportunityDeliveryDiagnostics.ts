@@ -60,7 +60,7 @@ WITH latest_popup AS (
     p.packageName COLLATE utf8mb4_unicode_ci AS packageName,
     p.companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId,
     COALESCE(p.companyDisplayName,o.companyDisplayName) COLLATE utf8mb4_unicode_ci AS companyDisplayName,
-    NULL AS assignmentStatus,NULL AS failureReason COLLATE utf8mb4_unicode_ci,NULL AS generatedAt,NULL AS assignmentPersistedAt,NULL AS assignedAt,
+    NULL AS assignmentStatus,NULL AS failureReason,NULL AS generatedAt,NULL AS assignmentPersistedAt,NULL AS assignedAt,
     NULL AS assignmentDeliveredAt,NULL AS assignmentExpiresAt,
     p.id AS popupEventId,p.eventStatus,p.deliveryStatus,p.deliveryAttemptCount,
     p.deliveryRetryAfter,p.deliveryLeaseExpiresAt,p.lastErrorCode,p.createdAt AS popupCreatedAt,
