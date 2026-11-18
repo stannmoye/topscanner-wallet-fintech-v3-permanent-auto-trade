@@ -61,7 +61,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 51 | Lower global body limits per route | `[x]` | `Fix #51` |
 | 52 | `/api/platform/config.js` browser-key only | `[x]` | `Fix #52` |
 | 53 | `recordDeliveryHistory` bounded warning log | `[x]` | `Fix #53` |
-| 54 | FX rate cache single-flight | `[ ]` | |
+| 54 | FX rate cache single-flight | `[x]` | `Fix #54` |
 | 55 | `usdUnitsToNativeMinor` clamp + unavailable flag | `[ ]` | |
 | 56 | Registry key rename + register 4 patchable fields | `[ ]` | |
 | 57 | Remove/dedupe `getAdminNavigationItem` | `[ ]` | |

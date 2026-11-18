@@ -51,15 +51,22 @@ let _pool: Pool | null = null;
 type TradingFxConfig = { code: string; scale: number; assetType: "fiat" | "crypto" | "token"; externalCode: string | null };
 type TradingFxCacheEntry = { expiresAt: number; value?: FxRateSnapshot; pending?: Promise<FxRateSnapshot> };
 const tradingFxRateCache = new Map<string, TradingFxCacheEntry>();
+// Item 54 / live-rate rules: every concurrent caller shares one in-flight fetch (single-flight),
+// and a resolved live value may be reused for at most this window so that balance polling cannot
+// exhaust the free provider limits. A live rate is always fetched for a stale or absent entry.
+const LIVE_FX_REUSE_WINDOW_MS = 5_000;
+const TRADING_FX_CACHE_MAX_ENTRIES = 256;
 
-async function getFreshTradingFxRate(config: TradingFxConfig): Promise<FxRateSnapshot> {
+export async function getFreshTradingFxRate(config: TradingFxConfig): Promise<FxRateSnapshot> {
   const code = config.code.trim().toUpperCase();
   const key = code + ":" + config.assetType + ":" + (config.externalCode || "");
   const now = Date.now();
   const cached = tradingFxRateCache.get(key);
-  if (cached && cached.expiresAt > now) {
-    if (cached.value) return cached.value;
+  if (cached) {
+    // Share a single in-flight fetch with every concurrent caller, regardless of age.
     if (cached.pending) return cached.pending;
+    // Only a resolved live value that is still inside the reuse window may be served.
+    if (cached.value && cached.expiresAt > now) return cached.value;
   }
   const pending = fetchCurrencyUsdRate({ code, assetType: config.assetType, externalCode: config.externalCode })
     .then(result => ({
@@ -70,11 +77,12 @@ async function getFreshTradingFxRate(config: TradingFxConfig): Promise<FxRateSna
       sourceDate: result.sourceDate,
       fetchedAt: result.fetchedAt,
     }));
-  tradingFxRateCache.set(key, { expiresAt: now + 30_000, pending });
+  // Store the pending promise BEFORE awaiting so concurrent callers share one fetch.
+  tradingFxRateCache.set(key, { expiresAt: now + LIVE_FX_REUSE_WINDOW_MS, pending });
   try {
     const value = await pending;
-    tradingFxRateCache.set(key, { expiresAt: Date.now() + 30_000, value });
-    while (tradingFxRateCache.size > 256) {
+    tradingFxRateCache.set(key, { expiresAt: Date.now() + LIVE_FX_REUSE_WINDOW_MS, value });
+    while (tradingFxRateCache.size > TRADING_FX_CACHE_MAX_ENTRIES) {
       const oldest = tradingFxRateCache.keys().next().value;
       if (oldest === undefined) break;
       tradingFxRateCache.delete(oldest);
