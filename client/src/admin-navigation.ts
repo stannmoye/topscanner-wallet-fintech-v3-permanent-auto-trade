@@ -143,4 +143,3 @@ export const adminPrimaryNavigationGroups = adminNavigationGroups.filter((group)
 );
 
 export const allAdminNavigationItems = adminNavigationGroups.flatMap((group) => group.items);
-export function getAdminNavigationItem(target: string) { return allAdminNavigationItems.find((item) => item.target === target); }

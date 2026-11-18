@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as adminNavigation from "./admin-navigation";
 import { adminNavigationGroups, adminPrimaryNavigationGroups, adminSecondaryNavigationGroups, adminSecondaryNavigationGroupIds } from "./admin-navigation";
 import { tradeSettingsOwnershipRegistry } from "./trade-settings-ownership";
 
@@ -81,6 +82,10 @@ describe("Trading administrator navigation", () => {
   it("does not expose quick-create shortcuts in the secondary drawer registry", () => {
     const secondaryLabels = adminSecondaryNavigationGroups.flatMap((group) => group.items).map((item) => item.label);
     expect(secondaryLabels).not.toEqual(expect.arrayContaining(["Add Customer", "Credit Adjustment", "Debit Adjustment", "Create Offer", "Compose Email"]));
+  });
+
+  it("does not expose the ambiguous single-match navigation lookup", () => {
+    expect(Object.keys(adminNavigation)).not.toContain("getAdminNavigationItem");
   });
 
   it("gives each registered control exactly one existing owner route", () => {
