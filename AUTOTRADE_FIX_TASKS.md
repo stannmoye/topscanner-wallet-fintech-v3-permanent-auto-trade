@@ -28,7 +28,7 @@ Legend: `[x]` done & pushed · `[~]` verified already-correct (no change needed)
 | 3 | Settlement must be immediate at trade completion / pop-up close | `[x]` | `be53741` |
 | 4 | Profit % randomly generated within min/max | `[~]` | — |
 | 5 | Trade amount randomly generated within min/max | `[~]` | — |
-| 6 | Fix other errors found (e.g. UNION-collation 500) | `[ ]` | — |
+| 6 | Fix other errors found (e.g. UNION-collation 500) | `[x]` | `d0232f7` |
 | 7 | Verify all workers flow with no conflicts | `[ ]` | — |
 
 ---
@@ -128,10 +128,30 @@ Live production data showed varied amounts (e.g. 92480, 92618, 133946, 181228,
 
 ---
 
-### Task 6 — Other errors — PENDING
+### Task 6 — Other errors — DONE (`d0232f7`)
 
-Known live error: `adminOperations.opportunityDeliveryRecords` returns tRPC
-`-32603` `"Illegal mix of collations for operation 'UNION'"`. Fix pending.
+Live error fixed: `adminOperations.opportunityDeliveryRecords` returned tRPC
+`-32603` `"Illegal mix of collations for operation 'UNION'"`.
+
+Root cause: in `server/opportunityDeliveryDiagnostics.ts` the `record_rows`
+CTE does a `UNION ALL` between rows from `opportunity_generation_assignments`
+and `opportunity_popup_events`. Both tables are `utf8mb4_unicode_ci`, but
+`opportunity_offers` was created in `drizzle/0003_jittery_marvel_boy.sql`
+**without an explicit charset/collation**, so its columns (e.g.
+`companyDisplayName`, `companyReferenceId`) inherited the database default.
+The UNION therefore combined columns with different `utf8mb4` collations,
+which MySQL rejects.
+
+Fix: pin `COLLATE utf8mb4_unicode_ci` on the cross-table string expressions in
+both UNION branches (`packageName`, `companyReferenceId`, and the
+`COALESCE(p.companyDisplayName,o.companyDisplayName)` result), mirroring the
+established repair in `drizzle/0102_opportunity_delivery_retry_lifecycle.sql`
+line 15. Integer joins and same-table string comparisons in the rest of the
+module were audited and need no change. A regression contract test was added to
+`server/opportunity-delivery-diagnostics.test.ts`.
+
+Checks: `pnpm test` (1322 passed / 31 skipped, 171 files), `pnpm check`,
+`pnpm build` all green.
 
 ---
 
