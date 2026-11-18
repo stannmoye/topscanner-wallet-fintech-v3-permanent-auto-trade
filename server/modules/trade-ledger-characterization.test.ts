@@ -10,9 +10,10 @@
  * code in `db.ts` consumes. Every helper exercised here is the same one the
  * transactional path calls.
  *
- * Expectations that a later item is allowed to change are marked inline:
- *   - item 19 removes the loss clamp in automatic-trade-lifecycle-math.
- *   - item 20 removes the platform fee entirely.
+ * Expectations that a later item was allowed to change are marked inline:
+ *   - item 19 removed the loss clamp in automatic-trade-lifecycle-math (done).
+ *   - item 20 ("remove the platform fee") was reviewed and skipped by the owner,
+ *     so the fee expectations below are intentionally left unchanged.
  */
 
 import { describe, expect, it } from "vitest";
@@ -115,7 +116,7 @@ describe("characterization: cross-wallet FX funding", () => {
     expect(locked.find(w => w.currency === "USD")).toMatchObject({ availableMinor: 0, lockedMinor: 10_000 });
     expect(locked.find(w => w.currency === "EUR")).toMatchObject({ availableMinor: 5_454, lockedMinor: 0 });
 
-    // Today's settlement keeps the platform fee; item 20 removes it.
+    // The settlement keeps the platform fee; item 20 (fee removal) was skipped.
     const settled = applySettlementCredit(locked, "USD", 10_000, 225);
     expect(settled.find(w => w.currency === "USD")).toMatchObject({ availableMinor: 10_225, lockedMinor: 0, earnedMinor: 225 });
     expect(settled.find(w => w.currency === "EUR")).toMatchObject({ availableMinor: 5_454, earnedMinor: 0 });

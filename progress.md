@@ -27,7 +27,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 17 | Admin wallet priority order | `[x]` | `Fix #17` |
 | 18 | Live fiat FX + customer conversion indicator | `[x]` | `Fix #18` |
 | 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[x]` | `Fix #19` |
-| 20 | Remove package fee entirely | `[ ]` | |
+| 20 | Remove package fee entirely | `[-]` | owner: keep the package fee |
 | 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[ ]` | |
 | 22 | CSRF Origin/Sec-Fetch-Site checks | `[ ]` | |
 | 23 | popup-execution-policy fail closed on blank status | `[ ]` | |
@@ -107,9 +107,13 @@ Only item 14 was actionable (items 12 and 13 are owner-ignored). Item 14 replace
 
 Only item 17 was actionable (items 15 and 16 are owner-ignored). Item 17 replaced the alphabetical cross-wallet funding order with a persisted, versioned and audited administrator **wallet funding priority** list (default: USD first, then the other currencies alphabetically; malformed config fails closed; wallet row locks keep a fixed currency order so funding never deadlocks). Tests/typecheck/build green (1373 passed, 31 skipped).
 
-### Batch 6 summary (items 18–20)
+### Batch 6 summary (items 18–20; #20 skipped)
 
-Item 18 named and documented the live-FX freshness windows (checked against the provider timestamp; ECB 4 days, fallback 24 h, crypto 5 min) with no behaviour change, and added a minimal customer conversion indicator. Item 19 made automatic pop-up settlement deterministic from the allocation snapshot (no market price, no loss), added a bounded startup catch-up plus the existing 30-second sweep with exactly-once guards, and removed the lifecycle reporting clamp. Item 20 is still to be done.
+Item 18 named and documented the live-FX freshness windows (checked against the provider timestamp; ECB 4 days, fallback 24 h, crypto 5 min) with no behaviour change, and added a minimal customer conversion indicator. Item 19 made automatic pop-up settlement deterministic from the allocation snapshot (no market price, no loss), added a bounded startup catch-up plus the existing 30-second sweep with exactly-once guards, and removed the lifecycle reporting clamp. Item 20 was reviewed and the owner instructed to keep the package fee and skip it, so this batch is 18–19.
+
+### Item 20 skipped (`[-]`, owner instruction)
+
+- The audit item "Remove package fee entirely" was scoped (it would have removed the per-package platform fee from settlement and touched the protected ledger/credit path). The owner reviewed the scope question and instructed: **keep the package fee, skip item 20 and move to item 21**. No code or behaviour changed; no commit was made for it. The package fee (per-package fee-policy versions, the settlement fee deduction, and the `trade_platform_fee` ledger posting) stays exactly as-is. The item-9 characterization suite at [trade-ledger-characterization.test.ts](file:///workspace/server/modules/trade-ledger-characterization.test.ts) keeps its fee expectations unchanged.
 
 ### Item 19 notes (`Fix #19`)
 
