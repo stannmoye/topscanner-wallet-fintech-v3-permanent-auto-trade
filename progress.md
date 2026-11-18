@@ -40,7 +40,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 30 | Missing source-wallet rate → stop "rate unavailable" | `[x]` | `Fix #30` |
 | 31 | Fee-policy reason limits alignment | `[x]` | `Fix #31` |
 | 32 | Validate every per-tier editable field | `[x]` | `Fix #32` |
-| 33 | Docs update (spec, progress, admin guide) | `[ ]` | |
+| 33 | Docs update (spec, progress, admin guide) | `[x]` | `Fix #33` (first pass; final pass after #64) |
 | 34 | Delivery acknowledgement retry cap/backoff | `[ ]` | |
 | 35 | Fix sounds for all sounds (per-sound enabled) | `[ ]` | |
 | 36 | Countdowns must not trust local clock | `[ ]` | |
@@ -124,6 +124,17 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 33 notes (`Fix #33`, first docs pass)
+
+- **Stale doc corrected.** [PERMANENT_AUTO_TRADE_UNLOCK.md](file:///workspace/repo/PERMANENT_AUTO_TRADE_UNLOCK.md) still described the pre-audit, fail-open intent ("Rate/duration defaults; never fail closed", "allocations.paused always treated as resumed", "requirePreviousSettlement never blocks", "Concurrent/daily/reward caps are soft quota only", "Missing fee policy uses 1500 bps default"). It is now rewritten as a historical migration note (`drizzle/0112_permanent_automatic_financial_execution.sql`) plus an accurate description of what the running server enforces: the audited `automaticFinancialExecutionEnabled` switch (default ON, fails closed), the fail-closed allocation gates with their blocked-state codes, the honoured `trading.allocations.paused`, the live-rate rules, the admin wallet-priority funding order, and the no-loss deterministic settlement.
+- **Admin guide updated.** [trade-admin-guide.html](file:///workspace/repo/client/public/trade-admin-guide.html) Package Configuration descriptions (menu-map paragraph, submenu table row) and the monitoring section now document the Automatic financial execution switch and the wallet funding priority order.
+- **Spec already consistent.** [docs/TRADING_SYSTEM_SPECIFICATION.md](file:///workspace/repo/docs/TRADING_SYSTEM_SPECIFICATION.md) (§130–132, §379) already states the fail-closed global controls and the previous-settlement prerequisite; no correction was required, so it was left unchanged.
+- **AGENTS.md.** No change made. Owner-approved revision 2 (pop-up internal-ledger wallet movement) already matches the enforced behaviour, so there was nothing to amend.
+- **Final pass.** A final docs pass runs again after item 64, per the work order.
+
+### Item 33 (`Fix #33`) — AGENTS.md change list
+- None. AGENTS.md was not modified in this item.
 
 ### Item 32 notes (`Fix #32`)
 
