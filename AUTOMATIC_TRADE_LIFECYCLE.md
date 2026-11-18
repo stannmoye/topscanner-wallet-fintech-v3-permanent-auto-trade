@@ -7,7 +7,7 @@ Once a popup opportunity arrives and the customer has **sufficient combined spen
 1. **No customer action is required** — no click, no confirm button.
 2. The server automatically **debits / locks** the required capital from available balance into the trade.
 3. The live UI shows **Capital locked into trade from available balance** with principal amount, expected profit, and a progress bar.
-4. When the trade reaches settlement, the server automatically **credits principal + net profit** back to the same wallet currency.
+4. When the trade reaches settlement, the server automatically **credits principal + the configured return fixed at allocation** back to the same wallet currency. No market price or external API is consulted, so there is no loss outcome.
 5. The UI and notifications show **Principal and profit credited to wallet** with the breakdown.
 
 If balance is insufficient, the popup states that clearly and no capital is moved.
@@ -22,6 +22,23 @@ If balance is insufficient, the popup states that clearly and no capital is move
 - `automaticTradeStageLabel` — human labels for lifecycle stages
 
 Stages: `evaluating_balance` → `capital_locking` → `capital_locked` → `trade_live` → `settlement_processing` → `principal_and_profit_credited` → `completed`
+
+## Deterministic, no-loss settlement and catch-up
+
+For automatic pop-up trades the settlement step (`processAutomaticMarketSettlements` in `server/db.ts`) settles **only from the snapshot stored at allocation** (`expectedRewardMinor`, with `configuredProfitRateBps` as a fallback). It does not read a market snapshot or call an external API, so:
+
+- the outcome can never be a loss for these trades;
+- a network outage cannot change the result;
+- the credit is identical whether settlement runs on time or late — the due time still comes from the admin timing settings (`settlementReviewAt` / `creditAt`).
+
+`calculateAutomaticTradeCredit` reports the real wallet credit: a supplied realized value is reported as-is, so the lifecycle `totalCreditedMinor` always equals the amount actually credited (the old clamp to zero was removed in item 19).
+
+Overdue, uncredited trades are recovered exactly once by:
+
+- **startup catch-up** — `catchUpDueAutomaticSettlements` runs the reconciliation → settlement → credit chain once at boot (`server/_core/index.ts`);
+- **periodic sweep** — the same chain runs on the 30-second trade cycle.
+
+Exactly-once is guaranteed by the existing per-trade row lock (`SELECT … FOR UPDATE`), the unique `trade_settlement_reference_claims` insert (duplicate key ⇒ skipped) and the `walletUpdatedAt IS NULL` conditional terminal transition, so a repeated run, a restart or duplicate workers cannot double-credit.
 
 ## Integration points
 

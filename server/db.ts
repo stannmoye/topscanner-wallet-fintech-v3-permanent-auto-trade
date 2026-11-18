@@ -5588,61 +5588,37 @@ export async function processAutomaticMarketSettlements(input?: { limit?: number
     eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending"),
     or(lte(tradePositions.settlementReviewAt,now),and(isNull(tradePositions.settlementReviewAt),lte(tradePositions.settlesAt,now))),
   )).orderBy(tradePositions.settlementReviewAt,tradePositions.settlesAt).limit(limit);
-  let settled=0, waitingForMarket=0, skipped=0;
+  let settled=0, skipped=0;
   for(const item of due){
     const result=await db.transaction(async tx=>{
       const trade=(await tx.select().from(tradePositions).where(eq(tradePositions.id,item.id)).limit(1).for("update"))[0];
       if(!trade||trade.status!=="confirmed"||trade.settlementStatus!=="pending") return "skipped" as const;
       const dueAt=trade.settlementReviewAt||trade.settlesAt;
       if(!dueAt||new Date(dueAt).getTime()>now.getTime()) return "skipped" as const;
-      // Prefer live market exit when available. Otherwise settle using the
-      // configured package profit rate so capital is never stuck locked forever
-      // when offers were allocated without continuous market data feeds.
-      const entryPrice=Number(trade.entryPriceUsd||0);
-      const exit=(trade.instrumentIdSnapshot
-        ?(await tx.select({id:marketSnapshots.id,priceUsd:marketSnapshots.priceUsd,observedAt:marketSnapshots.observedAt,source:marketSnapshots.source})
-          .from(marketSnapshots).where(and(eq(marketSnapshots.instrumentId,Number(trade.instrumentIdSnapshot)),gt(marketSnapshots.observedAt,new Date(trade.confirmedAt||trade.settlesAt||now)))).orderBy(desc(marketSnapshots.observedAt),desc(marketSnapshots.id)).limit(1))[0]
-        : null);
-      const exitPrice=Number(exit?.priceUsd);
-      const hasMarketExit=Boolean(exit)&&Number.isFinite(entryPrice)&&entryPrice>0&&Number.isFinite(exitPrice)&&exitPrice>0;
+      // Item 19: automatic pop-up trades settle ONLY from the allocation snapshot.
+      // The configured return (expectedRewardMinor, or configuredProfitRateBps as a
+      // fallback) was fixed when the trade was allocated. No market price or
+      // external API is consulted, so a network outage or a late run cannot change
+      // the result, there is no loss outcome, and the credit is identical whether
+      // settlement happens on time or late. The due time stays driven by the
+      // admin timing settings (settlementReviewAt / creditAt).
+      const configured=Number(trade.expectedRewardMinor||0);
+      const rateBps=Number(trade.configuredProfitRateBps||0);
       let grossProfitMinor:number;
-      let settlementResultSource:string;
-      let settlementProvider:string;
-      let exitMarketSnapshotId:number|null=null;
-      let exitPriceUsd:string|null=null;
-      let settlementObservedAt:Date|null=null;
-      let settlementNotes:string;
-      if(exit&&Number.isFinite(entryPrice)&&entryPrice>0&&Number.isFinite(exitPrice)&&exitPrice>0){
-        grossProfitMinor=Math.round(Number(trade.principalMinor)*((exitPrice-entryPrice)/entryPrice));
-        if(!Number.isSafeInteger(grossProfitMinor)||grossProfitMinor<-Number(trade.principalMinor)){
-          // fall through to configured rate
-          grossProfitMinor=Number(trade.expectedRewardMinor||0);
-          settlementResultSource="configured_profit_rate";
-          settlementProvider="platform-configured-rate";
-          settlementNotes="Market exit produced an out-of-bounds result; settled using the configured package profit rate.";
-        } else {
-          settlementResultSource="recorded_market_snapshot";
-          settlementProvider=String(exit.source||"market-sync");
-          exitMarketSnapshotId=Number(exit.id);
-          exitPriceUsd=String(exitPrice);
-          settlementObservedAt=exit.observedAt;
-          settlementNotes="Automatically resolved from a newer recorded market snapshot.";
-        }
+      if(Number.isSafeInteger(configured)&&configured>=0){
+        grossProfitMinor=configured;
+      } else if(Number.isSafeInteger(rateBps)&&rateBps>=0){
+        grossProfitMinor=Number((BigInt(trade.principalMinor)*BigInt(rateBps)+5000n)/10000n);
       } else {
-        const configured=Number(trade.expectedRewardMinor||0);
-        const rateBps=Number(trade.configuredProfitRateBps||0);
-        if(Number.isSafeInteger(configured)&&configured>=0){
-          grossProfitMinor=configured;
-        } else if(Number.isSafeInteger(rateBps)&&rateBps>=0){
-          grossProfitMinor=Number((BigInt(trade.principalMinor)*BigInt(rateBps)+5000n)/10000n);
-        } else {
-          grossProfitMinor=0;
-        }
-        if(!Number.isSafeInteger(grossProfitMinor)||grossProfitMinor<0) grossProfitMinor=0;
-        settlementResultSource="configured_profit_rate";
-        settlementProvider="platform-configured-rate";
-        settlementNotes="No exit market snapshot was available at settlement time; principal and configured profit were settled automatically.";
+        grossProfitMinor=0;
       }
+      if(!Number.isSafeInteger(grossProfitMinor)||grossProfitMinor<0) grossProfitMinor=0;
+      const settlementResultSource="allocation_snapshot";
+      const settlementProvider="platform-configured-rate";
+      const settlementNotes="Automatic trade settled from the return fixed at allocation; no market price was consulted.";
+      const exitMarketSnapshotId:number|null=null;
+      const exitPriceUsd:string|null=null;
+      const settlementObservedAt:Date|null=null;
       let feePolicy:{feeRateBps:number;roundingMode:FeeRoundingMode;policyVersion:number};
       if(trade.packageIdSnapshot!==null&&trade.packageFeeRateBpsSnapshot!==null&&trade.packageFeeRoundingModeSnapshot!==null&&trade.packageFeePolicyVersionSnapshot!==null){
         const saved=normalizePackageFeePolicy({packageId:trade.packageIdSnapshot,version:trade.packageFeePolicyVersionSnapshot,feeRateBps:trade.packageFeeRateBpsSnapshot,roundingMode:trade.packageFeeRoundingModeSnapshot,effectiveAt:trade.packageFeeEffectiveAtSnapshot||trade.confirmedAt,changedAt:trade.confirmedAt});
@@ -5661,12 +5637,12 @@ export async function processAutomaticMarketSettlements(input?: { limit?: number
         exitMarketSnapshotId,exitPriceUsd,settlementResultSource,settlementProvider,settlementObservedAt,
       }).where(and(eq(tradePositions.id,trade.id),eq(tradePositions.status,"confirmed"),eq(tradePositions.settlementStatus,"pending")));
       assertExactlyOneAffectedRow(stateUpdate,"Automatic market settlement transition");
-      await tx.insert(tradeLifecycleEvents).values({tradeId:trade.id,userId:trade.userId,eventType:"automatic_market_settlement_confirmed",stage:"Settlement Confirmed — Awaiting Wallet Credit",payloadJson:JSON.stringify({reference,entryMarketSnapshotId:trade.entryMarketSnapshotId,entryPriceUsd:entryPrice,exitMarketSnapshotId,exitPriceUsd,grossProfitMinor,platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,provider:settlementProvider,observedAt:settlementObservedAt,settlementResultSource})});
+      await tx.insert(tradeLifecycleEvents).values({tradeId:trade.id,userId:trade.userId,eventType:"automatic_market_settlement_confirmed",stage:"Settlement Confirmed — Awaiting Wallet Credit",payloadJson:JSON.stringify({reference,entryMarketSnapshotId:trade.entryMarketSnapshotId,entryPriceUsd:trade.entryPriceUsd??null,exitMarketSnapshotId,exitPriceUsd,grossProfitMinor,platformFeeMinor:accounting.platformFeeMinor,netProfitMinor:accounting.netProfitMinor,provider:settlementProvider,observedAt:settlementObservedAt,settlementResultSource})});
       return "settled" as const;
     });
     if(result==="settled") settled++; else skipped++;
   }
-  return {scanned:due.length,settled,waitingForMarket,skipped,limit,asOf:now.toISOString()};
+  return {scanned:due.length,settled,skipped,limit,asOf:now.toISOString()};
 }
 
 export async function markDueTradesAwaitingConfirmation(userId:number){
@@ -6276,7 +6252,7 @@ export async function processConfirmedTradeCredits(input?: { limit?: number }) {
       if(!trade||trade.status!=="confirmed"||trade.settlementStatus!=="confirmed_awaiting_credit"||trade.walletUpdatedAt) return null;
       const creditDueAt=trade.creditAt||trade.settlementReviewAt||trade.settlesAt;
       if(!creditDueAt||new Date(creditDueAt).getTime()>now.getTime()) return null;
-      const automaticMarketResult=trade.settlementResultSource==="recorded_market_snapshot"||trade.settlementResultSource==="configured_profit_rate";
+      const automaticMarketResult=trade.settlementResultSource==="recorded_market_snapshot"||trade.settlementResultSource==="configured_profit_rate"||trade.settlementResultSource==="allocation_snapshot";
       if(!trade.settlementConfirmedAt||(!trade.settlementConfirmedBy&&!automaticMarketResult)||!trade.settlementReference||trade.settlementOutcome==="legacy_unrecorded") {
         throw new Error("Confirmed trade is missing its evidence-backed settlement record");
       }
@@ -6383,6 +6359,27 @@ export async function processConfirmedTradeCredits(input?: { limit?: number }) {
     } else skipped++;
   }
   return {scanned:due.length,credited,skipped,limit,asOf:now.toISOString()};
+}
+
+/**
+ * Item 19: bounded startup catch-up for automatic pop-up trade settlement.
+ *
+ * Finds every due, uncredited automatic trade and runs the idempotent
+ * reconciliation -> settlement -> credit chain so an overdue trade is credited
+ * exactly once after a server restart, a network loss or a duplicate worker.
+ * Safety comes entirely from the existing guards invoked below: the per-trade
+ * `SELECT ... FOR UPDATE` row lock, the unique `trade_settlement_reference_claims`
+ * insert (duplicate key => skipped) and the `walletUpdatedAt IS NULL` conditional
+ * terminal transition. A repeated run is therefore a no-op, so a late credit is
+ * byte-for-byte identical to an on-time credit (both come from the return fixed
+ * at allocation). The same chain also runs on the periodic 30-second trade cycle.
+ */
+export async function catchUpDueAutomaticSettlements(input?: { limit?: number }) {
+  const limit=Math.max(1,Math.min(250,Number.isSafeInteger(input?.limit)?Number(input?.limit):100));
+  const reconciliation=await reconcileAllDueTradesAwaitingConfirmation();
+  const settlement=await processAutomaticMarketSettlements({limit});
+  const credit=await processConfirmedTradeCredits({limit});
+  return {reconciliation,settlement,credit,limit,asOf:new Date().toISOString()};
 }
 
 type PersistedOpportunityPublication = {

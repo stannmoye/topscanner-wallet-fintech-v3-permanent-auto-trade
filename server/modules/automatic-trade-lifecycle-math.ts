@@ -113,10 +113,37 @@ export function calculateAutomaticTradeCredit(input: AutomaticTradeCreditInput):
   const configuredProfit =
     capitalMinor < 1 ? 0 : calculateConfiguredProfitMinor(capitalMinor, profitRateBps);
 
+  // Item 19: report the real wallet credit. The previous clamp silently turned a
+  // negative realized result into zero, so the reported lifecycle total could
+  // disagree with the wallet. Automatic pop-up settlement only ever supplies the
+  // configured return fixed at allocation (never a market-derived loss), so this
+  // is non-negative in production; a supplied realized value is reported as-is.
   const profitMinor =
     input.realizedNetProfitMinor !== undefined && Number.isSafeInteger(input.realizedNetProfitMinor)
-      ? Math.max(0, Number(input.realizedNetProfitMinor))
+      ? Number(input.realizedNetProfitMinor)
       : configuredProfit;
+
+  if (!Number.isSafeInteger(profitMinor)) {
+    throw new RangeError("Realized return must be a safe integer in minor units");
+  }
+
+  if (profitMinor < 0) {
+    const currency = String(input.currency).trim().toUpperCase();
+    if (!currency) throw new Error("Trade settlement currency is required");
+    const totalCreditedMinor = capitalMinor + profitMinor;
+    if (!Number.isSafeInteger(totalCreditedMinor) || totalCreditedMinor < 0) {
+      throw new RangeError("Automatic trade credit would produce an invalid wallet total");
+    }
+    return {
+      creditedPrincipalMinor: capitalMinor,
+      creditedProfitMinor: profitMinor,
+      totalCreditedMinor,
+      currency,
+      stage: "principal_and_profit_credited",
+      stageLabel: "Principal and profit credited",
+      transitionText: "Principal and profit credited to wallet",
+    };
+  }
 
   const settlement = calculateTradeSettlement({
     currency: input.currency,

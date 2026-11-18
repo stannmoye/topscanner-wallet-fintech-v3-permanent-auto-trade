@@ -26,7 +26,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 16 | Float math in balance summary / min-max / exit P&L | `[-]` | owner: intentional |
 | 17 | Admin wallet priority order | `[x]` | `Fix #17` |
 | 18 | Live fiat FX + customer conversion indicator | `[x]` | `Fix #18` |
-| 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[ ]` | |
+| 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[x]` | `Fix #19` |
 | 20 | Remove package fee entirely | `[ ]` | |
 | 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[ ]` | |
 | 22 | CSRF Origin/Sec-Fetch-Site checks | `[ ]` | |
@@ -106,6 +106,19 @@ Only item 14 was actionable (items 12 and 13 are owner-ignored). Item 14 replace
 ### Batch 5 summary (items 15–17)
 
 Only item 17 was actionable (items 15 and 16 are owner-ignored). Item 17 replaced the alphabetical cross-wallet funding order with a persisted, versioned and audited administrator **wallet funding priority** list (default: USD first, then the other currencies alphabetically; malformed config fails closed; wallet row locks keep a fixed currency order so funding never deadlocks). Tests/typecheck/build green (1373 passed, 31 skipped).
+
+### Batch 6 summary (items 18–20)
+
+Item 18 named and documented the live-FX freshness windows (checked against the provider timestamp; ECB 4 days, fallback 24 h, crypto 5 min) with no behaviour change, and added a minimal customer conversion indicator. Item 19 made automatic pop-up settlement deterministic from the allocation snapshot (no market price, no loss), added a bounded startup catch-up plus the existing 30-second sweep with exactly-once guards, and removed the lifecycle reporting clamp. Item 20 is still to be done.
+
+### Item 19 notes (`Fix #19`)
+
+- **Deterministic, loss-free settlement.** `processAutomaticMarketSettlements` ([db.ts](file:///workspace/server/db.ts)) no longer reads a market snapshot (`marketSnapshots`) or any external API to decide a result. It settles only from the snapshot fixed at allocation (`expectedRewardMinor`, with `configuredProfitRateBps` as the fallback), records `settlementResultSource="allocation_snapshot"` and nulls the exit-snapshot fields, so a network outage cannot change the credit, there is no loss outcome, and an on-time and a late credit are byte-for-byte identical. The due time still comes from the admin timing settings (`settlementReviewAt` / `creditAt`). `processConfirmedTradeCredits` now recognises `allocation_snapshot` as an automatic result source. Debit/credit amounts are unchanged (protected area respected).
+- **Reporting clamp removed.** `calculateAutomaticTradeCredit` ([automatic-trade-lifecycle-math.ts](file:///workspace/server/modules/automatic-trade-lifecycle-math.ts)) no longer clamps a supplied realized result to zero; it reports the value as-is (with safe-integer and non-negative-total validation), so the lifecycle `totalCreditedMinor` always equals the real wallet credit. This is the one expectation item 19 is allowed to change: the characterization test at [trade-ledger-characterization.test.ts](file:///workspace/server/modules/trade-ledger-characterization.test.ts) was updated (a supplied `realizedNetProfitMinor: -400` now reports `-400` / `9_600` instead of `0` / `10_000`). Automatic settlement never supplies a negative result, so the no-loss guarantee still holds.
+- **Startup catch-up + periodic sweep.** New exported `catchUpDueAutomaticSettlements` ([db.ts](file:///workspace/server/db.ts)) runs the reconciliation → settlement → credit chain once at boot ([index.ts](file:///workspace/server/_core/index.ts)); the same chain already runs on the periodic 30-second trade cycle. Exactly-once comes from the per-trade `SELECT … FOR UPDATE` row lock, the unique `trade_settlement_reference_claims` insert (duplicate key ⇒ skipped) and the `walletUpdatedAt IS NULL` conditional terminal transition, so a restart, crash, network loss or duplicate worker cannot double-credit. Removed the now-unused `waitingForMarket` counter.
+- **Admin manual settlement is unchanged** and remains a separate, administrator-confirmed mandatory path — no conflict with the automatic path.
+- **Tests.** New [automatic-trade-no-loss-settlement.contract.test.ts](file:///workspace/server/automatic-trade-no-loss-settlement.contract.test.ts) (6 tests): no market read + allocation-snapshot source + null exit fields; credit guard accepts `allocation_snapshot`; exactly-once guards; the compose chain + bounded limit; the startup + 30 s sweep wiring; and late == on-time credit. Updated `trade-ledger-characterization.test.ts` (clamp expectation) and added a late-equals-on-time case.
+- **Docs.** `AUTOMATIC_TRADE_LIFECYCLE.md` gained a "Deterministic, no-loss settlement and catch-up" section; `docs/TRADING_SYSTEM_SPECIFICATION.md` §6 settlement section gained the item-19 behaviour paragraph.
 
 ### Item 18 notes (`Fix #18`)
 

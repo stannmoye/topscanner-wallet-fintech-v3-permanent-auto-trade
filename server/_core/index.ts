@@ -7,7 +7,7 @@ import { registerProviderOAuthRoutes } from "./providerOAuth";
 import { publicPlatformScript } from "./publicConfig";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
+import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { configuredAuthRateLimitStore, createAuthRateLimiter } from "./authRateLimit";
@@ -439,6 +439,17 @@ async function startServer() {
     };
     const autoTradeTimer = registerWorkerInterval(() => { void runTradeCycle().catch(() => undefined); }, 30_000);
     autoTradeTimer.unref();
+    // Item 19: one bounded startup catch-up clears any overdue automatic pop-up
+    // trade before the periodic 30-second sweep takes over. It is idempotent
+    // (row locks + unique settlement reference + walletUpdatedAt guard), so it is
+    // safe alongside the immediate runTradeCycle() below and after any restart.
+    void catchUpDueAutomaticSettlements({ limit: 250 })
+      .then(result => {
+        if (result.settlement.settled || result.credit.credited) {
+          console.log("[SettlementCatchUp] credited overdue automatic trades on startup", result);
+        }
+      })
+      .catch(error => console.error("[SettlementCatchUp] startup catch-up failed", sanitizeWorkerErrorMessage(error)));
     void runTradeCycle().catch(error => console.error("[AutoTrade]", sanitizeWorkerErrorMessage(error)));
     const refreshMinutes = Number(await getAppSetting("market.refreshIntervalMinutes", "120"));
     if (!Number.isFinite(refreshMinutes) || refreshMinutes < 1) { console.error("[MarketSync] Invalid market.refreshIntervalMinutes; using safe 120-minute fallback"); }

@@ -164,18 +164,32 @@ describe("characterization: automatic trade debit and credit", () => {
     expect(credit).toMatchObject({ creditedPrincipalMinor: 10_000, creditedProfitMinor: 225, totalCreditedMinor: 10_225 });
   });
 
-  it("characterizes today's no-loss clamp on realized profit (item 19 changes this)", () => {
-    // Today a negative realized result is clamped to zero, so the lifecycle total
-    // credit always equals principal. Item 19 keeps the no-loss guarantee but makes
-    // reporting reflect the real credit; the clamp expectation is intentionally here.
+  it("reports a supplied realized result as-is (item 19 changed this from the old no-loss clamp)", () => {
+    // Item 19 removes the clamp in automatic-trade-lifecycle-math so the reported
+    // lifecycle totalCreditedMinor always equals the real wallet credit. The
+    // no-loss guarantee now lives at settlement: processAutomaticMarketSettlements
+    // settles automatic pop-up trades only from the return fixed at allocation, so
+    // it never supplies a negative realized result. This test pins the reporting
+    // behaviour: a supplied value (negative included) is reported as-is.
     const credit = calculateAutomaticTradeCredit({
       capitalMinor: 10_000,
       profitRateBps: 250,
       currency: "USD",
       realizedNetProfitMinor: -400,
     });
-    expect(credit.creditedProfitMinor).toBe(0);
-    expect(credit.totalCreditedMinor).toBe(10_000);
+    expect(credit.creditedProfitMinor).toBe(-400);
+    expect(credit.totalCreditedMinor).toBe(9_600);
+  });
+
+  it("credits principal plus the configured return regardless of when the credit runs", () => {
+    // Item 19: a late credit must be byte-for-byte identical to an on-time credit.
+    // Both derive from the return fixed at allocation, so timing cannot change it.
+    const onTime = calculateAutomaticTradeCredit({ capitalMinor: 10_000, profitRateBps: 250, currency: "USD" });
+    const late = calculateAutomaticTradeCredit({ capitalMinor: 10_000, profitRateBps: 250, currency: "USD" });
+    expect(late).toEqual(onTime);
+    expect(late.creditedPrincipalMinor).toBe(10_000);
+    expect(late.creditedProfitMinor).toBe(250);
+    expect(late.totalCreditedMinor).toBe(10_250);
   });
 });
 
