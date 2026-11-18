@@ -73,6 +73,21 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 63 | Opportunities page eligibility consistency | `[x]` | Fix #63 |
 | 64 | Single source of truth for `packageName` | `[x]` | Fix #64 |
 
+### Item 64 notes (`Fix #64`)
+
+- **Problem.** The auth responses returned the stored `users.packageName` column (seeded to `"No active package"`), while `customer.tradingEligibility` derived the live tier from `customer_package_subscriptions` — so the login response could say "No active package" while eligibility showed "Imperial Ledger".
+- **Single source of truth.** [db.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/db.ts) now exports `NO_ACTIVE_PACKAGE_LABEL = "No active package"`, `resolveCustomerPackageName(userId)` (derived from `getCustomerTradingEligibility(userId).currentPackage?.name`) and `resolveCustomerPackageNames(userIds)` (bulk, same derivation). Both fall back to the label on a missing tier or a lookup failure and never throw, so a derivation fault can never break authentication.
+- **Every reader switched.** The register / customer-login / admin-login responses ([index.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/_core/index.ts)), `auth.me` ([routers.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/routers.ts)), the admin KYC directory ([kyc.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/kyc.ts)), the delivery-diagnostics customer search + detail ([opportunityDeliveryDiagnostics.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/opportunityDeliveryDiagnostics.ts)) and `listPendingSettlements` ([db.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/db.ts)) now derive the name from the resolver instead of reading the column.
+- **Column kept.** `users.packageName` is retained in [schema.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/drizzle/schema.ts) for audit and is still written by `createAdminCustomer`; it is no longer read for display. No migration and no column drop.
+- **Tests.** New [customer-package-name.contract.test.ts](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/server/customer-package-name.contract.test.ts) (6 tests): the resolver derives from eligibility; the column still exists; no remaining display reader of the column anywhere in the server; the three auth responses and `auth.me` use the resolver.
+- **Protected area.** Display derivation only; no ledger, allocation or settlement module touched.
+
+### Final docs pass (`Fix #64`, after item 64)
+
+- Re-read [PERMANENT_AUTO_TRADE_UNLOCK.md](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/PERMANENT_AUTO_TRADE_UNLOCK.md), [docs/TRADING_SYSTEM_SPECIFICATION.md](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/docs/TRADING_SYSTEM_SPECIFICATION.md), [trade-admin-guide.html](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/client/public/trade-admin-guide.html) and this progress index against the final code. They describe the shipped behaviour; the only change in this pass is the item-64 note above plus this note.
+- No stale claim was found that contradicts a shipped fix. The `packageName` mentions in [COMPANY_SELECTION_CONTRACT.md](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/docs/trading/COMPANY_SELECTION_CONTRACT.md) and [AUTOTRADE_FIX_TASKS.md](file:///workspace/topscanner-wallet-fintech-v3-permanent-auto-trade/AUTOTRADE_FIX_TASKS.md) describe unrelated concepts (a company-rotation scope key and a historical SQL `COLLATE` repair note), so they were left unchanged.
+- **AGENTS.md change list: none.** Owner-approved revision 2 (pop-up internal-ledger wallet movement, live-rate rules, admin wallet-priority order, no-loss deterministic settlement) already matches the enforced behaviour, so there was nothing to amend.
+
 ### Item 1 notes (`Fix #1`)
 
 - Surfaced the dropped tRPC error cause in server logs (`server/_core/index.ts` `onError`), leaving the client response unchanged (item 7).
