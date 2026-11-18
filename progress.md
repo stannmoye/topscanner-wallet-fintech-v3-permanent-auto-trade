@@ -48,7 +48,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 38 | Visibility-aware polling | `[x]` | `Fix #38` |
 | 39 | Refresh balance invalidates balances + FX | `[x]` | `Fix #39` |
 | 40 | Minimal customer feed payload | `[x]` | `Fix #40` |
-| 41 | Remove duplicate menus, keep ONE navigation | `[ ]` | |
+| 41 | Remove duplicate menus, keep ONE navigation | `[x]` | `Fix #41` |
 | 42 | Mobile admin drawer group-header close | `[ ]` | |
 | 43 | `AdminSlideMenu` label/active resolution | `[ ]` | |
 | 44 | Replace `window.prompt`/`confirm` | `[ ]` | |
@@ -124,6 +124,34 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 41 notes (`Fix #41`)
+
+- **Problem.** Three overlapping customer navigations: (a) `CustomerTopWorkspaceMenu` — the horizontal "WORKSPACE & INVESTMENTS" strip rendered above the workspace (Home + 10 investment categories + Support Centre); (b) the account/settings rail (`portal-rail customer-primary-rail`) — Account Preferences / Security & Access / Developer Settings / Privacy & Account **plus** the item-35 sound toggle, theme selector and Logout; (c) `CustomerSlideMenu` — the portaled body-level drawer (search + every resource destination). On desktop the drawer was *completely unreachable* (`.customer-slide-portal{display:none!important}` and its trigger hidden), so the rail was the only desktop nav and the top strip duplicated the drawer's page destinations. Three surfaces with inconsistent `aria-current` and duplicated ARIA labelled the same regions.
+- **Kept.** The **`CustomerSlideMenu` drawer is now the single page navigation** on every viewport. It has the best coverage (it already carried the resource/knowledge/legal destinations), the best mobile behaviour (slide-in drawer + search) and the cleanest accessibility (single labelled `<nav>`, one `aria-current`). The account rail is kept **only** as the settings/appearance sidebar (it still carries the sound toggle, theme selector and Logout), so no control or destination is lost.
+- **Removed.** The `CustomerTopWorkspaceMenu` component and its render call in [App.tsx](file:///workspace/repo/client/src/App.tsx) (the fully-redundant desktop strip). Its destinations all live in the drawer's new "Workspace" and expanded "Project & Investment" groups now.
+- **Drawer reachable on desktop.** [index.css](file:///workspace/repo/client/src/index.css) — the `@media (min-width:1101px) and (hover:hover) and (pointer:fine)` block no longer hides `.customer-slide-portal` and no longer hides `.customer-slide-layer .customer-resource-peek-trigger` (now `display:flex`), while `.customer-portal .customer-settings-trigger` stays hidden there (the rail is always visible on wide screens). The touch/narrow block is unchanged, so mobile is unaffected.
+- **Every menu label / destination (item 41 table).**
+
+| Old destination | Old surface(s) | Where it lives now |
+| --- | --- | --- |
+| Home / dashboard | top strip, drawer | drawer → Workspace |
+| Wallet | rail, drawer | drawer → Workspace |
+| Trade & Earn / opportunities | top strip, drawer | drawer → Workspace |
+| Stake & Earn / yield | drawer | drawer → Workspace |
+| Activity | drawer | drawer → Workspace |
+| Crypto Mining | drawer | drawer → Workspace |
+| Support centre | top strip, drawer | drawer → Workspace |
+| Advanced, Intelligence, Account | drawer | drawer → Core Workspace (unchanged) |
+| Whitepaper, Token Launch, Tokenomics, Roadmap, Investment Research | top strip, drawer | drawer → Project & Investment (unchanged entries) |
+| Treasury Bond, Cooperate Dept, Litigation Funds, IP Royalties, Music Royalties, Agro Investment, Carbon Credit, Green Energy | top strip (10 investment categories) | drawer → Project & Investment (added 8) |
+| Knowledge Base, Documentation, FAQs, Trading Guides | drawer | drawer → Knowledge & Support (unchanged) |
+| Risk Disclosure, Legal Documents, News & Updates | drawer | drawer → Transparency & Updates (unchanged) |
+| Notifications, console, resources | header (`PortalHeader`) | unchanged — header bell + console launch + profile |
+| Account Preferences, Security & Access, Developer Settings, Privacy & Account | settings rail | unchanged — settings rail |
+| Sound toggle, Theme selector, Logout | settings rail | unchanged — settings rail |
+- **Tests.** New [customer-navigation-consolidation.contract.test.ts](file:///workspace/repo/client/src/customer-navigation-consolidation.contract.test.ts) (4 tests): `App.tsx` no longer contains `CustomerTopWorkspaceMenu` / `customer-top-workspace-menu`; all 30 required destinations are present as drawer `target`s; the drawer keeps the single `aria-current={section === item.target ? "page" : undefined}`; and `index.css` keeps the desktop visibility block with the drawer trigger reachable. Registered the file in [vitest.config.ts](file:///workspace/repo/vitest.config.ts). Existing [portal-design-pass4.test.ts](file:///workspace/repo/client/src/portal-design-pass4.test.ts) and [notification-sound-deduplication.test.ts](file:///workspace/repo/client/src/notification-sound-deduplication.test.ts) strings stay intact.
+- **Note.** `customerMainNavigation` in `App.tsx` (defined but unused) and the now-dead `.customer-top-workspace-menu` CSS selectors in `customer-reference.css` / `customer-theme-overrides.css` are left for items 59 and later cleanup passes; removing them here is out of scope.
 
 ### Item 40 notes (`Fix #40`)
 

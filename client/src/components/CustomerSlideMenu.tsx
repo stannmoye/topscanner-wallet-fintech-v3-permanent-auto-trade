@@ -2,16 +2,32 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { createPortal } from "react-dom";
 import {
-  Activity, ArrowDownUp, BarChart3, BookMarked, BookOpen, CircleHelp, Coins, Cpu, FileText,
-  Headphones, Home, Library, LockKeyhole, Map, Menu, Newspaper, Scale, Search, ShieldAlert,
-  ShieldCheck, Sparkles, WalletCards, X, type LucideIcon,
+  Activity, ArrowDownUp, BarChart3, BookMarked, BookOpen, Building2, CircleHelp, Coins, FileText,
+  Globe2, Headphones, Home, Landmark, Layers3, Library, LockKeyhole, Map, Menu, Newspaper, Scale,
+  Search, ShieldAlert, ShieldCheck, Sparkles, TrendingUp, WalletCards, X, Zap, type LucideIcon,
 } from "lucide-react";
 
 type CustomerSlideMenuProps = { section: string; onNavigate: (section: string) => void };
 type CustomerDestination = { label: string; detail: string; target: string; icon: LucideIcon; planned?: boolean };
 type CustomerDestinationGroup = { label: string; detail: string; items: CustomerDestination[] };
 
+// Item 41: this drawer is now the single customer navigation. It carries every
+// destination that the removed top workspace strip and the mobile-only hidden
+// surfaces used to expose, so nothing becomes unreachable on desktop or mobile.
 const destinationGroups: CustomerDestinationGroup[] = [
+  {
+    label: "Workspace",
+    detail: "Your main customer pages",
+    items: [
+      { label: "Home", detail: "Main customer dashboard", target: "dashboard", icon: Home },
+      { label: "Wallet", detail: "Balances, funding and transaction history", target: "wallet", icon: WalletCards },
+      { label: "Trade & Earn", detail: "Published customer opportunities", target: "opportunities", icon: ArrowDownUp },
+      { label: "Stake & Earn", detail: "Yield and staking products", target: "yield", icon: Sparkles },
+      { label: "Activity", detail: "Account activity and transactions", target: "activity", icon: Activity },
+      { label: "Crypto Mining", detail: "Mining packages and activity", target: "crypto-mining", icon: Coins },
+      { label: "Support centre", detail: "Customer support and tickets", target: "support", icon: Headphones },
+    ],
+  },
   {
     label: "Core Workspace",
     detail: "Account tools and personal settings",
@@ -30,6 +46,14 @@ const destinationGroups: CustomerDestinationGroup[] = [
       { label: "Tokenomics", detail: "Planned token model · not currently active", target: "tokenomics", icon: Scale, planned: true },
       { label: "Roadmap", detail: "Milestones, delivery phases and priorities", target: "roadmap", icon: Map },
       { label: "Investment Research", detail: "Research notes, signals and market context", target: "investment-research", icon: Library },
+      { label: "Treasury Bond", detail: "Treasury bond investment section", target: "treasury-bond", icon: Landmark },
+      { label: "Cooperate Dept", detail: "Corporate opportunities section", target: "cooperate-dept", icon: Building2 },
+      { label: "Litigation Funds", detail: "Litigation fund opportunities", target: "litigation-funds", icon: Scale },
+      { label: "IP Royalties", detail: "Intellectual property royalty opportunities", target: "ip-royalties", icon: Layers3 },
+      { label: "Music Royalties", detail: "Music royalty opportunities", target: "music-royalties", icon: FileText },
+      { label: "Agro Investment", detail: "Agricultural investment opportunities", target: "agro-investment", icon: TrendingUp },
+      { label: "Carbon Credit", detail: "Carbon credit opportunities", target: "carbon-credit", icon: Globe2 },
+      { label: "Green Energy", detail: "Green energy opportunities", target: "green-energy", icon: Zap },
     ],
   },
   {
