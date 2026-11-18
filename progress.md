@@ -66,7 +66,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 56 | Registry key rename + register 4 patchable fields | `[x]` | `Fix #56` |
 | 57 | Remove/dedupe `getAdminNavigationItem` | `[x]` | `Fix #57` |
 | 58 | Unify display-delay label | `[x]` | `Fix #58` |
-| 59 | Remove dead code (DashboardLayout, unreachable dashboard) | `[ ]` | |
+| 59 | Remove dead code (DashboardLayout, unreachable dashboard) | `[x]` | `Fix #59` |
 | 60 | CustomerTradingEligibility hidden markup/CSS | `[ ]` | |
 | 61 | Cancel focus rAF in CustomerSlideMenu cleanup | `[ ]` | |
 | 62 | Visible "tap to enable sound" hint | `[ ]` | |
@@ -193,7 +193,7 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 | Account Preferences, Security & Access, Developer Settings, Privacy & Account | settings rail | unchanged — settings rail |
 | Sound toggle, Theme selector, Logout | settings rail | unchanged — settings rail |
 - **Tests.** New [customer-navigation-consolidation.contract.test.ts](file:///workspace/repo/client/src/customer-navigation-consolidation.contract.test.ts) (4 tests): `App.tsx` no longer contains `CustomerTopWorkspaceMenu` / `customer-top-workspace-menu`; all 30 required destinations are present as drawer `target`s; the drawer keeps the single `aria-current={section === item.target ? "page" : undefined}`; and `index.css` keeps the desktop visibility block with the drawer trigger reachable. Registered the file in [vitest.config.ts](file:///workspace/repo/vitest.config.ts). Existing [portal-design-pass4.test.ts](file:///workspace/repo/client/src/portal-design-pass4.test.ts) and [notification-sound-deduplication.test.ts](file:///workspace/repo/client/src/notification-sound-deduplication.test.ts) strings stay intact.
-- **Note.** `customerMainNavigation` in `App.tsx` (defined but unused) and the now-dead `.customer-top-workspace-menu` CSS selectors in `customer-reference.css` / `customer-theme-overrides.css` are left for items 59 and later cleanup passes; removing them here is out of scope.
+- **Note.** `customerMainNavigation` in `App.tsx` was removed in `Fix #59`. The now-dead `.customer-top-workspace-menu` CSS selectors in `customer-reference.css` / `customer-theme-overrides.css` remain for a later cleanup pass; removing them here is out of scope.
 
 ### Item 40 notes (`Fix #40`)
 

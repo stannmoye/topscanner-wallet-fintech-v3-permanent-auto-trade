@@ -208,7 +208,7 @@ describe("notification sound playback reliability", () => {
 
   it("keeps the explicit customer opt-in and administrator sound policy gates", () => {
     expect(app).toContain("resolveSoundPlayback(settings,kind,SOUND_PRESETS,{userOptIn:soundEffectsEnabled(),force:options.force,loop:options.loop})");
-    expect(app).toContain('window.localStorage.setItem("wisebond-sound-effects",next?"on":"off")');
+    expect(app).toContain('window.localStorage.setItem("wisebond-sound-effects",sound?"on":"off")');
     // Item 35: cues must read their own loaded policy, never the module-level default.
     expect(app).not.toContain("defaultSoundSettings.enabled");
   });
