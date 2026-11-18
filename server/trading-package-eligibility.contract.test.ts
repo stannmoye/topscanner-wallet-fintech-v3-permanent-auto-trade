@@ -133,9 +133,18 @@ describe("server-side automatic Trading tier eligibility", () => {
     expect(implementation).toContain('.for("update")');
     expect(implementation).toContain("SELECT id,loginMethod FROM users WHERE id=${userId} FOR UPDATE");
     expect(implementation).toContain('if(!activePackageSubscriptions.length) throw new Error("An automatically assigned eligible Trading tier is required")');
-    expect(implementation).toContain('if(!subscriptionsWithQuota.length) subscriptionsWithQuota=eligibleSubscriptions.slice();');
+    // Item 10: allocation now fails closed instead of silently falling back to all
+    // subscriptions when no tier qualifies or the daily quota is exhausted.
+    expect(implementation).not.toContain("subscriptionsWithQuota=eligibleSubscriptions.slice()");
+    expect(implementation).not.toContain("eligibleSubscriptions=activePackageSubscriptions.slice()");
+    expect(implementation).toContain('throw allocationBlockedError("NO_ELIGIBLE_TIER"');
+    expect(implementation).toContain('throw allocationBlockedError("DAILY_OPPORTUNITY_QUOTA_EXHAUSTED"');
     expect(implementation).toContain("samePackageSubscription");
     expect(implementation).toContain("No eligible package subscription remains for this allocation");
+    expect(implementation).toContain('throw allocationBlockedError("CONCURRENT_ACTIVE_TRADE_LIMIT_REACHED"');
+    expect(implementation).toContain('throw allocationBlockedError("DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED"');
+    expect(implementation).toContain('throw allocationBlockedError("DAILY_REWARD_CEILING_REACHED"');
+    expect(implementation).toContain('throw allocationBlockedError("TIER_ACTIVE_INVESTMENT_LIMIT_REACHED"');
     expect(implementation).toContain("Number(subscription.packageId)===input.packageId");
     expect(implementation).toContain("const requirePreviousSettlement=requiresPreviousSettlementForAllocation(globalControls);");
     expect(implementation).toContain("if(requirePreviousSettlement) {");

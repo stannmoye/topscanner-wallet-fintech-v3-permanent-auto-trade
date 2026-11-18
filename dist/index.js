@@ -4070,6 +4070,10 @@ function remainingRewardAllowance(cap, credited, reserved) {
   const remaining = BigInt(cap) - BigInt(credited) - BigInt(reserved);
   return remaining > 0n ? Number(remaining) : 0;
 }
+function canReserveReward(cap, credited, reserved, requested) {
+  assertRewardAmount(requested, "Requested reward");
+  return remainingRewardAllowance(cap, credited, reserved) >= requested;
+}
 var init_advanced_auto_trading = __esm({
   "server/modules/advanced-auto-trading.ts"() {
     "use strict";
@@ -11029,6 +11033,11 @@ async function runAutoTradeCycle(input = {}) {
     ...pausedUntilSettled ? { pausedUntilSettled: true, outstandingTrades } : {}
   };
 }
+function allocationBlockedError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
 async function createTrade(userId, input) {
   if (!AUTOMATIC_FINANCIAL_EXECUTION_ENABLED) throw new Error("Automatic trade allocation is disabled by the server safety guard");
   const db2 = await getDb();
@@ -11209,19 +11218,16 @@ async function createTrade(userId, input) {
     if (!activePackageSubscriptions.length) throw new Error("An automatically assigned eligible Trading tier is required");
     const packagePolicies = await tx.select().from(opportunityPackagePolicies).where(inArray2(opportunityPackagePolicies.packageName, activePackageSubscriptions.map((row) => row.packageName))).for("update");
     const policyByName = indexTradingPackagePolicies(packagePolicies);
-    let eligibleSubscriptions = activePackageSubscriptions.filter((subscription) => {
+    const eligibleSubscriptions = activePackageSubscriptions.filter((subscription) => {
       const configured = policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName));
       if (!configured) return true;
       return hasConfiguredTradingOfferPolicy(configured);
     });
-    if (!eligibleSubscriptions.length) {
-      eligibleSubscriptions = activePackageSubscriptions.slice();
-    }
-    if (!eligibleSubscriptions.length) throw new Error("No active Trading tier subscription is available for allocation");
+    if (!eligibleSubscriptions.length) throw allocationBlockedError("NO_ELIGIBLE_TIER", "No active Trading tier subscription qualifies for allocation; no funds were moved");
     const quotaRows = await tx.execute(sql5`SELECT packageSubscriptionId,COUNT(*) AS used FROM trade_positions WHERE userId=${userId} AND packageSubscriptionId IS NOT NULL AND confirmedAt>=${effectiveOpportunityQuotaStart} AND confirmedAt<${tomorrowStartUtc} AND id>${opportunityUsageResetBoundary?.tradePositionMaxId ?? 0} AND status<>'cancelled' GROUP BY packageSubscriptionId`);
     const usedBySubscription = /* @__PURE__ */ new Map();
     for (const row of quotaRows?.[0] || []) usedBySubscription.set(Number(row.packageSubscriptionId), Number(row.used || 0));
-    let subscriptionsWithQuota = eligibleSubscriptions.filter((subscription) => {
+    const subscriptionsWithQuota = eligibleSubscriptions.filter((subscription) => {
       let snapshot = {};
       try {
         snapshot = JSON.parse(String(subscription.termsSnapshotJson || "{}"));
@@ -11232,11 +11238,11 @@ async function createTrade(userId, input) {
       const used = usedBySubscription.get(Number(subscription.subscriptionId)) || 0;
       return !Number.isSafeInteger(dailyQuota) || dailyQuota <= 0 || used < dailyQuota;
     });
-    if (!subscriptionsWithQuota.length) subscriptionsWithQuota = eligibleSubscriptions.slice();
-    if (!subscriptionsWithQuota.length) throw new Error("No active Trading tier subscription is available for allocation");
+    if (!subscriptionsWithQuota.length) throw allocationBlockedError("DAILY_OPPORTUNITY_QUOTA_EXHAUSTED", "The daily opportunity quota for every eligible Trading tier is exhausted; no funds were moved");
     const requestedSubscription = input.packageSubscriptionId ? subscriptionsWithQuota.find((subscription) => Number(subscription.subscriptionId) === input.packageSubscriptionId && (!input.packageId || Number(subscription.packageId) === input.packageId)) : void 0;
     const samePackageSubscription = input.packageId ? subscriptionsWithQuota.find((subscription) => Number(subscription.packageId) === input.packageId) : void 0;
     if ((input.packageSubscriptionId || input.packageId) && !requestedSubscription && !samePackageSubscription) {
+      throw allocationBlockedError("DAILY_OPPORTUNITY_QUOTA_EXHAUSTED", "The requested Trading tier has no remaining daily opportunity quota for this allocation");
     }
     const activePackageSubscription = requestedSubscription || samePackageSubscription || (!input.packageSubscriptionId && !input.packageId ? subscriptionsWithQuota[0] : void 0);
     if (!activePackageSubscription) throw new Error("No eligible package subscription remains for this allocation");
@@ -11257,8 +11263,11 @@ async function createTrade(userId, input) {
       activeTermsSnapshot = {};
     }
     const tierActiveLimit = Number(activeTermsSnapshot.maxActiveInvestments ?? activePackageSubscription.maxActiveInvestments ?? 0);
+    if (!Number.isSafeInteger(tierActiveLimit) || tierActiveLimit < 0) throw new Error("The selected tier's active-investment cap is invalid; allocation was rejected safely");
     if (tierActiveLimit > 0) {
-      void tierActiveLimit;
+      const activeInvestmentRows = await tx.execute(sql5`SELECT COUNT(*) AS active FROM trade_positions WHERE userId=${userId} AND packageSubscriptionId=${selectedSubscriptionId} AND status<>'cancelled' AND (status<>'settled' OR settlementStatus<>'completed')`);
+      const activeInvestments = Number(activeInvestmentRows?.[0]?.[0]?.active || 0);
+      if (activeInvestments >= tierActiveLimit) throw allocationBlockedError("TIER_ACTIVE_INVESTMENT_LIMIT_REACHED", "The selected tier already has its maximum of " + tierActiveLimit + " active investment(s); allocation was blocked");
     }
     if (packagePolicy) {
       if (requirePreviousSettlement) {
@@ -11271,9 +11280,18 @@ async function createTrade(userId, input) {
           throw new Error("A previous trade settlement is still pending");
         }
       }
-      void packagePolicy.maxConcurrentActiveTrades;
-      void packagePolicy.maxTradeAttemptsPerDay;
-      void packagePolicy.maxSuccessfulTradesPerDay;
+      const maxConcurrentActiveTrades = Number(packagePolicy.maxConcurrentActiveTrades);
+      if (!Number.isSafeInteger(maxConcurrentActiveTrades) || maxConcurrentActiveTrades < 1) throw new Error("The selected tier's concurrent-trade cap is invalid; allocation was rejected safely");
+      const concurrentRows = await tx.execute(sql5`SELECT COUNT(*) AS active FROM trade_positions WHERE userId=${userId} AND status<>'cancelled' AND (status<>'settled' OR settlementStatus<>'completed')`);
+      const concurrentActive = Number(concurrentRows?.[0]?.[0]?.active || 0);
+      if (concurrentActive >= maxConcurrentActiveTrades) throw allocationBlockedError("CONCURRENT_ACTIVE_TRADE_LIMIT_REACHED", "The customer already has the maximum of " + maxConcurrentActiveTrades + " active trade(s) allowed by the selected tier; allocation was blocked");
+      const maxSuccessfulTradesPerDay = Number(packagePolicy.maxSuccessfulTradesPerDay);
+      if (!Number.isSafeInteger(maxSuccessfulTradesPerDay) || maxSuccessfulTradesPerDay < 0) throw new Error("The selected tier's daily successful-trade cap is invalid; allocation was rejected safely");
+      if (maxSuccessfulTradesPerDay > 0) {
+        const successRows = await tx.execute(sql5`SELECT COUNT(*) AS settled FROM trade_positions WHERE userId=${userId} AND status='settled' AND settlementStatus='completed' AND settledAt>=${todayStartUtc} AND settledAt<${tomorrowStartUtc}`);
+        const settledToday = Number(successRows?.[0]?.[0]?.settled || 0);
+        if (settledToday >= maxSuccessfulTradesPerDay) throw allocationBlockedError("DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED", "The customer reached the tier's daily successful-trade limit of " + maxSuccessfulTradesPerDay + "; allocation was blocked");
+      }
     }
     const currencyRow = (await tx.select({ scale: currencyRegistry.scale }).from(currencyRegistry).where(eq3(currencyRegistry.code, offer.currency)).limit(1))[0];
     if (!currencyRow) throw new Error(`Currency ${offer.currency} is not configured`);
@@ -11352,7 +11370,8 @@ async function createTrade(userId, input) {
         AND tp.settledAt>=${todayStartUtc} AND tp.settledAt<${tomorrowStartUtc}
         AND tp.netProfitMinor>0`);
       const reserved = Number(reservationRows?.[0]?.[0]?.reserved || 0), credited = Number(creditedRows?.[0]?.[0]?.credited || 0);
-      void remainingRewardAllowance(Number(packagePolicy.maxDailyRewardMinor), credited, reserved);
+      if (!canReserveReward(Number(packagePolicy.maxDailyRewardMinor), credited, reserved, reward))
+        throw allocationBlockedError("DAILY_REWARD_CEILING_REACHED", "The customer reached the selected tier's daily reward ceiling; allocation was blocked");
     }
     if (fundingPlan && fundingPlan.sourceDebits.length) {
       const targetRate = tradeFxRates.get(String(offer.currency).toUpperCase());

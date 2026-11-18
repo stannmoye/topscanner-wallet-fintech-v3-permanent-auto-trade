@@ -17,7 +17,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 7 | SQL text in 500 responses | `[-]` | owner: leave alone |
 | 8 | Replace `1/x` float inversion with exact decimal | `[x]` | `Fix #8` |
 | 9 | Use live API rates everywhere a calc reads a stored rate | `[x]` | `Fix #9` |
-| 10 | Allocation fail-open — enforce tier/quota caps | `[ ]` | |
+| 10 | Allocation fail-open — enforce tier/quota caps | `[x]` | `Fix #10` |
 | 11 | Remove fallback session secret | `[ ]` | |
 | 12 | database.sql / Git LFS dump | `[-]` | owner: ignore |
 | 13 | General .gitignore | `[-]` | owner: ignore (except item 50) |
@@ -98,6 +98,15 @@ Item 4 added the UNION-branch regression test for item 3; item 5 fixed the ambig
 ### Item 8 notes (`Fix #8`)
 
 - `marketSync.ts` line 25 stored `String(1 / Number(row.rate))` and `marketProviders.ts` lines 92/110 stored `String(1 / usdToNative)`, producing binary-float reciprocals such as `1.0998922105633648`. Added `invertDecimalRate(rate, decimalPlaces = 12)` to `shared/money.ts` (decimal.js, half-up, fixed 12 decimals — matching the scale `rateToScaled` parses) and used it at all three sites. The stored `currencyRegistry.usdRate` is now an exact-decimal string. Unit tests live in `server/fx-rate-inversion.test.ts` (the `shared/**` glob is not collected by `vitest.config.ts`, so tests must live under `server/`), plus a contract assertion in `market-sync-no-synthetic-economics.contract.test.ts` that no `1/x` float inversion remains.
+
+### Item 10 notes (`Fix #10`)
+
+- Allocation in `createTrade` (`server/db.ts`) **failed open**: when no subscription passed tier eligibility or the daily opportunity quota it silently fell back to *all* active subscriptions, and the concurrency / daily-success / daily-reward / per-tier active-investment caps were `void`-ed (unenforced). Every gate now **fails closed** and records a clear blocked state via a new `allocationBlockedError(code, message)` helper whose `code` is preserved by `decideTradeExecutionRetry` and persisted on the missed-opportunity record.
+- New blocked codes: `NO_ELIGIBLE_TIER`, `DAILY_OPPORTUNITY_QUOTA_EXHAUSTED`, `TIER_ACTIVE_INVESTMENT_LIMIT_REACHED`, `CONCURRENT_ACTIVE_TRADE_LIMIT_REACHED`, `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED`, `DAILY_REWARD_CEILING_REACHED`. All throws happen **before any wallet debit/credit**, so no funds move on a block (protected-area amounts unchanged).
+- Cap semantics (documented in the tier editor `client/src/components/TradingDeliveryPolicyEditor.tsx`): `maxActiveInvestments`, `maxSuccessfulTradesPerDay` and `maxDailyRewardMinor` treat **0 as "no cap"**; `maxConcurrentActiveTrades` has a minimum of 1 and is always enforced. Invalid/negative cap values are rejected safely rather than silently ignored. `maxTradeAttemptsPerDay` remains enforced at `claimOpportunityExecutionAttempt` (its own execution domain) and was **not** moved into `createTrade`.
+- Reward-ceiling enforcement now uses `canReserveReward(...)` (imported from `server/modules/advanced-auto-trading.ts`) and runs before the `trade_reward_reservations` row is written, so a blocked trade never reserves reward budget.
+- Tests: `server/trading-allocation-fail-closed.contract.test.ts` (new, 6 tests) asserts fail-closed behavior, 0-means-no-cap semantics, block-before-reservation ordering, and that the uppercase block codes survive `decideTradeExecutionRetry`. `server/trading-package-eligibility.contract.test.ts` updated: the old fail-open assertion (`subscriptionsWithQuota=eligibleSubscriptions.slice()`) is now a `not.toContain`, replaced with positive assertions for each new blocked code. Characterization tests (item 9) still pass unchanged.
+- **Items 9, 10, 14, 17, 18, 19, 20, 30** may touch allocation/settlement/ledger; this is the first after 9.
 
 ### Item 9 notes (`Fix #9`)
 
