@@ -6,7 +6,7 @@ This manifest reflects the current source-level entry routing. It is not a subst
 |---|---|---|
 | `/` | Client-rendered SPA → `PortalGateway` | Portal gateway with customer and administrator entry points. |
 | `/customer` | Client-rendered SPA → `CustomerPortal` | Customer signup/sign-in and authenticated session resolution via `trpc.auth.me`; OAuth profile completion is handled by the server callback flow. |
-| `/ops-console-7f3a` | Client-rendered SPA → `AdminRoute` | Unlisted administrator sign-in and operations portal; server-side authorization remains mandatory. Current source matches any path beginning with this prefix. |
+| `/ops-console-7f3a` | Client-rendered SPA → `AdminRoute` | Unlisted administrator sign-in and operations portal; server-side authorization remains mandatory. Current source matches any path beginning with this prefix. `/admin` is deliberately **not** an alias for this route, so probing it cannot disclose the console location. |
 | Other non-root, non-admin paths | Client-rendered SPA → `CustomerPortal` | The current client routing falls back to the customer portal. Confirm server/static fallback behaviour and whether unknown paths should instead return a not-found view. Customer sections are primarily in-app state, not separate URL paths. |
 | `/api/health` | Express server | Unauthenticated health check. |
 | `/api/oauth/google/start` | Express server | Google authorization start; reads server-only credentials. |

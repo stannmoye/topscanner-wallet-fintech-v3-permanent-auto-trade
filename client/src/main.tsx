@@ -19,7 +19,10 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof Error)) return;
   if (!/UNAUTHORIZED|Authentication required|Session has been revoked/i.test(error.message)) return;
   const current = window.location.pathname;
-  const target = current.startsWith("/ops-console") || current.startsWith("/admin")
+  // Item 49: only the console's own path prefix maps to the administrator sign-in.
+  // "/admin" is deliberately not aliased here, so probing it cannot reveal the
+  // console location.
+  const target = current.startsWith("/ops-console")
     ? "/ops-console-7f3a"
     : "/customer";
   if (current !== target) window.location.assign(target);

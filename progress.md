@@ -56,7 +56,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 46 | Remove password pepper | `[x]` | owner decision: keep |
 | 47 | Shorten sessions with sliding renewal | `[x]` | owner decision: keep current |
 | 48 | Remove legacy 3-part session tokens | `[x]` | owner decision: keep legacy |
-| 49 | Strengthen admin checks (keep `/ops-console-7f3a`) | `[ ]` | |
+| 49 | Strengthen admin checks (keep `/ops-console-7f3a`) | `[x]` | `Fix #49` |
 | 50 | Stop tracking dist/ + 2 zips (add narrow .gitignore) | `[ ]` | |
 | 51 | Lower global body limits per route | `[ ]` | |
 | 52 | `/api/platform/config.js` browser-key only | `[ ]` | |

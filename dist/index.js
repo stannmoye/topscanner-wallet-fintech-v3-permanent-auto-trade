@@ -13455,8 +13455,60 @@ async function notifyOwner(payload) {
 }
 
 // server/_core/trpc.ts
-import { initTRPC, TRPCError as TRPCError2 } from "@trpc/server";
+import { initTRPC, TRPCError as TRPCError3 } from "@trpc/server";
 import superjson from "superjson";
+
+// server/_core/adminRateLimit.ts
+import { TRPCError as TRPCError2 } from "@trpc/server";
+var ADMIN_MUTATION_RATE_LIMIT_WINDOW_MS = 5 * 6e4;
+var ADMIN_MUTATION_RATE_LIMIT_MAX = 300;
+function tooManyRequests() {
+  return new TRPCError2({
+    code: "TOO_MANY_REQUESTS",
+    message: "Too many administrator actions in a short period. Please wait a moment and try again."
+  });
+}
+function createAdminMutationRateLimiter(options = {}) {
+  const windowMs = options.windowMs ?? ADMIN_MUTATION_RATE_LIMIT_WINDOW_MS;
+  const max = options.max ?? ADMIN_MUTATION_RATE_LIMIT_MAX;
+  const store = options.store;
+  const now = options.now ?? Date.now;
+  const buckets = /* @__PURE__ */ new Map();
+  return async function consume(adminUserId) {
+    const key = `admin-mutation:${adminUserId}`;
+    if (store) {
+      let result;
+      try {
+        result = await store.consume(key, windowMs);
+      } catch (error) {
+        console.warn(
+          "[AdminRateLimit] Shared store unavailable; allowing administrator mutation",
+          error instanceof Error ? error.name : "UnknownError"
+        );
+        return;
+      }
+      if (result.count > max) throw tooManyRequests();
+      return;
+    }
+    const current = now();
+    let bucket = buckets.get(key);
+    if (!bucket || bucket.resetAt <= current) {
+      bucket = { count: 0, resetAt: current + windowMs };
+      buckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    if (buckets.size > 1e4) {
+      const oldest = buckets.keys().next().value;
+      if (oldest !== void 0 && oldest !== key) buckets.delete(oldest);
+    }
+    if (bucket.count > max) throw tooManyRequests();
+  };
+}
+var enforceAdminMutationRateLimit = createAdminMutationRateLimiter({
+  store: configuredAuthRateLimitStore
+});
+
+// server/_core/trpc.ts
 var t = initTRPC.context().create({
   transformer: superjson
 });
@@ -13465,7 +13517,7 @@ var publicProcedure = t.procedure;
 var requireUser = t.middleware(async (opts) => {
   const { ctx, next } = opts;
   if (!ctx.user) {
-    throw new TRPCError2({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+    throw new TRPCError3({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
   return next({
     ctx: {
@@ -13477,9 +13529,12 @@ var requireUser = t.middleware(async (opts) => {
 var protectedProcedure = t.procedure.use(requireUser);
 var adminProcedure = t.procedure.use(
   t.middleware(async (opts) => {
-    const { ctx, next } = opts;
+    const { ctx, next, type } = opts;
     if (!ctx.user || ctx.user.role !== "admin") {
-      throw new TRPCError2({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+      throw new TRPCError3({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    }
+    if (type === "mutation") {
+      await enforceAdminMutationRateLimit(ctx.user.id);
     }
     return next({
       ctx: {
@@ -13759,7 +13814,7 @@ async function getCustomerCommunicationOptions(customerName, customerEmail) {
 
 // server/routers.ts
 init_db();
-import { TRPCError as TRPCError5 } from "@trpc/server";
+import { TRPCError as TRPCError6 } from "@trpc/server";
 
 // server/stakeEarn.ts
 init_mysql();
@@ -16876,7 +16931,7 @@ async function invalidateUserSessions(userId) {
 init_schema();
 import { randomBytes } from "node:crypto";
 import { and as and6, count as count2, desc as desc4, eq as eq7, inArray as inArray3 } from "drizzle-orm";
-import { TRPCError as TRPCError3 } from "@trpc/server";
+import { TRPCError as TRPCError4 } from "@trpc/server";
 
 // shared/privacy.ts
 var PRIVACY_REQUEST_TRANSITIONS = {
@@ -16975,7 +17030,7 @@ function asCustomerRequest(row, events) {
 }
 function normalizeSections(sections) {
   if (sections.length < 6 || sections.length > 16) {
-    throw new TRPCError3({ code: "BAD_REQUEST", message: "A privacy notice must contain between 6 and 16 sections." });
+    throw new TRPCError4({ code: "BAD_REQUEST", message: "A privacy notice must contain between 6 and 16 sections." });
   }
   const ids = /* @__PURE__ */ new Set();
   return sections.map((section) => {
@@ -16983,10 +17038,10 @@ function normalizeSections(sections) {
     const title = cleanText2(section.title, 160);
     const body = section.body.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim();
     if (!/^[a-z0-9-]{2,48}$/.test(id2) || ids.has(id2)) {
-      throw new TRPCError3({ code: "BAD_REQUEST", message: "Each policy section needs a unique, valid identifier." });
+      throw new TRPCError4({ code: "BAD_REQUEST", message: "Each policy section needs a unique, valid identifier." });
     }
     if (title.length < 3 || body.length < 40) {
-      throw new TRPCError3({ code: "BAD_REQUEST", message: "Each policy section needs a heading and a meaningful explanation." });
+      throw new TRPCError4({ code: "BAD_REQUEST", message: "Each policy section needs a heading and a meaningful explanation." });
     }
     ids.add(id2);
     return { id: id2, title, body };
@@ -16994,19 +17049,19 @@ function normalizeSections(sections) {
 }
 async function getCurrentPrivacyPolicy() {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "Privacy information is temporarily unavailable." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Privacy information is temporarily unavailable." });
   const row = (await db2.select().from(privacyPolicyVersions).where(eq7(privacyPolicyVersions.status, "published")).orderBy(desc4(privacyPolicyVersions.publishedAt), desc4(privacyPolicyVersions.id)).limit(1))[0];
   return row ? asCustomerPolicy(row) : null;
 }
 async function getPrivacyPolicyHistory() {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "Privacy history is temporarily unavailable." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Privacy history is temporarily unavailable." });
   const rows2 = await db2.select().from(privacyPolicyVersions).where(inArray3(privacyPolicyVersions.status, ["published", "archived"])).orderBy(desc4(privacyPolicyVersions.publishedAt), desc4(privacyPolicyVersions.id)).limit(25);
   return rows2.map(asCustomerPolicy);
 }
 async function getAdminPrivacyPolicyState() {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "Privacy management is temporarily unavailable." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Privacy management is temporarily unavailable." });
   const [rows2, currentRows, draftRows, recentAudit] = await Promise.all([
     db2.select().from(privacyPolicyVersions).orderBy(desc4(privacyPolicyVersions.updatedAt), desc4(privacyPolicyVersions.id)).limit(40),
     db2.select().from(privacyPolicyVersions).where(eq7(privacyPolicyVersions.status, "published")).orderBy(desc4(privacyPolicyVersions.publishedAt), desc4(privacyPolicyVersions.id)).limit(1),
@@ -17023,7 +17078,7 @@ async function getAdminPrivacyPolicyState() {
 }
 async function savePrivacyPolicyDraft(adminId, input) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "Privacy changes could not be saved." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Privacy changes could not be saved." });
   const title = cleanText2(input.title, 200);
   const summary = cleanText2(input.summary, 700);
   const controllerName = cleanText2(input.controllerName, 200);
@@ -17033,13 +17088,13 @@ async function savePrivacyPolicyDraft(adminId, input) {
   const htmlContent = (input.htmlContent || "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim();
   const sections = htmlContent ? input.sections.map((section) => ({ ...section, body: section.body.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim() })) : normalizeSections(input.sections);
   if (title.length < 5 || summary.length < 20 || controllerName.length < 3 || privacyContact.length < 5) {
-    throw new TRPCError3({ code: "BAD_REQUEST", message: "Enter a descriptive notice title and summary, a responsible organization, and a privacy contact channel before saving." });
+    throw new TRPCError4({ code: "BAD_REQUEST", message: "Enter a descriptive notice title and summary, a responsible organization, and a privacy contact channel before saving." });
   }
   return db2.transaction(async (tx) => {
     await tx.select({ id: privacyPolicyVersions.id }).from(privacyPolicyVersions).orderBy(privacyPolicyVersions.id).for("update");
     const draft = input.draftId ? (await tx.select().from(privacyPolicyVersions).where(and6(eq7(privacyPolicyVersions.id, input.draftId), eq7(privacyPolicyVersions.status, "draft"))).limit(1).for("update"))[0] : (await tx.select().from(privacyPolicyVersions).where(eq7(privacyPolicyVersions.status, "draft")).orderBy(desc4(privacyPolicyVersions.updatedAt)).limit(1).for("update"))[0];
     if (input.draftId && !draft) {
-      throw new TRPCError3({ code: "NOT_FOUND", message: "That draft is no longer available. Refresh the Privacy Centre and retry." });
+      throw new TRPCError4({ code: "NOT_FOUND", message: "That draft is no longer available. Refresh the Privacy Centre and retry." });
     }
     let draftId;
     if (draft) {
@@ -17071,19 +17126,19 @@ async function savePrivacyPolicyDraft(adminId, input) {
   });
 }
 async function publishPrivacyPolicy(adminId, draftId, reviewAcknowledged) {
-  if (!reviewAcknowledged) throw new TRPCError3({ code: "BAD_REQUEST", message: "Confirm that the notice has received its required review before publishing." });
+  if (!reviewAcknowledged) throw new TRPCError4({ code: "BAD_REQUEST", message: "Confirm that the notice has received its required review before publishing." });
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "The privacy notice could not be published." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The privacy notice could not be published." });
   return db2.transaction(async (tx) => {
     await tx.select({ id: privacyPolicyVersions.id }).from(privacyPolicyVersions).orderBy(privacyPolicyVersions.id).for("update");
     const draft = (await tx.select().from(privacyPolicyVersions).where(and6(eq7(privacyPolicyVersions.id, draftId), eq7(privacyPolicyVersions.status, "draft"))).limit(1).for("update"))[0];
-    if (!draft) throw new TRPCError3({ code: "NOT_FOUND", message: "The selected draft is no longer available." });
+    if (!draft) throw new TRPCError4({ code: "NOT_FOUND", message: "The selected draft is no longer available." });
     const htmlContent = draft.htmlContent || "";
     const sections = htmlContent.trim() ? parseSections(draft.sectionsJson) : normalizeSections(parseSections(draft.sectionsJson));
     const title = cleanText2(draft.title, 200);
     const summary = cleanText2(draft.summary, 700);
     if (title.length < 5 || summary.length < 20 || !htmlContent.trim() && sections.length < 6 || draft.controllerName.trim().length < 3 || draft.controllerName.trim().toLowerCase() === "not configured" || draft.privacyContact.trim().length < 5 || !htmlContent.trim() && sections.some((section) => section.title.trim().length < 3 || section.body.trim().length < 40)) {
-      throw new TRPCError3({ code: "BAD_REQUEST", message: "The draft is incomplete. Confirm the responsible organization and privacy contact, then provide either complete HTML notice content or at least six complete structured sections before publication." });
+      throw new TRPCError4({ code: "BAD_REQUEST", message: "The draft is incomplete. Confirm the responsible organization and privacy contact, then provide either complete HTML notice content or at least six complete structured sections before publication." });
     }
     const latest = (await tx.select().from(privacyPolicyVersions).where(inArray3(privacyPolicyVersions.status, ["published", "archived"])).orderBy(desc4(privacyPolicyVersions.publishedAt), desc4(privacyPolicyVersions.id)).limit(1))[0];
     const nextVersion = nextPrivacyVersion(latest?.versionLabel);
@@ -17102,12 +17157,12 @@ async function publishPrivacyPolicy(adminId, draftId, reviewAcknowledged) {
 }
 async function listAdminPrivacyRequesters() {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request queue is temporarily unavailable." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request queue is temporarily unavailable." });
   return db2.select({ id: users.id }).from(users).where(eq7(users.role, "admin"));
 }
 async function listMyPrivacyRequests(userId) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "Your privacy requests are temporarily unavailable." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Your privacy requests are temporarily unavailable." });
   const rows2 = await db2.select().from(privacyRequests).where(eq7(privacyRequests.userId, userId)).orderBy(desc4(privacyRequests.createdAt), desc4(privacyRequests.id)).limit(30);
   if (!rows2.length) return [];
   const events = await db2.select().from(privacyRequestEvents).where(inArray3(privacyRequestEvents.requestId, rows2.map((row) => row.id))).orderBy(desc4(privacyRequestEvents.createdAt), desc4(privacyRequestEvents.id));
@@ -17115,17 +17170,17 @@ async function listMyPrivacyRequests(userId) {
 }
 async function createPrivacyRequest(userId, input) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "Your privacy request could not be submitted." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Your privacy request could not be submitted." });
   const subject = cleanText2(input.subject, 180);
   const details = cleanText2(input.details || "", 3e3);
   const idempotencyKey2 = cleanText2(input.idempotencyKey, 80);
   if (subject.length < 5 || idempotencyKey2.length < 8) {
-    throw new TRPCError3({ code: "BAD_REQUEST", message: "Add a clear subject and retry the request." });
+    throw new TRPCError4({ code: "BAD_REQUEST", message: "Add a clear subject and retry the request." });
   }
   return db2.transaction(async (tx) => {
     const account = (await tx.select({ id: users.id, role: users.role, loginMethod: users.loginMethod }).from(users).where(eq7(users.id, userId)).limit(1).for("update"))[0];
     if (!account || account.role !== "user" || account.loginMethod === "closed") {
-      throw new TRPCError3({ code: "NOT_FOUND", message: "Your customer account is not available for this request." });
+      throw new TRPCError4({ code: "NOT_FOUND", message: "Your customer account is not available for this request." });
     }
     const prior = (await tx.select().from(privacyRequests).where(and6(eq7(privacyRequests.userId, userId), eq7(privacyRequests.idempotencyKey, idempotencyKey2))).limit(1))[0];
     if (prior) return { id: prior.id, requestReference: prior.requestReference, status: prior.status, duplicate: true };
@@ -17134,7 +17189,7 @@ async function createPrivacyRequest(userId, input) {
       inArray3(privacyRequests.status, ACTIVE_STATUSES)
     )))[0]?.value || 0;
     if (Number(active) >= 5) {
-      throw new TRPCError3({ code: "TOO_MANY_REQUESTS", message: "You already have several privacy requests awaiting review. Check their status or contact the Support Centre before opening another." });
+      throw new TRPCError4({ code: "TOO_MANY_REQUESTS", message: "You already have several privacy requests awaiting review. Check their status or contact the Support Centre before opening another." });
     }
     const requestReference = "PRV-" + Date.now().toString(36).toUpperCase() + "-" + randomBytes(4).toString("hex").toUpperCase();
     const result = await tx.insert(privacyRequests).values({ requestReference, idempotencyKey: idempotencyKey2, userId, requestType: input.requestType, subject, details: details || null, status: "submitted" });
@@ -17152,11 +17207,11 @@ async function createPrivacyRequest(userId, input) {
 }
 async function cancelMyPrivacyRequest(userId, requestId) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "The request could not be cancelled." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The request could not be cancelled." });
   return db2.transaction(async (tx) => {
     const row = (await tx.select().from(privacyRequests).where(and6(eq7(privacyRequests.id, requestId), eq7(privacyRequests.userId, userId))).limit(1).for("update"))[0];
-    if (!row) throw new TRPCError3({ code: "NOT_FOUND", message: "Privacy request not found." });
-    if (row.status !== "submitted") throw new TRPCError3({ code: "BAD_REQUEST", message: "A request can only be cancelled while it is awaiting initial review." });
+    if (!row) throw new TRPCError4({ code: "NOT_FOUND", message: "Privacy request not found." });
+    if (row.status !== "submitted") throw new TRPCError4({ code: "BAD_REQUEST", message: "A request can only be cancelled while it is awaiting initial review." });
     await tx.update(privacyRequests).set({ status: "cancelled" }).where(and6(eq7(privacyRequests.id, requestId), eq7(privacyRequests.userId, userId), eq7(privacyRequests.status, "submitted")));
     await tx.insert(privacyRequestEvents).values({
       requestId,
@@ -17172,7 +17227,7 @@ async function cancelMyPrivacyRequest(userId, requestId) {
 }
 async function listAdminPrivacyRequests(status) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request queue is temporarily unavailable." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request queue is temporarily unavailable." });
   const query = db2.select({
     id: privacyRequests.id,
     requestReference: privacyRequests.requestReference,
@@ -17190,7 +17245,7 @@ async function listAdminPrivacyRequests(status) {
 }
 async function getAdminPrivacyRequestDetail(requestId) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request could not be loaded." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request could not be loaded." });
   const request = (await db2.select({
     id: privacyRequests.id,
     requestReference: privacyRequests.requestReference,
@@ -17207,25 +17262,25 @@ async function getAdminPrivacyRequestDetail(requestId) {
     reviewedBy: privacyRequests.reviewedBy,
     reviewedAt: privacyRequests.reviewedAt
   }).from(privacyRequests).innerJoin(users, eq7(privacyRequests.userId, users.id)).where(eq7(privacyRequests.id, requestId)).limit(1))[0];
-  if (!request) throw new TRPCError3({ code: "NOT_FOUND", message: "Privacy request not found." });
+  if (!request) throw new TRPCError4({ code: "NOT_FOUND", message: "Privacy request not found." });
   const events = await db2.select().from(privacyRequestEvents).where(eq7(privacyRequestEvents.requestId, requestId)).orderBy(desc4(privacyRequestEvents.createdAt), desc4(privacyRequestEvents.id));
   return { ...request, events };
 }
 async function updatePrivacyRequest(adminId, input) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request could not be updated." });
+  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request could not be updated." });
   const customerMessage = cleanText2(input.customerMessage || "", 1500);
   const internalNote = cleanText2(input.internalNote || "", 3e3);
   return db2.transaction(async (tx) => {
     const row = (await tx.select().from(privacyRequests).where(eq7(privacyRequests.id, input.requestId)).limit(1).for("update"))[0];
-    if (!row) throw new TRPCError3({ code: "NOT_FOUND", message: "Privacy request not found." });
+    if (!row) throw new TRPCError4({ code: "NOT_FOUND", message: "Privacy request not found." });
     if (!canTransitionPrivacyRequest(row.status, input.status)) {
-      throw new TRPCError3({ code: "BAD_REQUEST", message: "That request status transition is not permitted. Refresh the queue and review the current status." });
+      throw new TRPCError4({ code: "BAD_REQUEST", message: "That request status transition is not permitted. Refresh the queue and review the current status." });
     }
     const statusChanged = row.status !== input.status;
     const visibleMessage = customerMessage || (statusChanged ? privacyRequestStatusMessage(input.status) : "");
     if (!statusChanged && !internalNote && !customerMessage) {
-      throw new TRPCError3({ code: "BAD_REQUEST", message: "Change the request status or add a customer message or internal note." });
+      throw new TRPCError4({ code: "BAD_REQUEST", message: "Change the request status or add a customer message or internal note." });
     }
     await tx.update(privacyRequests).set({
       status: input.status,
@@ -17259,18 +17314,18 @@ init_db();
 init_schema();
 import crypto18 from "node:crypto";
 import { and as and7, eq as eq8, lte as lte4, or as or4, isNull as isNull4, sql as sql8 } from "drizzle-orm";
-import { TRPCError as TRPCError4 } from "@trpc/server";
+import { TRPCError as TRPCError5 } from "@trpc/server";
 init_workerHealth();
 init_workerRuntime();
 var CRON_RANGES = [[0, 59], [0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
 function parseCronField(raw, min, max, normalizeDow = false) {
-  if (!raw) throw new TRPCError4({ code: "BAD_REQUEST", message: "Cron fields cannot be empty." });
+  if (!raw) throw new TRPCError5({ code: "BAD_REQUEST", message: "Cron fields cannot be empty." });
   const values = /* @__PURE__ */ new Set();
   for (const item of raw.split(",")) {
     const match = /^(\*|\d+|\d+-\d+)(?:\/(\d+))?$/.exec(item);
-    if (!match) throw new TRPCError4({ code: "BAD_REQUEST", message: `Invalid cron field: ${raw}` });
+    if (!match) throw new TRPCError5({ code: "BAD_REQUEST", message: `Invalid cron field: ${raw}` });
     const step = Number(match[2] || 1);
-    if (!Number.isSafeInteger(step) || step < 1 || step > max - min + 1) throw new TRPCError4({ code: "BAD_REQUEST", message: "Cron step is outside the supported range." });
+    if (!Number.isSafeInteger(step) || step < 1 || step > max - min + 1) throw new TRPCError5({ code: "BAD_REQUEST", message: "Cron step is outside the supported range." });
     let start = min;
     let end = max;
     if (match[1] !== "*") {
@@ -17278,7 +17333,7 @@ function parseCronField(raw, min, max, normalizeDow = false) {
       start = bounds[0];
       end = bounds.length === 2 ? bounds[1] : bounds[0];
     }
-    if (start < min || end > max || start > end) throw new TRPCError4({ code: "BAD_REQUEST", message: `Cron field values must be between ${min} and ${max}.` });
+    if (start < min || end > max || start > end) throw new TRPCError5({ code: "BAD_REQUEST", message: `Cron field values must be between ${min} and ${max}.` });
     for (let value = start; value <= end; value += step) {
       values.add(normalizeDow && value === 7 ? 0 : value);
     }
@@ -17287,10 +17342,10 @@ function parseCronField(raw, min, max, normalizeDow = false) {
 }
 function parseCron(expression) {
   const parts = expression.trim().split(/\s+/);
-  if (parts.length !== 6) throw new TRPCError4({ code: "BAD_REQUEST", message: "Cron must contain six UTC fields: sec min hour dom mon dow." });
+  if (parts.length !== 6) throw new TRPCError5({ code: "BAD_REQUEST", message: "Cron must contain six UTC fields: sec min hour dom mon dow." });
   const fields = parts.map((part, index2) => parseCronField(part, ...CRON_RANGES[index2], index2 === 5));
   if (fields[0].values.size !== 1 || !fields[0].values.has(0)) {
-    throw new TRPCError4({ code: "BAD_REQUEST", message: "Local schedules must run at second zero and cannot repeat more often than once per minute." });
+    throw new TRPCError5({ code: "BAD_REQUEST", message: "Local schedules must run at second zero and cannot repeat more often than once per minute." });
   }
   return fields;
 }
@@ -17313,11 +17368,11 @@ function computeNextExecution(expression, after = /* @__PURE__ */ new Date()) {
     if (matchesCron(candidate, fields)) return candidate;
     candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
   }
-  throw new TRPCError4({ code: "BAD_REQUEST", message: "No matching cron time found within the next year." });
+  throw new TRPCError5({ code: "BAD_REQUEST", message: "No matching cron time found within the next year." });
 }
 function validateCallbackPath(value) {
   if (!/^\/api\/scheduled\/[a-zA-Z0-9/_-]{1,480}$/.test(value) || value.includes("..") || value.includes("//")) {
-    throw new TRPCError4({ code: "BAD_REQUEST", message: "Callback path must be a local /api/scheduled/... path without traversal or query parameters." });
+    throw new TRPCError5({ code: "BAD_REQUEST", message: "Callback path must be a local /api/scheduled/... path without traversal or query parameters." });
   }
   return value;
 }
@@ -17326,20 +17381,20 @@ function serializePayload(payload) {
   try {
     value = JSON.stringify(payload === void 0 ? {} : payload);
   } catch {
-    throw new TRPCError4({ code: "BAD_REQUEST", message: "Scheduled job payload must be JSON-serializable." });
+    throw new TRPCError5({ code: "BAD_REQUEST", message: "Scheduled job payload must be JSON-serializable." });
   }
-  if (value === void 0 || Buffer.byteLength(value, "utf8") > 64 * 1024) throw new TRPCError4({ code: "BAD_REQUEST", message: "Scheduled job payload must be at most 64 KiB of JSON." });
+  if (value === void 0 || Buffer.byteLength(value, "utf8") > 64 * 1024) throw new TRPCError5({ code: "BAD_REQUEST", message: "Scheduled job payload must be at most 64 KiB of JSON." });
   return value;
 }
 async function resolveActor(sessionToken) {
-  if (!sessionToken) throw new TRPCError4({ code: "UNAUTHORIZED", message: "A local session is required to manage scheduled jobs." });
+  if (!sessionToken) throw new TRPCError5({ code: "UNAUTHORIZED", message: "A local session is required to manage scheduled jobs." });
   const session = verifyLocalSession(sessionToken);
-  if (!session) throw new TRPCError4({ code: "UNAUTHORIZED", message: "A valid local session is required to manage scheduled jobs." });
+  if (!session) throw new TRPCError5({ code: "UNAUTHORIZED", message: "A valid local session is required to manage scheduled jobs." });
   const user = await getUserById(session.userId);
   if (!user || user.loginMethod === "closed" || Number(user.authVersion ?? 0) !== Number(session.authVersion ?? 0)) {
-    throw new TRPCError4({ code: "UNAUTHORIZED", message: "The local account or session is no longer active." });
+    throw new TRPCError5({ code: "UNAUTHORIZED", message: "The local account or session is no longer active." });
   }
-  if (user.role !== "admin") throw new TRPCError4({ code: "FORBIDDEN", message: "Only an administrator can manage scheduled jobs." });
+  if (user.role !== "admin") throw new TRPCError5({ code: "FORBIDDEN", message: "Only an administrator can manage scheduled jobs." });
   return user.id;
 }
 function toJobInfo(row) {
@@ -17360,10 +17415,10 @@ function toJobInfo(row) {
 }
 async function createHeartbeatJob(job, userSession = "") {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
-  if (!job.name?.trim() || job.name.trim().length > 160) throw new TRPCError4({ code: "BAD_REQUEST", message: "Job name must be between 1 and 160 characters." });
+  if (!db2) throw new TRPCError5({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
+  if (!job.name?.trim() || job.name.trim().length > 160) throw new TRPCError5({ code: "BAD_REQUEST", message: "Job name must be between 1 and 160 characters." });
   const callbackPath = validateCallbackPath(job.path);
-  if (job.method && job.method !== "POST" && job.method !== "PUT") throw new TRPCError4({ code: "BAD_REQUEST", message: "Only POST and PUT callback methods are supported." });
+  if (job.method && job.method !== "POST" && job.method !== "PUT") throw new TRPCError5({ code: "BAD_REQUEST", message: "Only POST and PUT callback methods are supported." });
   const nextExecutionAt = computeNextExecution(job.cron);
   const taskUid = crypto18.randomUUID();
   const ownerUserId = await resolveActor(userSession);
@@ -17383,11 +17438,11 @@ async function createHeartbeatJob(job, userSession = "") {
 }
 async function updateHeartbeatJob(taskUid, patch, userSession = "") {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
+  if (!db2) throw new TRPCError5({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
   const ownerUserId = await resolveActor(userSession);
   const whereOwner = and7(eq8(localScheduledJobs.taskUid, taskUid), eq8(localScheduledJobs.ownerUserId, ownerUserId));
   const current = (await db2.select().from(localScheduledJobs).where(whereOwner).limit(1))[0];
-  if (!current) throw new TRPCError4({ code: "NOT_FOUND", message: "Scheduled job not found." });
+  if (!current) throw new TRPCError5({ code: "NOT_FOUND", message: "Scheduled job not found." });
   const values = { updatedAt: /* @__PURE__ */ new Date() };
   if (patch.cron !== void 0) {
     values.cronExpression = patch.cron.trim();
@@ -17395,7 +17450,7 @@ async function updateHeartbeatJob(taskUid, patch, userSession = "") {
   }
   if (patch.path !== void 0) values.callbackPath = validateCallbackPath(patch.path);
   if (patch.method !== void 0) {
-    if (patch.method !== "POST" && patch.method !== "PUT") throw new TRPCError4({ code: "BAD_REQUEST", message: "Only POST and PUT callback methods are supported." });
+    if (patch.method !== "POST" && patch.method !== "PUT") throw new TRPCError5({ code: "BAD_REQUEST", message: "Only POST and PUT callback methods are supported." });
     values.callbackMethod = patch.method;
   }
   if (patch.payload !== void 0) values.callbackPayload = serializePayload(patch.payload);
@@ -17411,14 +17466,14 @@ async function updateHeartbeatJob(taskUid, patch, userSession = "") {
 }
 async function deleteHeartbeatJob(taskUid, userSession = "") {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
+  if (!db2) throw new TRPCError5({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
   const ownerUserId = await resolveActor(userSession);
   const whereOwner = and7(eq8(localScheduledJobs.taskUid, taskUid), eq8(localScheduledJobs.ownerUserId, ownerUserId));
   await db2.delete(localScheduledJobs).where(whereOwner);
 }
 async function listHeartbeatJobs(userSession = "", pagination) {
   const db2 = await getDb();
-  if (!db2) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
+  if (!db2) throw new TRPCError5({ code: "INTERNAL_SERVER_ERROR", message: "The Arbitrade database is not available." });
   const ownerUserId = await resolveActor(userSession);
   const whereOwner = eq8(localScheduledJobs.ownerUserId, ownerUserId);
   const page = Math.max(1, Math.floor(pagination?.page ?? 1));
@@ -18426,7 +18481,7 @@ var appRouter = router({
       const selectedIds = input.selectionBitmap ? decodeCompanyCatalogueSelection(input.selectionBitmap) : input.ids;
       const ids = [...new Set(selectedIds)];
       if (ids.some((id2) => !getCompanyReferenceById(id2))) {
-        throw new TRPCError5({ code: "BAD_REQUEST", message: "One or more selected company IDs do not exist in the catalogue." });
+        throw new TRPCError6({ code: "BAD_REQUEST", message: "One or more selected company IDs do not exist in the catalogue." });
       }
       return updateCompanyCatalogueAdminState({ ids, status: input.status, reason: input.reason, updatedBy: ctx.user.id });
     }),
@@ -18443,15 +18498,15 @@ var appRouter = router({
   }),
   privacy: router({
     currentPolicy: protectedProcedure.query(({ ctx }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Privacy Centre customer views require a customer account." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Privacy Centre customer views require a customer account." });
       return getCurrentPrivacyPolicy();
     }),
     policyHistory: protectedProcedure.query(({ ctx }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Privacy Centre customer views require a customer account." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Privacy Centre customer views require a customer account." });
       return getPrivacyPolicyHistory();
     }),
     myRequests: protectedProcedure.query(({ ctx }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Privacy requests are available to customer accounts." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Privacy requests are available to customer accounts." });
       return listMyPrivacyRequests(ctx.user.id);
     }),
     createRequest: protectedProcedure.input(z3.object({
@@ -18460,7 +18515,7 @@ var appRouter = router({
       details: z3.string().max(3e3).optional(),
       idempotencyKey: z3.string().trim().min(8).max(80)
     })).mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Only customer accounts can submit privacy requests." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Only customer accounts can submit privacy requests." });
       const result = await createPrivacyRequest(ctx.user.id, input);
       if (!result.duplicate) {
         try {
@@ -18483,7 +18538,7 @@ var appRouter = router({
       return result;
     }),
     cancelRequest: protectedProcedure.input(z3.object({ requestId: z3.number().int().positive() })).mutation(({ ctx, input }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Only the customer can cancel their privacy request." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Only the customer can cancel their privacy request." });
       return cancelMyPrivacyRequest(ctx.user.id, input.requestId);
     })
   }),
@@ -18543,11 +18598,11 @@ var appRouter = router({
   }),
   customer: router({
     tradingEligibility: protectedProcedure.query(({ ctx }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Trading eligibility is available to customer accounts." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Trading eligibility is available to customer accounts." });
       return getCustomerTradingEligibility(ctx.user.id);
     }),
     companySpotlightPreview: protectedProcedure.query(({ ctx }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Company spotlight preview is available to customer accounts." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Company spotlight preview is available to customer accounts." });
       return previewNextCustomerCompanySpotlight(ctx.user.id);
     }),
     communicationOptions: protectedProcedure.query(({ ctx }) => getCustomerCommunicationOptions(ctx.user.name, ctx.user.email)),
@@ -18563,7 +18618,7 @@ var appRouter = router({
       try {
         return await startStage(ctx.user.id, input.stage, input.idempotencyKey, input.deviceMetadata);
       } catch (error) {
-        throw new TRPCError5({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "This KYC stage is not available yet." });
+        throw new TRPCError6({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "This KYC stage is not available yet." });
       }
     }),
     kycIssueEmail: protectedProcedure.mutation(({ ctx }) => issueEmail(ctx.user.id)),
@@ -18584,7 +18639,7 @@ var appRouter = router({
     revokeSession: protectedProcedure.input(z3.object({ id: z3.number().int().positive() })).mutation(async ({ ctx, input }) => {
       const sessions = await listCustomerSessions(ctx.user.id);
       const target = sessions.find((session) => Number(session.id) === input.id);
-      if (!target) throw new TRPCError5({ code: "NOT_FOUND", message: "Session not found" });
+      if (!target) throw new TRPCError6({ code: "NOT_FOUND", message: "Session not found" });
       await revokeCustomerSession(ctx.user.id, input.id);
       const sessionCursor = target.lastSeenAt instanceof Date ? target.lastSeenAt.getTime() : String(target.lastSeenAt || "unknown");
       try {
@@ -18610,37 +18665,37 @@ var appRouter = router({
       reasons: z3.array(z3.enum(["not-using", "experience", "fees", "privacy", "support"])).min(3, "Select at least three closure reasons.").max(5).refine((reasons) => new Set(reasons).size === reasons.length, "Each closure reason can only be selected once."),
       acknowledged: z3.literal(true)
     })).mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Only customer accounts can request closure." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Only customer accounts can request closure." });
       return createAccountClosureTicket(ctx.user.id, input.reasons);
     }),
     createTicket: protectedProcedure.input(z3.object({ subject: z3.string().min(3).max(200), body: z3.string().min(1).max(2e4), category: z3.enum(["account", "wallet", "opportunity", "security", "technical"]).default("account"), priority: z3.enum(["low", "normal", "high", "urgent"]) })).mutation(async ({ ctx, input }) => {
-      if (/^\s*account closure request\b/i.test(input.subject)) throw new TRPCError5({ code: "BAD_REQUEST", message: "Use the dedicated account-closure request form." });
+      if (/^\s*account closure request\b/i.test(input.subject)) throw new TRPCError6({ code: "BAD_REQUEST", message: "Use the dedicated account-closure request form." });
       const created = await createTicket(ctx.user.id, input);
       return created;
     }),
     tickets: protectedProcedure.query(({ ctx }) => listCustomerTickets(ctx.user.id)),
     ticketMessages: protectedProcedure.input(z3.object({ ticketId: z3.number().int().positive() })).query(async ({ ctx, input }) => {
-      if (!await getCustomerTicket(ctx.user.id, input.ticketId)) throw new TRPCError5({ code: "NOT_FOUND", message: "Ticket not found" });
+      if (!await getCustomerTicket(ctx.user.id, input.ticketId)) throw new TRPCError6({ code: "NOT_FOUND", message: "Ticket not found" });
       return listTicketMessages(input.ticketId);
     }),
     ticketAttachments: protectedProcedure.input(z3.object({ ticketId: z3.number().int().positive() })).query(async ({ ctx, input }) => {
-      if (!await getCustomerTicket(ctx.user.id, input.ticketId)) throw new TRPCError5({ code: "NOT_FOUND", message: "Ticket not found" });
+      if (!await getCustomerTicket(ctx.user.id, input.ticketId)) throw new TRPCError6({ code: "NOT_FOUND", message: "Ticket not found" });
       return listTicketAttachments(input.ticketId);
     }),
     replyTicket: protectedProcedure.input(z3.object({ ticketId: z3.number().int().positive(), body: z3.string().trim().min(1).max(2e4) })).mutation(async ({ ctx, input }) => {
-      if (!await getCustomerTicket(ctx.user.id, input.ticketId)) throw new TRPCError5({ code: "NOT_FOUND", message: "Ticket not found" });
+      if (!await getCustomerTicket(ctx.user.id, input.ticketId)) throw new TRPCError6({ code: "NOT_FOUND", message: "Ticket not found" });
       await addTicketMessage(ctx.user.id, input.ticketId, input.body);
       return { success: true };
     }),
     reopenTicket: protectedProcedure.input(z3.object({ ticketId: z3.number().int().positive() })).mutation(({ ctx, input }) => reopenSupportTicket(ctx.user.id, input.ticketId)),
     addAttachment: protectedProcedure.input(z3.object({ ticketId: z3.number().int().positive(), fileName: z3.string().max(255), mimeType: z3.string().max(160), sizeBytes: z3.number().int().positive().max(25e6), storageKey: z3.string().max(512) })).mutation(({ ctx, input }) => {
-      if (!isValidSupportAttachmentStorageKey(input.storageKey)) throw new TRPCError5({ code: "BAD_REQUEST", message: "Invalid support attachment storage key" });
+      if (!isValidSupportAttachmentStorageKey(input.storageKey)) throw new TRPCError6({ code: "BAD_REQUEST", message: "Invalid support attachment storage key" });
       return addTicketAttachment(ctx.user.id, input);
     }),
     uploadPolicy: protectedProcedure.query(() => getTicketUploadPolicy()),
     balances: protectedProcedure.query(({ ctx }) => getCustomerBalanceSummary(ctx.user.id)),
     walletLedger: protectedProcedure.query(({ ctx }) => {
-      if (ctx.user.role !== "user") throw new TRPCError5({ code: "FORBIDDEN", message: "Wallet ledger history is available only to customer accounts." });
+      if (ctx.user.role !== "user") throw new TRPCError6({ code: "FORBIDDEN", message: "Wallet ledger history is available only to customer accounts." });
       return listCustomerWalletLedger(ctx.user.id);
     }),
     payoutEligibility: protectedProcedure.query(({ ctx }) => getCustomerPayoutEligibility(ctx.user.id)),
@@ -18715,7 +18770,7 @@ var appRouter = router({
       return safe;
     })),
     settle: protectedProcedure.input(z3.object({ tradeId: z3.number().int().positive() })).mutation(async () => {
-      throw new TRPCError5({ code: "FORBIDDEN", message: "Settlement is performed manually by an administrator after the external payment is confirmed." });
+      throw new TRPCError6({ code: "FORBIDDEN", message: "Settlement is performed manually by an administrator after the external payment is confirmed." });
     }),
     notifications: protectedProcedure.query(({ ctx }) => listCustomerNotifications(ctx.user.id)),
     notificationHistory: protectedProcedure.input(z3.object({ cursor: z3.string().max(100).optional(), limit: z3.number().int().min(1).max(100).optional() }).optional()).query(({ ctx, input }) => listCustomerNotificationPage(ctx.user.id, input?.cursor, input?.limit)),
@@ -18821,7 +18876,7 @@ var appRouter = router({
       try {
         return await updateDeliveryRetryPolicy(input, ctx.user.id);
       } catch (error) {
-        if (error instanceof DeliveryRetryPolicyVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+        if (error instanceof DeliveryRetryPolicyVersionConflictError) throw new TRPCError6({ code: "CONFLICT", message: error.message });
         throw error;
       }
     }),
@@ -18834,7 +18889,7 @@ var appRouter = router({
       try {
         return await setTradeGlobalControl(input, ctx.user.id);
       } catch (error) {
-        if (error instanceof TradeGlobalControlVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+        if (error instanceof TradeGlobalControlVersionConflictError) throw new TRPCError6({ code: "CONFLICT", message: error.message });
         throw error;
       }
     }),
@@ -18852,7 +18907,7 @@ var appRouter = router({
       try {
         return await setWalletFundingPriority(ctx.user.id, input);
       } catch (error) {
-        if (error instanceof WalletFundingPriorityVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+        if (error instanceof WalletFundingPriorityVersionConflictError) throw new TRPCError6({ code: "CONFLICT", message: error.message });
         throw error;
       }
     }),
@@ -18900,14 +18955,14 @@ var appRouter = router({
           expiresAt: input.expiresAt ? new Date(input.expiresAt) : null
         });
       } catch (error) {
-        if (error instanceof TradingPackageTermsVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+        if (error instanceof TradingPackageTermsVersionConflictError) throw new TRPCError6({ code: "CONFLICT", message: error.message });
         throw error;
       }
     }),
     communicationSettings: adminProcedure.query(() => getAdminCommunicationSettings()),
     updateCommunicationSettings: adminProcedure.input(communicationSettingsInput).mutation(async ({ ctx, input }) => {
       const errors = validateCommunicationSettingsInput(input);
-      if (errors.length) throw new TRPCError5({ code: "BAD_REQUEST", message: errors.join(" ") });
+      if (errors.length) throw new TRPCError6({ code: "BAD_REQUEST", message: errors.join(" ") });
       return saveAdminCommunicationSettings(ctx.user.id, input);
     }),
     privacyPolicyState: adminProcedure.query(() => getAdminPrivacyPolicyState()),
@@ -19120,7 +19175,7 @@ var appRouter = router({
       try {
         return await deleteAdminCustomer(input.userId);
       } catch (error) {
-        if (error instanceof AccountClosureDecisionError) throw new TRPCError5({ code: "PRECONDITION_FAILED", message: error.message });
+        if (error instanceof AccountClosureDecisionError) throw new TRPCError6({ code: "PRECONDITION_FAILED", message: error.message });
         throw error;
       }
     }),
@@ -19178,7 +19233,7 @@ var appRouter = router({
       }
     })(), appearance: await normalizeAppearanceSettings(await getAppSetting("appearance.settings")), trade: await getTradeSettlementPolicy() })),
     updateSettings: adminProcedure.input(z3.object({ ticket: z3.object({ maxAttachmentMb: z3.number().int().min(1).max(100), allowedMimeTypes: z3.array(z3.string().min(1).max(120)).min(1).max(50) }).optional(), email: z3.object({ provider: z3.enum(["smtp", "sendgrid", "disabled"]), fromName: z3.string().min(1).max(120), fromAddress: z3.string().email(), replyTo: z3.string().email().or(z3.literal("")) }).optional(), opportunity: z3.object({ countdownSeconds: z3.number().int().min(10).max(86400), signupCreditMinor: z3.number().int().min(0).max(1e8), signupCreditCurrency: z3.enum(["USD", "EUR", "GBP", "BTC", "ETH"]) }).optional(), sounds: z3.object({ default: z3.string().min(1).max(80), opportunity: z3.string().min(1).max(80), deposit: z3.string().min(1).max(80), credit: z3.string().min(1).max(80), debit: z3.string().min(1).max(80), withdrawal: z3.string().min(1).max(80), trading: z3.string().min(1).max(80), mining: z3.string().min(1).max(80), support: z3.string().min(1).max(80), announcement: z3.string().min(1).max(80), failure: z3.string().min(1).max(80), enabled: z3.boolean(), loopOpportunity: z3.boolean(), volume: z3.number().int().min(0).max(100).default(80) }).optional(), policy: z3.object({ kyc: z3.boolean(), withdrawals: z3.boolean(), twofa: z3.boolean(), facial: z3.boolean() }).optional(), branding: z3.record(z3.string(), z3.string()).optional(), appearance: z3.object({ defaultTheme: z3.enum(["original", "midnight-premium", "clean-light", "emerald-finance", "aurora-modern", "gold-luxe"]), enabledThemes: z3.array(z3.enum(["original", "midnight-premium", "clean-light", "emerald-finance", "aurora-modern", "gold-luxe"])).min(1).max(6), customerCanSelect: z3.boolean() }).optional(), trade: z3.object({ settlementDelaySeconds: z3.number().int().min(0).max(604800), creditDelaySeconds: z3.number().int().min(0).max(604800), cooldownSeconds: z3.number().int().min(0).max(604800), nextPopupFormulaDelaySeconds: z3.number().int().min(0).max(604800), popupCooldownSeconds: z3.number().int().min(0).max(604800), popupDisplaySeconds: z3.number().int().min(1).max(3600), popupPreAlertSeconds: z3.number().int().min(0).max(3600), popupJitterSeconds: z3.number().int().min(0).max(604800), popupMaxPerHour: z3.number().int().min(1).max(1e4), marketRefreshIntervalMinutes: z3.number().int().min(1).max(10080), blockUntilSettled: z3.boolean(), reason: z3.string().trim().min(5).max(500), expectedPolicyVersion: z3.number().int().min(1) }).optional() }).refine((sections) => !sections.trade || Object.entries(sections).every(([key, value]) => key === "trade" || value === void 0), { message: "Trade timing settings must be saved on their own." })).mutation(async ({ ctx, input }) => {
-      if (input.appearance && !input.appearance.enabledThemes.includes(input.appearance.defaultTheme)) throw new TRPCError5({ code: "BAD_REQUEST", message: "The default theme must be enabled." });
+      if (input.appearance && !input.appearance.enabledThemes.includes(input.appearance.defaultTheme)) throw new TRPCError6({ code: "BAD_REQUEST", message: "The default theme must be enabled." });
       if (input.ticket) {
         await setAppSetting("ticket.maxAttachmentMb", String(input.ticket.maxAttachmentMb), ctx.user.id);
         await setAppSetting("ticket.allowedMimeTypes", input.ticket.allowedMimeTypes.join(","), ctx.user.id);
@@ -19201,7 +19256,7 @@ var appRouter = router({
         try {
           await setTradeSettlementPolicy({ delaySeconds: input.trade.settlementDelaySeconds, creditDelaySeconds: input.trade.creditDelaySeconds, cooldownSeconds: input.trade.cooldownSeconds, nextPopupFormulaDelaySeconds: input.trade.nextPopupFormulaDelaySeconds, popupCooldownSeconds: input.trade.popupCooldownSeconds, popupDisplaySeconds: input.trade.popupDisplaySeconds, popupPreAlertSeconds: input.trade.popupPreAlertSeconds, popupJitterSeconds: input.trade.popupJitterSeconds, popupMaxPerHour: input.trade.popupMaxPerHour, marketRefreshIntervalMinutes: input.trade.marketRefreshIntervalMinutes, blockUntilSettled: input.trade.blockUntilSettled }, ctx.user.id, input.trade.reason, input.trade.expectedPolicyVersion);
         } catch (error) {
-          if (error instanceof TradeTimingPolicyVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+          if (error instanceof TradeTimingPolicyVersionConflictError) throw new TRPCError6({ code: "CONFLICT", message: error.message });
           throw error;
         }
       }
@@ -19241,7 +19296,7 @@ var appRouter = router({
       try {
         return await setOpportunityGenerationControl(input, ctx.user.id);
       } catch (error) {
-        if (error instanceof OpportunityGenerationControlVersionConflictError) throw new TRPCError5({ code: "CONFLICT", message: error.message });
+        if (error instanceof OpportunityGenerationControlVersionConflictError) throw new TRPCError6({ code: "CONFLICT", message: error.message });
         throw error;
       }
     }),
@@ -19304,10 +19359,10 @@ var appRouter = router({
       }).strict()).min(1).max(1e3)
     })).mutation(({ ctx, input }) => updateOpportunityPackagePolicies(ctx.user.id, input.policies, input.reason)),
     createOffer: adminProcedure.input(z3.unknown()).mutation(() => {
-      throw new TRPCError5({ code: "PRECONDITION_FAILED", message: "Manual opportunity publication is retired. Customer-specific opportunities are generated automatically from the approved company catalogue; saved company templates are optional display-term enrichment." });
+      throw new TRPCError6({ code: "PRECONDITION_FAILED", message: "Manual opportunity publication is retired. Customer-specific opportunities are generated automatically from the approved company catalogue; saved company templates are optional display-term enrichment." });
     }),
     bulkCreateOffers: adminProcedure.input(z3.unknown()).mutation(() => {
-      throw new TRPCError5({ code: "PRECONDITION_FAILED", message: "Manual opportunity CSV import is retired. Customer offers are generated from the approved company catalogue and saved qualifying-package policy; a company template is not required." });
+      throw new TRPCError6({ code: "PRECONDITION_FAILED", message: "Manual opportunity CSV import is retired. Customer offers are generated from the approved company catalogue and saved qualifying-package policy; a company template is not required." });
     }),
     closeOffer: adminProcedure.input(z3.object({ offerId: z3.number().int().positive().safe(), reason: z3.string().trim().min(1).max(2e3) })).mutation(({ ctx, input }) => closeOpportunityOffer(ctx.user.id, input)),
     tickets: adminProcedure.query(() => listAllTickets()),
@@ -19315,7 +19370,7 @@ var appRouter = router({
     assignTicket: adminProcedure.input(z3.object({ ticketId: z3.number().int().positive(), assignedAdminId: z3.number().int().positive().nullable() })).mutation(({ ctx, input }) => assignSupportTicket(ctx.user.id, input.ticketId, input.assignedAdminId)),
     ticketMessages: adminProcedure.input(z3.object({ ticketId: z3.number().int().positive() })).query(({ input }) => listTicketMessages(input.ticketId)),
     ticketAttachments: adminProcedure.input(z3.object({ ticketId: z3.number().int().positive() })).query(async ({ input }) => {
-      if (!await getSupportTicketById(input.ticketId)) throw new TRPCError5({ code: "NOT_FOUND", message: "Ticket not found" });
+      if (!await getSupportTicketById(input.ticketId)) throw new TRPCError6({ code: "NOT_FOUND", message: "Ticket not found" });
       return listTicketAttachments(input.ticketId);
     }),
     decideAccountClosure: adminProcedure.input(z3.object({
@@ -19339,21 +19394,21 @@ var appRouter = router({
         return result;
       } catch (error) {
         if (error instanceof AccountClosureDecisionError) {
-          throw new TRPCError5({ code: "PRECONDITION_FAILED", message: error.message });
+          throw new TRPCError6({ code: "PRECONDITION_FAILED", message: error.message });
         }
         throw error;
       }
     }),
     replyTicket: adminProcedure.input(z3.object({ ticketId: z3.number().int().positive(), body: z3.string().trim().min(1).max(2e4), status: z3.enum(["answered", "resolved", "closed"]) })).mutation(async ({ ctx, input }) => {
       const ticket = await getSupportTicketById(input.ticketId);
-      if (!ticket) throw new TRPCError5({ code: "NOT_FOUND", message: "Ticket not found" });
-      if (ticket.subject === ACCOUNT_CLOSURE_TICKET_SUBJECT) throw new TRPCError5({ code: "BAD_REQUEST", message: "Use the explicit account-closure decision controls for this request." });
+      if (!ticket) throw new TRPCError6({ code: "NOT_FOUND", message: "Ticket not found" });
+      if (ticket.subject === ACCOUNT_CLOSURE_TICKET_SUBJECT) throw new TRPCError6({ code: "BAD_REQUEST", message: "Use the explicit account-closure decision controls for this request." });
       await addTicketMessage(ctx.user.id, input.ticketId, input.body, input.status);
       return { success: true };
     }),
     reopenTicket: adminProcedure.input(z3.object({ ticketId: z3.number().int().positive() })).mutation(async ({ ctx, input }) => {
       const ticket = await getSupportTicketById(input.ticketId);
-      if (ticket?.subject === ACCOUNT_CLOSURE_TICKET_SUBJECT) throw new TRPCError5({ code: "BAD_REQUEST", message: "Account-closure requests cannot be reopened from generic support controls." });
+      if (ticket?.subject === ACCOUNT_CLOSURE_TICKET_SUBJECT) throw new TRPCError6({ code: "BAD_REQUEST", message: "Account-closure requests cannot be reopened from generic support controls." });
       return reopenSupportTicket(ctx.user.id, input.ticketId);
     })
   })
