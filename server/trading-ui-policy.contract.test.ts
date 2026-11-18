@@ -19,6 +19,13 @@ describe("Trading UI policy acceptance contracts", () => {
     expect(customerEligibility).not.toMatch(/activatePackage|subscribeToPackage|purchasePackage|activate\s+package/i);
   });
 
+  it("does not list offers as eligible when the customer is not eligible", () => {
+    expect(appSource).toContain("const notEligible=Boolean(feed.delivery?.packageNotActive||feed.delivery?.noPackage);");
+    expect(appSource).toContain('{notEligible?"Opportunities":"Eligible opportunities"}');
+    expect(appSource).toContain('{notEligible?"Not eligible":`${offers.length} open`}');
+    expect(appSource).toContain("You are not currently eligible for automatic opportunities, so no offers are listed as eligible here.");
+  });
+
   it("does not mount a second package-management experience outside the existing customer portal", () => {
     expect(appSource).toContain("CustomerTradingEligibility");
     expect(appSource).not.toMatch(/customerPackageActivation|customerPackagePurchase/);

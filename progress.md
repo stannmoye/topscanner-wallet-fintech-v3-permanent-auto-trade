@@ -70,7 +70,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 60 | CustomerTradingEligibility hidden markup/CSS | `[x]` | Fix #60 |
 | 61 | Cancel focus rAF in CustomerSlideMenu cleanup | `[x]` | Fix #61 |
 | 62 | Visible "tap to enable sound" hint | `[x]` | Fix #62 |
-| 63 | Opportunities page eligibility consistency | `[ ]` | |
+| 63 | Opportunities page eligibility consistency | `[x]` | Fix #63 |
 | 64 | Single source of truth for `packageName` | `[ ]` | |
 
 ### Item 1 notes (`Fix #1`)

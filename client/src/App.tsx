@@ -929,6 +929,7 @@ function CustomerOpportunities({opportunityData}:{push:(x:string)=>void;sound:bo
   const feed:any=opportunityData||{};
   const offers:any[]=feed.offers||[];
   const missed:any[]=feed.missed||[];
+  const notEligible=Boolean(feed.delivery?.packageNotActive||feed.delivery?.noPackage);
   const currencyCode=(value:unknown):string|null=>typeof value==="string"&&value.trim()?value.trim().toUpperCase():null;
   const currencyScale=(currency:unknown)=>{const code=currencyCode(currency);return Number(balances.data?.currencies?.find((item:any)=>String(item.code||"").toUpperCase()===code)?.scale??(code==="BTC"||code==="ETH"?8:2));};
   const money=(minor:number,currency:unknown)=>Number(minor||0)/(10**currencyScale(currency));
@@ -937,16 +938,17 @@ function CustomerOpportunities({opportunityData}:{push:(x:string)=>void;sound:bo
   return <div className="arb-page portal-page customer-opportunities-page">
     <div className="portal-page-top">
       <div><div className="eyebrow">Automatic trading lifecycle</div><h1>Trading Opportunities</h1><p>Eligible opportunities are evaluated by the server. Capital is committed only when automatic deposit-based eligibility and available-balance checks pass.</p></div>
-      <span className="admin-live-chip"><span className="pulse"/>{feed.delivery?.packageNotActive||feed.delivery?.noPackage?"Not currently eligible":"Server-managed"}</span>
+      <span className="admin-live-chip"><span className="pulse"/>{notEligible?"Not currently eligible":"Server-managed"}</span>
     </div>
-    {feed.delivery?.noPackage||feed.delivery?.packageNotActive
+    {notEligible
       ? <div className="test-notice"><ShieldCheck size={15}/><span>Eligibility is determined automatically from qualifying manual administrator wallet credits. No tier selection or activation is required; once eligible, the server evaluates opportunities automatically.</span></div>
       : <div className="test-notice"><ShieldCheck size={15}/><span>Scheduled times and reward estimates are not execution evidence. Actual profit, fees, loss, and returned capital appear only after the database records settlement.</span></div>}
     <CustomerOpportunityHistoryPanel offers={offers} missed={missed} trades={(trades.data || []) as any[]} />
     <section className="customer-panel">
-      <div className="customer-panel-head"><div><div className="eyebrow">Current cycle</div><h2>Eligible opportunities</h2></div><span>{offers.length} open</span></div>
+      <div className="customer-panel-head"><div><div className="eyebrow">Current cycle</div><h2>{notEligible?"Opportunities":"Eligible opportunities"}</h2></div><span>{notEligible?"Not eligible":`${offers.length} open`}</span></div>
       {feed.delivery?.packagePolicyMissing && <div className="admin-ops-empty error">Automatic allocation is paused because no eligible tier policy is configured.</div>}
-      {!offers.length ? <div className="empty-state">No eligible open opportunity is available at this time.</div>
+      {notEligible ? <div className="empty-state">You are not currently eligible for automatic opportunities, so no offers are listed as eligible here. Eligibility is confirmed automatically from qualifying manual administrator wallet credits.</div>
+        : !offers.length ? <div className="empty-state">No eligible open opportunity is available at this time.</div>
         : <div className="trading-opportunity-list">{offers.map((offer:any)=>{
           const required=Number(offer.minimumMinor||0);
           const balanceStatus=String(offer.balanceStatus||"unknown").toLowerCase();
