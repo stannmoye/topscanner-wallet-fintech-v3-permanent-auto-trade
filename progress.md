@@ -1838,3 +1838,9 @@ Verification (headless Chrome, CDP device-metrics emulation at 1600/1440/1280/11
 - At ≤900px the rail is the off-canvas drawer (translated out, `main` full width, no leftover 194px gutter).
 
 Checks: `pnpm install --frozen-lockfile` completed; `pnpm check` (`tsc --noEmit`) passed; `pnpm build:static` passed. The rail-related contract tests (`portal-design-pass4`, `drawer-accessibility-contract`, `customer-theme-selector`, `notification-sound-deduplication`, `design-system-contract`) show the same 2 pre-existing failures with and without these changes (verified via `git stash`) — no new failures introduced. CSS-only change: no server, schema, database, worker, ledger or trading behaviour touched. No merge or deployment performed.
+
+## 2026-11-18 — Auto-trade fix task ledger opened
+
+- Added root `AUTOTRADE_FIX_TASKS.md`: a one-task-at-a-time tracker for the owner-requested trade/opportunity-delivery fixes, written so another agent/provider can resume without repeating work.
+- Task 1 (pop-up closing before its trade completes) fixed in `server/db.ts` `createTrade`: the mapped trade now settles at the delivered pop-up's immutable `rewardAt` instant (`max(offer.rewardAt, allocationTime)`), so the pop-up always closes at or after trade completion. Commit `bec6a0d`, pushed to `main`.
+- Checks for Task 1: `pnpm test` 1321 passed / 31 skipped, `pnpm check` clean, `pnpm build` clean.
