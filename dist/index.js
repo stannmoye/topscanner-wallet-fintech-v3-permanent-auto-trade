@@ -5888,6 +5888,12 @@ async function getFreshTradingFxRate(config2) {
     throw error;
   }
 }
+function tradingFxConfigForRow(row) {
+  return { code: String(row.code).toUpperCase(), scale: Number(row.scale), assetType: row.assetType, externalCode: row.externalCode ? String(row.externalCode) : null };
+}
+async function resolveLiveCurrencyUsdRate(row) {
+  return getFreshTradingFxRate(tradingFxConfigForRow(row));
+}
 async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -7291,7 +7297,13 @@ async function getCustomerBalanceSummary(userId) {
   for (const c of currencies) {
     const b = byCode.get(c.code);
     const factor = Math.pow(10, c.scale);
-    const rate = Number(c.usdRate) || 0;
+    let rate = 0;
+    try {
+      rate = Number((await resolveLiveCurrencyUsdRate(c)).rateUsdPerUnit);
+    } catch {
+      rate = 0;
+    }
+    if (!Number.isFinite(rate) || rate <= 0) rate = 0;
     availableUsd += Number(b?.availableMinor || 0) / factor * rate;
     lockedUsd += Number(b?.lockedMinor || 0) / factor * rate;
     promotionalUsd += Number(b?.promotionalMinor || 0) / factor * rate;
@@ -8462,6 +8474,21 @@ async function adjustCustomerBalance(adminId, input) {
         metadataJson: JSON.stringify({ ledgerId, userId: input.userId, currency: currency.code, amountMinor: input.amountMinor, entryType, qualifyingDepositUsdMinor, qualifyingDepositReversalOfId, rate: qualifyingDepositRate, rateProvider: qualifyingDepositRateProvider, rateAt: qualifyingDepositRateAt?.toISOString() })
       });
     }
+    let responseRateUsd = qualifyingDepositRate !== null ? Number(qualifyingDepositRate) : null;
+    let responseRateAt = qualifyingDepositRateAt ?? null;
+    let responseAmountUsd = qualifyingDepositUsdMinor !== null ? Math.abs(qualifyingDepositUsdMinor) / 100 : null;
+    if (responseRateUsd === null) {
+      try {
+        const live = await resolveLiveCurrencyUsdRate(currency);
+        const liveRate = Number(live.rateUsdPerUnit);
+        if (Number.isFinite(liveRate) && liveRate > 0) {
+          responseRateUsd = liveRate;
+          responseRateAt = live.fetchedAt;
+          responseAmountUsd = nativeMinorToUsd(input.amountMinor, Number(currency.scale), liveRate);
+        }
+      } catch {
+      }
+    }
     const committedResponse = {
       success: true,
       newAvailableMinor: next,
@@ -8472,9 +8499,9 @@ async function adjustCustomerBalance(adminId, input) {
       entryType,
       qualifyingDepositUsdMinor,
       qualifyingDepositReversalOfId,
-      rateUsd: qualifyingDepositRate !== null ? Number(qualifyingDepositRate) : Number(currency.usdRate),
-      rateUpdatedAt: qualifyingDepositRateAt ?? currency.updatedAt,
-      amountUsd: qualifyingDepositUsdMinor !== null ? Math.abs(qualifyingDepositUsdMinor) / 100 : nativeMinorToUsd(input.amountMinor, Number(currency.scale), Number(currency.usdRate)),
+      rateUsd: responseRateUsd,
+      rateUpdatedAt: responseRateAt,
+      amountUsd: responseAmountUsd,
       qualifyingDepositRateProvider
     };
     const idempotencyUpdate = await tx.update(adminWalletAdjustmentIdempotency).set({ responseJson: JSON.stringify(committedResponse), updatedAt: /* @__PURE__ */ new Date() }).where(eq3(adminWalletAdjustmentIdempotency.id, idempotencyRecord.id));
@@ -8518,10 +8545,12 @@ function calculateTradeTerms(_userId, offer, _amountMinor) {
   }
   return { minimumMinor, rewardBps, method: "admin-published-estimate" };
 }
-function packageUsdUnitsToNativeMinor(usdUnits, currency, currencies) {
+function packageUsdUnitsToNativeMinor(usdUnits, currency, currencies, liveRateUsd) {
   const row = currencies.find((item) => item.code === currency);
   if (!row) throw new Error(`Currency ${currency} is not configured`);
-  return usdUnitsToNativeMinor(usdUnits, Number(row.scale), Number(row.usdRate));
+  const rate = Number(liveRateUsd);
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error(`A live exchange rate for ${currency} is unavailable; conversion is blocked`);
+  return usdUnitsToNativeMinor(usdUnits, Number(row.scale), rate);
 }
 function parseTradeAllocationControls(raw) {
   if (!raw) {
@@ -9255,11 +9284,17 @@ async function generateAutomaticCustomerOpportunity(input) {
         }
         const template = (await tx.select().from(opportunityGenerationTemplates).where(and3(eq3(opportunityGenerationTemplates.status, "approved"), eq3(opportunityGenerationTemplates.companyReferenceId, company.id))).orderBy(opportunityGenerationTemplates.id).limit(1).for("update"))[0] || null;
         const currencyCode = template ? String(template.currency) : "USD";
-        const currencyRows = await tx.select({ code: currencyRegistry.code, scale: currencyRegistry.scale, usdRate: currencyRegistry.usdRate, updatedAt: currencyRegistry.updatedAt }).from(currencyRegistry).where(and3(eq3(currencyRegistry.enabled, true), eq3(currencyRegistry.code, currencyCode))).limit(1);
+        const currencyRows = await tx.select({ code: currencyRegistry.code, scale: currencyRegistry.scale, assetType: currencyRegistry.assetType, externalCode: currencyRegistry.externalCode, usdRate: currencyRegistry.usdRate, updatedAt: currencyRegistry.updatedAt }).from(currencyRegistry).where(and3(eq3(currencyRegistry.enabled, true), eq3(currencyRegistry.code, currencyCode))).limit(1);
         const currencyRow = currencyRows[0];
         if (!currencyRow) return skipped("NO_ENABLED_CURRENCY_FOR_PACKAGE");
-        const packageMinimum = packageUsdUnitsToNativeMinor(Number(selectedPolicy.minimumTradeUnits), currencyCode, [currencyRow]);
-        const packageMaximum = packageUsdUnitsToNativeMinor(Number(selectedPolicy.maximumTradeUnits), currencyCode, [currencyRow]);
+        let packageCurrencyRate;
+        try {
+          packageCurrencyRate = await resolveLiveCurrencyUsdRate(currencyRow);
+        } catch {
+          return skipped("LIVE_FX_RATE_UNAVAILABLE");
+        }
+        const packageMinimum = packageUsdUnitsToNativeMinor(Number(selectedPolicy.minimumTradeUnits), currencyCode, [currencyRow], Number(packageCurrencyRate.rateUsdPerUnit));
+        const packageMaximum = packageUsdUnitsToNativeMinor(Number(selectedPolicy.maximumTradeUnits), currencyCode, [currencyRow], Number(packageCurrencyRate.rateUsdPerUnit));
         if (!Number.isSafeInteger(packageMinimum) || packageMinimum <= 0 || !Number.isSafeInteger(packageMaximum) || packageMaximum < packageMinimum)
           throw new Error("The active package's saved capital bounds are invalid.");
         const normalized = template ? validateOpportunityGenerationTemplate({
@@ -9343,8 +9378,8 @@ async function generateAutomaticCustomerOpportunity(input) {
           venueFrom: terms.venueFrom,
           venueTo: terms.venueTo,
           currency: terms.currency,
-          currencyRateUsd: Number(currencyRow.usdRate),
-          currencyRateUpdatedAt: currencyRow.updatedAt ? new Date(currencyRow.updatedAt).toISOString() : null,
+          currencyRateUsd: Number(packageCurrencyRate.rateUsdPerUnit),
+          currencyRateUpdatedAt: packageCurrencyRate.fetchedAt.toISOString(),
           popupDisplayTargetSeconds: displaySeconds,
           completionDisplaySeconds,
           badgeLabel: selectedPolicy.badgeLabel ?? null,
@@ -10074,6 +10109,21 @@ async function listCustomerOpportunities(userId, options = {}) {
   const combinedQuota = [...quotaByPackage.values()].reduce((sum, value) => sum + value, 0);
   if (combinedQuota <= 0) return emptyResult({ packageName: eligibleSubscriptions.map((row) => row.packageName).join(", "), maxPopupsPerDay: 0, maxVisibleOffers: 0, enabled: false, packageQuotaExhausted: true, popupPolicy: {} }, "CUSTOMER_PACKAGE_ENTITLEMENT_ZERO", { activeAutomaticSubscriptions: subscriptions.length, validPolicySubscriptions: eligibleSubscriptions.length });
   const currencyRows = await listCurrencies();
+  const liveRateCache = /* @__PURE__ */ new Map();
+  const liveOfferRate = async (code) => {
+    const key = String(code).toUpperCase();
+    if (liveRateCache.has(key)) return liveRateCache.get(key);
+    const config2 = currencyRows.find((row) => String(row.code).toUpperCase() === key);
+    if (!config2) return null;
+    try {
+      const snapshot = await resolveLiveCurrencyUsdRate(config2);
+      liveRateCache.set(key, snapshot);
+      return snapshot;
+    } catch (error) {
+      console.error("[Trading] Live FX rate unavailable for", key, error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  };
   const configuredPolicies = eligibleSubscriptions.map((subscription) => policyByName.get(normalizeTradingPackagePolicyKey(subscription.packageName))).filter((row) => Boolean(row));
   const policy = configuredPolicies[0] || null;
   const packageName = [...new Set(eligibleSubscriptions.map((row) => row.packageName))].join(", ");
@@ -10356,6 +10406,9 @@ async function listCustomerOpportunities(userId, options = {}) {
       }
       const currencyRow = currencyRows.find((row) => String(row.code).toUpperCase() === String(offer.currency).toUpperCase());
       if (!currencyRow) continue;
+      const offerLiveRate = await liveOfferRate(String(offer.currency));
+      if (!offerLiveRate) continue;
+      const offerLiveRateUsd = Number(offerLiveRate.rateUsdPerUnit);
       const publishedRewardBps = Number(offer.expectedRewardBps);
       const publishedDurationSeconds = Number(offer.durationSeconds);
       if (!Number.isSafeInteger(publishedRewardBps) || publishedRewardBps < 0 || publishedRewardBps > 1e4 || !Number.isSafeInteger(publishedDurationSeconds) || publishedDurationSeconds < 10 || publishedDurationSeconds > 86400) continue;
@@ -10365,8 +10418,8 @@ async function listCustomerOpportunities(userId, options = {}) {
         if (!subscriptionHasQuota(candidate)) continue;
         if (packageSchedules.get(String(candidate.packageName))?.cooling === true) continue;
         const candidatePolicy = policyByName.get(normalizeTradingPackagePolicyKey(candidate.packageName));
-        const configuredMinimum = generatedOffer ? Number(generationSnapshot.packageMinimumMinor) : candidatePolicy ? packageUsdUnitsToNativeMinor(Number(candidatePolicy.minimumTradeUnits), String(offer.currency), currencyRows) : Number(offer.minimumMinor);
-        const configuredMaximum = generatedOffer ? Number(generationSnapshot.packageMaximumMinor) : candidatePolicy ? Math.max(configuredMinimum, packageUsdUnitsToNativeMinor(Number(candidatePolicy.maximumTradeUnits), String(offer.currency), currencyRows)) : Number.MAX_SAFE_INTEGER;
+        const configuredMinimum = generatedOffer ? Number(generationSnapshot.packageMinimumMinor) : candidatePolicy ? packageUsdUnitsToNativeMinor(Number(candidatePolicy.minimumTradeUnits), String(offer.currency), currencyRows, offerLiveRateUsd) : Number(offer.minimumMinor);
+        const configuredMaximum = generatedOffer ? Number(generationSnapshot.packageMaximumMinor) : candidatePolicy ? Math.max(configuredMinimum, packageUsdUnitsToNativeMinor(Number(candidatePolicy.maximumTradeUnits), String(offer.currency), currencyRows, offerLiveRateUsd)) : Number.MAX_SAFE_INTEGER;
         const terms = calculateTradeTerms(userId, offer, Math.max(Number(offer.minimumMinor), configuredMinimum));
         const minimumMinor = Math.max(Number(offer.minimumMinor), Number(terms.minimumMinor || 0), configuredMinimum);
         if (!Number.isSafeInteger(minimumMinor) || minimumMinor <= 0 || minimumMinor > configuredMaximum) continue;
@@ -10393,8 +10446,8 @@ async function listCustomerOpportunities(userId, options = {}) {
         minimumMinor: selected.minimumMinor,
         packageMinimumTradeMinor: selected.configuredMinimum,
         packageMaximumTradeMinor: selected.configuredMaximum,
-        currencyRateUsd: Number(currencyRow.usdRate || 0),
-        currencyRateUpdatedAt: currencyRow.updatedAt || null,
+        currencyRateUsd: offerLiveRateUsd,
+        currencyRateUpdatedAt: offerLiveRate.fetchedAt || null,
         expectedRewardBps: configuredProfitRateBps,
         configuredProfitRateBps,
         configuredDurationSeconds,
@@ -10555,6 +10608,8 @@ async function listCustomerOpportunities(userId, options = {}) {
   const catalogueAdminRow = (await db2.select({ settingValue: appSettings.settingValue }).from(appSettings).where(eq3(appSettings.settingKey, "trade.companyCatalogue.adminState")).limit(1))[0];
   const catalogueAdminState = parseCompanyCatalogueAdminState(catalogueAdminRow?.settingValue ?? "{}");
   const companyDisplayAllowed = createCompanySpotlightDisplayGuard(catalogueAdminState);
+  const popupLiveRates = /* @__PURE__ */ new Map();
+  for (const code of [...new Set(popupRows.map((row) => String(row.currency).toUpperCase()))]) popupLiveRates.set(code, await liveOfferRate(code));
   const tradeCandidates = popupRows.filter((row) => row.offerStatus === "open" && row.closesAt && new Date(row.closesAt).getTime() > now.getTime()).map((row) => {
     const generationAssignment = generationAssignmentByOffer.get(Number(row.offerId));
     let generationSnapshot = null;
@@ -10591,8 +10646,10 @@ async function listCustomerOpportunities(userId, options = {}) {
     const companySymbol = String(companyMetadata.ticker || companyMetadata.symbol || row.symbol || "").trim().toUpperCase() || String(row.symbol || "").toUpperCase();
     const currencyRow = currencyRows.find((item) => String(item.code).toUpperCase() === String(row.currency).toUpperCase());
     const offerMinimum = Number(row.offerMinimumMinor ?? row.popupMinimumMinor);
-    const configuredMinimum = configured && currencyRow ? packageUsdUnitsToNativeMinor(Number(configured.minimumTradeUnits), String(row.currency), currencyRows) : offerMinimum;
-    const configuredMaximum = configured && currencyRow ? Math.max(configuredMinimum, packageUsdUnitsToNativeMinor(Number(configured.maximumTradeUnits), String(row.currency), currencyRows)) : Number.MAX_SAFE_INTEGER;
+    const tradeCandidateRate = popupLiveRates.get(String(row.currency).toUpperCase()) || null;
+    const tradeCandidateRateUsd = tradeCandidateRate ? Number(tradeCandidateRate.rateUsdPerUnit) : NaN;
+    const configuredMinimum = configured && currencyRow && Number.isFinite(tradeCandidateRateUsd) ? packageUsdUnitsToNativeMinor(Number(configured.minimumTradeUnits), String(row.currency), currencyRows, tradeCandidateRateUsd) : offerMinimum;
+    const configuredMaximum = configured && currencyRow && Number.isFinite(tradeCandidateRateUsd) ? Math.max(configuredMinimum, packageUsdUnitsToNativeMinor(Number(configured.maximumTradeUnits), String(row.currency), currencyRows, tradeCandidateRateUsd)) : Number.MAX_SAFE_INTEGER;
     return {
       id: Number(row.offerId),
       offerId: Number(row.offerId),
@@ -10983,7 +11040,8 @@ async function createTrade(userId, input) {
   const replayEvent = input.deliveryEventId === void 0 ? null : (await db2.select({ eventStatus: opportunityPopupEvents.eventStatus, tradeId: opportunityPopupEvents.tradeId }).from(opportunityPopupEvents).where(and3(eq3(opportunityPopupEvents.id, input.deliveryEventId), eq3(opportunityPopupEvents.userId, userId))).limit(1))[0] || null;
   const tradeFxRates = /* @__PURE__ */ new Map();
   const tradeFxConfigs = /* @__PURE__ */ new Map();
-  if (targetPreflightBalance < input.amountMinor && !(replayEvent?.eventStatus === "TRADED" && Number(replayEvent.tradeId) > 0)) {
+  const isIdempotentReplay = Boolean(replayEvent?.eventStatus === "TRADED" && Number(replayEvent.tradeId) > 0);
+  {
     const registryRows = await db2.select({ code: currencyRegistry.code, scale: currencyRegistry.scale, assetType: currencyRegistry.assetType, externalCode: currencyRegistry.externalCode }).from(currencyRegistry).where(eq3(currencyRegistry.enabled, true));
     for (const row of registryRows) tradeFxConfigs.set(String(row.code).toUpperCase(), {
       code: String(row.code).toUpperCase(),
@@ -10991,7 +11049,11 @@ async function createTrade(userId, input) {
       assetType: row.assetType,
       externalCode: row.externalCode ? String(row.externalCode) : null
     });
-    const codes = /* @__PURE__ */ new Set([targetCurrency, ...preflightWallets.filter((row) => Number(row.availableMinor) > 0).map((row) => String(row.currency).toUpperCase())]);
+    const needsConversion = targetPreflightBalance < input.amountMinor && !isIdempotentReplay;
+    const codes = /* @__PURE__ */ new Set([targetCurrency]);
+    if (needsConversion) {
+      for (const row of preflightWallets) if (Number(row.availableMinor) > 0) codes.add(String(row.currency).toUpperCase());
+    }
     const fetched = await Promise.all([...codes].map(async (code) => {
       const config2 = tradeFxConfigs.get(code);
       if (!config2) return [code, null];
@@ -11002,7 +11064,7 @@ async function createTrade(userId, input) {
       }
     }));
     for (const [code, rate] of fetched) if (rate) tradeFxRates.set(code, rate);
-    if (!tradeFxRates.has(targetCurrency)) throw new Error("A current exchange rate for " + targetCurrency + " is unavailable; no wallet funds were moved");
+    if (!isIdempotentReplay && !tradeFxRates.has(targetCurrency)) throw new Error("A current exchange rate for " + targetCurrency + " is unavailable; no wallet funds were moved");
   }
   return db2.transaction(async (tx) => {
     const userLock = await tx.execute(sql5`SELECT id,loginMethod FROM users WHERE id=${userId} FOR UPDATE`);
@@ -11049,8 +11111,11 @@ async function createTrade(userId, input) {
             throw new Error("Opportunity delivery event was already allocated under a different package");
           }
         }
-        const rate = (await tx.select({ scale: currencyRegistry.scale, usdRate: currencyRegistry.usdRate, updatedAt: currencyRegistry.updatedAt }).from(currencyRegistry).where(eq3(currencyRegistry.code, existing.currency)).limit(1))[0];
-        if (!rate || !Number.isFinite(Number(rate.usdRate)) || Number(rate.usdRate) <= 0) throw new Error("Existing trade was found but its currency rate is unavailable for a safe retry response");
+        const replayScaleRow = (await tx.select({ scale: currencyRegistry.scale }).from(currencyRegistry).where(eq3(currencyRegistry.code, existing.currency)).limit(1))[0];
+        if (!replayScaleRow || !Number.isFinite(Number(replayScaleRow.scale))) throw new Error("Existing trade was found but its currency configuration is unavailable for a safe retry response");
+        const replayRate = tradeFxRates.get(String(existing.currency).toUpperCase());
+        const replayRateUsd = replayRate ? Number(replayRate.rateUsdPerUnit) : NaN;
+        const replayRateValid = Number.isFinite(replayRateUsd) && replayRateUsd > 0;
         const amountMinor = Number(existing.principalMinor);
         const replayBps = amountMinor > 0 ? Math.floor(Number(existing.expectedRewardMinor) * 1e4 / amountMinor) : 0;
         let debitTransitionText = "Capital locked into trade from available balance";
@@ -11063,7 +11128,7 @@ async function createTrade(userId, input) {
           expectedCreditMinor = sim.expectedCreditMinor;
         } catch {
         }
-        return { tradeId: Number(existing.id), publicTradeId: String(existing.publicTradeId || ""), rewardMinor: Number(existing.expectedRewardMinor), rewardBps: replayBps, minimumMinor: 0, calculationMethod: "idempotent-replay", settlesAt: existing.settlesAt, creditAt: existing.creditAt, currency: existing.currency, amountMinor, rateUsd: Number(rate.usdRate), rateUpdatedAt: rate.updatedAt, amountUsd: nativeMinorToUsd(amountMinor, Number(rate.scale), Number(rate.usdRate)), idempotentReplay: true, debitTransitionText, expectedProfitMinor, expectedCreditMinor, lifecycleStage: "capital_locked" };
+        return { tradeId: Number(existing.id), publicTradeId: String(existing.publicTradeId || ""), rewardMinor: Number(existing.expectedRewardMinor), rewardBps: replayBps, minimumMinor: 0, calculationMethod: "idempotent-replay", settlesAt: existing.settlesAt, creditAt: existing.creditAt, currency: existing.currency, amountMinor, rateUsd: replayRateValid ? replayRateUsd : null, rateUpdatedAt: replayRate?.fetchedAt || null, amountUsd: replayRateValid ? nativeMinorToUsd(amountMinor, Number(replayScaleRow.scale), replayRateUsd) : null, idempotentReplay: true, debitTransitionText, expectedProfitMinor, expectedCreditMinor, lifecycleStage: "capital_locked" };
       }
     }
     let publicTradeId = String(popupSnapshot?.publicTradeId || "");
@@ -11210,11 +11275,11 @@ async function createTrade(userId, input) {
       void packagePolicy.maxTradeAttemptsPerDay;
       void packagePolicy.maxSuccessfulTradesPerDay;
     }
-    const currencyRow = (await tx.select({ scale: currencyRegistry.scale, usdRate: currencyRegistry.usdRate, updatedAt: currencyRegistry.updatedAt }).from(currencyRegistry).where(eq3(currencyRegistry.code, offer.currency)).limit(1))[0];
+    const currencyRow = (await tx.select({ scale: currencyRegistry.scale }).from(currencyRegistry).where(eq3(currencyRegistry.code, offer.currency)).limit(1))[0];
     if (!currencyRow) throw new Error(`Currency ${offer.currency} is not configured`);
-    const nativeFactor = Math.pow(10, Number(currencyRow.scale));
-    const nativeRate = Number(currencyRow.usdRate);
-    if (!Number.isFinite(nativeRate) || nativeRate <= 0) throw new Error(`Currency ${offer.currency} has no valid conversion rate`);
+    const targetPreflightRate = tradeFxRates.get(String(offer.currency).toUpperCase());
+    const nativeRate = targetPreflightRate ? Number(targetPreflightRate.rateUsdPerUnit) : NaN;
+    if (!Number.isFinite(nativeRate) || nativeRate <= 0) throw new Error(`Currency ${offer.currency} has no valid live conversion rate`);
     const terms = calculateTradeTerms(userId, offer, input.amountMinor);
     const packageMinimumNative = packagePolicy ? usdUnitsToNativeMinor(Number(packagePolicy.minimumTradeUnits), Number(currencyRow.scale), nativeRate) : Number(offer.minimumMinor);
     const packageMaximumNative = packagePolicy ? Math.max(packageMinimumNative, usdUnitsToNativeMinor(Number(packagePolicy.maximumTradeUnits), Number(currencyRow.scale), nativeRate)) : Number.MAX_SAFE_INTEGER;
@@ -11359,7 +11424,7 @@ async function createTrade(userId, input) {
     if (input.deliveryEventId !== void 0) await tx.update(opportunityPopupEvents).set({ tradeId, publicTradeId, eventStatus: "TRADED", executionStatus: "SUCCEEDED", executionRetryAfter: null, executionLastErrorCode: null, tradedAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(and3(eq3(opportunityPopupEvents.id, input.deliveryEventId), eq3(opportunityPopupEvents.userId, userId), eq3(opportunityPopupEvents.offerId, offer.id)));
     else await tx.execute(sql5`UPDATE opportunity_popup_events SET tradeId=${tradeId},publicTradeId=${publicTradeId},eventStatus='TRADED',executionStatus='SUCCEEDED',executionRetryAfter=NULL,executionLastErrorCode=NULL,deliveryStatus=CASE WHEN deliveryStatus='failed' THEN deliveryStatus ELSE 'rendered' END,tradedAt=COALESCE(tradedAt,CURRENT_TIMESTAMP),updatedAt=CURRENT_TIMESTAMP WHERE userId=${userId} AND offerId=${offer.id} ORDER BY deliveredAt DESC LIMIT 1`);
     await tx.insert(tradeRewardReservations).values({ userId, tradeId, packageName: activePackageSubscription.packageName, windowKey: today, currency: offer.currency, reservedMinor: reward, status: "reserved" });
-    return { tradeId, publicTradeId, rewardMinor: reward, rewardBps: effectiveRateBps, minimumMinor: terms.minimumMinor, calculationMethod: "saved-tier-policy", configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, settlesAt, settlementReviewAt, creditAt, currency: offer.currency, amountMinor: input.amountMinor, rateUsd: nativeRate, rateUpdatedAt: currencyRow.updatedAt, amountUsd: nativeMinorToUsd(input.amountMinor, Number(currencyRow.scale), nativeRate), debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage, expectedCreditMinor: automaticDebit.expectedCreditMinor };
+    return { tradeId, publicTradeId, rewardMinor: reward, rewardBps: effectiveRateBps, minimumMinor: terms.minimumMinor, calculationMethod: "saved-tier-policy", configuredDurationSeconds: effectiveDurationSeconds, packagePolicyVersionSnapshot: snapshotVersion, settlesAt, settlementReviewAt, creditAt, currency: offer.currency, amountMinor: input.amountMinor, rateUsd: nativeRate, rateUpdatedAt: targetPreflightRate ? targetPreflightRate.fetchedAt : null, amountUsd: nativeMinorToUsd(input.amountMinor, Number(currencyRow.scale), nativeRate), debitTransitionText: automaticDebit.transitionText, expectedProfitMinor: automaticDebit.expectedGrossProfitMinor, lifecycleStage: automaticDebit.stage, expectedCreditMinor: automaticDebit.expectedCreditMinor };
   });
 }
 async function listTrades(userId) {

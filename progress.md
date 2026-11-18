@@ -16,7 +16,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 6 | `opportunityDeliveryCustomerSearch` email/name search | `[x]` | `Fix #6` |
 | 7 | SQL text in 500 responses | `[-]` | owner: leave alone |
 | 8 | Replace `1/x` float inversion with exact decimal | `[x]` | `Fix #8` |
-| 9 | Use live API rates everywhere a calc reads a stored rate | `[ ]` | |
+| 9 | Use live API rates everywhere a calc reads a stored rate | `[x]` | `Fix #9` |
 | 10 | Allocation fail-open — enforce tier/quota caps | `[ ]` | |
 | 11 | Remove fallback session secret | `[ ]` | |
 | 12 | database.sql / Git LFS dump | `[-]` | owner: ignore |
@@ -98,6 +98,13 @@ Item 4 added the UNION-branch regression test for item 3; item 5 fixed the ambig
 ### Item 8 notes (`Fix #8`)
 
 - `marketSync.ts` line 25 stored `String(1 / Number(row.rate))` and `marketProviders.ts` lines 92/110 stored `String(1 / usdToNative)`, producing binary-float reciprocals such as `1.0998922105633648`. Added `invertDecimalRate(rate, decimalPlaces = 12)` to `shared/money.ts` (decimal.js, half-up, fixed 12 decimals — matching the scale `rateToScaled` parses) and used it at all three sites. The stored `currencyRegistry.usdRate` is now an exact-decimal string. Unit tests live in `server/fx-rate-inversion.test.ts` (the `shared/**` glob is not collected by `vitest.config.ts`, so tests must live under `server/`), plus a contract assertion in `market-sync-no-synthetic-economics.contract.test.ts` that no `1/x` float inversion remains.
+
+### Item 9 notes (`Fix #9`)
+
+- Every rate that feeds a **calculation** now comes from a LIVE API fetch; the stored `currencyRegistry.usdRate` is used only as an audit snapshot. Added `tradingFxConfigForRow` / `resolveLiveCurrencyUsdRate` helpers in `server/db.ts` wrapping the existing `getFreshTradingFxRate` (`marketProviders.ts`, Frankfurter → open.er-api for fiat, CoinGecko for crypto).
+- Sites migrated to live rates: `getCustomerBalanceSummary` (balance FX), `packageUsdUnitsToNativeMinor` callers (generation snapshot, eligible-offer bounds, popup candidates, publication compatibility), `listCustomerOpportunities` (per-request `liveRateCache` memo), `createTrade` preflight (target + conversion-source wallets), the idempotent-replay rate block, `createTrade` success response, and the admin wallet-adjustment `committedResponse` (reports `null`/unavailable when no live rate).
+- Fail-closed: a missing live rate blocks the conversion (generation returns `LIVE_FX_RATE_UNAVAILABLE`; `createTrade` throws "A current exchange rate for … is unavailable; no wallet funds were moved"). Float arithmetic in the balance summary / min-max / exit P&L is unchanged (item 16).
+- **Characterization tests** (`server/modules/trade-ledger-characterization.test.ts`, 10 tests) added before this first protected-area item: cross-wallet FX funding (all-or-none, available-only debits), automatic debit/credit, realized-profit fee behaviour, and settlement-ledger reconciliation. They pass now and must keep passing through items 10, 14, 17, 18, 19, 20, 30; expectations may change only where item 19 (no-loss) or item 20 (fee removal) explicitly says so.
 
 ### Item 5 notes (`Fix #5`)
 
