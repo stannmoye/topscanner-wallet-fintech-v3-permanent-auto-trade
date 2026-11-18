@@ -15,10 +15,12 @@ type Props = {
   updateRow: (index: number, key: Exclude<keyof TradingDeliveryPolicyRow, "packageName">, value: number | boolean | string | null) => void;
   onPolicyReasonChange: (reason: string) => void;
   policyRowValid: (row: TradingDeliveryPolicyRow) => boolean;
+  /** Optional field-level error map per row (item 32); when omitted no inline errors render. */
+  policyRowErrors?: (row: TradingDeliveryPolicyRow) => Record<string, string>;
   onSave: () => void;
 };
 
-export default function TradingDeliveryPolicyEditor({ focus, policyRows, policyMessage, policyMessageKind, policyReason, isLoading, isSaving, updateRow, onPolicyReasonChange, policyRowValid, onSave }: Props) {
+export default function TradingDeliveryPolicyEditor({ focus, policyRows, policyMessage, policyMessageKind, policyReason, isLoading, isSaving, updateRow, onPolicyReasonChange, policyRowValid, policyRowErrors, onSave }: Props) {
   const show = (section: PolicyEditorFocus) => !focus || focus === section;
   return <div className="settings-card package-policy-card">
   <div className="eyebrow">Administrator-managed Trading settings</div>
@@ -27,8 +29,9 @@ export default function TradingDeliveryPolicyEditor({ focus, policyRows, policyM
   {focus==="quotas"&&<div className="admin-policy-note" role="note"><strong>Important: two different limits.</strong> The daily opportunity entitlement is set in <strong>Trade Settings → Tiers &amp; Eligibility</strong>. This page sets per-tier operational delivery ceilings that can reduce that entitlement but never increase it. To make a 600-per-day tier allowance available, set the hard daily pop-up ceiling to at least 600 and leave the optional target at 0. Existing customer entitlements keep their original saved quota; edits apply to future automatic assignments.</div>}
   {focus==="policy"&&<div className="admin-policy-note" role="note"><strong>Scope:</strong> This page contains per-tier offer eligibility and capital bounds only. Per-tier policy and pop-up delivery switches are controlled in the shared Trading controls panel above this page; no global switch is edited here. Tier threshold, entitlement duration and daily opportunity entitlement are maintained only in <strong>Tiers &amp; Eligibility</strong>.</div>}
   {policyMessage&&<div className={"test-notice "+(policyMessageKind==="error"?"error":"success")} role={policyMessageKind==="error"?"alert":"status"} aria-live="polite">{policyMessage}</div>}
-  {policyRows.map((row,index)=><article className="package-admin-card" key={row.packageName} style={{marginBottom:16}}>
+  {policyRows.map((row,index)=>{const rowErrors=policyRowErrors?Object.entries(policyRowErrors(row)):[];return <article className="package-admin-card" key={row.packageName} style={{marginBottom:16}}>
     <div className="package-admin-head"><div><span className="eyebrow">Tier policy</span><h3>{row.packageName}</h3></div><span className="admin-live-chip">Versioned</span></div>
+    {rowErrors.length>0&&<div className="test-notice error" role="alert"><strong>Fix these fields before saving:</strong><ul style={{margin:"4px 0 0 18px"}}>{rowErrors.map(([field,message])=><li key={field}>{message}</li>)}</ul></div>}
     {show("quotas")&&<>
     <div className="eyebrow">Operational delivery ceilings</div>
     <div className="form-two">
@@ -112,7 +115,7 @@ export default function TradingDeliveryPolicyEditor({ focus, policyRows, policyM
       <label>Card close policy<select value={row.closePolicy} onChange={e=>updateRow(index,"closePolicy",e.target.value)}><option value="after_completion">After completion</option><option value="after_final_display">After final status display</option></select><small>Per-tier presentation rule for when a card may close: after completion or after its final status display. Pending, retrying and awaiting-settlement cards remain accessible; this does not settle a trade or change its result.</small></label>
     </div>
     </>}
-  </article>)}
+  </article>})}
   {policyRows.length===0&&<div className="empty-state">{isLoading?"Loading saved tier policies…":"No tier policies were returned. Refresh the policy list before editing."}</div>}
   <label>Reason for changing Trading tier policies (required for audit)<textarea value={policyReason} maxLength={500} minLength={5} onChange={e=>onPolicyReasonChange(e.target.value)} placeholder="Explain why these delivery, automation, rate or duration controls are changing."/><small>Enter 5–500 characters for the administrator audit record.</small></label>
   <button className="primary-button" type="button" disabled={!policyRows.length||isLoading||isSaving} aria-busy={isSaving} onClick={onSave}>{isSaving?"Saving policy…":"Save per-tier policy"} <Check size={14}/></button>

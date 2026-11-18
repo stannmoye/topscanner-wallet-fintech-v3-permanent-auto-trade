@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf8");
 const policyEditor = readFileSync(new URL("../client/src/components/TradingDeliveryPolicyEditor.tsx", import.meta.url), "utf8");
+const policyValidator = readFileSync(new URL("../client/src/trading-policy-validation.ts", import.meta.url), "utf8");
+const policyBounds = readFileSync(new URL("../shared/trading-tier-policy-bounds.ts", import.meta.url), "utf8");
 const retryEditor = readFileSync(new URL("../client/src/components/AdminDeliveryRetryPolicy.tsx", import.meta.url), "utf8");
 const router = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const database = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
@@ -58,7 +60,10 @@ describe("administrator Trading delivery policy controls", () => {
     expect(router).not.toContain("popupDisplayTargetSeconds: z.number().int().min(1).max(86400).optional()");
     expect(policyEditor).not.toContain("Expanded pop-up display duration");
     expect(app).not.toContain("row.popupDisplayTargetSeconds<=86400");
-    expect(app).toContain("row.completionDisplaySeconds<=3600");
+    // Item 32 moved every per-tier field bound into the shared module consumed
+    // by the client validator; the completion-display bound is validated there.
+    expect(policyValidator).toContain("TRADING_TIER_POLICY_NUMERIC_BOUNDS");
+    expect(policyBounds).toContain("completionDisplaySeconds: { min: 1, max: 3600 }");
     expect(router).toContain("minimumTradeUnits: z.number().int().min(1).max(2147483647).optional()");
     const start = router.indexOf("updatePackagePolicies: adminProcedure.input");
     const end = router.indexOf("createOffer: adminProcedure.input", start);

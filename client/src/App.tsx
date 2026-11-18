@@ -9,6 +9,7 @@ import PortalRenderBoundary from "@/components/PortalRenderBoundary";
 import { OpportunityCloseAction } from "@/components/OpportunityCloseAction";
 import { TradeIdCopyButton } from "@/components/TradeIdCopyButton";
 import type { TradingDeliveryPolicyRow } from "@/components/TradingDeliveryPolicyEditor";
+import { tradingPolicyRowValid, tradingPolicyRowErrorMap, validateTradingPolicyRow } from "@/trading-policy-validation";
 import { formatFeeBpsAsPercent, parseFeePercentToBps, resolvePackageFeePolicy, type FeeRoundingMode } from "./trading-settings-client-contracts";
 import { getPageCount, paginateItems } from "./trading-catalogue-pagination";
 import { countEnabledTradingPackages } from "./trading-package-status";
@@ -1455,30 +1456,13 @@ function AdminTradingPolicySettings({focus}:{focus?:"policy"|"quotas"|"delivery"
     setPolicyMessage("");
     setPolicyRows(rows=>rows.map((row,i)=>i===index?{...row,[key]:value}:row));
   };
-  const policyRowValid=(row:TradingDeliveryPolicyRow)=>{
-    const settlementBaseline=policyBaseline.find(item=>item.packageName===row.packageName);
-    const settlementTimingChanged=Boolean(settlementBaseline&&(row.minSettlementDelaySeconds!==settlementBaseline.minSettlementDelaySeconds||row.maxSettlementDelaySeconds!==settlementBaseline.maxSettlementDelaySeconds));
-    const settlementTimingSafe=!settlementTimingChanged||(row.minSettlementDelaySeconds>=0&&row.maxSettlementDelaySeconds>=0);
-    const minRate=row.minimumPayoutRateBps,maxRate=row.maximumPayoutRateBps;
-    const validRateBounds=minRate!==null&&maxRate!==null&&Number.isSafeInteger(minRate)&&Number.isSafeInteger(maxRate)&&minRate>=1&&maxRate>=minRate&&maxRate<=5000;
-    const minDuration=row.minimumTradeDurationSeconds,maxDuration=row.maximumTradeDurationSeconds;
-    const validDurationBounds=minDuration!==null&&maxDuration!==null&&Number.isSafeInteger(minDuration)&&Number.isSafeInteger(maxDuration)&&minDuration>=10&&maxDuration>=minDuration&&maxDuration<=86400;
-    const validDisplayDurations=Number.isSafeInteger(row.completionDisplaySeconds)&&row.completionDisplaySeconds>=1&&row.completionDisplaySeconds<=3600;
-    const requiresConfiguredOfferTerms=row.enabled&&row.automaticDelivery;
-    const validAutomationSwitches=!row.automaticTradingEnabled||(row.enabled&&row.automaticDelivery);
-    return typeof row.enabled==="boolean"&&typeof row.automaticDelivery==="boolean"&&typeof row.automaticTradingEnabled==="boolean"&&validAutomationSwitches&&
-      row.badgeLabel.length<=40&&["neutral","blue","purple","gold","green"].includes(row.badgeStyle)&&
-      (!requiresConfiguredOfferTerms||(validRateBounds&&validDurationBounds))&&
-      validDisplayDurations&&
-      Number.isSafeInteger(row.minimumTradeUnits)&&Number.isSafeInteger(row.maximumTradeUnits)&&row.minimumTradeUnits>=1&&row.maximumTradeUnits>=row.minimumTradeUnits&&
-      Number.isSafeInteger(row.minIntervalSeconds)&&Number.isSafeInteger(row.maxIntervalSeconds)&&row.minIntervalSeconds<=row.maxIntervalSeconds&&
-      Number.isSafeInteger(row.minSettlementDelaySeconds)&&Number.isSafeInteger(row.maxSettlementDelaySeconds)&&row.minSettlementDelaySeconds<=row.maxSettlementDelaySeconds&&settlementTimingSafe;
-  };
+  const policyRowValid=(row:TradingDeliveryPolicyRow)=>tradingPolicyRowValid(row);
+  const policyRowErrors=(row:TradingDeliveryPolicyRow)=>tradingPolicyRowErrorMap(row);
   const onSave=()=>{
     if(policyReason.trim().length<5){setPolicyMessageKind("error");setPolicyMessage("Enter at least 5 characters explaining this policy change.");return;}
     if(!policyRows.length){setPolicyMessageKind("error");setPolicyMessage("No tier policies are loaded. Refresh before saving.");return;}
     const invalidTier=policyRows.find(row=>!policyRowValid(row));
-    if(invalidTier){setPolicyMessageKind("error");setPolicyMessage("Correct the invalid policy settings for "+invalidTier.packageName+" before saving.");return;}
+    if(invalidTier){setPolicyMessageKind("error");setPolicyMessage("Correct the invalid policy settings for "+invalidTier.packageName+" before saving. "+validateTradingPolicyRow(invalidTier).map(item=>item.message).join(" "));return;}
     const patches=buildChangedPolicyPatches(policyBaseline,policyRows,TRADING_TIER_POLICY_PATCH_KEYS);
     if(!patches.length){setPolicyMessageKind("error");setPolicyMessage("No policy changes to save.");return;}
     updatePolicies.mutate({policies:patches,reason:policyReason.trim()});
@@ -1488,7 +1472,7 @@ function AdminTradingPolicySettings({focus}:{focus?:"policy"|"quotas"|"delivery"
   return <div className="arb-page portal-page"><div className="portal-page-top"><div><div className="eyebrow">Authoritative Trading policy editor</div><h1>{title}</h1><p>{description}</p></div></div>
     {policies.isError&&<div className="auth-error" role="alert">Trading policy could not be loaded. {policies.error.message}</div>}
     <Suspense fallback={<div className="settings-card">Loading saved Trading policy controls…</div>}>
-      <TradingDeliveryPolicyEditor policyRows={policyRows} policyMessage={policyMessage} policyMessageKind={policyMessageKind} policyReason={policyReason} onPolicyReasonChange={setPolicyReason} isLoading={policies.isLoading} isSaving={updatePolicies.isPending} updateRow={updateRow} policyRowValid={policyRowValid} onSave={onSave} focus={focus}/>
+      <TradingDeliveryPolicyEditor policyRows={policyRows} policyMessage={policyMessage} policyMessageKind={policyMessageKind} policyReason={policyReason} onPolicyReasonChange={setPolicyReason} isLoading={policies.isLoading} isSaving={updatePolicies.isPending} updateRow={updateRow} policyRowValid={policyRowValid} policyRowErrors={policyRowErrors} onSave={onSave} focus={focus}/>
     </Suspense>
   </div>;
 }
