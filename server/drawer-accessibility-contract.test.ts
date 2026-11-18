@@ -39,6 +39,11 @@ describe("navigation drawer keyboard accessibility contracts", () => {
     expect(source).toContain('aria-expanded={open}');
   });
 
+  it("cancels the pending focus requestAnimationFrame when the customer drawer closes", () => {
+    expect(customerDrawer).toContain("const focusFrame = window.requestAnimationFrame(");
+    expect(customerDrawer).toContain("window.cancelAnimationFrame(focusFrame)");
+  });
+
   it("keeps navigation scrollable inside Android's dynamic viewport", () => {
     expect(drawerStyles).toContain("max-height:calc(100dvh - 12px)!important");
     expect(drawerStyles).toContain("overflow-y:auto!important");

@@ -166,8 +166,8 @@ export function CustomerSlideMenu({ section, onNavigate }: CustomerSlideMenuProp
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
     window.addEventListener("keydown", onKeyDown);
-    window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>("input,button:not([tabindex=\"-1\"])")?.focus());
-    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", onKeyDown); };
+    const focusFrame = window.requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>("input,button:not([tabindex=\"-1\"])")?.focus());
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", onKeyDown); window.cancelAnimationFrame(focusFrame); };
   }, [open]);
 
   const close = () => { setOpen(false); window.requestAnimationFrame(() => triggerRef.current?.focus()); };
