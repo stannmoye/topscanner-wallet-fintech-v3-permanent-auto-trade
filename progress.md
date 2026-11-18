@@ -29,7 +29,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 19 | No-loss settlement, catch-up + sweep, reporting clamp | `[x]` | `Fix #19` |
 | 20 | Remove package fee entirely | `[-]` | owner: keep the package fee |
 | 21 | Security headers (CSP, HSTS, frame, referrer, nosniff) | `[x]` | `Fix #21` |
-| 22 | CSRF Origin/Sec-Fetch-Site checks | `[ ]` | |
+| 22 | CSRF Origin/Sec-Fetch-Site checks | `[x]` | `Fix #22` |
 | 23 | popup-execution-policy fail closed on blank status | `[ ]` | |
 | 24 | `updatePopupDeliveryStatus` requires leaseToken | `[ ]` | |
 | 25 | Allocation reason 8–500 chars, strict input | `[ ]` | |
@@ -124,6 +124,16 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 22 notes (`Fix #22`)
+
+- **What changed.** New [csrfProtection.ts](file:///workspace/repo/server/_core/csrfProtection.ts) exports the pure decision `evaluateCsrfProtection`, the origin helpers, and `csrfProtectionMiddleware`. [index.ts](file:///workspace/repo/server/_core/index.ts) installs it with `app.use(csrfProtectionMiddleware())` immediately after the security headers and **before** `registerLocalStorageRoutes(app)` and every route, so it guards all tRPC mutations and the auth/upload endpoints (`/api/customer/*`, `/api/admin/login`, password reset, email verification, support attachments, settlement evidence).
+- **Decision order** for unsafe methods (`POST`/`PUT`/`PATCH`/`DELETE`; `GET`/`HEAD`/`OPTIONS` are exempt): (1) `Sec-Fetch-Site` — `same-origin`/`none` trusted, anything else rejected; (2) `Origin` must equal the app origin; (3) `Referer` origin as fallback; (4) no origin evidence at all fails closed.
+- **Behind the proxy.** The authoritative origin is `PUBLIC_APP_URL` (the installer requires it and it is the exact public HTTPS URL), so the check is correct even when the app sees a plain-HTTP request behind a TLS-terminating proxy. When `PUBLIC_APP_URL` is unset (dev/preview only) the request-derived origin is used and a same-host match is accepted, matching the standard host-based Origin check. Comparison is scheme+host whenever `PUBLIC_APP_URL` is set.
+- **Exempt.** Signed heartbeat worker callbacks (`/api/scheduled/…` and the `x-arbitrade-scheduled-signature` HMAC header) are exempt — they originate from the server and are already authenticated by HMAC. OAuth routes are `GET`-only, so they are untouched at the safe-method step.
+- **Tests.** New [csrf-protection.contract.test.ts](file:///workspace/repo/server/csrf-protection.contract.test.ts) (13 tests): safe methods, `Sec-Fetch-Site` allow/reject, `Origin` match/mismatch, `Referer` fallback + precedence, fail-closed on missing evidence, the scheduled/HMAC exemptions, the TLS-terminating-proxy case, strictness when `PUBLIC_APP_URL` is configured, the dev/preview host-only fallback, origin normalisation, the middleware returning 403/next, and a source-contract check that the middleware sits after the security headers and before the first route.
+- **Docs.** [README.md](file:///workspace/repo/README.md) security section documents the CSRF check and the `PUBLIC_APP_URL` requirement.
+- **Protected area untouched.** No change to any ledger, allocation or settlement module.
 
 ### Item 19 notes (`Fix #19`)
 

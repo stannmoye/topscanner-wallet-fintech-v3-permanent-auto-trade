@@ -19601,6 +19601,89 @@ function securityHeadersMiddleware(nodeEnv = process.env.NODE_ENV) {
   };
 }
 
+// server/_core/csrfProtection.ts
+var SAFE_METHODS = /* @__PURE__ */ new Set(["GET", "HEAD", "OPTIONS"]);
+var SCHEDULED_CALLBACK_PATH_PREFIX = "/api/scheduled/";
+var SCHEDULED_SIGNATURE_HEADER = "x-arbitrade-scheduled-signature";
+function firstHeader(value) {
+  if (Array.isArray(value)) return value[0];
+  return value?.trim() || void 0;
+}
+function normalizeOrigin(value) {
+  const raw = value?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return null;
+  }
+}
+function originHost(origin2) {
+  if (!origin2) return null;
+  try {
+    return new URL(origin2).host;
+  } catch {
+    return null;
+  }
+}
+function evaluateCsrfProtection(input) {
+  const method = (input.method || "GET").toUpperCase();
+  if (SAFE_METHODS.has(method)) return { allowed: true, reason: "safe-method" };
+  if (input.path.startsWith(SCHEDULED_CALLBACK_PATH_PREFIX)) {
+    return { allowed: true, reason: "scheduled-callback-path" };
+  }
+  if (firstHeader(input.headers[SCHEDULED_SIGNATURE_HEADER])) {
+    return { allowed: true, reason: "signed-worker-callback" };
+  }
+  const fetchSite = firstHeader(input.headers["sec-fetch-site"])?.toLowerCase();
+  if (fetchSite) {
+    if (fetchSite === "same-origin" || fetchSite === "none") {
+      return { allowed: true, reason: "sec-fetch-site-same-origin" };
+    }
+    return { allowed: false, reason: "sec-fetch-site-cross-site" };
+  }
+  const configured = normalizeOrigin(input.configuredOrigin ?? void 0);
+  const requestOrigin = normalizeOrigin(input.requestOrigin ?? void 0);
+  const allowedOrigins = /* @__PURE__ */ new Set();
+  if (configured) allowedOrigins.add(configured);
+  else if (requestOrigin) allowedOrigins.add(requestOrigin);
+  if (!allowedOrigins.size) return { allowed: false, reason: "unknown-expected-origin" };
+  const allowHostOnlyFallback = !configured;
+  const evaluate = (candidate, kind) => {
+    if (!candidate) return { allowed: false, reason: `missing-${kind}` };
+    if (allowedOrigins.has(candidate)) return { allowed: true, reason: `${kind}-match` };
+    if (allowHostOnlyFallback && requestOrigin && originHost(candidate) === originHost(requestOrigin)) {
+      return { allowed: true, reason: `${kind}-host-match` };
+    }
+    return { allowed: false, reason: `${kind}-mismatch` };
+  };
+  const origin2 = normalizeOrigin(firstHeader(input.headers["origin"]));
+  if (origin2) return evaluate(origin2, "origin");
+  const referer = normalizeOrigin(firstHeader(input.headers["referer"]));
+  if (referer) return evaluate(referer, "referer");
+  return { allowed: false, reason: "missing-origin-evidence" };
+}
+function resolveConfiguredOrigin() {
+  const configured = process.env.PUBLIC_APP_URL?.trim();
+  if (!configured) return null;
+  return normalizeOrigin(configured);
+}
+function csrfProtectionMiddleware() {
+  return (req, res, next) => {
+    const decision = evaluateCsrfProtection({
+      method: req.method,
+      path: req.path,
+      headers: req.headers,
+      configuredOrigin: resolveConfiguredOrigin(),
+      requestOrigin: `${req.protocol}://${req.get("host") ?? ""}`
+    });
+    if (decision.allowed) return next();
+    res.status(403).json({ error: "Request blocked: the cross-site request was rejected." });
+  };
+}
+
 // server/_core/index.ts
 init_opportunityLifecycle();
 init_emailQueue();
@@ -19747,6 +19830,7 @@ async function startServer() {
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: (/* @__PURE__ */ new Date()).toISOString(), event: "session-secret-initialization-complete" }));
   const app = express2();
   app.use(securityHeadersMiddleware());
+  app.use(csrfProtectionMiddleware());
   registerLocalStorageRoutes(app);
   if (process.env.NODE_ENV === "production" && !configuredAuthRateLimitStore) {
     console.warn("[AuthRateLimit] Using process-local counters. Configure AUTH_RATE_LIMIT_REDIS_REST_URL and AUTH_RATE_LIMIT_REDIS_REST_TOKEN for multi-instance deployments.");

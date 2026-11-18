@@ -19,6 +19,7 @@ import { getTicketUploadPolicy } from "../db";
 import { ensureMarketDrivenOpportunities, refreshMarketData } from "../marketSync";
 import { serveStatic, setupVite } from "./vite";
 import { securityHeadersMiddleware } from "./securityHeaders";
+import { csrfProtectionMiddleware } from "./csrfProtection";
 import { openTransactionConsoleSession } from "../transactionConsole";
 import { runOpportunityRetention } from "../opportunityLifecycle";
 import { getLocalSessionFromRequest } from "./localAuth";
@@ -71,6 +72,10 @@ async function startServer() {
   // referrer, nosniff) before any route is registered so every response — API,
   // static asset and SPA fallback — carries them.
   app.use(securityHeadersMiddleware());
+  // Item 22: reject cross-site state-changing requests (tRPC mutations and the
+  // auth/upload endpoints) with a Sec-Fetch-Site + Origin/Referer check. Signed
+  // heartbeat worker callbacks under /api/scheduled/… are exempt.
+  app.use(csrfProtectionMiddleware());
   registerLocalStorageRoutes(app);
   if (process.env.NODE_ENV === "production" && !configuredAuthRateLimitStore) {
     console.warn("[AuthRateLimit] Using process-local counters. Configure AUTH_RATE_LIMIT_REDIS_REST_URL and AUTH_RATE_LIMIT_REDIS_REST_TOKEN for multi-instance deployments.");
