@@ -153,6 +153,43 @@ describe("Trade Settings ownership registry contract", () => {
     }
   });
 
+  it("uses the server canonical key for the informational pop-up delivery master", () => {
+    const master = tradeSettingsOwnershipRegistry.find((entry) => entry.key === "trade.global.informationalPopupDeliveryEnabled");
+    expect(master).toMatchObject({
+      scope: "global",
+      ownerRoute: "trade-package-configuration",
+      readQuery: "adminOperations.globalTradeControls",
+      saveMutation: "adminOperations.updateGlobalTradeControl",
+      availability: "available",
+    });
+    expect(tradeSettingsOwnershipRegistry.some((entry) => entry.key === "trade.global.popupDeliveryEnabled")).toBe(false);
+  });
+
+  it("registers the four patchable rate-profile fields that have no editor control", () => {
+    const editorlessFields: Record<string, string> = {
+      minHourlyTarget: "trade.policy.minimumHourlyTarget",
+      normalHourlyTarget: "trade.policy.normalHourlyTarget",
+      marketInfluenceBps: "trade.policy.marketInfluenceBps",
+      maxBurstSize: "trade.policy.maxBurstSize",
+    };
+    for (const [field, key] of Object.entries(editorlessFields)) {
+      expect(TRADING_TIER_POLICY_PATCH_KEYS, `${field} is a patchable server field`).toContain(field);
+      expect(renderedPolicyFields, `${field} has no rendered editor`).not.toContain(field);
+      const matches = tradeSettingsOwnershipRegistry.filter((entry) => entry.key === key);
+      expect(matches, `${field} is registered once`).toHaveLength(1);
+      expect(matches[0]).toMatchObject({
+        scope: "package",
+        ownerRoute: "trade-delivery-policy",
+        section: "policy",
+        saveMutation: "adminOperations.updatePackagePolicies",
+        readQuery: "adminOperations.packagePolicies",
+        availability: "available",
+      });
+      // A patchable control with no editor is represented by omitting controlContract.
+      expect(matches[0].controlContract, `${field} must not claim a rendered editor`).toBeUndefined();
+    }
+  });
+
   it("registers locked and unavailable controls without mutation owners", () => {
     const byKey = new Map(tradeSettingsOwnershipRegistry.map((entry) => [entry.key, entry]));
     for (const key of ["trade.retry.carryForward"]) {

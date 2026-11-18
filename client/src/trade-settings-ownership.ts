@@ -71,6 +71,14 @@ const tierPolicyField = (input: {
   runtimeConsumer: string;
   customerImpact: string;
   risk?: TradeSettingsRisk;
+  /**
+   * Defaults to true. Set false for a per-tier policy field that the audited
+   * patch contract still accepts but that has no dedicated editor control in
+   * TradingDeliveryPolicyEditor. The registry then omits `controlContract`,
+   * which is its link from a field to a rendered editor control; that omission
+   * is how the registry represents a control that has no editor.
+   */
+  hasEditor?: boolean;
 }): RegistryEntry => ({
   key: input.key,
   scope: "package",
@@ -88,7 +96,7 @@ const tierPolicyField = (input: {
   customerImpact: input.customerImpact,
   risk: input.risk ?? "medium",
   availability: "available",
-  controlContract: `packagePolicies.${input.field}`,
+  ...(input.hasEditor === false ? {} : { controlContract: `packagePolicies.${input.field}` }),
 });
 
 const packageTermField = (input: {
@@ -159,7 +167,7 @@ const registryEntries: readonly RegistryEntry[] = [
     customerImpact: "ON permits valid tiers to be considered; OFF prevents future matching decisions.", risk: "high",
   }),
   globalMaster({
-    key: "trade.global.popupDeliveryEnabled", label: "Pop-up delivery",
+    key: "trade.global.informationalPopupDeliveryEnabled", label: "Informational pop-up delivery",
     explanation: "Global gate for new informational customer pop-ups from published open opportunities.",
     runtimeConsumer: "server/db.ts customer opportunity delivery worker.",
     customerImpact: "OFF stops new pop-ups; it does not create opportunities or move funds.", risk: "high",
@@ -278,6 +286,30 @@ const registryEntries: readonly RegistryEntry[] = [
     explanation: "Upper per-tier required-capital bound in whole USD units; it must be at least the minimum.", units: "whole USD units",
     validation: "Positive integer from 1 through 2,147,483,647; must be at least the minimum bound.", runtimeConsumer: "server/db.ts validates and applies the saved per-tier capital bounds during offer eligibility checks.",
     customerImpact: "Constrains eligible offer terms; it does not establish available balance, allocate capital, debit a wallet, or prove execution.", risk: "high",
+  }),
+  tierPolicyField({
+    field: "minHourlyTarget", key: "trade.policy.minimumHourlyTarget", section: "policy", label: "Minimum hourly target",
+    explanation: "Lower bound of this tier's adaptive delivery rate profile. It describes a saved rate-profile input only; it is not a delivery guarantee or a per-day quota.", units: "whole target units per hour",
+    validation: "Integer from 0 through 100; the server rejects a minimum that exceeds the normal hourly target.", runtimeConsumer: "server/db.ts per-tier policy validation and the delivery rateProfile returned by the pop-up eligibility worker.",
+    customerImpact: "Adjusts the saved adaptive rate profile only; it does not change capital, debit, credit or the customer's entitlement.", hasEditor: false,
+  }),
+  tierPolicyField({
+    field: "normalHourlyTarget", key: "trade.policy.normalHourlyTarget", section: "policy", label: "Normal hourly target",
+    explanation: "Reference (normal) hourly target of this tier's adaptive delivery rate profile. It is a saved profile input, not a promised delivery rate.", units: "whole target units per hour",
+    validation: "Integer from 0 through 100; the server rejects a normal target whose 24-hour total exceeds the hard daily pop-up ceiling.", runtimeConsumer: "server/db.ts per-tier policy validation and the delivery rateProfile returned by the pop-up eligibility worker.",
+    customerImpact: "Adjusts the saved adaptive rate profile only; it does not create an opportunity or move funds.", hasEditor: false,
+  }),
+  tierPolicyField({
+    field: "marketInfluenceBps", key: "trade.policy.marketInfluenceBps", section: "policy", label: "Market influence",
+    explanation: "Per-tier weighting applied to market influence inside the adaptive delivery rate profile. It is a profile input, not a market quote or evidence of execution.", units: "basis points; 1 bp = 0.01 percentage point",
+    validation: "Integer from 0 through 10,000 basis points.", runtimeConsumer: "server/db.ts delivery rateProfile.marketInfluenceBps.",
+    customerImpact: "Adjusts the saved adaptive rate profile only; it does not alter configured returns, capital or wallet postings.", hasEditor: false,
+  }),
+  tierPolicyField({
+    field: "maxBurstSize", key: "trade.policy.maxBurstSize", section: "policy", label: "Maximum burst size",
+    explanation: "Per-tier maximum number of eligible pop-ups the worker may create in one cycle while the global burst-delivery master is ON.", units: "pop-ups per worker cycle; the server hard-caps the effective value at 10",
+    validation: "Integer from 0 through 100; a saved value below 1 delivers one item per cycle.", runtimeConsumer: "server/db.ts new-eligibility burst limit via resolveTradingBurstLimit and the delivery rateProfile.",
+    customerImpact: "Limits how many informational pop-ups one worker cycle may queue for the tier; it never bypasses quotas and does not move funds.", hasEditor: false,
   }),
   tierPolicyField({
     field: "dailyPopupTarget", key: "trade.policy.optionalDailyTarget", section: "quotas", label: "Optional daily target cap",

@@ -26,7 +26,7 @@ describe("global Trade master policy ownership and migration", () => {
   it("assigns each global master exactly one global owner and keeps package lifecycle separate", () => {
     const masterKeys = [
       "trade.global.tierPolicyMasterEnabled",
-      "trade.global.popupDeliveryEnabled",
+      "trade.global.informationalPopupDeliveryEnabled",
       "trade.global.companyRotationEnabled",
       "trade.global.randomizedTimingEnabled",
       "trade.global.burstDeliveryEnabled",

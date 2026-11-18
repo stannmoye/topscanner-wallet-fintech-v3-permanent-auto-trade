@@ -63,7 +63,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 53 | `recordDeliveryHistory` bounded warning log | `[x]` | `Fix #53` |
 | 54 | FX rate cache single-flight | `[x]` | `Fix #54` |
 | 55 | `usdUnitsToNativeMinor` clamp + unavailable flag | `[x]` | `Fix #55` |
-| 56 | Registry key rename + register 4 patchable fields | `[ ]` | |
+| 56 | Registry key rename + register 4 patchable fields | `[x]` | `Fix #56` |
 | 57 | Remove/dedupe `getAdminNavigationItem` | `[ ]` | |
 | 58 | Unify display-delay label | `[ ]` | |
 | 59 | Remove dead code (DashboardLayout, unreachable dashboard) | `[ ]` | |
