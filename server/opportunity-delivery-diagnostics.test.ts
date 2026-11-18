@@ -114,4 +114,24 @@ describe("Opportunity delivery diagnostics", () => {
     expect(diagnosticsSource).toContain("p.companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId");
     expect(diagnosticsSource).toContain("COALESCE(p.companyDisplayName,o.companyDisplayName) COLLATE utf8mb4_unicode_ci AS companyDisplayName");
   });
+
+  it("never applies COLLATE to a NULL literal in any UNION branch of the delivery record SQL", () => {
+    // Regression guard for item 3: the second UNION ALL branch used to emit
+    // `NULL AS failureReason COLLATE utf8mb4_unicode_ci`. A NULL literal has no
+    // character set, so MariaDB rejects the whole statement and every delivery-records
+    // surface (records/details/customer/export) returned HTTP 500. The sandbox has no
+    // MySQL/MariaDB server binary, so the project test setup cannot execute the query;
+    // this asserts the generated SQL texturally for every branch instead.
+    const cteStart = diagnosticsSource.indexOf("const RECORD_CTES = `");
+    const cteEnd = diagnosticsSource.indexOf("`;", cteStart);
+    expect(cteStart).toBeGreaterThanOrEqual(0);
+    expect(cteEnd).toBeGreaterThan(cteStart);
+    const generatedSql = diagnosticsSource.slice(cteStart, cteEnd);
+    expect(generatedSql).not.toMatch(/NULL\s+(?:AS\s+[A-Za-z_][A-Za-z0-9_]*\s+)?COLLATE\b/i);
+    // Both UNION ALL branches must still pin every unioned string column.
+    expect(generatedSql.match(/packageName COLLATE utf8mb4_unicode_ci AS packageName/g)).toHaveLength(2);
+    expect(generatedSql.match(/companyReferenceId COLLATE utf8mb4_unicode_ci AS companyReferenceId/g)).toHaveLength(2);
+    expect(generatedSql.match(/\) COLLATE utf8mb4_unicode_ci AS companyDisplayName/g)).toHaveLength(2);
+    expect((generatedSql.match(/\bUNION ALL\b/g) ?? []).length).toBe(1);
+  });
 });

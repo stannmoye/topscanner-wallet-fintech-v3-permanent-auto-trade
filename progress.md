@@ -11,7 +11,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 1 | `settlementIntegrityIssues` 500 — surface cause, fix collation drift | `[x]` | `Fix #1` |
 | 2 | `walletLedgerReconciliation` 500 — sequential queries | `[x]` | `Fix #2` |
 | 3 | Delivery records 500 — invalid `COLLATE` on NULL | `[x]` | `Fix #3` |
-| 4 | Test covering item 3 on every UNION branch | `[ ]` | |
+| 4 | Test covering item 3 on every UNION branch | `[x]` | `Fix #4` |
 | 5 | Delivery queue diagnostics ambiguous `createdAt` | `[ ]` | |
 | 6 | `opportunityDeliveryCustomerSearch` email/name search | `[ ]` | |
 | 7 | SQL text in 500 responses | `[-]` | owner: leave alone |
@@ -82,6 +82,10 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 ### Item 2 notes (`Fix #2`)
 
 - `listWalletLedgerReconciliation` ran four aggregate reads with `Promise.all` inside one `db.transaction`. A Drizzle transaction is bound to a single MySQL connection and mysql2 cannot pipeline overlapping commands, so the report 500'd (the reported failing statement was the `payout_requests` aggregate). The four aggregates are now `await`ed in series.
+
+### Item 4 notes (`Fix #4`)
+
+- Added a regression test (`server/opportunity-delivery-diagnostics.test.ts`) that extracts the generated `RECORD_CTES` SQL and fails if any `NULL` literal is followed by `COLLATE` (the item-3 defect), while asserting both `UNION ALL` branches still pin every unioned string column. Verified the guard matches the pre-fix text and rejects the fixed text. The test would run against a real MariaDB if one were available; the sandbox has none, so it validates the SQL texturally.
 
 ### Item 3 notes (`Fix #3`)
 
