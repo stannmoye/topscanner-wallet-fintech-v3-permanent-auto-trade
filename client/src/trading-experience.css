@@ -554,20 +554,6 @@
     linear-gradient(120deg, color-mix(in srgb, var(--trade-warning) 8%, var(--trade-raised)), var(--trade-surface));
   box-shadow: 0 12px 26px color-mix(in srgb, var(--trade-canvas) 25%, transparent);
 }
-.customer-portal .portal-main .trading-packages-panel .trading-journey-refresh {
-  min-height: 40px;
-  padding: 9px 14px;
-  border: 1px solid color-mix(in srgb, var(--trade-accent) 42%, var(--trade-border));
-  border-radius: 12px;
-  color: var(--arb-color-text, #f4fbf8);
-  background: linear-gradient(120deg, color-mix(in srgb, var(--trade-accent) 20%, var(--trade-raised)), var(--trade-surface));
-  font-weight: 760;
-  transition: transform .18s ease, box-shadow .18s ease;
-}
-.customer-portal .portal-main .trading-packages-panel .trading-journey-refresh:hover:not(:disabled) {
-  box-shadow: 0 10px 23px color-mix(in srgb, var(--trade-canvas) 30%, transparent);
-  transform: translateY(-2px);
-}
 .customer-portal .portal-main .customer-home-page .customer-quick-feature.trade {
   border: 1px solid color-mix(in srgb, var(--trade-accent) 38%, var(--trade-border));
   border-radius: 18px;

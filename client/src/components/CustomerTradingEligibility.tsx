@@ -1,10 +1,6 @@
 import {
-  ArrowUpRight,
   CalendarClock,
   CheckCircle2,
-  Clock3,
-  Info,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   Target,
@@ -44,13 +40,7 @@ export function CustomerTradingEligibility() {
           <div className="trading-journey-eyebrow"><Sparkles size={18} strokeWidth={2.5} aria-hidden="true" /> Your Trading Journey</div>
           <h2 className="trading-journey-title" id="trading-eligibility-heading">Package progress</h2>
           <div className={`trading-bot-status ${eligibilityQuery.isLoading ? "is-loading" : eligibilityQuery.isError ? "is-error" : currentPackage ? "is-active" : "is-inactive"}`} role="status" aria-live="polite">
-            <span className="trading-bot-status-icon" aria-hidden="true">
-              {eligibilityQuery.isLoading ? <Clock3 size={19} strokeWidth={2.5} /> : eligibilityQuery.isError ? <Info size={19} strokeWidth={2.5} /> : currentPackage ? <CheckCircle2 size={19} strokeWidth={2.5} /> : <WalletCards size={19} strokeWidth={2.5} />}
-            </span>
             <span className="trading-status-copy">
-              <strong className="trading-status-label">
-                {eligibilityQuery.isLoading ? "CHECKING" : eligibilityQuery.isError ? "RETRY NEEDED" : currentPackage ? "PACKAGE ACTIVE" : "NO PACKAGE ASSIGNED"}
-              </strong>
               <span className="trading-status-message">
                 {eligibilityQuery.isLoading
                   ? "Checking your latest progress."
@@ -64,16 +54,6 @@ export function CustomerTradingEligibility() {
             {!eligibilityQuery.isLoading && !eligibilityQuery.isError && currentPackage && <span className="trading-bot-live-dot" aria-hidden="true" />}
           </div>
         </div>
-        <button
-          className="trading-journey-refresh"
-          type="button"
-          onClick={() => void eligibilityQuery.refetch()}
-          disabled={eligibilityQuery.isFetching}
-          aria-label="Refresh Trading package progress"
-        >
-          <RefreshCw size={16} strokeWidth={2.5} aria-hidden="true" className={eligibilityQuery.isFetching ? "animate-spin" : undefined} />
-          {eligibilityQuery.isFetching ? "Updating…" : "Refresh"}
-        </button>
       </header>
 
       {eligibilityQuery.isLoading ? (
@@ -91,7 +71,6 @@ export function CustomerTradingEligibility() {
                   <div className="trading-tier-kicker"><CheckCircle2 size={19} strokeWidth={2.5} aria-hidden="true" /> Milestone Package</div>
                   <h3 className="trading-tier-name" id="current-trading-package">{currentPackage.name}</h3>
                 </div>
-                <span className="trading-tier-state"><ShieldCheck size={17} strokeWidth={2.5} aria-hidden="true" /> Automatically assigned</span>
               </div>
               <div className="trading-tier-metrics">
                 <div className="trading-tier-metric">
@@ -105,7 +84,6 @@ export function CustomerTradingEligibility() {
                   <strong className="trading-tier-metric-value trading-current-number">{currentPackage.opportunitiesPerDay}</strong>
                 </div>
               </div>
-              <p className="trading-tier-explainer"><Info size={17} strokeWidth={2.5} aria-hidden="true" />Your daily opportunity allowance updates automatically.</p>
               </div>
             </article>
           ) : (
@@ -115,8 +93,6 @@ export function CustomerTradingEligibility() {
                 <span className="trading-no-package-icon" aria-hidden="true"><ShieldCheck size={34} strokeWidth={2.2} /></span>
                 <div>
                   <h3 className="trading-tier-name" id="not-yet-qualified">No Package Assigned</h3>
-                  
-                  <p className="trading-tier-explainer"><Info size={17} strokeWidth={2.5} aria-hidden="true" />Your package will be assigned automatically when the qualifying threshold is met.</p>
                 </div>
               </div>
             </article>
@@ -131,7 +107,6 @@ export function CustomerTradingEligibility() {
                   <div className="trading-tier-kicker"><TrendingUp size={20} strokeWidth={2.5} aria-hidden="true" /> {currentPackage ? "Next Milestone Package" : "Milestone Package"}</div>
                   <h3 className="trading-tier-name" id="next-trading-package">{nextPackage.name}</h3>
                 </div>
-                <span className="trading-tier-state"><ArrowUpRight size={18} strokeWidth={2.5} aria-hidden="true" /> Next level</span>
               </div>
 
               <div className="trading-threshold-panel">
@@ -160,7 +135,7 @@ export function CustomerTradingEligibility() {
                     <strong>{usdEquivalent(qualifyingTotal)} <span aria-hidden="true">/</span> {usdEquivalent(nextThreshold)}</strong>
                   </div>
                   <div className="trading-progress-track" aria-hidden="true">
-                    <span style={{ width: `${progressPercent}%` }} />
+                    <span className="trading-progress-value" style={{ width: `${progressPercent}%` }} />
                   </div>
                   <span className="trading-progress-note">Only qualifying credits manually issued by an administrator count. Your package is assigned automatically when you qualify.</span>
                   <span className="sr-only">Qualifying admin wallet credits are valued in USD at the rate recorded when credited.</span>
@@ -180,7 +155,6 @@ export function CustomerTradingEligibility() {
                   <strong className="trading-tier-metric-value trading-next-number">+{nextPackage.additionalDailyOpportunities}</strong>
                 </div>
               </div>
-              <p className="trading-tier-explainer"><Info size={17} strokeWidth={2.5} aria-hidden="true" />Qualify for this milestone and your package will be assigned automatically, adding +{nextPackage.additionalDailyOpportunities} extra opportunities every day.</p>
               </div>
             </article>
           ) : (

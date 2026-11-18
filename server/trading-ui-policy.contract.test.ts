@@ -14,7 +14,6 @@ describe("Trading UI policy acceptance contracts", () => {
     expect(customerEligibility).toContain("Your package will be assigned automatically when you qualify.");
     expect(customerEligibility).toContain("Only qualifying credits manually issued by an administrator count.");
     expect(customerEligibility).toContain("data?.dailyOpportunityAllowance");
-    expect(customerEligibility).toContain("eligibilityQuery.refetch()");
     expect(customerEligibility).toContain("role=\"alert\"");
     expect(customerEligibility).toContain("role=\"status\"");
     expect(customerEligibility).not.toMatch(/activatePackage|subscribeToPackage|purchasePackage|activate\s+package/i);

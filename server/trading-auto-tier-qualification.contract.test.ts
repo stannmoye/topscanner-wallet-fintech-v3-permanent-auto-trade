@@ -116,9 +116,9 @@ describe("Automatic Trading tier qualification", () => {
     expect(customerAppSource).not.toContain("CustomerTradingPackages");
     expect(customerAppSource).toContain("CustomerTradingEligibility");
     expect(eligibilityComponent).toContain("trpc.customer.tradingEligibility.useQuery");
-    expect(eligibilityComponent).toContain('"PACKAGE ACTIVE"');
-    expect(eligibilityComponent).toContain('"NO PACKAGE ASSIGNED"');
-    expect(eligibilityComponent).toContain('"RETRY NEEDED"');
+    expect(eligibilityComponent).toContain("is active. Your daily opportunity allowance is ready.");
+    expect(eligibilityComponent).toContain("Your package will be assigned automatically when you qualify.");
+    expect(eligibilityComponent).toContain("Your status could not load. Refresh to retry.");
     expect(eligibilityComponent).toContain("No Package Assigned");
     expect(eligibilityComponent).toContain("Additional qualifying amount needed");
     expect(eligibilityComponent).toContain("currentPackage.name");
@@ -136,7 +136,12 @@ describe("Automatic Trading tier qualification", () => {
     expect(eligibilityStyles).toContain("prefers-reduced-motion: reduce");
     expect(eligibilityStyles).toContain("@keyframes trading-card-glint");
     expect(eligibilityStyles).toContain("@keyframes trading-progress-shimmer");
-    expect(eligibilityStyles).toContain(".trading-status-label");
+    expect(eligibilityStyles).toContain(".trading-progress-value");
+    expect(eligibilityStyles).not.toContain(".trading-status-label");
+    expect(eligibilityStyles).not.toContain(".trading-bot-status-icon");
+    expect(eligibilityStyles).not.toContain(".trading-tier-state");
+    expect(eligibilityStyles).not.toContain(".trading-tier-explainer");
+    expect(eligibilityStyles).not.toContain(".trading-journey-refresh");
     expect(eligibilityStyles).toContain("var(--arb-color-surface-raised)");
     expect(specification).toContain("the single next enabled tier");
     expect(specification).toContain("must never expose the full administrator-managed tier catalogue");

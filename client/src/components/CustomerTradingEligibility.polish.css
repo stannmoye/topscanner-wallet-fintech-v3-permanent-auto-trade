@@ -38,22 +38,8 @@
   color: #b9d8e8;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
 }
-.trading-bot-status-icon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  border-radius: 11px;
-  background: linear-gradient(145deg, #123c55, #0b293e);
-  color: #62f2dc;
-  box-shadow: inset 0 0 0 1px rgb(89 245 222 / 23%), 0 0 16px rgb(35 211 195 / 10%);
-}
 .trading-bot-status.is-inactive { border-color: #31657a; }
-.trading-bot-status.is-inactive .trading-bot-status-icon { color: #73d9ff; background: linear-gradient(145deg, #123d59, #0a263c); }
-.trading-bot-status.is-error .trading-bot-status-icon { color: #ff9e9e; }
-.trading-status-label { color: #f1f8ff; letter-spacing: .045em; }
 .trading-status-message { color: #a9c9d9; }
-.trading-journey-refresh { border-radius: 11px; border-color: #28576a; color: #c9f5f4; }
-.trading-journey-refresh svg { color: #56eddb; }
 .trading-journey-content { gap: 16px; }
 .trading-tier-card {
   border-radius: 16px;
@@ -72,7 +58,6 @@
 .trading-tier-kicker { gap: 9px; color: #63f0dc; font-size: 11px; letter-spacing: .105em; }
 .trading-tier-kicker svg { flex: 0 0 auto; filter: drop-shadow(0 0 7px rgb(67 244 221 / 28%)); }
 .trading-tier-name { color: #f2f8ff; }
-.trading-tier-state { max-width: 48%; border-color: rgb(79 228 210 / 30%); background: rgb(22 110 107 / 20%); color: #80f6e3; }
 .trading-tier-metric {
   border-color: #24485b;
   border-radius: 13px;
@@ -98,8 +83,6 @@
 .trading-next-number { color: #55f29b; text-shadow: 0 0 16px rgb(62 244 143 / 17%); }
 .trading-next-opportunities { border-color: rgb(65 207 139 / 38%); background: linear-gradient(135deg, rgb(8 55 47 / 72%), rgb(6 31 40 / 96%)); }
 .trading-next-opportunities .trading-tier-metric-icon { color: #66f5a5; background: linear-gradient(145deg, #14553f, #0a332f); }
-.trading-tier-explainer { color: #9bbccc; }
-.trading-tier-explainer svg { flex: 0 0 auto; color: #65f1dc; filter: drop-shadow(0 0 5px rgb(70 235 211 / 24%)); }
 .trading-threshold-panel {
   display: grid;
   grid-template-columns: minmax(90px, .62fr) minmax(0, 1fr) minmax(110px, .75fr);
@@ -232,7 +215,6 @@
   box-shadow: 0 0 22px rgb(45 176 255 / 12%), inset 0 0 0 1px rgb(255 255 255 / 3%);
 }
 .trading-no-package-content .trading-tier-name { margin-top: 0; }
-.trading-no-package-content .trading-tier-explainer { margin-top: 8px; }
 .trading-no-next { border-radius: 14px; border-color: #24566b; background: #071d2c; }
 @keyframes trading-card-glint {
   0%, 65% { transform: translateX(-55%); opacity: .25; }
@@ -253,11 +235,9 @@
 }
 @media (max-width: 560px) {
   .trading-journey-header { display: block; }
-  .trading-journey-refresh { margin-top: 10px; }
   .trading-threshold-panel { grid-template-columns: minmax(88px, .58fr) minmax(0, 1fr); }
   .trading-candle-chart { grid-column: 2; min-height: 100px; }
   .trading-tier-card-head { gap: 8px; }
-  .trading-tier-state { display: none; }
   .trading-tier-metrics { gap: 8px; }
   .trading-tier-metric { grid-template-columns: 28px minmax(0, 1fr); gap: 5px 7px; padding: 10px 8px; }
   .trading-tier-metric-icon { width: 28px; height: 28px; }
@@ -387,7 +367,6 @@
 .trading-next-package-layout .trading-threshold-panel { grid-template-columns: minmax(76px, .6fr) minmax(130px, 1fr) minmax(130px, .8fr); }
 .trading-next-package-layout .trading-candle-chart { display: none; }
 .trading-next-package-layout .trading-tier-kicker { color: #6df8bb; }
-.trading-next-package-layout .trading-tier-state { color: #70ffc0; border-color: rgb(0 255 151 / 35%); background: rgb(0 120 72 / 22%); }
 .trading-total-allowance {
   border: 2px solid #f0b800;
   background: radial-gradient(ellipse at 8% 50%, rgb(255 190 0 / 12%), transparent 45%), linear-gradient(110deg, #171a24, #07182b 75%);
@@ -457,9 +436,6 @@
   align-content: center;
   padding: 12px;
 }
-.trading-tier-explainer {
-  display: none;
-}
 .trading-total-allowance {
   border-radius: 3px;
   margin-top: 20px;
@@ -497,21 +473,6 @@
 }
 .trading-tier-metric {
   border-radius: 12px;
-}
-.trading-tier-explainer {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 12px 0 0;
-  font-size: 12px;
-  line-height: 1.55;
-}
-.trading-bot-status.is-active .trading-status-label {
-  color: #93ffd0;
-}
-.trading-bot-status.is-active .trading-bot-status-icon {
-  color: #6affc0;
-  box-shadow: inset 0 0 0 1px rgb(102 255 192 / 30%), 0 0 18px rgb(52 238 166 / 14%);
 }
 .trading-progress-caption {
   display: flex;
@@ -569,9 +530,6 @@
     flex-direction: column;
   }
   .trading-progress-caption strong {
-    font-size: 11px;
-  }
-  .trading-tier-explainer {
     font-size: 11px;
   }
 }

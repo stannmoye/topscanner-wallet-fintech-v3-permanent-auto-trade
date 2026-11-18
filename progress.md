@@ -67,7 +67,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 57 | Remove/dedupe `getAdminNavigationItem` | `[x]` | `Fix #57` |
 | 58 | Unify display-delay label | `[x]` | `Fix #58` |
 | 59 | Remove dead code (DashboardLayout, unreachable dashboard) | `[x]` | `Fix #59` |
-| 60 | CustomerTradingEligibility hidden markup/CSS | `[ ]` | |
+| 60 | CustomerTradingEligibility hidden markup/CSS | `[x]` | Fix #60 |
 | 61 | Cancel focus rAF in CustomerSlideMenu cleanup | `[ ]` | |
 | 62 | Visible "tap to enable sound" hint | `[ ]` | |
 | 63 | Opportunities page eligibility consistency | `[ ]` | |
