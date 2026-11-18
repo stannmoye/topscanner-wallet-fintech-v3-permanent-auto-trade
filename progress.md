@@ -50,7 +50,7 @@ Legend: `[x]` done · `[~]` done with a documented decision/later dependency · 
 | 40 | Minimal customer feed payload | `[x]` | `Fix #40` |
 | 41 | Remove duplicate menus, keep ONE navigation | `[x]` | `Fix #41` |
 | 42 | Mobile admin drawer group-header close | `[x]` | `Fix #42` |
-| 43 | `AdminSlideMenu` label/active resolution | `[ ]` | |
+| 43 | `AdminSlideMenu` label/active resolution | `[x]` | `Fix #43` |
 | 44 | Replace `window.prompt`/`confirm` | `[ ]` | |
 | 45 | Generic registration/login responses | `[ ]` | |
 | 46 | Remove password pepper | `[ ]` | |
@@ -124,6 +124,15 @@ Item 18 named and documented the live-FX freshness windows (checked against the 
 - **Tests.** New [security-headers.contract.test.ts](file:///workspace/server/security-headers.contract.test.ts) (7 tests): the full header set; the production CSP directives and the "no inline script in production" assertion; the dev-only `ws:`/inline relaxation; the middleware installing all five headers then calling `next` once; and a source-contract check that `app.use(securityHeadersMiddleware())` precedes both `registerLocalStorageRoutes(app)` and `app.use(express.json`.
 - **Docs.** [README.md](file:///workspace/README.md) (security paragraph) and `docs/arbitrade-platform-spec.md` (post-install hardening HTTPS-headers bullet) now document the baseline headers.
 - **Rollout follow-up (`Fix #21`, 2nd commit).** Item 21 requires an unverified CSP to ship in Report-Only mode. The authenticated customer and admin screens cannot be browser-verified in this environment, so production now sends the policy with the `Content-Security-Policy-Report-Only` header ([contentSecurityPolicyHeaderName](file:///workspace/server/_core/securityHeaders.ts)); every other header stays enforced, and the CSP is enforced in development/test so violations are real. A first-party browser probe, [security-headers-browser-acceptance.ts](file:///workspace/scripts/security-headers-browser-acceptance.ts), loads the built bundle in headless Chromium with the policy **enforced** on `/`, `/customer` and `/ops-console-7f3a` and fails on any CSP violation or empty shell — it currently reports 0 violations across all three routes. Enforcement in production is a one-line flip once the authenticated screens are verified.
+
+### Item 43 notes (`Fix #43`)
+
+- **Problem.** [AdminSlideMenu.tsx](file:///workspace/repo/client/src/components/AdminSlideMenu.tsx) resolved the "current section" label only from the **secondary** groups, so every primary section (e.g. `packages`, `tradePackageConfiguration`, `overview`) fell back to the literal "Admin workspace". The active state used `section === item.target`, and several secondary items share a target (`verificationOversight` ×2, `riskWatchlist` ×3, `kycCenter` ×2, `smtpCenter` ×2, `apis` ×3), so tapping one marked **all** of them `is-active` with `aria-current="page"` at once.
+- **Fix (label).** The current item is now resolved from the **full** registry `allAdminNavigationItems` (primary + secondary), first by `target` + `focus`, then by `target` alone; `activeLabel` is that item's label. Primary sections now show their real name ("Package Configuration", "Tiers & Eligibility", "Dashboard", …) instead of "Admin workspace".
+- **Fix (unique active).** The active row is derived once as `activeItemId` and each row uses `const active = item.id === activeItemId;` for both `is-active` and `aria-current`. Because ids are unique, exactly one row is ever active.
+- **Focus passed through.** [App.tsx](file:///workspace/repo/client/src/App.tsx) `AdminPortal` now passes `focus={focus}` to `AdminSlideMenu` (new optional prop), so overlapping package destinations (tiers/quotas/policy/delivery/rotation) resolve to the correct owner.
+- **Tests.** Extended [admin-navigation-drawer.contract.test.ts](file:///workspace/repo/client/src/admin-navigation-drawer.contract.test.ts) (now 9 tests) with a second describe block: every secondary target resolves to a non-generic label; exactly one secondary row is active per target; primary labels resolve correctly; the source uses `item.id === activeItemId` and no longer the shared-`target` comparison; and the drawer consumes `allAdminNavigationItems` and receives `focus` from the portal.
+- **Protected area.** Client navigation display only; no server, ledger, allocation or settlement change.
 
 ### Item 42 notes (`Fix #42`)
 

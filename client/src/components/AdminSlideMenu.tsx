@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Activity, Menu, Search, X, type LucideIcon } from "lucide-react";
-import { adminSecondaryNavigationGroups } from "../admin-navigation";
+import { adminSecondaryNavigationGroups, allAdminNavigationItems } from "../admin-navigation";
 
-type AdminSlideMenuProps = { section: string; onNavigate: (section: string, focus?: string) => void };
+type AdminSlideMenuProps = { section: string; focus?: string; onNavigate: (section: string, focus?: string) => void };
 
 const drawerFocusableSelector = 'a[href]:not([tabindex="-1"]):not([aria-disabled="true"]),button:not([tabindex="-1"]):not([disabled]),input:not([tabindex="-1"]):not([disabled]),select:not([tabindex="-1"]):not([disabled]),textarea:not([tabindex="-1"]):not([disabled]),[tabindex]:not([tabindex="-1"]):not([disabled]),[contenteditable="true"]';
 
-export function AdminSlideMenu({ section, onNavigate }: AdminSlideMenuProps) {
+export function AdminSlideMenu({ section, focus, onNavigate }: AdminSlideMenuProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
@@ -15,7 +15,15 @@ export function AdminSlideMenu({ section, onNavigate }: AdminSlideMenuProps) {
   );
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLElement | null>(null);
-  const activeLabel = adminSecondaryNavigationGroups.flatMap((group) => group.items).find((item) => item.target === section)?.label || "Admin workspace";
+  // Item 43: resolve the current section from the FULL navigation registry
+  // (primary and secondary) so the label is never a generic fallback, and
+  // identify the single owning item by id — overlapping targets can no longer
+  // mark several drawer rows active at once.
+  const activeItem = allAdminNavigationItems.find((item) => item.target === section && item.focus === focus)
+    ?? allAdminNavigationItems.find((item) => item.target === section)
+    ?? null;
+  const activeItemId = activeItem?.id;
+  const activeLabel = activeItem?.label || "Admin workspace";
   const normalizedQuery = query.trim().toLowerCase();
   const visibleGroups = adminSecondaryNavigationGroups.map((group) => ({
     ...group,
@@ -71,8 +79,9 @@ export function AdminSlideMenu({ section, onNavigate }: AdminSlideMenuProps) {
             </button>
             {expanded && <div className="admin-slide-items">{group.items.map((item) => {
               const Icon = item.icon as LucideIcon;
+              const active = item.id === activeItemId;
               return <div className="admin-secondary-item-wrap" key={item.id}>
-                <button type="button" className={`admin-slide-item${section === item.target ? " is-active" : ""}`} tabIndex={open ? 0 : -1} aria-current={section === item.target ? "page" : undefined} onClick={() => navigate(item.target, item.focus)}>
+                <button type="button" className={`admin-slide-item${active ? " is-active" : ""}`} tabIndex={open ? 0 : -1} aria-current={active ? "page" : undefined} onClick={() => navigate(item.target, item.focus)}>
                   <span className="admin-slide-item-icon"><Icon size={16} /></span><span className="admin-slide-item-copy"><strong>{item.label}</strong><small>{item.detail}</small></span>
                 </button>
                 {item.children?.length ? <div className="admin-secondary-submenu">{item.children.map((child) =>
