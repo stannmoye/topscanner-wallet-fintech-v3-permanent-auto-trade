@@ -1,3 +1,41 @@
+## 2026-11-20 — Password centre (Account Preferences → Password)
+
+Branch `main`. Owner request: build a full, advanced password page where customers can change
+their password, with guidance on using a strong password and keeping it safe, at least four
+advanced features, beautiful icons and imagery — pushed to the correct repository
+(`stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`).
+
+- `server/db.ts`: added `changeCustomerPassword(userId, nextHash)` — updates the customer's
+  `passwordHash` and advances `authVersion` (via `authVersion + 1`) so every previously issued
+  session cookie is invalidated. Returns the new `authVersion`.
+- `server/routers.ts`: `customer.changePassword` mutation (customer-role only). It verifies the
+  current password against the stored scrypt hash (`verifyPassword`), rejects a new password that
+  equals the current one, hashes the new password (`passwordHash`), advances the auth version, and
+  re-issues a fresh session cookie for the device performing the change using
+  `createLocalSession(userId, authVersion)` + `getSessionCookieOptions`. So the current device
+  stays signed in while all other devices are signed out.
+- `client/src/App.tsx`: added `CustomerPasswordCentre` (wired into `CustomerPreferencePanel` via a
+  new `isPassword` branch) plus the client-side strength helpers `customerPasswordRules`,
+  `customerPasswordStrength` and `customerGenerateStrongPassword` (uses `crypto.getRandomValues`).
+  Features (well over the four required): (1) three-field change form (current / new / confirm)
+  with per-field show/hide toggles; (2) live 5-bar strength meter with six-rule requirement
+  checklist (length, upper, lower, number, symbol, no spaces) and common-password / email-name
+  penalties; (3) a secure password generator that fills both new & confirm and copies to the
+  clipboard; (4) inline match indicator plus success/error feedback banners; (5) two guidance
+  cards — "How to create a strong password" and "How to keep your password safe"; (6) a hero
+  illustration (text_to_image) with animated glow and status chips. Uses a diverse `lucide-react`
+  icon set (Lock, KeyRound, ShieldCheck, ShieldAlert, Fingerprint, Gauge, Wand2, Copy, Eye/EyeOff,
+  Timer, ListChecks, Lightbulb, RotateCcw, Check, X, AlertTriangle, CheckCircle2).
+- `client/src/customer-reference.css`: added the `/* ---- Customer password centre ---- */` block —
+  layered hero with cover image and aurora glow, two-column form/strength grid, strength meter,
+  requirement checklist, generator panel, guidance cards, footer note, responsive breakpoints
+  (1180/900/620), reduced-motion and print styles. Container widths are normalised
+  (`.customer-password > *{width:100%;max-width:none}` and
+  `.customer-password .settings-card{max-width:none}`) so every card matches the hero width.
+- Verified: `pnpm check` (`tsc --noEmit`), `pnpm test` (196 files / 1,545 tests passed, 7 files /
+  36 skipped), and `pnpm build` (App chunk carries "How to create a strong password"; the
+  `customer-reference-*.css` chunk carries the `customer-password-*` styles).
+
 ## 2026-11-20 — Statements centre (Account Preferences → Statements)
 
 Branch `main`. Owner request: build a full accounting statement page — very advanced, with

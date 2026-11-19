@@ -17,6 +17,7 @@ import { confirmEmailVerification, requestEmailVerification } from "./emailAuth"
 import { enqueueAdminMessage, getCustomerEmailPreferences, updateCustomerEmailPreferences, sendEmailTest, getDailyDigestSchedule } from "./emailQueue";
 import { isEmailDeliveryConfigured } from "./email";
 import { ensureCustomerControls } from "./db";
+import { changeCustomerPassword } from "./db";
 import { adminAuditEvents, adminCustomerDirectory, adminDashboard, adminDecision, adminOverride, adminQueue, getAdminKycSettings, getCenter, issueEmail, issuePhone, recordConsent, recordFace as recordFaceVerification, startStage, submitAddress, submitDocument, updateAdminKycSettings, verifyAuditChain, verifyEmail, verifyPhone } from "./kyc";
 import { isEmailAdminConfigured, listEmailRecipients, publicEmailConfig, runDailyEmailReports, saveEmailConfig, sendAdminComposedEmail, testEmailConnection } from "./emailAdmin";
 import * as mining from "./mining";
@@ -26,7 +27,7 @@ import { ADMIN_BROADCAST_CATEGORIES } from "./modules/notification-events";
 import { stripCustomerFeedInternalObjects } from "./modules/customer-feed-payload";
 import { isValidSupportAttachmentStorageKey } from "./_core/attachmentPolicy";
 import { invalidateUserSessions } from "./authSessions";
-import { getLocalSessionFromRequest } from "./_core/localAuth";
+import { getLocalSessionFromRequest, createLocalSession, passwordHash, verifyPassword } from "./_core/localAuth";
 import * as privacyService from "./privacy";
 import { localIdentityService } from "./_core/localIdentityService";
 import { createHeartbeatJob, deleteHeartbeatJob, listHeartbeatJobs, updateHeartbeatJob } from "./_core/heartbeat";
@@ -281,6 +282,22 @@ export const appRouter = router({
       return previewNextCustomerCompanySpotlight(ctx.user.id);
     }),
     communicationOptions: protectedProcedure.query(({ ctx }) => getCustomerCommunicationOptions(ctx.user.name, ctx.user.email)),
+    changePassword: protectedProcedure.input(z.object({
+      currentPassword: z.string().min(1).max(200),
+      newPassword: z.string().min(12).max(200),
+    })).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "user") throw new TRPCError({ code: "FORBIDDEN", message: "Password changes are available to customer accounts." });
+      if (!ctx.user.passwordHash || !verifyPassword(input.currentPassword, ctx.user.passwordHash)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Your current password is incorrect." });
+      }
+      if (input.newPassword === input.currentPassword) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Your new password must be different from your current password." });
+      }
+      const { authVersion } = await changeCustomerPassword(ctx.user.id, passwordHash(input.newPassword));
+      // Keep the device that performed the change signed in; every other session is now invalid.
+      ctx.res.cookie(COOKIE_NAME, createLocalSession(ctx.user.id, authVersion), { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
+      return { success: true as const };
+    }),
     authenticatorStatus: protectedProcedure.query(({ ctx }) => getCustomerAuthenticatorStatus(ctx.user.id)),
     startAuthenticatorEnrollment: protectedProcedure.mutation(({ ctx }) => startCustomerAuthenticatorEnrollment(ctx.user.id)),
     confirmAuthenticatorEnrollment: protectedProcedure.input(z.object({ code: z.string().regex(/^\d{6}$/) })).mutation(({ ctx, input }) => confirmCustomerAuthenticatorEnrollment(ctx.user.id, input.code)),

@@ -87,7 +87,8 @@ import {
   Landmark, Lock, Menu, Pause, Plus, RefreshCw, Search, Settings2, ShieldCheck,
   Sparkles, TrendingUp, ToggleLeft, ToggleRight, Unlock, Users, WalletCards,
   X, Zap, Check, KeyRound, FileText, PlugZap, BarChart3, Bot, Building2, SlidersHorizontal, Mail, UserRound, Smartphone, Eye, EyeOff, CheckCircle2, LogIn, Play, Server, Code2, UserRoundX, Copy, Download, RotateCcw,
-  Calendar, Filter, Printer, FileSpreadsheet, PieChart, ArrowUpDown, TrendingDown, BadgeCheck, Hash, Percent, ScrollText, Sigma, ArrowDownUp, FileSearch
+  Calendar, Filter, Printer, FileSpreadsheet, PieChart, ArrowUpDown, TrendingDown, BadgeCheck, Hash, Percent, ScrollText, Sigma, ArrowDownUp, FileSearch,
+  Wand2, Lightbulb, ListChecks, AlertTriangle, Fingerprint, Timer
 } from "lucide-react";
 
 function CustomerBotBadge({compact=false}:{compact?:boolean}) { return <span className={`customer-bot-badge${compact?" compact":""}`} role="img" aria-label="BOT"><Bot size={10} aria-hidden="true"/><span aria-hidden="true">BOT</span></span>; }
@@ -791,16 +792,169 @@ function CustomerStatementsCentre({push}:{push:(message:string)=>void}) {
     <div className="customer-statement-foot"><ShieldCheck size={14}/><span>Statement figures are read directly from the server wallet ledger and every amount reconciles to your balances. Download or print a copy for your records at any time.</span></div>
   </div>;
 }
+const PASSWORD_HERO_IMAGE = "https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=" + encodeURIComponent("cyber security password vault, glowing padlock and shield emblem, encrypted key, deep navy and teal gradient panels, gold accent light lines, minimal 3D fintech render, dark cinematic interface, no text, no words, no letters, no numbers") + "&image_size=landscape_16_9";
+type CustomerPasswordRule = { id:string; label:string; test:(value:string)=>boolean };
+const customerPasswordRules: CustomerPasswordRule[] = [
+  { id:"length", label:"At least 12 characters", test:value=>value.length>=12 },
+  { id:"upper", label:"One uppercase letter (A–Z)", test:value=>/[A-Z]/.test(value) },
+  { id:"lower", label:"One lowercase letter (a–z)", test:value=>/[a-z]/.test(value) },
+  { id:"number", label:"One number (0–9)", test:value=>/\d/.test(value) },
+  { id:"symbol", label:"One symbol (!@#$…)", test:value=>/[^A-Za-z0-9]/.test(value) },
+  { id:"spaces", label:"No spaces in the password", test:value=>value.length>0&&!/\s/.test(value) },
+];
+const customerCommonPasswords = ["password","password1","password12","passw0rd","123456789012","qwertyuiop12","letmein12345","welcome12345","admin1234567","changeme1234","iloveyou1234","monkey123456"];
+const customerPasswordLevels = ["Very weak","Weak","Fair","Good","Strong","Excellent"];
+function customerPasswordStrength(value:string, email:string){
+  const passed = customerPasswordRules.filter(rule=>rule.test(value)).length;
+  const local = (email.split("@")[0]||"").trim().toLowerCase();
+  const lower = value.toLowerCase();
+  let score = passed;
+  if(value.length>=16) score+=1;
+  if(local.length>=3&&lower.includes(local)) score-=2;
+  if(customerCommonPasswords.includes(lower)) score-=4;
+  if(/^(.)\1+$/.test(value)) score-=3;
+  score = Math.max(0, Math.min(5, score));
+  return { passed, score, label:customerPasswordLevels[score]??"Very weak" };
+}
+function customerGenerateStrongPassword(length=16){
+  const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ","abcdefghijkmnopqrstuvwxyz","23456789","!@#$%^&*_-+=?"];
+  const all = sets.join("");
+  const randomIndex = (max:number) => { const buffer = new Uint32Array(1); crypto.getRandomValues(buffer); return buffer[0]%max; };
+  const chars = sets.map(set=>set[randomIndex(set.length)]);
+  while(chars.length<length) chars.push(all[randomIndex(all.length)]);
+  for(let i=chars.length-1;i>0;i--){ const j = randomIndex(i+1); const swap = chars[i]; chars[i] = chars[j]; chars[j] = swap; }
+  return chars.slice(0,length).join("");
+}
+function CustomerPasswordCentre({push}:{push:(message:string)=>void}) {
+  const me = trpc.auth.me.useQuery();
+  const change = trpc.customer.changePassword.useMutation();
+  const [current,setCurrent] = useState("");
+  const [next,setNext] = useState("");
+  const [confirm,setConfirm] = useState("");
+  const [show,setShow] = useState({current:false,next:false,confirm:false});
+  const [feedback,setFeedback] = useState<{tone:"ok"|"error";text:string}|null>(null);
+  const email = me.data?.email || "";
+  const strength = customerPasswordStrength(next, email);
+  const matches = next.length>0 && next===confirm;
+  const meetsRequirements = strength.passed===customerPasswordRules.length;
+  const canSubmit = current.length>0 && meetsRequirements && matches && !change.isPending;
+  const toggle = (field:"current"|"next"|"confirm") => setShow(prev=>({ ...prev, [field]: !prev[field] }));
+  const toneClass = strength.score<=1?"is-weak":strength.score<=3?"is-fair":"is-strong";
+  const submit = (event:any) => {
+    event.preventDefault();
+    setFeedback(null);
+    if(!canSubmit) return;
+    change.mutate({ currentPassword:current, newPassword:next }, {
+      onSuccess: () => { setFeedback({ tone:"ok", text:"Your password has been updated. Other devices were signed out for your security." }); setCurrent(""); setNext(""); setConfirm(""); setShow({current:false,next:false,confirm:false}); push("Password updated"); },
+      onError: (error) => setFeedback({ tone:"error", text:error.message || "We could not update your password right now." }),
+    });
+  };
+  const suggest = () => { const value = customerGenerateStrongPassword(16); setNext(value); setConfirm(value); setShow(prev=>({ ...prev, next:true, confirm:true })); setFeedback({ tone:"ok", text:"A strong password was generated. Save it somewhere safe before updating." }); };
+  const copySuggested = async () => { if(!next){ setFeedback({ tone:"error", text:"Generate a password first, then copy it." }); return; } try{ await navigator.clipboard.writeText(next); setFeedback({ tone:"ok", text:"Generated password copied to your clipboard." }); }catch{ setFeedback({ tone:"error", text:"Clipboard access is unavailable — copy the password manually." }); } };
+  const clearForm = () => { setCurrent(""); setNext(""); setConfirm(""); setFeedback(null); change.reset(); };
+  return <div className="customer-password">
+    <section className="customer-password-hero">
+      <img className="customer-password-hero-image" src={PASSWORD_HERO_IMAGE} alt="" aria-hidden="true" loading="lazy" />
+      <div className="customer-password-hero-copy">
+        <span className="eyebrow"><Fingerprint size={13}/> Password &amp; sign-in security</span>
+        <h2>Change your password and keep your account locked down.</h2>
+        <p>Update your password with a strong, unique passphrase. We verify your current password first, then sign out every other device so only you keep access.</p>
+        <div className="customer-password-hero-chips">
+          <span className="customer-password-chip"><ListChecks size={13}/> 12 characters minimum</span>
+          <span className="customer-password-chip"><ShieldCheck size={13}/> Other devices signed out</span>
+          <span className="customer-password-chip"><Timer size={13}/> Takes under a minute</span>
+        </div>
+      </div>
+      <div className="customer-password-hero-glow" aria-hidden="true" />
+    </section>
+    <div className="customer-password-grid">
+      <form className="settings-card customer-password-form" onSubmit={submit} aria-labelledby="customer-password-heading">
+        <div className="customer-password-form-head"><div><span className="eyebrow">Update password</span><h3 id="customer-password-heading">Change your password</h3></div><span className={`customer-password-state${change.isPending?" is-busy":""}`} role="status"><span className="pulse" /> {change.isPending?"Securing…":"Protected"}</span></div>
+        <label className="customer-password-field">
+          <span className="customer-password-label"><Lock size={13}/> Current password</span>
+          <div className="customer-password-input">
+            <input type={show.current?"text":"password"} value={current} onChange={event=>setCurrent(event.target.value)} placeholder="Enter your current password" autoComplete="current-password" />
+            <button type="button" onClick={()=>toggle("current")} aria-label={show.current?"Hide current password":"Show current password"}>{show.current?<EyeOff size={14}/>:<Eye size={14}/>}</button>
+          </div>
+        </label>
+        <label className="customer-password-field">
+          <span className="customer-password-label"><KeyRound size={13}/> New password</span>
+          <div className="customer-password-input">
+            <input type={show.next?"text":"password"} value={next} onChange={event=>setNext(event.target.value)} placeholder="Create a strong password" autoComplete="new-password" />
+            <button type="button" onClick={()=>toggle("next")} aria-label={show.next?"Hide new password":"Show new password"}>{show.next?<EyeOff size={14}/>:<Eye size={14}/>}</button>
+          </div>
+          {next.length>0&&<div className={`customer-password-mini-meter ${toneClass}`} aria-hidden="true"><span style={{width:`${Math.round(strength.score/5*100)}%`}} /></div>}
+        </label>
+        <label className="customer-password-field">
+          <span className="customer-password-label"><ShieldCheck size={13}/> Confirm new password</span>
+          <div className="customer-password-input">
+            <input type={show.confirm?"text":"password"} value={confirm} onChange={event=>setConfirm(event.target.value)} placeholder="Re-enter the new password" autoComplete="new-password" />
+            <button type="button" onClick={()=>toggle("confirm")} aria-label={show.confirm?"Hide confirmation":"Show confirmation"}>{show.confirm?<EyeOff size={14}/>:<Eye size={14}/>}</button>
+          </div>
+          {confirm.length>0&&<small className={`customer-password-match${matches?" is-ok":" is-bad"}`}>{matches?<><Check size={11}/> Passwords match</>:<><X size={11}/> Passwords do not match</>}</small>}
+        </label>
+        {feedback&&<div className={`customer-password-feedback${feedback.tone==="error"?" error":""}`} role={feedback.tone==="error"?"alert":"status"}>{feedback.tone==="error"?<AlertTriangle size={14}/>:<CheckCircle2 size={14}/>}<span>{feedback.text}</span></div>}
+        <div className="customer-password-actions">
+          <button type="button" className="secondary-button" onClick={clearForm} disabled={change.isPending}><RotateCcw size={14}/> Clear</button>
+          <button type="button" className="secondary-button" onClick={suggest} disabled={change.isPending}><Wand2 size={14}/> Suggest</button>
+          <button type="submit" className="primary-button" disabled={!canSubmit}>{change.isPending?"Updating…":"Update password"} <Check size={14}/></button>
+        </div>
+        <p className="customer-password-hint"><ShieldAlert size={13}/> Changing your password signs out every other device signed in to your account.</p>
+      </form>
+      <section className="settings-card customer-password-strength" aria-label="Password strength">
+        <div className="customer-password-form-head"><div><span className="eyebrow">Strength meter</span><h3>How strong is it?</h3></div><Gauge size={16}/></div>
+        <div className={`customer-password-meter ${toneClass}`}>
+          <div className="customer-password-meter-bars" aria-hidden="true">{[0,1,2,3,4].map(index=><span key={index} className={index<strength.score?"is-on":""} />)}</div>
+          <div className="customer-password-meter-copy"><strong>{next?strength.label:"Waiting for input"}</strong><small>{strength.passed} of {customerPasswordRules.length} requirements met</small></div>
+        </div>
+        <ul className="customer-password-checks">
+          {customerPasswordRules.map(rule=>{ const ok = rule.test(next); return <li key={rule.id} className={ok?"is-ok":""}>{ok?<Check size={13}/>:<X size={13}/>}<span>{rule.label}</span></li>; })}
+        </ul>
+        <div className="customer-password-generator">
+          <div><span className="eyebrow">Generator</span><p>Not sure? Generate a 16-character password mixing upper and lower case, numbers and symbols.</p></div>
+          <div className="customer-password-generator-actions">
+            <button type="button" className="secondary-button" onClick={suggest}><Wand2 size={14}/> Generate</button>
+            <button type="button" className="secondary-button" onClick={()=>void copySuggested()}><Copy size={14}/> Copy</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div className="customer-password-guides">
+      <section className="settings-card customer-password-guide" aria-label="How to create a strong password">
+        <div className="customer-password-guide-head"><span className="customer-password-guide-icon"><Lightbulb size={16}/></span><div><span className="eyebrow">Strong passwords</span><h3>How to create a strong password</h3></div></div>
+        <ul>
+          <li><CheckCircle2 size={13}/> Use at least 12–16 characters — length matters more than complexity.</li>
+          <li><CheckCircle2 size={13}/> Mix upper and lower case letters, numbers and symbols.</li>
+          <li><CheckCircle2 size={13}/> Build a passphrase of unrelated words, e.g. “Copper-Lantern-41-River!”.</li>
+          <li><CheckCircle2 size={13}/> Never reuse a password from another site or service.</li>
+          <li><AlertTriangle size={13}/> Avoid names, birthdays, “password”, “123456” and keyboard runs.</li>
+        </ul>
+      </section>
+      <section className="settings-card customer-password-guide" aria-label="How to keep your password safe">
+        <div className="customer-password-guide-head"><span className="customer-password-guide-icon"><Fingerprint size={16}/></span><div><span className="eyebrow">Staying safe</span><h3>How to keep your password safe</h3></div></div>
+        <ul>
+          <li><CheckCircle2 size={13}/> Use a reputable password manager to store unique passwords.</li>
+          <li><CheckCircle2 size={13}/> Turn on two-factor authentication for an extra layer of protection.</li>
+          <li><CheckCircle2 size={13}/> Never share your password — our team will never ask you for it.</li>
+          <li><CheckCircle2 size={13}/> Only sign in from trusted devices and secure networks.</li>
+          <li><ShieldAlert size={13}/> Report anything suspicious to support straight away.</li>
+        </ul>
+      </section>
+    </div>
+    <div className="customer-password-foot"><ShieldCheck size={14}/><span>Your password is stored as a salted scrypt hash — we never see or keep it in plain text. Updates verify your current password first and take effect immediately.</span></div>
+  </div>;
+}
 function CustomerPreferencePanel({itemId,push}:{itemId:string;push:(message:string)=>void}) {
   const item = customerPreferenceItems.find(x => x.id === itemId) || customerPreferenceItems[0];
   const Icon = item.icon;
   const isClosure=item.id==="close-account";
   const isPersonal=item.id==="personal-details";
   const isStatements=item.id==="statements";
+  const isPassword=item.id==="password";
   const action = item.id === "close-account" ? "Review closure requirements" : item.id === "api-access" ? "Review API permissions" : item.id === "statements" ? "Open statements centre" : "Save preference";
   return <div className="arb-page portal-page settings-page customer-preference-page">
-    <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":isPersonal?"Keep your first name, last name, gender, country, state, address, and telephone up to date, and save changes whenever you need.":isStatements?"Search, filter, reconcile, and download a complete accounting statement of your credits, debits, and closing balances.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":isPersonal?"Editable profile":isStatements?"Ledger-backed statements":"Account preference"}</span></div>
-    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:isStatements?<CustomerStatementsCentre push={push}/>:<>
+    <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":isPersonal?"Keep your first name, last name, gender, country, state, address, and telephone up to date, and save changes whenever you need.":isStatements?"Search, filter, reconcile, and download a complete accounting statement of your credits, debits, and closing balances.":isPassword?"Change your password with a strong passphrase, learn how to build one, and get practical guidance on keeping it safe.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":isPersonal?"Editable profile":isStatements?"Ledger-backed statements":isPassword?"Protected sign-in":"Account preference"}</span></div>
+    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:isStatements?<CustomerStatementsCentre push={push}/>:isPassword?<CustomerPasswordCentre push={push}/>:<>
       <div className="preference-hero"><div className="preference-hero-icon"><Icon size={22}/></div><div><span className="eyebrow">WiseBond account controls</span><h2>{item.label}</h2><p>These controls are designed around clear ownership, secure access, and an auditable customer experience.</p></div></div>
       <div className="preference-card-grid"><div className="settings-card preference-card"><div className="settings-card-icon"><Icon size={18}/></div><h2>{item.label}</h2><p>{item.description}</p><button className="primary-button" onClick={()=>push(item.label + " settings opened")}>{action} <ArrowUpRight size={14}/></button></div><div className="settings-card preference-card preference-card-secondary"><div className="settings-card-icon"><ShieldCheck size={18}/></div><h2>Protected workspace</h2><p>Changes remain subject to account status, administrator policy, and server-side security checks. No setting on this page moves funds by itself.</p><span className="preference-status"><CheckCircle2 size={14}/> Ready for secure configuration</span></div></div>
     </>}

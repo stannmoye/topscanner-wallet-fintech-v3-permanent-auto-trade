@@ -772,6 +772,24 @@ export async function createLocalCustomer(input: { email: string; passwordHash: 
 }
 
 /**
+ * Persist a new password hash for an authenticated customer and advance the account's
+ * auth version. Advancing the version invalidates every previously issued session cookie,
+ * so a password change signs the account out on all other devices. The caller is expected
+ * to re-issue a fresh session for the device that performed the change.
+ */
+export async function changeCustomerPassword(userId: number, nextHash: string) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  const now = new Date();
+  const updated = await db.update(users)
+    .set({ passwordHash: nextHash, authVersion: sql`${users.authVersion} + 1`, updatedAt: now })
+    .where(and(eq(users.id, userId), eq(users.role, "user")));
+  const affected = Number((updated as any)?.[0]?.affectedRows ?? (updated as any)?.affectedRows ?? 0);
+  if (affected !== 1) throw new Error("Password change could not be completed");
+  const row = (await db.select({ authVersion: users.authVersion }).from(users).where(eq(users.id, userId)).limit(1))[0];
+  return { authVersion: Number(row?.authVersion ?? 0) };
+}
+
+/**
  * Resolve a signed session identity for logout without performing OAuth auto-provisioning.
  * Unlike getUserByOpenId, this helper fails closed when the database is unavailable.
  */
