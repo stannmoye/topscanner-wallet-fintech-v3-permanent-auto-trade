@@ -19,7 +19,11 @@ and push to the correct repository (`stannmoye/topscanner-wallet-fintech-v3-perm
 - `client/src/customer-reference.css`: added the `/* ---- Customer statements centre ---- */`
   block — layered hero with cover image and aurora glow, KPI cards with tone accents, search and
   filter controls, action toolbar, reconciliation and chart cards, ledger table with credit/debit
-  pills, plus responsive breakpoints (1180/900/620), reduced-motion and print styles.
+  pills, plus responsive breakpoints (1180/900/620), reduced-motion and print styles. Also
+  normalised container widths: the page inherits `.settings-page{max-width:900px}` and
+  `.settings-card{max-width:680px}`, so the hero/KPI/foot stretched wider than the controls and
+  ledger cards; added `.customer-statement > *{width:100%;max-width:none}` and
+  `.customer-statement .settings-card{max-width:none}` so every statement container is the same width.
 - Verified: `pnpm check` (`tsc --noEmit`), `pnpm test` (196 files / 1,545 tests passed, 7 files /
   36 skipped), and `pnpm build`. `createdAt` from `walletLedger` is a `Date`, so the statement
   entry type accepts `string | Date`.
