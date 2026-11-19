@@ -1,3 +1,33 @@
+## 2026-11-20 — Customer daily offer usage record + all-offers-used login notice
+
+Branch `main`. Owner request: give customers a visible daily trading record and a login
+notice when they have used every offer for the day.
+
+Changes:
+- `server/db.ts` (`listCustomerOpportunities`): the result now carries a top-level
+  `dailySummary` (`offersAllowance`, `offersUsed`, `offersRemaining`, `allOffersUsed`,
+  `earnedTodayUsd`, `nextOfferAvailableAt`, `windowPeriod`) in both the normal and
+  `emptyResult` shapes. Profit earned today is the sum of settled `tradePositions`
+  `netProfitMinor` whose `walletUpdatedAt` falls inside the active quota window, summed
+  per currency and converted to USD with the same live FX rates `getCustomerBalanceSummary`
+  uses (fail-closed when a live rate is missing). New non-exported helper
+  `getCustomerEarnedUsdInWindow(userId,start,end)` backs it.
+- `client/src/App.tsx`: new `CustomerDailyOfferRecord` band rendered directly under the
+  welcome panel on the dashboard (feature 2), and `CustomerDailyLimitAlert` login pop-up
+  rendered next to the opportunity alert (feature 1). The pop-up shows only when
+  `summary.allOffersUsed`, once per quota window (`sessionStorage` marker keyed on
+  `nextOfferAvailableAt`), and shows offers used, profit earned today, lifetime profit
+  (`trpc.customer.balances.summary.earnedUsd`), the next offer time and an upgrade CTA.
+  The marker is cleared on logout so it reappears on the next login.
+- `client/src/trading-experience.css`: `.customer-daily-offer-record*` and
+  `.customer-daily-limit-alert*` styles plus keyframes and a reduced-motion override.
+
+`dailySummary` is a top-level result field, so it flows through `customer.opportunities`
+untouched (the router only sanitizes the per-offer objects).
+
+Verified: `pnpm check`, `pnpm test` (196 files / 1545 tests passed), `pnpm build`.
+Commit: `cbddcfe`, pushed to `origin/main`.
+
 ## 2026-11-19 — Daily successful-trade cap now gates opportunity creation
 
 Branch `main`. Owner report: "during trade the amount is no longer deducted / no longer locked" —
