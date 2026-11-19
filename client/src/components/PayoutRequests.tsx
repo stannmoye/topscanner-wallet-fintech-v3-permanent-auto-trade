@@ -121,12 +121,12 @@ export function CustomerPayoutRequests() {
   const [feedback, setFeedback] = useState("");
   const [receipt, setReceipt] = useState<any>(null);
 
-  const payoutAllowed = eligibility.data?.allowed === true && !eligibility.isError;
-  const eligibilityMessage = eligibility.isError
-    ? "Withdrawal eligibility could not be verified. Requests are disabled until account status can be checked."
-    : eligibility.data?.allowed === false
-      ? eligibility.data.reason || "Withdrawal requests are not available for this account."
-      : "";
+  // Withdrawals are always available to customers. The eligibility probe is
+  // informational only: a failed check must never disable the request form.
+  const payoutAllowed = eligibility.data?.allowed !== false;
+  const eligibilityMessage = eligibility.data?.allowed === false
+    ? eligibility.data.reason || "Withdrawal requests are not available for this account."
+    : "";
 
   const requestMutation = trpc.customer.requestPayout.useMutation({
     onSuccess: (request) => {
@@ -196,7 +196,7 @@ export function CustomerPayoutRequests() {
 
   const submitRequest = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!payoutAllowed || !amountValid || amountMinor === null || !destinationReady || (authenticatorStatus.data?.enabled === true && !/^\d{6}$/.test(totpCode)) || isBusy) return;
+    if (!payoutAllowed || !amountValid || amountMinor === null || !destinationReady || isBusy) return;
     setFeedback("");
     requestMutation.mutate({
       currency,
@@ -312,7 +312,7 @@ export function CustomerPayoutRequests() {
         </div>
         {feedback && <div className={/was received|was cancelled/.test(feedback) ? "payout-feedback success" : "payout-feedback"} role="status">{feedback}</div>}
         <div className="payout-submit-row">
-          <button className="payout-submit" type="submit" disabled={!payoutAllowed || !amountValid || !destinationReady || (authenticatorStatus.data?.enabled === true && !/^\d{6}$/.test(totpCode)) || isBusy || balances.isLoading}>
+          <button className="payout-submit" type="submit" disabled={!payoutAllowed || !amountValid || !destinationReady || isBusy || balances.isLoading}>
             <Send size={15} /> {requestMutation.isPending ? "Submitting withdrawal…" : "Confirm withdrawal"}
           </button>
           {balances.isError && <small className="payout-form-error">Wallet balances could not be loaded. Refresh before submitting.</small>}

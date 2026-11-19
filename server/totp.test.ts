@@ -89,10 +89,10 @@ describe("customer TOTP integration contract", () => {
     expect(dbSource).toContain("encryptTotpSecret(secret)");
     expect(dbSource).toContain("decryptTotpSecret(row.secretCiphertext)");
     expect(dbSource).toContain("lastUsedStep: step");
-    expect(dbSource).toContain("await consumePayoutAuthenticatorCode(tx, userId, totpCode)");
+    expect(dbSource).not.toContain("consumePayoutAuthenticatorCode");
   });
 
-  it("exposes protected enrollment and replacement endpoints and collects a code with each protected payout", () => {
+  it("exposes protected enrollment and replacement endpoints without gating payout requests", () => {
     expect(routerSource).toContain("startAuthenticatorEnrollment: protectedProcedure");
     expect(routerSource).toContain("confirmAuthenticatorEnrollment: protectedProcedure");
     expect(routerSource).toContain("totpCode: z.string().regex(/^\\d{6}$/).optional()");

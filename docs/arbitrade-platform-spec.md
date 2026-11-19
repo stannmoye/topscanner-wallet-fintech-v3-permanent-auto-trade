@@ -185,9 +185,9 @@ Customers need separate flows for **deposit, reserve, invest, trade, swap, settl
 - View filled quantity, average price, fees, network costs, and remaining quantity.
 - Request release of unused reserved funds.
 - See when locked funds are scheduled for release.
-- Prevent withdrawals while a chargeback, fraud review, sanctions review, or settlement rule applies.
+- Flag or review activity while a chargeback, fraud review, sanctions review, or settlement rule applies. Customer withdrawals are always requestable: no chargeback, fraud, sanctions, or settlement rule may disable a customer's ability to submit a withdrawal request.
 - Allow an authorized admin to release or continue a lock only with dual approval and a reason.
-- Apply customer-specific limits on funding, order size, daily turnover, asset exposure, withdrawal, and earning products.
+- Apply customer-specific limits on funding, order size, daily turnover, asset exposure, and earning products. Withdrawal is excluded: it is never limited or disabled per customer.
 
 The portal must never label a customer’s unavailable funds as “lost” when they are pending, and must never label locked funds as available. Cancellation and release actions must create ledger events and customer notifications.
 
@@ -429,7 +429,6 @@ Admin users should be able to apply scoped controls to a customer, organization,
 - disable trading or swaps;
 - disable new earning positions;
 - disable token-launch participation;
-- disable withdrawals;
 - cap transaction amount or daily turnover;
 - cap asset or network exposure;
 - place an account or position on compliance hold;
@@ -440,6 +439,8 @@ Admin users should be able to apply scoped controls to a customer, organization,
 - send a mandatory notice and record customer acknowledgement.
 
 Every restriction needs a reason code, scope, start time, review date, creator, approver, customer notice, and appeal or support path where applicable. Support staff can request a restriction but cannot silently impose a financial lock unless their role and policy permit it. Emergency actions must be logged and reviewed after the incident.
+
+> **Withdrawal availability (current product decision):** Customer withdrawals are never restricted. Withdrawal is intentionally excluded from this restriction matrix: every customer with an existing account can submit a payout (withdrawal) request at any time, with no account-status, KYC, two-factor, or policy gate, and no administrator control can disable it. The per-customer `withdrawalsEnabled` flag and the global `withdrawals` policy default are both forced to enabled on write.
 
 ## 9. Architecture
 

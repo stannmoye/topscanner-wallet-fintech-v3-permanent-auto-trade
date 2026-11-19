@@ -1729,22 +1729,6 @@ export async function confirmCustomerAuthenticatorReplacement(userId: number, co
   });
 }
 
-async function consumePayoutAuthenticatorCode(tx: any, userId: number, code: string | undefined) {
-  const row = (await tx.select().from(customerTotpAuthenticators)
-    .where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
-  if (!row?.confirmedAt || !row.secretCiphertext) {
-    throw new Error("Set up and confirm an authenticator before requesting a payout.");
-  }
-  if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
-    throw new Error("Enter the current six-digit authenticator code to request a payout.");
-  }
-  const secret = decryptTotpSecret(row.secretCiphertext);
-  const step = verifyTotpCode(secret, code, Date.now(), Number(row.lastUsedStep ?? -1));
-  if (step === null) throw new Error("The authenticator code is invalid, expired, or has already been used.");
-  await tx.update(customerTotpAuthenticators).set({ lastUsedStep: step, updatedAt: new Date() })
-    .where(eq(customerTotpAuthenticators.userId, userId));
-}
-
 type CustomerPayoutInput = {
   currency: "USD" | "EUR" | "GBP" | "BTC" | "ETH" | "USDT";
   amountMinor: number;
@@ -1774,47 +1758,9 @@ function payoutIdempotencyKey(userId: number, rawKey: string) {
   return `payout:${userId}:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
-async function assertPayoutPolicyAllowsRequest(tx: any, userId: number, totpCode?: string) {
-  const policyRow = (await tx.select({ settingValue: appSettings.settingValue })
-    .from(appSettings).where(eq(appSettings.settingKey, "policy.defaults")).limit(1).for("update"))[0];
-  let policy: Record<string, unknown>;
-  try {
-    if (!policyRow) throw new Error("Policy is not configured");
-    const parsed = JSON.parse(String(policyRow.settingValue || "{}"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid policy shape");
-    policy = parsed as Record<string, unknown>;
-  } catch {
-    throw new Error("Payout requests are unavailable until global withdrawal policy is explicitly configured.");
-  }
-  if (policy.withdrawals !== true) throw new Error("Withdrawals are disabled by the global policy.");
-
-  const controls = (await tx.select().from(customerControls)
-    .where(eq(customerControls.userId, userId)).limit(1).for("update"))[0];
-  if (!controls) throw new Error("Customer payout controls are not configured.");
-  if (controls.accountStatus !== "active") throw new Error("Payout requests are unavailable while the account is restricted.");
-
-  if (policy.twofa === true || controls.twoFactorRequired === true) {
-    // Check enrollment before asking for a code, so accounts without an authenticator
-    // receive the actionable setup reason rather than a misleading missing-code error.
-    await consumePayoutAuthenticatorCode(tx, userId, totpCode);
-  } else {
-    // The customer UI treats an enabled authenticator as a payout step-up even when
-    // two-factor enrollment is optional globally. Keep server enforcement consistent.
-    const authenticator = (await tx.select({ confirmedAt: customerTotpAuthenticators.confirmedAt })
-      .from(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, userId)).limit(1).for("update"))[0];
-    if (authenticator?.confirmedAt) await consumePayoutAuthenticatorCode(tx, userId, totpCode);
-  }
-
-  const kycRequired = policy.kyc === true || controls.kycRequired === true;
-  if (kycRequired) {
-    if (controls.emailVerified !== true) throw new Error("Verify the account email before requesting a payout.");
-    const profile = (await tx.select({ overallStatus: kycProfiles.overallStatus })
-      .from(kycProfiles).where(eq(kycProfiles.userId, userId)).limit(1).for("update"))[0];
-    if (profile?.overallStatus !== "VERIFIED") {
-      throw new Error("Complete the required identity verification before requesting a payout.");
-    }
-  }
-}
+// Withdrawal requests are unconditional for customer accounts. The previous
+// global-policy, account-status, KYC, and two-factor gates were removed so every
+// customer can request a withdrawal at any time.
 
 export async function getCustomerPayoutEligibility(userId: number) {
   if (!Number.isSafeInteger(userId) || userId <= 0) {
@@ -1827,46 +1773,6 @@ export async function getCustomerPayoutEligibility(userId: number) {
     .from(users).where(eq(users.id, userId)).limit(1))[0];
   if (!account || account.role !== "user") {
     return { allowed: false, reason: "Customer account was not found." };
-  }
-
-  const policyRow = (await db.select({ settingValue: appSettings.settingValue })
-    .from(appSettings).where(eq(appSettings.settingKey, "policy.defaults")).limit(1))[0];
-  let policy: Record<string, unknown>;
-  try {
-    if (!policyRow) throw new Error("Policy is not configured");
-    const parsed = JSON.parse(String(policyRow.settingValue || "{}"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid policy shape");
-    policy = parsed as Record<string, unknown>;
-  } catch {
-    return { allowed: false, reason: "Payout requests are unavailable until global withdrawal policy is explicitly configured." };
-  }
-  if (policy.withdrawals !== true) {
-    return { allowed: false, reason: "Withdrawals are disabled by the global policy." };
-  }
-
-  const controls = (await db.select().from(customerControls)
-    .where(eq(customerControls.userId, userId)).limit(1))[0];
-  if (!controls) return { allowed: false, reason: "Customer payout controls are not configured." };
-  if (controls.accountStatus !== "active") {
-    return { allowed: false, reason: "Payout requests are unavailable while the account is restricted." };
-  }
-  if (policy.twofa === true || controls.twoFactorRequired === true) {
-    const authenticator = (await db.select({ confirmedAt: customerTotpAuthenticators.confirmedAt }).from(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, userId)).limit(1))[0];
-    if (!authenticator?.confirmedAt) {
-      return { allowed: false, reason: "Set up and confirm an authenticator before requesting a payout." };
-    }
-  }
-
-  const kycRequired = policy.kyc === true || controls.kycRequired === true;
-  if (kycRequired) {
-    if (controls.emailVerified !== true) {
-      return { allowed: false, reason: "Verify the account email before requesting a payout." };
-    }
-    const profile = (await db.select({ overallStatus: kycProfiles.overallStatus })
-      .from(kycProfiles).where(eq(kycProfiles.userId, userId)).limit(1))[0];
-    if (profile?.overallStatus !== "VERIFIED") {
-      return { allowed: false, reason: "Complete the required identity verification before requesting a payout." };
-    }
   }
 
   return { allowed: true, reason: null };
@@ -2058,7 +1964,6 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
       return { request: prior, created: false };
     }
 
-    await assertPayoutPolicyAllowsRequest(tx, userId, input.totpCode);
     const currency = (await tx.select().from(currencyRegistry)
       .where(and(eq(currencyRegistry.code, currencyCode), eq(currencyRegistry.enabled, true))).limit(1))[0];
     if (!currency) throw new Error(`Payout currency ${currencyCode} is not enabled.`);
@@ -2345,7 +2250,7 @@ export async function listAdminCustomers(){
       assignedTierDetails:assignedTierDetailsByUser.get(row.id)||[],
       qualifyingDepositUsd:qualifyingUsdMinor/100,
       status:control?.accountStatus||"active",accountState:control?.accountStatus||"active",opportunities:"Automatically assigned tier allowance",
-      kyc:control?.kycRequired??true,withdrawals:control?.withdrawalsEnabled??false,twofa:control?.twoFactorRequired??false,
+      kyc:control?.kycRequired??true,withdrawals:true,twofa:control?.twoFactorRequired??false,
       facial:false,emailVerified:control?.emailVerified??false,riskTier:control?.riskTier||"standard",adminNote:control?.adminNote||"",
       companyCountryRestrictions:normalizeCustomerCompanyCountryRestrictions(control?.companyCountryRestrictions||""),createdAt:row.createdAt};
   });
@@ -2374,9 +2279,13 @@ export async function updateAdminCustomer(input:{id:number;name:string;email:str
 export async function updateCustomerControls(adminId:number,input:{userId:number;accountStatus?:"active"|"suspended"|"restricted";withdrawalsEnabled?:boolean;kycRequired?:boolean;twoFactorRequired?:boolean;emailVerified?:boolean;riskTier?:string;adminNote?:string;companyCountryRestrictions?:string[]}){
   const db=await getDb();if(!db)throw new Error("Database is not available");
   const values:any={};
-  for(const key of ["accountStatus","withdrawalsEnabled","kycRequired","twoFactorRequired","emailVerified","riskTier","adminNote"] as const){
+  for(const key of ["accountStatus","kycRequired","twoFactorRequired","emailVerified","riskTier","adminNote"] as const){
     if(input[key]!==undefined) values[key]=input[key];
   }
+  // Withdrawals are unrestricted for every customer account. An administrator
+  // can never persist a disabled withdrawal flag, so the column is always kept
+  // enabled and no code path can re-disable customer withdrawals.
+  values.withdrawalsEnabled=true;
   if(input.companyCountryRestrictions!==undefined) values.companyCountryRestrictions=normalizeCustomerCompanyCountryRestrictions(input.companyCountryRestrictions)||null;
   const existing=(await db.select().from(customerControls).where(eq(customerControls.userId,input.userId)).limit(1))[0];
   if(existing) await db.update(customerControls).set({...values,updatedBy:adminId}).where(eq(customerControls.userId,input.userId));
@@ -2521,7 +2430,7 @@ export async function applyAccountClosureDecision(adminId: number, input: { tick
     const existingControls = (await tx.select({ userId: customerControls.userId }).from(customerControls)
       .where(eq(customerControls.userId, user.id)).limit(1).for("update"))[0];
     const closedControls = {
-      accountStatus: "restricted" as const, withdrawalsEnabled: false, updatedBy: adminId,
+      accountStatus: "restricted" as const, withdrawalsEnabled: true, updatedBy: adminId,
     };
     if (existingControls) await tx.update(customerControls).set(closedControls).where(eq(customerControls.userId, user.id));
     else await tx.insert(customerControls).values({ userId: user.id, ...closedControls });

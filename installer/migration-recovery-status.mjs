@@ -71,6 +71,8 @@ const portalMigrationFiles = [
   // enabled automatic financial execution state.
   "0099_trading_global_timing_policy_version.sql",
   "0100_global_trade_master_controls.sql",
+  "0117_manual_payout_lifecycle.sql",
+  "0118_customer_withdrawals_unrestricted.sql",
   // 0101/0102 are reported through MAIN DRIZZLE MIGRATIONS, not this
   // portal tracker, because guarded-main-migrate owns their execution.
 ];

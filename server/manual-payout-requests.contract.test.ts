@@ -38,17 +38,19 @@ describe("manual payout request lifecycle contract", () => {
     expect(migrationRunner).toContain('"payout_requests"');
   });
 
-  it("requires the global and per-customer withdrawal gates and verified KYC when required", () => {
+  it("lets every customer request a withdrawal without policy, account-status, KYC, or 2FA gates", () => {
     expect(requestStart).toBeGreaterThanOrEqual(0);
     expect(cancelStart).toBeGreaterThan(requestStart);
     expect(requestService).toContain("payoutIdempotencyKey(userId, input.idempotencyKey)");
-    expect(requestService).toContain("assertPayoutPolicyAllowsRequest(tx, userId, input.totpCode)");
-    expect(db).toContain('policy.withdrawals !== true');
+    expect(requestService).not.toContain("assertPayoutPolicyAllowsRequest");
+    expect(db).not.toContain("assertPayoutPolicyAllowsRequest");
+    expect(db).not.toContain('policy.withdrawals !== true');
     expect(db).not.toContain('controls.withdrawalsEnabled !== true');
-    expect(db).toContain('profile?.overallStatus !== "VERIFIED"');
-    expect(db).toContain("controls.emailVerified !== true");
-    expect(db).toContain("policy.twofa === true || controls.twoFactorRequired === true");
-    expect(db).toContain("await consumePayoutAuthenticatorCode(tx, userId, totpCode)");
+    expect(db).not.toContain('profile?.overallStatus !== "VERIFIED"');
+    expect(db).not.toContain("controls.emailVerified !== true");
+    expect(db).not.toContain("policy.twofa === true || controls.twoFactorRequired === true");
+    expect(db).not.toContain("consumePayoutAuthenticatorCode");
+    expect(db).toContain("return { allowed: true, reason: null };");
   });
 
   it("uses row locks and reserves only non-promotional funds atomically", () => {
@@ -114,7 +116,7 @@ describe("manual payout request lifecycle contract", () => {
     expect(router).toContain("listAdminPayoutRequests(input ?? {})");
     expect(router).toContain("resolveCustomerPayoutRequest(ctx.user.id, input)");
     expect(customerUi).toContain("trpc.customer.payoutEligibility.useQuery");
-    expect(customerUi).toContain("eligibility.data?.allowed === true && !eligibility.isError");
+    expect(customerUi).toContain("eligibility.data?.allowed !== false");
     expect(customerUi).toContain('className="payout-eligibility-alert" role="alert"');
     expect(customerUi).toContain("!payoutAllowed || !amountValid");
     expect(customerUi).toContain('setAmountText(""); setWalletAddress(""); setNetwork(firstPayoutNetwork(nextCurrency));');

@@ -2332,3 +2332,18 @@ Changes:
 - `server/manual-payout-requests.contract.test.ts`, `scripts/payout-browser-acceptance.cjs`, `client/src/notification-sound-deduplication.test.ts`: aligned the source-contract assertions and the mocked browser acceptance flow to the withdrawn-page copy, structured fields, "Mark successful" and "Available for withdrawal"; the obsolete "withdrawals blocked" copy assertion now asserts the truthful manual-request copy.
 
 Verification: `pnpm install --frozen-lockfile` completed; `pnpm check` (`tsc --noEmit`) clean; `pnpm test` 1573 tests — 1542 passed / 31 skipped (one initially failing stale "withdrawals blocked" assertion, updated in `notification-sound-deduplication.test.ts`); `pnpm build` clean. Lifecycle semantics unchanged: funds are reserved (available→locked, `payout_reserve`) on submit and the exact reserved amount is removed (locked decrement, `payout_paid`) on administrator completion; decline/cancel release the reserve. No external transfer is initiated. Commit `Fix withdrawal flow` on `main`.
+
+## 2026-11-19 — Withdrawals made unconditional for every customer account
+
+Owner request: customers saw "Withdrawal eligibility could not be verified. Requests are disabled until account status can be checked" and withdrawals stayed disabled. Every customer must be able to request a withdrawal at any time with no policy, account-status, KYC, or two-factor restriction; the control must be forced enabled across the application, the documentation, and the stored database records.
+
+Changes:
+- `server/db.ts`: `getCustomerPayoutEligibility` now only requires an existing customer account and returns `{ allowed: true, reason: null }`; the prior global-policy/account-status/KYC/two-factor gates and the `assertPayoutPolicyAllowsRequest`/`consumePayoutAuthenticatorCode` helpers are gone. `listAdminCustomers` always reports `withdrawals: true`. `updateCustomerControls` no longer accepts a writable `withdrawalsEnabled` value and forces `values.withdrawalsEnabled = true`, so no administrator action can persist a disabled flag. Account-closure controls keep `withdrawalsEnabled: true`.
+- `server/routers.ts`: the admin `settings` query forces `policy.withdrawals = true` on read, and `updateSettings` forces `withdrawals: true` on write, so the global default can never be stored disabled.
+- `client/src/components/PayoutRequests.tsx`: the customer form fails open — `payoutAllowed = eligibility.data?.allowed !== false`; no TOTP gate remains on the submit path.
+- `client/src/App.tsx`: the per-customer Withdrawals control renders always-enabled and non-interactive; the admin Policy-gates Withdrawals switch is fixed on; the customer "Withdrawal Security" description no longer implies approval requirements.
+- `drizzle/schema.ts`: `withdrawalsEnabled` defaults to `true`.
+- `drizzle/0118_customer_withdrawals_unrestricted.sql` (new, idempotent/additive): sets the column default to `1` and brings every existing row to enabled; registered in `scripts/apply-portal-migrations.mjs` and `installer/migration-recovery-status.mjs`.
+- Docs: `docs/admin-portal-menu-guide.md` (Withdrawal control + Policy gates) and `docs/arbitrade-platform-spec.md` (account-control matrix) now state customer withdrawals are never restricted.
+
+Verification: `pnpm check` (`tsc --noEmit`) clean; `pnpm test` 1573 tests — 1542 passed / 31 skipped. Note: the customer-facing error string no longer exists anywhere in the source, so a deployment still showing it is running an older build and must be redeployed from this commit.

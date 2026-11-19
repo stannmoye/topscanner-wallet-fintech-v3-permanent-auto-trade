@@ -188,15 +188,14 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     expect(history.items.map((item: any) => Number(item.id))).toContain(Number(created.id));
   });
 
-  it("requires an enrolled authenticator under the default 2FA policy and rejects replayed codes", async () => {
+  it("enrolls, replaces, and recovers a customer authenticator without gating payouts", async () => {
     const userId = await createAccount();
     const previousEncryptionKey = process.env.TOTP_ENCRYPTION_KEY;
     process.env.TOTP_ENCRYPTION_KEY = "a".repeat(64);
     try {
       await setPolicy({ kyc: false, withdrawals: true, twofa: true, facial: false });
-      const blocked = await getCustomerPayoutEligibility(userId);
-      expect(blocked.allowed).toBe(false);
-      expect(blocked.reason).toContain("Set up and confirm an authenticator");
+      // Even under the strictest global policy every customer may request a payout.
+      expect(await getCustomerPayoutEligibility(userId)).toMatchObject({ allowed: true });
 
       // Two tabs may start setup together. Both responses must describe the same
       // persisted pending secret, rather than invalidating the first tab's QR code.
@@ -265,16 +264,12 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
       expect(await getCustomerAuthenticatorStatus(userId)).toMatchObject({ enabled: true, replacementPending: false, recoveryCodesRemaining: 9 });
       expect((await getCustomerPayoutEligibility(userId)).allowed).toBe(true);
 
-      const payoutStep = Math.floor(Date.now() / 30_000) + 1;
-      const code = totpAtStep(recovery.secret, payoutStep);
-      const request = await createCustomerPayoutRequest(userId, { ...requestInput(1000, unique("payout-totp")), totpCode: code });
+      // A payout request no longer requires an authenticator code.
+      const request = await createCustomerPayoutRequest(userId, requestInput(1000, unique("payout-no-code")));
       expect(request.status).toBe("processing");
       expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
-
-      await expect(createCustomerPayoutRequest(userId, { ...requestInput(1000, unique("payout-totp-replay")), totpCode: code }))
-        .rejects.toThrow("invalid, expired, or has already been used");
-      expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
       await cancelCustomerPayoutRequest(userId, Number(request.id));
+      expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
     } finally {
       if (previousEncryptionKey === undefined) delete process.env.TOTP_ENCRYPTION_KEY;
       else process.env.TOTP_ENCRYPTION_KEY = previousEncryptionKey;
@@ -282,7 +277,7 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     }
   });
 
-  it("enforces payout TOTP when the customer enabled an authenticator even if global 2FA is optional", async () => {
+  it("does not require a payout authenticator code even when the customer enabled an authenticator", async () => {
     const userId = await createAccount();
     const previousEncryptionKey = process.env.TOTP_ENCRYPTION_KEY;
     process.env.TOTP_ENCRYPTION_KEY = "b".repeat(64);
@@ -294,27 +289,13 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
         totpAtStep(setup.secret, Math.floor(Date.now() / 30_000)),
       );
 
-      // The customer interface asks for a code once an authenticator is enabled.
-      // The backend must validate and consume it even when global 2FA is optional.
-      await expect(createCustomerPayoutRequest(
+      // A payout succeeds without any authenticator code.
+      const request = await createCustomerPayoutRequest(
         userId,
-        requestInput(1000, unique("payout-enabled-totp-missing")),
-      )).rejects.toThrow("Enter the current six-digit authenticator code");
-      expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
-      expect(await ledgerCount(userId, "payout_reserve")).toBe(0);
-
-      const code = totpAtStep(setup.secret, Math.floor(Date.now() / 30_000) + 1);
-      const request = await createCustomerPayoutRequest(userId, {
-        ...requestInput(1000, unique("payout-enabled-totp-valid")),
-        totpCode: code,
-      });
+        requestInput(1000, unique("payout-enabled-authenticator-no-code")),
+      );
       expect(request.status).toBe("processing");
       expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
-
-      await expect(createCustomerPayoutRequest(userId, {
-        ...requestInput(1000, unique("payout-enabled-totp-replay")),
-        totpCode: code,
-      })).rejects.toThrow("invalid, expired, or has already been used");
       expect(await ledgerCount(userId, "payout_reserve")).toBe(1);
       await cancelCustomerPayoutRequest(userId, Number(request.id));
       expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
@@ -414,58 +395,52 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     expect(payoutRows[0].status).toBe("cancelled");
   });
 
-  it("fails closed when global policy or required KYC/2FA is missing, regardless of the per-customer withdrawal flag", async () => {
-    // The per-customer withdrawalsEnabled flag no longer blocks withdrawals;
-    // all active customers may request a payout subject to global policy, KYC,
-    // and 2FA only.
+  it("allows every customer to request a payout regardless of global policy, account status, KYC, or 2FA", async () => {
+    // Withdrawals are unconditional for customer accounts: the per-customer flag,
+    // global policy, account status, KYC, and 2FA no longer block a payout request.
     const flagDisabledCustomer = await createAccount("user", { withdrawalsEnabled: false, kycRequired: false });
     expect(await getCustomerPayoutEligibility(flagDisabledCustomer)).toMatchObject({ allowed: true });
 
     const enabledCustomer = await createAccount("user", { withdrawalsEnabled: true, kycRequired: false });
     await setPolicy({ kyc: false, withdrawals: false, twofa: false, facial: false });
     try {
-      expect(await getCustomerPayoutEligibility(enabledCustomer)).toEqual({
-        allowed: false,
-        reason: "Withdrawals are disabled by the global policy.",
-      });
-      await expect(createCustomerPayoutRequest(enabledCustomer, requestInput(1000, unique("payout-disabled-global"))))
-        .rejects.toThrow("Withdrawals are disabled by the global policy");
+      expect(await getCustomerPayoutEligibility(enabledCustomer)).toMatchObject({ allowed: true });
+      const request = await createCustomerPayoutRequest(enabledCustomer, requestInput(1000, unique("payout-global-disabled")));
+      expect(request.status).toBe("processing");
+      await cancelCustomerPayoutRequest(enabledCustomer, Number(request.id));
     } finally {
       await setPolicy({ kyc: false, withdrawals: true, twofa: false, facial: false });
     }
 
     const kycCustomer = await createAccount("user", { withdrawalsEnabled: true, kycRequired: true });
-    expect(await getCustomerPayoutEligibility(kycCustomer)).toEqual({
-      allowed: false,
-      reason: "Complete the required identity verification before requesting a payout.",
-    });
-    await expect(createCustomerPayoutRequest(kycCustomer, requestInput(1000, unique("payout-kyc-required"))))
-      .rejects.toThrow("Complete the required identity verification");
+    expect(await getCustomerPayoutEligibility(kycCustomer)).toMatchObject({ allowed: true });
+    const kycRequest = await createCustomerPayoutRequest(kycCustomer, requestInput(1000, unique("payout-kyc-required")));
+    expect(kycRequest.status).toBe("processing");
+    await cancelCustomerPayoutRequest(kycCustomer, Number(kycRequest.id));
+
     const twoFactorCustomer = await createAccount("user", { withdrawalsEnabled: true, kycRequired: false });
     await pool!.execute("UPDATE customer_controls SET twoFactorRequired=1 WHERE userId=?", [twoFactorCustomer]);
-    expect(await getCustomerPayoutEligibility(twoFactorCustomer)).toEqual({
-      allowed: false,
-      reason: "Set up and confirm an authenticator before requesting a payout.",
-    });
-    await expect(createCustomerPayoutRequest(twoFactorCustomer, requestInput(1000, unique("payout-customer-2fa"))))
-      .rejects.toThrow("Set up and confirm an authenticator");
+    expect(await getCustomerPayoutEligibility(twoFactorCustomer)).toMatchObject({ allowed: true });
+    const twoFactorRequest = await createCustomerPayoutRequest(twoFactorCustomer, requestInput(1000, unique("payout-customer-2fa")));
+    expect(twoFactorRequest.status).toBe("processing");
+    await cancelCustomerPayoutRequest(twoFactorCustomer, Number(twoFactorRequest.id));
+
+    const restrictedCustomer = await createAccount("user", { withdrawalsEnabled: true, kycRequired: false });
+    await pool!.execute("UPDATE customer_controls SET accountStatus='restricted' WHERE userId=?", [restrictedCustomer]);
+    expect(await getCustomerPayoutEligibility(restrictedCustomer)).toMatchObject({ allowed: true });
+    const restrictedRequest = await createCustomerPayoutRequest(restrictedCustomer, requestInput(1000, unique("payout-restricted-account")));
+    expect(restrictedRequest.status).toBe("processing");
+    await cancelCustomerPayoutRequest(restrictedCustomer, Number(restrictedRequest.id));
 
     const globalTwoFactorCustomer = await createAccount("user", { withdrawalsEnabled: true, kycRequired: false });
     await setPolicy({ kyc: false, withdrawals: true, twofa: true, facial: false });
     try {
-      expect(await getCustomerPayoutEligibility(globalTwoFactorCustomer)).toMatchObject({
-        allowed: false,
-        reason: "Set up and confirm an authenticator before requesting a payout.",
-      });
-      await expect(createCustomerPayoutRequest(globalTwoFactorCustomer, requestInput(1000, unique("payout-global-2fa"))))
-        .rejects.toThrow("Set up and confirm an authenticator");
+      expect(await getCustomerPayoutEligibility(globalTwoFactorCustomer)).toMatchObject({ allowed: true });
+      const globalTwoFactorRequest = await createCustomerPayoutRequest(globalTwoFactorCustomer, requestInput(1000, unique("payout-global-2fa")));
+      expect(globalTwoFactorRequest.status).toBe("processing");
+      await cancelCustomerPayoutRequest(globalTwoFactorCustomer, Number(globalTwoFactorRequest.id));
     } finally {
       await setPolicy({ kyc: false, withdrawals: true, twofa: false, facial: false });
     }
-    expect(await ledgerCount(blockedCustomer, "payout_reserve")).toBe(0);
-    expect(await ledgerCount(enabledCustomer, "payout_reserve")).toBe(0);
-    expect(await ledgerCount(kycCustomer, "payout_reserve")).toBe(0);
-    expect(await ledgerCount(twoFactorCustomer, "payout_reserve")).toBe(0);
-    expect(await ledgerCount(globalTwoFactorCustomer, "payout_reserve")).toBe(0);
   });
 });

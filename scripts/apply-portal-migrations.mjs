@@ -69,6 +69,9 @@ const migrationFiles = [
   // Creates or migrates the manual payout request lifecycle table onto the
   // confirming/processing -> completed/declined vocabulary. Idempotent and additive.
   "0117_manual_payout_lifecycle.sql",
+  // Enables the per-customer withdrawal flag for every existing account so no
+  // stored record can leave customer withdrawals disabled. Idempotent/additive.
+  "0118_customer_withdrawals_unrestricted.sql",
   // 0101/0102 are canonical Drizzle-journal migrations. They must not be
   // replayed by this legacy portal tracker after guarded-main-migrate.
 ];

@@ -75,7 +75,7 @@ Enables or disables delivery of opportunities to the customer.
 
 ### Withdrawal control
 
-Enables or disables withdrawals for the selected customer.
+Withdrawals are always available for every customer and cannot be disabled. This control is shown in the enabled state only. Every customer with an existing account can submit a payout (withdrawal) request at any time, with no account-status, KYC, two-factor, or policy gate. No administrator action can disable it.
 
 ### KYC requirement
 
@@ -427,11 +427,11 @@ For the detailed field-by-field behaviour, effective-time rules, and recovery gu
 **Policy gates:**
 
 - KYC verification
-- Withdrawals
+- Withdrawals (always on — see note below)
 - Two-factor authentication
 - Facial verification
 
-The administrator can enable or disable each default and save the policy registry to the database. These defaults are applied by customer provisioning and account-control workflows.
+The administrator can enable or disable each default and save the policy registry to the database, with one exception: **withdrawals are always on**. The `withdrawals` default is forced to enabled on both read and write, so it can never be persisted as disabled and no customer can be prevented from requesting a payout. The other defaults are applied by customer provisioning and account-control workflows.
 
 ---
 

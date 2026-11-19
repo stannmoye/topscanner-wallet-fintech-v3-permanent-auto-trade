@@ -41,7 +41,7 @@ export const customerControls = mysqlTable("customer_controls", {
   autoTradeEnabled: boolean("autoTradeEnabled").default(false).notNull(),
   autoTradeMode: mysqlEnum("autoTradeMode", ["enabled", "disabled"]).default("disabled").notNull(),
   autoTradeMinRewardBps: int("autoTradeMinRewardBps").default(0).notNull(),
-  withdrawalsEnabled: boolean("withdrawalsEnabled").default(false).notNull(),
+  withdrawalsEnabled: boolean("withdrawalsEnabled").default(true).notNull(),
   kycRequired: boolean("kycRequired").default(true).notNull(),
   twoFactorRequired: boolean("twoFactorRequired").default(false).notNull(),
   emailVerified: boolean("emailVerified").default(false).notNull(),
