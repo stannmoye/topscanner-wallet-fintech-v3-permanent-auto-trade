@@ -63,6 +63,9 @@ describe("manual payout request lifecycle contract", () => {
     expect(requestService).toContain('entryType: "payout_reserve"');
     expect(requestService).toContain("status: initialPayoutRequestStatus(currencyCode)");
     expect(requestService).toContain("notifyAdminsOfPayoutRequest(outcome.request, resolvedScale)");
+    expect(requestService).toContain("openPayoutSupportTicket(outcome.request, resolvedScale)");
+    expect(db).toContain("async function openPayoutSupportTicket(");
+    expect(db).toContain('createTicket(request.userId, { subject, body, priority: "high", category: "wallet" })');
   });
 
   it("uses stable bounded continuation pages for customer and admin history instead of truncating", () => {
@@ -114,10 +117,15 @@ describe("manual payout request lifecycle contract", () => {
     expect(customerUi).toContain("eligibility.data?.allowed === true && !eligibility.isError");
     expect(customerUi).toContain('className="payout-eligibility-alert" role="alert"');
     expect(customerUi).toContain("!payoutAllowed || !amountValid");
-    expect(customerUi).toContain('setAmountText(""); setDestinationDetails(""); setDestinationType(["BTC", "ETH", "USDT"].includes(nextCurrency) ? "crypto_transfer" : "bank_transfer")');
+    expect(customerUi).toContain('setAmountText(""); setWalletAddress(""); setNetwork(firstPayoutNetwork(nextCurrency));');
     expect(customerUi).toContain("Never enter passwords, PINs, private keys, or seed phrases.");
+    expect(customerUi).toContain('id="payout-network"');
+    expect(customerUi).toContain('id="payout-wallet-address"');
+    expect(customerUi).toContain("composeCryptoDestination(network, walletAddress)");
+    expect(customerUi).toContain("composeBankDestination({ beneficiaryName, bankName, accountNumber, swiftCode, bankCountry })");
+    expect(customerUi).toContain("Auto-generated withdrawal record");
     expect(adminUi).toContain("Decline and release");
-    expect(adminUi).toContain("Mark completed");
+    expect(adminUi).toContain("Mark successful");
   });
 
   it("keeps payout list and review actions on the dedicated owner component only", () => {
@@ -143,7 +151,7 @@ describe("manual payout request lifecycle contract", () => {
     expect(parsed.code).toContain('procedure === "customer.requestPayout"');
     expect(payoutBrowserAcceptance).toContain('procedure === "customer.requestPayout"');
     expect(payoutBrowserAcceptance).toContain('procedure === "customer.cancelPayoutRequest"');
-    expect(payoutBrowserAcceptance).toContain("Available for payout: USD 80.00");
+    expect(payoutBrowserAcceptance).toContain("Available for withdrawal: USD 80.00");
     expect(payoutBrowserAcceptance).toContain('getByText("Processing", { exact: true })');
     expect(payoutBrowserAcceptance).toContain('getByText(/External: BANK-TRANSFER-VERIFIED-001/)');
     expect(payoutBrowserAcceptance).toContain("const pendingStatusVisible = await pendingStatus.isVisible().catch(() => false);")

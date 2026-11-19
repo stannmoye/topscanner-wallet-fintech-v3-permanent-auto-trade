@@ -21,6 +21,7 @@ const destinationGroups: CustomerDestinationGroup[] = [
     items: [
       { label: "Home", detail: "Main customer dashboard", target: "dashboard", icon: Home },
       { label: "Wallet", detail: "Balances, funding and transaction history", target: "wallet", icon: WalletCards },
+      { label: "Withdraw funds", detail: "Request a withdrawal and track its history", target: "withdraw", icon: ArrowDownUp },
       { label: "Trade & Earn", detail: "Published customer opportunities", target: "opportunities", icon: ArrowDownUp },
       { label: "Stake & Earn", detail: "Yield and staking products", target: "yield", icon: Sparkles },
       { label: "Activity", detail: "Account activity and transactions", target: "activity", icon: Activity },
@@ -99,6 +100,7 @@ const menuTargets = new Set(destinations.map((item) => item.target));
 const mainPageOnlySearchDestinations = mainPageSearchDestinations.filter((item) => !menuTargets.has(item.target));
 const primaryLabels: Record<string, string> = {
   dashboard: "Dashboard", opportunities: "Opportunities", yield: "Yield Strategies", wallet: "Wallet",
+  withdraw: "Withdraw funds",
   activity: "Activity", support: "Support", account: "Account Settings", security: "Security",
   kyc: "Identity verification", notifications: "Notifications", console: "Customer console",
   "crypto-mining": "Crypto Mining", "token-launch": "Token Launch", "treasury-bond": "Treasury Bond", "cooperate-dept": "Cooperate Dept",
@@ -131,7 +133,7 @@ export function CustomerSlideMenu({ section, onNavigate }: CustomerSlideMenuProp
     const collections: Array<{ kind: string; rows: any[]; target: string }> = [
       { kind: "Transaction", rows: Array.isArray(tradesQuery.data) ? tradesQuery.data as any[] : [], target: "activity" },
       { kind: "Transaction activity", rows: Array.isArray(consoleQuery.data) ? consoleQuery.data as any[] : [], target: "activity" },
-      { kind: "Withdrawal request", rows: Array.isArray(payoutQuery.data) ? payoutQuery.data as any[] : [], target: "wallet" },
+      { kind: "Withdrawal request", rows: Array.isArray(payoutQuery.data) ? payoutQuery.data as any[] : [], target: "withdraw" },
       { kind: "Support ticket", rows: Array.isArray(ticketQuery.data) ? ticketQuery.data as any[] : [], target: "support" },
     ];
     return collections.flatMap(({ kind, rows, target }) => rows.filter((row) => {

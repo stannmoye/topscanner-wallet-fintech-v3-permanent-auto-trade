@@ -2545,3 +2545,26 @@
   .customer-portal .portal-main .wallet-estimated-total::before { animation: none; }
   .customer-portal .portal-main .wallet-currency-card::after { transition: none; }
 }
+/* Withdraw action on each eligible wallet tile, routing to the withdrawal page. */
+.customer-portal .portal-main .wallet-card-withdraw {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  margin-top: 11px;
+  padding: 8px 10px;
+  border: 1px solid rgba(137, 157, 201, .28);
+  border-radius: 9px;
+  background: rgba(120, 140, 255, .12);
+  color: #dbe3ff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease;
+}
+.customer-portal .portal-main .wallet-card-withdraw:hover { background: rgba(120, 140, 255, .2); border-color: rgba(137, 157, 201, .45); }
+.customer-portal .portal-main .wallet-card-withdraw:focus-visible { outline: 2px solid rgba(120, 140, 255, .55); outline-offset: 2px; }
+@media (max-width: 390px) {
+  .customer-portal .portal-main .wallet-card-withdraw { margin-top: 8px; padding: 7px 9px; font-size: 10px; }
+}

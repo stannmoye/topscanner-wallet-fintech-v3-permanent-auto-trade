@@ -125,7 +125,7 @@ async function runAdminPayoutReview(browser) {
       });
 
     const paidRow = page.locator("tr").filter({ hasText: "payout-admin-paid-1" });
-    const paidButton = paidRow.getByRole("button", { name: "Mark completed" });
+    const paidButton = paidRow.getByRole("button", { name: "Mark successful" });
     const paidOperatorNote = page.getByLabel("Required operator note for payout-admin-paid-1");
     await paidOperatorNote.fill("Independent external transfer verification completed.");
     const paidDisabledWithoutReference = await paidButton.isDisabled();
@@ -302,46 +302,50 @@ async function main() {
       const menuTrigger = page.getByRole("button", { name: "Open customer navigation" });
       await menuTrigger.waitFor({ state: "visible", timeout: 15000 });
       await menuTrigger.click();
-      // Wallet is a main-page destination surfaced by the resource drawer's accessible search.
-      await page.getByLabel("Search customer pages and resources").fill("Wallet");
-      await page.locator(".customer-resource-nav").getByRole("button", { name: /^Wallet\b/ }).click();
-      await page.getByRole("heading", { name: "Payout requests" }).waitFor({ state: "visible", timeout: 15000 });
+      // The withdrawal page is a dedicated main-page destination surfaced by the resource drawer's accessible search.
+      await page.getByLabel("Search customer pages and resources").fill("Withdraw");
+      await page.locator(".customer-resource-nav").getByRole("button", { name: /^Withdraw funds\b/ }).click();
+      await page.getByRole("heading", { name: "Withdraw funds" }).waitFor({ state: "visible", timeout: 15000 });
 
-      const available80 = page.getByText("Available for payout: USD 80.00");
+      const available80 = page.getByText("Available for withdrawal: USD 80.00");
       await available80.waitFor({ state: "visible" });
       const eligibilityAlert = page.locator(".payout-eligibility-alert");
-      record("wallet navigation and eligible payout state", 
-        await page.getByRole("heading", { name: "Wallet & cash" }).isVisible().catch(() => false) &&
+      record("withdrawal navigation and eligible payout state",
+        await page.getByRole("heading", { name: "Withdraw funds" }).isVisible().catch(() => false) &&
         !(await eligibilityAlert.isVisible().catch(() => false)) &&
         await available80.isVisible().catch(() => false), {
           availableText: await available80.innerText().catch(() => null),
           eligibilityAlert: await eligibilityAlert.isVisible().catch(() => false),
         });
 
-      const currencySelect = page.getByLabel("Payout currency");
+      const currencySelect = page.getByLabel("Withdrawal currency");
       await currencySelect.selectOption("BTC");
       const cryptoType = await page.locator(".payout-destination-type").innerText();
-      const cryptoDetails = page.getByLabel("Public wallet address and network");
+      const cryptoDetails = page.getByLabel("Wallet address");
       const cryptoLabel = await cryptoDetails.isVisible().catch(() => false);
       await cryptoDetails.fill("bc1q-public-test-destination");
       await currencySelect.selectOption("USD");
       const bankType = await page.locator(".payout-destination-type").innerText();
-      const bankDetails = page.getByLabel("Beneficiary and bank details");
+      const bankDetails = page.getByLabel("Beneficiary name");
       const bankLabel = await bankDetails.isVisible().catch(() => false);
       const staleDestinationCleared = await bankDetails.inputValue().then(value => value === "").catch(() => false);
-      record("payout destination type follows currency and clears previous destination text",
+      record("withdrawal destination type follows currency and clears previous destination text",
         cryptoType === "Crypto wallet transfer" && cryptoLabel &&
         bankType === "Bank transfer" && bankLabel && staleDestinationCleared, {
           cryptoType, cryptoLabel, bankType, bankLabel, staleDestinationCleared,
         });
 
       const amount = page.getByLabel("Amount");
-      const submit = page.getByRole("button", { name: /Request payout/ });
+      const submit = page.getByRole("button", { name: /Confirm withdrawal/ });
       await amount.fill("81.00");
       const amountAboveAvailableDisabled = await submit.isDisabled();
       const amountErrorVisible = await page.getByText(/Enter a positive amount within the available balance/).isVisible().catch(() => false);
       await amount.fill("10.00");
-      await page.getByLabel("Beneficiary and bank details").fill("A. Customer; Example Bank; account 00001234");
+      await page.getByLabel("Beneficiary name").fill("A. Customer");
+      await page.getByLabel("Bank name").fill("Example Bank");
+      await page.getByLabel("Account number or IBAN").fill("00001234");
+      await page.getByLabel("SWIFT / BIC or routing number").fill("EXAMPUS33");
+      await page.getByLabel("Bank country").fill("United States");
       const validAmountEnabled = await submit.isEnabled();
       record("promotional balance excluded from amount limit",
         amountAboveAvailableDisabled && amountErrorVisible && validAmountEnabled, {
@@ -350,28 +354,28 @@ async function main() {
         });
 
       await submit.click();
-      const pendingButton = page.getByRole("button", { name: /Submitting request/ });
+      const pendingButton = page.getByRole("button", { name: /Submitting withdrawal/ });
       await pendingButton.waitFor({ state: "visible", timeout: 5000 });
       const busyDisabled = await pendingButton.isDisabled();
-      const recordedMessage = page.getByText(/Payout request payout-browser-1 was recorded/);
+      const recordedMessage = page.getByText(/Withdrawal request payout-browser-1 was received/);
       await recordedMessage.waitFor({ state: "visible", timeout: 10000 });
       const pendingStatus = page.getByText("Processing", { exact: true });
       await pendingStatus.waitFor({ state: "visible", timeout: 10000 });
-      const available70 = await page.getByText("Available for payout: USD 70.00").isVisible().catch(() => false);
+      const available70 = await page.getByText("Available for withdrawal: USD 70.00").isVisible().catch(() => false);
       const recordedFeedbackVisible = await recordedMessage.isVisible().catch(() => false);
       const pendingStatusVisible = await pendingStatus.isVisible().catch(() => false);
-      record("payout submission updates feedback, reservation display, and history",
+      record("withdrawal submission updates feedback, reservation display, and history",
         busyDisabled && requestCount === 1 && available70 && recordedFeedbackVisible && pendingStatusVisible, {
           requestCount, busyDisabled, available70, recordedFeedbackVisible, pendingStatusVisible,
           recordedMessage: await recordedMessage.innerText().catch(() => null),
         });
 
       await page.getByRole("button", { name: "Cancel request" }).click();
-      const cancelledMessage = page.getByText(/Payout request payout-browser-1 was cancelled/);
+      const cancelledMessage = page.getByText(/Withdrawal request payout-browser-1 was cancelled/);
       await cancelledMessage.waitFor({ state: "visible", timeout: 10000 });
       await page.getByText("Cancelled · funds released").waitFor({ state: "visible", timeout: 10000 });
-      const available80Restored = await page.getByText("Available for payout: USD 80.00").isVisible().catch(() => false);
-      record("cancelling a pending payout restores the displayed balance",
+      const available80Restored = await page.getByText("Available for withdrawal: USD 80.00").isVisible().catch(() => false);
+      record("cancelling a pending withdrawal restores the displayed balance",
         cancelCount === 1 && available80Restored &&
         await cancelledMessage.isVisible().catch(() => false) &&
         await page.getByText("Cancelled · funds released").isVisible().catch(() => false), {

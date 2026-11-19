@@ -285,7 +285,7 @@ describe("authoritative financial-event notification contracts", () => {
 
   it("does not present customer deposit submission or withdrawal initiation as confirmed payout", () => {
     expect(app).toContain("Mock provider flow available for testing");
-    expect(app).toContain("Blocked until custody and execution providers are configured");
+    expect(app).toContain("Request a manual withdrawal from an eligible wallet");
     expect(app).not.toContain("Deposit completed successfully");
     expect(app).not.toContain("Withdrawal paid successfully");
   });

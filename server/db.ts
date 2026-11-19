@@ -1936,6 +1936,32 @@ async function notifyAdminsOfPayoutRequest(
   }
 }
 
+// Best-effort, post-commit support ticket so a withdrawal request also lands in
+// the administrator ticket desk. The Manual Payouts queue remains the resolution
+// surface; the ticket is the durable administrator/customer audit thread.
+async function openPayoutSupportTicket(
+  request: { userId: number; requestReference: string; currency: string; amountMinor: number; destinationType: string; destinationDetails: string },
+  scale: number,
+) {
+  try {
+    const amount = formatPayoutMinorAmount(Number(request.amountMinor), request.currency, scale);
+    const destination = request.destinationType === "bank_transfer" ? "bank transfer" : "crypto wallet transfer";
+    const subject = `Withdrawal request ${request.requestReference} · ${amount}`;
+    const body = [
+      "WITHDRAWAL REQUEST — ADMINISTRATOR REVIEW REQUIRED", "",
+      "A customer submitted a manual withdrawal request. The requested amount has been reserved from their available balance and no funds have been sent.", "",
+      `Withdrawal reference: ${request.requestReference}`,
+      `Amount: ${amount}`,
+      `Destination type: ${destination}`,
+      `Destination details: ${request.destinationDetails}`, "",
+      "Review it in the administrator Manual Payouts queue and mark it successful or decline it. Declining releases the reserved funds. Marking it successful deducts the exact reserved amount from the customer wallet and requires an external transfer reference and an operator note.",
+    ].join("\n");
+    await createTicket(request.userId, { subject, body, priority: "high", category: "wallet" });
+  } catch (error) {
+    console.error("[Support] Withdrawal ticket creation failed after commit:", error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
 type PayoutHistoryCursor = { createdAt: string; id: number };
 export function decodePayoutHistoryCursor(value?: string): PayoutHistoryCursor | null {
   if (value === undefined) return null;
@@ -2104,6 +2130,7 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
       `payout-request:${outcome.request.requestReference}`,
     );
     await notifyAdminsOfPayoutRequest(outcome.request, resolvedScale);
+    await openPayoutSupportTicket(outcome.request, resolvedScale);
   }
   return outcome.request;
 }
