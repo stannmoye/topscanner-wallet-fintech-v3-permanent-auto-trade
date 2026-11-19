@@ -2553,3 +2553,12 @@ Owner clarified that the popup's required capital (for example, `$100`) must alt
 - Added `client/src/customer-wallet-status.ts` and a focused regression test for concurrent `$400` pending withdrawal and `$100` popup trade, including currency matching and the ledger fallback.
 
 Verification: `pnpm check` clean; `pnpm test` 1544 passed / 31 skipped (196 test files passed / 6 skipped); `pnpm build` clean (existing large-chunk warning only). No financial ledger behavior changed. Hosted verification and deployment remain outstanding.
+
+### Follow-up — redesigned "Today's trade record" band (dashboard)
+
+Owner feedback: the dashboard "Today's trade record" band needed a stronger, better-designed container with effects, animation, multiple colours, and a correct, responsive width.
+
+- `client/src/App.tsx` (`CustomerDailyOfferRecord`): added a decorative `__aurora` layer and a live pulse dot in the header; each of the four tiles now carries a tone class (`tone-teal`/`tone-blue`/`tone-gold`/`tone-violet`) plus an aria-hidden icon badge. Tile label/value/summary text is unchanged, so no number or copy changed.
+- `client/src/trading-experience.css`: replaced the compact block with a layered design — a rotating multi-hue aurora glow, a diagonal sheen sweep, per-tile accent colours (teal/blue/violet/gold) with top accent bars and hover lift, a four-stop animated progress meter, staggered tile entrance, header pill, and a pulsing live indicator. Width uses fluid `clamp()` gutters and stays aligned with the sibling bands (single 1100px column on desktop, full-width below 901px). Grid: 4 columns, 2 at ≤900px, 1 at ≤380px. Added `prefers-reduced-motion` and `forced-colors` fallbacks. No data, ledger, or financial behaviour changed.
+
+Verification: `pnpm check` clean; `pnpm exec vitest run client/src/trading-experience.styles.test.ts` 8/8 passed; `pnpm build` clean (existing large-chunk warning only). Source change only — not yet pushed or deployed.

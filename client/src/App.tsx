@@ -548,15 +548,16 @@ function CustomerDailyOfferRecord({summary}:{summary?:CustomerDailySummary}) {
   const earnedToday=summary?.earnedTodayUsd||0;
   const percent=allowance>0?Math.min(100,Math.max(0,Math.round((used/allowance)*100))):0;
   return <div className="customer-daily-offer-record arb-page" role="status" aria-live="polite">
+    <span className="customer-daily-offer-record__aurora" aria-hidden="true" />
     <div className="customer-daily-offer-record__head">
       <span className="eyebrow"><Activity size={13}/> Today&apos;s trade record</span>
-      <small>{summary?"Live from your account":"Syncing your daily record…"}</small>
+      <small className="customer-daily-offer-record__live"><i aria-hidden="true"/> {summary?"Live from your account":"Syncing your daily record…"}</small>
     </div>
     <div className="customer-daily-offer-record__grid">
-      <div className="customer-daily-offer-record__tile"><span>Offers available today</span><strong>{summary?remaining:"—"}</strong><small>of {summary?allowance:"—"} daily offers</small></div>
-      <div className="customer-daily-offer-record__tile"><span>Offers used today</span><strong>{summary?used:"—"}</strong><small>consumed this window</small></div>
-      <div className="customer-daily-offer-record__tile"><span>Profit earned today</span><strong className="customer-daily-offer-record__money">{summary?formatCustomerUsd(earnedToday):"—"}</strong><small>credited to your wallet</small></div>
-      <div className="customer-daily-offer-record__tile"><span>Next offers unlock</span><strong>{summary?formatNextOfferAvailability(summary.nextOfferAvailableAt):"—"}</strong><small>{summary?.allOffersUsed?"All daily offers used":"More offers may still arrive"}</small></div>
+      <div className="customer-daily-offer-record__tile tone-teal"><span className="customer-daily-offer-record__icon" aria-hidden="true"><Coins size={15}/></span><span className="customer-daily-offer-record__label">Offers available today</span><strong>{summary?remaining:"—"}</strong><small>of {summary?allowance:"—"} daily offers</small></div>
+      <div className="customer-daily-offer-record__tile tone-blue"><span className="customer-daily-offer-record__icon" aria-hidden="true"><Activity size={15}/></span><span className="customer-daily-offer-record__label">Offers used today</span><strong>{summary?used:"—"}</strong><small>consumed this window</small></div>
+      <div className="customer-daily-offer-record__tile tone-gold"><span className="customer-daily-offer-record__icon" aria-hidden="true"><CircleDollarSign size={15}/></span><span className="customer-daily-offer-record__label">Profit earned today</span><strong className="customer-daily-offer-record__money">{summary?formatCustomerUsd(earnedToday):"—"}</strong><small>credited to your wallet</small></div>
+      <div className="customer-daily-offer-record__tile tone-violet"><span className="customer-daily-offer-record__icon" aria-hidden="true"><Clock size={15}/></span><span className="customer-daily-offer-record__label">Next offers unlock</span><strong>{summary?formatNextOfferAvailability(summary.nextOfferAvailableAt):"—"}</strong><small>{summary?.allOffersUsed?"All daily offers used":"More offers may still arrive"}</small></div>
     </div>
     <div className="customer-daily-offer-record__meter" aria-hidden="true"><i style={{width:`${percent}%`}}/></div>
   </div>;

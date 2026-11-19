@@ -2036,36 +2036,222 @@
 }
 @media (prefers-reduced-motion:reduce) { .customer-portal .reference-popup-provider-card,.customer-portal .reference-popup-provider-flag,.customer-portal .reference-popup-route > div:nth-child(2) svg { animation:none!important; } }
 
-/* Customer daily Trade record band (rendered beside the welcome panel).
-   Kept deliberately compact so it never crowds the workspace header. */
-.customer-portal .customer-daily-offer-record-band { position: relative; z-index: 60; width: 100%; box-sizing: border-box; padding: 0 24px 8px; }
-.customer-portal .customer-daily-offer-record {
+/* Customer "Today's trade record" — a layered, animated multi-colour band that
+   follows the dashboard welcome panel and keeps the same width as its sibling
+   bands (1100px column on desktop, full-width fluid gutters below). */
+.customer-portal .customer-daily-offer-record-band {
   position: relative;
+  z-index: 60;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 clamp(10px, 2.2vw, 24px) clamp(8px, 1.4vw, 12px);
+}
+
+.customer-portal .customer-daily-offer-record {
+  /* Distinct accent per section so each tile and the meter use several colours. */
+  --cdor-teal: var(--trade-accent, #34e0c0);
+  --cdor-blue: var(--trade-info, #4aa8ff);
+  --cdor-gold: var(--trade-warning, #f0b95a);
+  --cdor-violet: #b58cff;
+  --cdor-mint: var(--trade-success, #55d6a4);
+  position: relative;
+  isolation: isolate;
   overflow: hidden;
   display: grid;
-  gap: 6px;
-  padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--trade-accent) 22%, var(--trade-border));
-  border-radius: 12px;
+  gap: clamp(8px, 1.1vw, 12px);
+  padding: clamp(12px, 1.7vw, 18px) clamp(12px, 1.9vw, 20px);
+  border: 1px solid color-mix(in srgb, var(--cdor-teal) 30%, var(--trade-border));
+  border-radius: 18px;
   background:
-    radial-gradient(360px 130px at 8% 0%, color-mix(in srgb, var(--trade-accent) 12%, transparent), transparent 68%),
-    linear-gradient(135deg, color-mix(in srgb, var(--trade-raised) 94%, transparent), var(--trade-surface));
-  box-shadow: var(--trade-shadow);
+    linear-gradient(155deg, color-mix(in srgb, var(--trade-raised) 96%, transparent), var(--trade-surface) 58%, color-mix(in srgb, var(--trade-canvas) 92%, var(--trade-surface)));
+  box-shadow: var(--trade-shadow), 0 0 26px color-mix(in srgb, var(--cdor-teal) 12%, transparent);
 }
-.customer-portal .customer-daily-offer-record__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.customer-portal .customer-daily-offer-record__head .eyebrow { display: inline-flex; align-items: center; gap: 5px; font-size: 8px; }
-.customer-portal .customer-daily-offer-record__head small { color: var(--arb-color-text-muted, #91a6b6); font-size: 9px; }
-.customer-portal .customer-daily-offer-record__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.customer-portal .customer-daily-offer-record__tile { display: grid; gap: 1px; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--trade-border) 80%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--trade-canvas) 34%, transparent); }
-.customer-portal .customer-daily-offer-record__tile span { color: var(--arb-color-text-muted, #91a6b6); font-size: 8px; letter-spacing: .05em; text-transform: uppercase; }
-.customer-portal .customer-daily-offer-record__tile strong { color: var(--arb-color-text, #f3f8fb); font-size: 12px; font-weight: 850; line-height: 1.1; }
-.customer-portal .customer-daily-offer-record__tile small { color: var(--arb-color-text-muted, #91a6b6); font-size: 8px; }
-.customer-portal .customer-daily-offer-record__money { color: var(--trade-accent) !important; }
-.customer-portal .customer-daily-offer-record__meter { height: 3px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--trade-border) 70%, transparent); }
-.customer-portal .customer-daily-offer-record__meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--trade-accent), color-mix(in srgb, var(--trade-info) 60%, var(--trade-accent))); transition: width .5s ease; }
+
+/* Drifting multi-colour aurora glow behind the content. */
+.customer-portal .customer-daily-offer-record__aurora {
+  position: absolute;
+  inset: -60% -18%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 46% at 14% 22%, color-mix(in srgb, var(--cdor-teal) 44%, transparent), transparent 70%),
+    radial-gradient(34% 44% at 86% 10%, color-mix(in srgb, var(--cdor-blue) 42%, transparent), transparent 72%),
+    radial-gradient(42% 50% at 70% 102%, color-mix(in srgb, var(--cdor-gold) 34%, transparent), transparent 72%),
+    radial-gradient(38% 46% at 24% 98%, color-mix(in srgb, var(--cdor-violet) 40%, transparent), transparent 72%);
+  opacity: .55;
+  filter: blur(30px) saturate(1.2);
+  animation: customerDailyRecordDrift 20s ease-in-out infinite alternate;
+}
+
+/* Slow diagonal light sweep. */
+.customer-portal .customer-daily-offer-record::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 32%, color-mix(in srgb, #ffffff 13%, transparent) 47%, transparent 62%);
+  background-size: 260% 100%;
+  opacity: .5;
+  animation: customerDailyRecordSheen 7.5s ease-in-out infinite;
+}
+
+.customer-portal .customer-daily-offer-record__head,
+.customer-portal .customer-daily-offer-record__grid,
+.customer-portal .customer-daily-offer-record__meter {
+  position: relative;
+  z-index: 1;
+}
+
+.customer-portal .customer-daily-offer-record__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.customer-portal .customer-daily-offer-record__head .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid color-mix(in srgb, var(--cdor-teal) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cdor-teal) 12%, transparent);
+  color: color-mix(in srgb, var(--cdor-teal) 68%, #ffffff);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+.customer-portal .customer-daily-offer-record__live { display: inline-flex; align-items: center; gap: 7px; color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; }
+.customer-portal .customer-daily-offer-record__live i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cdor-mint);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--cdor-mint) 70%, transparent);
+  animation: customerDailyRecordPulse 1.9s ease-out infinite;
+}
+
+.customer-portal .customer-daily-offer-record__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(8px, 1.1vw, 12px); }
+
+.customer-portal .customer-daily-offer-record__tile {
+  --tile-accent: var(--cdor-teal);
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "icon label" "icon value" "icon sub";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 1px;
+  padding: clamp(9px, 1.1vw, 13px) clamp(10px, 1.2vw, 14px);
+  border: 1px solid color-mix(in srgb, var(--tile-accent) 36%, var(--trade-border));
+  border-radius: 13px;
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--tile-accent) 20%, transparent), transparent 60%),
+    color-mix(in srgb, var(--trade-canvas) 46%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--tile-accent) 26%, transparent);
+  overflow: hidden;
+  animation: customerDailyRecordRise .55s cubic-bezier(.22,.7,.3,1) both;
+  transition: transform .3s ease, border-color .3s ease, box-shadow .3s ease;
+}
+.customer-portal .customer-daily-offer-record__tile::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--tile-accent), transparent);
+}
+.customer-portal .customer-daily-offer-record__tile.tone-blue { --tile-accent: var(--cdor-blue); }
+.customer-portal .customer-daily-offer-record__tile.tone-gold { --tile-accent: var(--cdor-gold); }
+.customer-portal .customer-daily-offer-record__tile.tone-violet { --tile-accent: var(--cdor-violet); }
+.customer-portal .customer-daily-offer-record__tile:nth-child(2) { animation-delay: .07s; }
+.customer-portal .customer-daily-offer-record__tile:nth-child(3) { animation-delay: .14s; }
+.customer-portal .customer-daily-offer-record__tile:nth-child(4) { animation-delay: .21s; }
+
+.customer-portal .customer-daily-offer-record__icon {
+  grid-area: icon;
+  display: grid;
+  place-items: center;
+  width: clamp(28px, 3.2vw, 34px);
+  height: clamp(28px, 3.2vw, 34px);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tile-accent) 20%, transparent);
+  color: var(--tile-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tile-accent) 32%, transparent);
+}
+.customer-portal .customer-daily-offer-record__label { grid-area: label; color: color-mix(in srgb, var(--tile-accent) 60%, var(--arb-color-text-muted, #91a6b6)); font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.customer-portal .customer-daily-offer-record__tile strong { grid-area: value; color: var(--arb-color-text, #f3f8fb); font-size: clamp(15px, 1.7vw, 20px); font-weight: 860; line-height: 1.05; letter-spacing: -.01em; }
+.customer-portal .customer-daily-offer-record__tile small { grid-area: sub; color: var(--arb-color-text-muted, #91a6b6); font-size: 9px; }
+.customer-portal .customer-daily-offer-record__money {
+  color: color-mix(in srgb, var(--cdor-gold) 78%, var(--arb-color-text, #ffffff)) !important;
+  text-shadow: 0 0 16px color-mix(in srgb, var(--cdor-gold) 45%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .customer-portal .customer-daily-offer-record__tile:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--tile-accent) 66%, transparent);
+    box-shadow: 0 12px 24px color-mix(in srgb, var(--tile-accent) 24%, transparent), inset 0 1px color-mix(in srgb, var(--tile-accent) 36%, transparent);
+  }
+}
+
+.customer-portal .customer-daily-offer-record__meter {
+  height: clamp(5px, .7vw, 7px);
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--trade-border) 58%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, #000000 32%, transparent);
+}
+.customer-portal .customer-daily-offer-record__meter i {
+  display: block;
+  height: 100%;
+  min-width: 6px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cdor-teal), var(--cdor-blue) 38%, var(--cdor-violet) 66%, var(--cdor-gold));
+  background-size: 220% 100%;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cdor-teal) 55%, transparent);
+  transition: width .65s cubic-bezier(.22,.61,.36,1);
+  animation: customerDailyRecordFlow 4s linear infinite;
+}
+
+@keyframes customerDailyRecordDrift {
+  0% { transform: translate3d(-4%, -2%, 0) scale(1.05) rotate(-2deg); }
+  100% { transform: translate3d(4%, 3%, 0) scale(1.15) rotate(3deg); }
+}
+@keyframes customerDailyRecordSheen {
+  0%, 55% { background-position: 180% 0; }
+  100% { background-position: -80% 0; }
+}
+@keyframes customerDailyRecordRise {
+  from { opacity: 0; transform: translateY(10px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes customerDailyRecordPulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cdor-mint) 70%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes customerDailyRecordFlow {
+  from { background-position: 0 0; }
+  to { background-position: 220% 0; }
+}
+
 @media (max-width: 900px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .customer-portal .customer-daily-offer-record-band { padding: 0 8px 8px; } }
-@media (max-width: 420px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; } .customer-portal .customer-daily-offer-record__head small { display: none; } }
+@media (max-width: 760px) { .customer-portal .customer-daily-offer-record-band { padding: 0 8px 10px; } }
+@media (max-width: 420px) {
+  .customer-portal .customer-daily-offer-record__grid { gap: 6px; }
+  .customer-portal .customer-daily-offer-record__head small { display: none; }
+}
+@media (max-width: 380px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: 1fr; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .customer-portal .customer-daily-offer-record__aurora,
+  .customer-portal .customer-daily-offer-record::after,
+  .customer-portal .customer-daily-offer-record__tile,
+  .customer-portal .customer-daily-offer-record__meter i,
+  .customer-portal .customer-daily-offer-record__live i { animation: none !important; }
+}
+@media (forced-colors: active) {
+  .customer-portal .customer-daily-offer-record,
+  .customer-portal .customer-daily-offer-record__tile { border: 1px solid CanvasText; }
+  .customer-portal .customer-daily-offer-record__aurora,
+  .customer-portal .customer-daily-offer-record::after { display: none; }
+}
 
 /* All-offers-used login notice. */
 .customer-portal .customer-daily-limit-alert { position: fixed; inset: 0; z-index: 4000; display: grid; place-items: center; padding: 20px; }
