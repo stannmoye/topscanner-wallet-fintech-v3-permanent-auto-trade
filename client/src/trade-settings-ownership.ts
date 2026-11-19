@@ -593,7 +593,7 @@ const registryEntries: readonly RegistryEntry[] = [
   {
     key: "trade.manualPayouts.review", scope: "record", ownerRoute: "trade-manual-payouts",
     section: "manual-payout-review", label: "Manual payout request review and resolution",
-    explanation: "The sole Trade Settings UI owner for listing manual payout requests and recording the existing paid/rejected administrative resolution.",
+    explanation: "The sole Trade Settings UI owner for listing manual payout requests and recording the existing completed/declined administrative resolution.",
     units: "one payout request", validation: "Uses the existing payout resolution validation and external-reference requirements; the route does not initiate a bank or blockchain transfer.",
     saveMutation: "adminOperations.resolvePayoutRequest", readQuery: "adminOperations.payoutRequests",
     auditRequirement: "Resolution uses the existing server-side manual payout request contract; no UI route duplicates or bypasses that mutation.",

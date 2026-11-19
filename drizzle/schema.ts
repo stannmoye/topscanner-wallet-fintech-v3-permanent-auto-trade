@@ -73,7 +73,7 @@ export const payoutRequests = mysqlTable("payout_requests", {
   amountMinor: bigint("amountMinor", { mode: "number" }).notNull(),
   destinationType: mysqlEnum("destinationType", ["bank_transfer", "crypto_transfer"]).notNull(),
   destinationDetails: text("destinationDetails").notNull(),
-  status: mysqlEnum("status", ["pending", "paid", "rejected", "cancelled"]).default("pending").notNull(),
+  status: mysqlEnum("status", ["confirming", "processing", "completed", "declined", "cancelled"]).default("processing").notNull(),
   externalReference: varchar("externalReference", { length: 160 }),
   resolutionNote: varchar("resolutionNote", { length: 1000 }),
   resolvedBy: int("resolvedBy"),

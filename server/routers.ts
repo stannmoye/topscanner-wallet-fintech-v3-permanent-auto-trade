@@ -580,7 +580,7 @@ export const appRouter = router({
     payoutRequests: adminProcedure.input(z.object({ cursor: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/).optional(), pageSize: z.number().int().min(1).max(100).optional() }).strict().optional()).query(({ input }) => listAdminPayoutRequests(input ?? {})),
     resolvePayoutRequest: adminProcedure.input(z.object({
       requestId: z.number().int().positive(),
-      action: z.enum(["paid", "rejected"]),
+      action: z.enum(["completed", "declined"]),
       externalReference: z.string().trim().max(160).optional(),
       note: z.string().trim().min(3).max(1000),
     })).mutation(({ ctx, input }) => resolveCustomerPayoutRequest(ctx.user.id, input)),

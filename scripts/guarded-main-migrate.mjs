@@ -257,6 +257,29 @@ async function reconcileTradeSettlementTimingSchema(connection, root) {
   return { checkedColumns: requiredTradeColumns.length + requiredLifecycleColumns.length + requiredReservationColumns.length, checkedTables: 3 };
 }
 
+async function reconcilePayoutRequestLifecycleSchema(connection, root) {
+  const readStatusType = async () => {
+    const [rows] = await connection.query(
+      "SELECT column_type AS columnType FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='payout_requests' AND column_name='status' LIMIT 1",
+    );
+    return String(rows[0]?.columnType ?? "");
+  };
+  const hasLifecycleEnum = (type) =>
+    type.includes("'confirming'") && type.includes("'processing'") && type.includes("'completed'") && type.includes("'declined'");
+
+  const statusType = await readStatusType();
+  if (hasLifecycleEnum(statusType)) return { repaired: false };
+
+  const migrationPath = resolve(root, "drizzle", "0117_manual_payout_lifecycle.sql");
+  const sql = await readFile(migrationPath, "utf8");
+  await executeCompatibleMigrationSql(connection, sql);
+  if (!hasLifecycleEnum(await readStatusType())) {
+    throw new Error("Manual payout request schema verification failed after additive repair: payout_requests.status is missing the confirming/processing/completed/declined lifecycle values.");
+  }
+  console.log("[main-migrate] Reconciled manual payout request schema using the idempotent 0117 repair.");
+  return { repaired: true };
+}
+
 async function main() {
   if (!databaseUrl) {
     console.error("[main-migrate] ERROR: DATABASE_URL is required.");
@@ -467,6 +490,9 @@ async function main() {
     currentMigration = "trading-package-policy-schema-reconciliation";
     currentStatement = { index: null, label: "Trading package policy and reservation schema verification and additive repair" };
     await reconcileTradingPackagePolicySchema(connection, root);
+    currentMigration = "manual-payout-request-lifecycle-schema-reconciliation";
+    currentStatement = { index: null, label: "manual payout request lifecycle schema verification and additive repair" };
+    await reconcilePayoutRequestLifecycleSchema(connection, root);
     currentMigration = null;
     currentStatement = null;
 

@@ -166,7 +166,7 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
 
     const created = await createCustomerPayoutRequest(userId, input);
-    expect(created.status).toBe("pending");
+    expect(created.status).toBe("processing");
     expect(await balance(userId)).toEqual({ availableMinor: 5000, lockedMinor: 5000, promotionalMinor: 2000 });
 
     const replay = await createCustomerPayoutRequest(userId, input);
@@ -268,7 +268,7 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
       const payoutStep = Math.floor(Date.now() / 30_000) + 1;
       const code = totpAtStep(recovery.secret, payoutStep);
       const request = await createCustomerPayoutRequest(userId, { ...requestInput(1000, unique("payout-totp")), totpCode: code });
-      expect(request.status).toBe("pending");
+      expect(request.status).toBe("processing");
       expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
 
       await expect(createCustomerPayoutRequest(userId, { ...requestInput(1000, unique("payout-totp-replay")), totpCode: code }))
@@ -308,7 +308,7 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
         ...requestInput(1000, unique("payout-enabled-totp-valid")),
         totpCode: code,
       });
-      expect(request.status).toBe("pending");
+      expect(request.status).toBe("processing");
       expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
 
       await expect(createCustomerPayoutRequest(userId, {
@@ -325,17 +325,17 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     }
   });
 
-  it("marks a request paid only with a unique manual reference and releases rejected requests", async () => {
+  it("marks a request completed only with a unique manual reference and releases declined requests", async () => {
     const userId = await createAccount();
     const paidRequest = await createCustomerPayoutRequest(userId, requestInput(2500, unique("payout-paid")));
     const externalReference = unique("external-transfer");
     const paid = await resolveCustomerPayoutRequest(adminId, {
       requestId: Number(paidRequest.id),
-      action: "paid",
+      action: "completed",
       externalReference,
       note: "Administrator verified the manual transfer receipt.",
     });
-    expect(paid.status).toBe("paid");
+    expect(paid.status).toBe("completed");
     expect(paid.externalReference).toBe(externalReference);
     expect(paid.resolutionNote).toBe("Administrator verified the manual transfer receipt.");
     expect(await balance(userId)).toEqual({ availableMinor: 7500, lockedMinor: 0, promotionalMinor: 2000 });
@@ -345,25 +345,25 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     const rejectedRequest = await createCustomerPayoutRequest(userId, requestInput(4000, unique("payout-reject")));
     const rejected = await resolveCustomerPayoutRequest(adminId, {
       requestId: Number(rejectedRequest.id),
-      action: "rejected",
-      note: "CI fixture rejection; no external transfer was sent.",
+      action: "declined",
+      note: "CI fixture decline; no external transfer was sent.",
     });
-    expect(rejected.status).toBe("rejected");
-    expect(rejected.resolutionNote).toBe("CI fixture rejection; no external transfer was sent.");
+    expect(rejected.status).toBe("declined");
+    expect(rejected.resolutionNote).toBe("CI fixture decline; no external transfer was sent.");
     expect(await balance(userId)).toEqual({ availableMinor: 7500, lockedMinor: 0, promotionalMinor: 2000 });
     expect(await ledgerCount(userId, "payout_release")).toBe(1);
 
     const duplicateReferenceRequest = await createCustomerPayoutRequest(userId, requestInput(1000, unique("payout-duplicate-ref")));
     await expect(resolveCustomerPayoutRequest(adminId, {
       requestId: Number(duplicateReferenceRequest.id),
-      action: "paid",
+      action: "completed",
       externalReference,
       note: "Duplicate reference must be rejected.",
     })).rejects.toThrow("already assigned to another payout");
     expect((await balance(userId)).lockedMinor).toBe(1000);
     await resolveCustomerPayoutRequest(adminId, {
       requestId: Number(duplicateReferenceRequest.id),
-      action: "rejected",
+      action: "declined",
       note: "Release duplicate-reference fixture.",
     });
     expect(await balance(userId)).toEqual({ availableMinor: 7500, lockedMinor: 0, promotionalMinor: 2000 });
@@ -375,13 +375,13 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     const results = await Promise.allSettled([
       resolveCustomerPayoutRequest(adminId, {
         requestId: Number(request.id),
-        action: "paid",
+        action: "completed",
         externalReference: unique("external-race"),
-        note: "Competing paid resolution reason.",
+        note: "Competing completed resolution reason.",
       }),
       resolveCustomerPayoutRequest(adminId, {
         requestId: Number(request.id),
-        action: "rejected",
+        action: "declined",
         note: "Competing CI resolution.",
       }),
     ]);
@@ -391,10 +391,10 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
       "SELECT status FROM payout_requests WHERE id=? LIMIT 1",
       [Number(request.id)],
     );
-    expect(["paid", "rejected"]).toContain(finalRows[0]?.status);
+    expect(["completed", "declined"]).toContain(finalRows[0]?.status);
     const current = await balance(userId);
     expect(current.lockedMinor).toBe(0);
-    if (finalRows[0].status === "paid") expect(current.availableMinor).toBe(9000);
+    if (finalRows[0].status === "completed") expect(current.availableMinor).toBe(9000);
     else expect(current.availableMinor).toBe(10000);
   });
 

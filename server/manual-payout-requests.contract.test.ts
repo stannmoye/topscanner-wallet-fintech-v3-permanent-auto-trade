@@ -6,6 +6,7 @@ const db = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const router = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../drizzle/schema.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../drizzle/0059_manual_payout_requests.sql", import.meta.url), "utf8");
+const lifecycleMigration = readFileSync(new URL("../drizzle/0117_manual_payout_lifecycle.sql", import.meta.url), "utf8");
 const migrationRunner = readFileSync(new URL("../scripts/apply-portal-migrations.mjs", import.meta.url), "utf8");
 const customerUi = readFileSync(new URL("../client/src/components/PayoutRequests.tsx", import.meta.url), "utf8");
 const payoutBrowserAcceptance = readFileSync(new URL("../scripts/payout-browser-acceptance.cjs", import.meta.url), "utf8");
@@ -26,7 +27,14 @@ describe("manual payout request lifecycle contract", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS `payout_requests`");
     expect(migration).toContain("payout_requests_external_reference_unique");
     expect(schema).toContain('export const payoutRequests = mysqlTable("payout_requests"');
+    expect(schema).toContain('"confirming", "processing", "completed", "declined", "cancelled"');
+    expect(lifecycleMigration).toContain("CREATE TABLE IF NOT EXISTS `payout_requests`");
+    expect(lifecycleMigration).toContain("payout_requests_external_reference_unique");
+    expect(lifecycleMigration).toContain("ENUM('confirming','processing','completed','declined','cancelled')");
+    expect(lifecycleMigration).toContain("SET `status` = 'confirming' WHERE `status` = 'pending'");
+    expect(lifecycleMigration).toContain("SET `status` = 'declined' WHERE `status` = 'rejected'");
     expect(migrationRunner).toContain('"0059_manual_payout_requests.sql"');
+    expect(migrationRunner).toContain('"0117_manual_payout_lifecycle.sql"');
     expect(migrationRunner).toContain('"payout_requests"');
   });
 
@@ -53,7 +61,8 @@ describe("manual payout request lifecycle contract", () => {
     expect(requestService).toContain("no conversion is performed.");
     expect(requestService).toContain("Payout wallet reservation");
     expect(requestService).toContain('entryType: "payout_reserve"');
-    expect(requestService).toContain('status: "pending"');
+    expect(requestService).toContain("status: initialPayoutRequestStatus(currencyCode)");
+    expect(requestService).toContain("notifyAdminsOfPayoutRequest(outcome.request, resolvedScale)");
   });
 
   it("uses stable bounded continuation pages for customer and admin history instead of truncating", () => {
@@ -66,9 +75,9 @@ describe("manual payout request lifecycle contract", () => {
     const payoutRoutes = router.slice(router.indexOf("payoutRequests: protectedProcedure"), router.indexOf("requestPayout:", router.indexOf("payoutRequests: protectedProcedure"))) + router.slice(router.indexOf("payoutRequests: adminProcedure"), router.indexOf("resolvePayoutRequest:", router.indexOf("payoutRequests: adminProcedure")));
     expect(payoutRoutes.match(/pageSize: z.number\(\).int\(\).min\(1\).max\(100\)/g)).toHaveLength(2);
   });
-  it("releases reserved funds on customer cancellation or admin rejection", () => {
+  it("releases reserved funds on customer cancellation or admin decline", () => {
     expect(cancelService).toContain('eq(payoutRequests.userId, userId)');
-    expect(cancelService).toContain('request.status !== "pending"');
+    expect(cancelService).toContain("!isOpenPayoutStatus(request.status)");
     expect(cancelService).toContain("Payout cancellation wallet release");
     expect(cancelService).toContain('status: "cancelled"');
     expect(resolveService).toContain("Payout rejection wallet release");
@@ -107,8 +116,8 @@ describe("manual payout request lifecycle contract", () => {
     expect(customerUi).toContain("!payoutAllowed || !amountValid");
     expect(customerUi).toContain('setAmountText(""); setDestinationDetails(""); setDestinationType(["BTC", "ETH", "USDT"].includes(nextCurrency) ? "crypto_transfer" : "bank_transfer")');
     expect(customerUi).toContain("Never enter passwords, PINs, private keys, or seed phrases.");
-    expect(adminUi).toContain("Reject and release");
-    expect(adminUi).toContain("Mark paid");
+    expect(adminUi).toContain("Decline and release");
+    expect(adminUi).toContain("Mark completed");
   });
 
   it("keeps payout list and review actions on the dedicated owner component only", () => {
@@ -124,8 +133,8 @@ describe("manual payout request lifecycle contract", () => {
     expect(financeAndSettlement).not.toContain("adminOperations.resolvePayoutRequest");
     expect(payoutOwner).toContain("trpc.adminOperations.payoutRequests.useQuery");
     expect(payoutOwner).toContain("trpc.adminOperations.resolvePayoutRequest.useMutation");
-    expect(payoutOwner).toContain('action: "paid"');
-    expect(payoutOwner).toContain('action: "rejected"');
+    expect(payoutOwner).toContain('action: "completed"');
+    expect(payoutOwner).toContain('action: "declined"');
     expect(payoutOwner).toContain("No external bank or blockchain transfer is initiated here.");
   });
 
@@ -135,7 +144,7 @@ describe("manual payout request lifecycle contract", () => {
     expect(payoutBrowserAcceptance).toContain('procedure === "customer.requestPayout"');
     expect(payoutBrowserAcceptance).toContain('procedure === "customer.cancelPayoutRequest"');
     expect(payoutBrowserAcceptance).toContain("Available for payout: USD 80.00");
-    expect(payoutBrowserAcceptance).toContain('getByText("Pending manual review", { exact: true })');
+    expect(payoutBrowserAcceptance).toContain('getByText("Processing", { exact: true })');
     expect(payoutBrowserAcceptance).toContain('getByText(/External: BANK-TRANSFER-VERIFIED-001/)');
     expect(payoutBrowserAcceptance).toContain("const pendingStatusVisible = await pendingStatus.isVisible().catch(() => false);")
     expect(payoutBrowserAcceptance).toContain("staleDestinationCleared");

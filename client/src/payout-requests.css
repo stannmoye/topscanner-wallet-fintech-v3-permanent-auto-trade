@@ -30,7 +30,7 @@
 .payout-request-item-top strong{display:block;font-size:14px}
 .payout-request-item-top small{display:block;margin-top:4px;color:var(--muted-text,#8ba0b4);font-size:10px;overflow-wrap:anywhere}
 .payout-status{display:inline-flex;align-items:center;justify-content:flex-end;gap:5px;font-size:10px;font-weight:800;text-align:right}
-.payout-status-pending{color:#d9ad55}.payout-status-paid{color:#58c79a}.payout-status-rejected,.payout-status-cancelled{color:var(--muted-text,#8ba0b4)}
+.payout-status-confirming,.payout-status-processing,.payout-status-pending{color:#d9ad55}.payout-status-completed,.payout-status-paid{color:#58c79a}.payout-status-declined,.payout-status-rejected,.payout-status-cancelled{color:var(--muted-text,#8ba0b4)}
 .payout-request-item-details{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;color:var(--muted-text,#8ba0b4);font-size:11px}
 .payout-request-item p{margin:8px 0 0;color:var(--muted-text,#8ba0b4);font-size:11px;line-height:1.5;overflow-wrap:anywhere}
 .payout-request-item p strong{color:var(--text-color,inherit)}

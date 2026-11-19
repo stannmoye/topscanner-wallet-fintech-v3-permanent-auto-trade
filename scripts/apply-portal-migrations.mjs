@@ -66,6 +66,9 @@ const migrationFiles = [
   "0097_trading_daily_execution_attempt_accounting.sql",
   "0099_trading_global_timing_policy_version.sql",
   "0100_global_trade_master_controls.sql",
+  // Creates or migrates the manual payout request lifecycle table onto the
+  // confirming/processing -> completed/declined vocabulary. Idempotent and additive.
+  "0117_manual_payout_lifecycle.sql",
   // 0101/0102 are canonical Drizzle-journal migrations. They must not be
   // replayed by this legacy portal tracker after guarded-main-migrate.
 ];

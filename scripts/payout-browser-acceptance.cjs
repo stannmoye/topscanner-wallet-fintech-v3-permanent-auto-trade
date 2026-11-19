@@ -25,7 +25,7 @@ async function runAdminPayoutReview(browser) {
       customerEmail: "payout-paid@example.test", requestReference: "payout-admin-paid-1",
       currency: "USD", amountMinor: 1234, destinationType: "bank_transfer",
       destinationDetails: "Test Beneficiary; Example Bank; account ending 1234",
-      status: "pending", externalReference: null, resolutionNote: null, resolvedBy: null,
+      status: "processing", externalReference: null, resolutionNote: null, resolvedBy: null,
       resolvedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     },
     {
@@ -33,7 +33,7 @@ async function runAdminPayoutReview(browser) {
       customerEmail: "payout-reject@example.test", requestReference: "payout-admin-reject-1",
       currency: "USD", amountMinor: 2500, destinationType: "bank_transfer",
       destinationDetails: "Other Beneficiary; Example Bank; account ending 9876",
-      status: "pending", externalReference: null, resolutionNote: null, resolvedBy: null,
+      status: "processing", externalReference: null, resolutionNote: null, resolvedBy: null,
       resolvedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     },
   ];
@@ -69,14 +69,14 @@ async function runAdminPayoutReview(browser) {
           data = payoutPage(requests);
         } else if (procedure === "adminOperations.resolvePayoutRequest") {
           const current = requests.find(item => Number(item.id) === Number(input.requestId));
-          if (!current || current.status !== "pending") {
-            return { error: { json: { message: "Only a pending payout request can be resolved." } } };
+          if (!current || (current.status !== "confirming" && current.status !== "processing")) {
+            return { error: { json: { message: "Only a payout request that is still confirming or processing can be resolved." } } };
           }
-          if (input.action === "paid") {
-            current.status = "paid";
+          if (input.action === "completed") {
+            current.status = "completed";
             current.externalReference = input.externalReference;
           } else {
-            current.status = "rejected";
+            current.status = "declined";
             current.externalReference = null;
           }
           current.resolutionNote = input.note || null;
@@ -115,7 +115,7 @@ async function runAdminPayoutReview(browser) {
     await page.getByRole("heading", { name: "Manual Payouts" }).waitFor({ state: "visible", timeout: 15000 });
     await page.getByRole("heading", { name: "Customer payout requests" }).waitFor({ state: "visible", timeout: 10000 });
 
-    const pendingCount = page.getByText("2 pending on this page", { exact: true });
+    const pendingCount = page.getByText("2 open on this page", { exact: true });
     const payoutQueue = page.getByRole("region", { name: "Customer payout requests" });
     const firstVisible = await payoutQueue.getByText("payout-admin-paid-1", { exact: true }).isVisible().catch(() => false);
     const secondVisible = await payoutQueue.getByText("payout-admin-reject-1", { exact: true }).isVisible().catch(() => false);
@@ -125,7 +125,7 @@ async function runAdminPayoutReview(browser) {
       });
 
     const paidRow = page.locator("tr").filter({ hasText: "payout-admin-paid-1" });
-    const paidButton = paidRow.getByRole("button", { name: "Mark paid" });
+    const paidButton = paidRow.getByRole("button", { name: "Mark completed" });
     const paidOperatorNote = page.getByLabel("Required operator note for payout-admin-paid-1");
     await paidOperatorNote.fill("Independent external transfer verification completed.");
     const paidDisabledWithoutReference = await paidButton.isDisabled();
@@ -138,23 +138,23 @@ async function runAdminPayoutReview(browser) {
     await page.locator(".admin-payout-history-head").waitFor({ state: "visible" });
     const paidHistoryRow = page.locator("tr").filter({ hasText: "payout-admin-paid-1" }).filter({ hasText: "External: BANK-TRANSFER-VERIFIED-001" });
     await paidHistoryRow.waitFor({ state: "visible", timeout: 10000 });
-    await paidHistoryRow.getByText("paid", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+    await paidHistoryRow.getByText("completed", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
     const paidReferenceVisible = await paidHistoryRow.getByText(/External: BANK-TRANSFER-VERIFIED-001/).isVisible().catch(() => false);
-    record("admin paid resolution requires reference and operator note, then records paid status",
-      paidDisabledWithoutReference && paidDisabledWithoutNote && paidEnabled && paidReferenceVisible && requests[0].status === "paid" && requests[0].externalReference === "BANK-TRANSFER-VERIFIED-001", {
+    record("admin completion resolution requires reference and operator note, then records completed status",
+      paidDisabledWithoutReference && paidDisabledWithoutNote && paidEnabled && paidReferenceVisible && requests[0].status === "completed" && requests[0].externalReference === "BANK-TRANSFER-VERIFIED-001", {
         paidDisabledWithoutReference, paidDisabledWithoutNote, paidEnabled, paidReferenceVisible, persistedMockStatus: requests[0].status,
         externalReference: requests[0].externalReference,
       });
 
     const rejectRow = page.locator("tr").filter({ hasText: "payout-admin-reject-1" });
-    await page.getByLabel("Required operator note for payout-admin-reject-1").fill("Rejected for browser acceptance; no transfer was initiated.");
-    const rejectButton = rejectRow.getByRole("button", { name: "Reject and release" });
+    await page.getByLabel("Required operator note for payout-admin-reject-1").fill("Declined for browser acceptance; no transfer was initiated.");
+    const rejectButton = rejectRow.getByRole("button", { name: "Decline and release" });
     const rejectEnabled = await rejectButton.isEnabled();
     await rejectButton.click();
-    await page.locator("tr").filter({ hasText: "payout-admin-reject-1" }).getByText("rejected", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
-    const noteVisible = await page.getByText("Rejected for browser acceptance; no transfer was initiated.", { exact: true }).isVisible().catch(() => false);
-    record("admin rejection requires and preserves a resolution note",
-      rejectEnabled && noteVisible && requests[1].status === "rejected", {
+    await page.locator("tr").filter({ hasText: "payout-admin-reject-1" }).getByText("declined", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+    const noteVisible = await page.getByText("Declined for browser acceptance; no transfer was initiated.", { exact: true }).isVisible().catch(() => false);
+    record("admin decline requires and preserves a resolution note",
+      rejectEnabled && noteVisible && requests[1].status === "declined", {
         rejectEnabled, noteVisible, persistedMockStatus: requests[1].status,
       });
 
@@ -249,7 +249,7 @@ async function main() {
             amountMinor: input.amountMinor,
             destinationType: input.destinationType,
             destinationDetails: input.destinationDetails,
-            status: "pending",
+            status: ["BTC", "ETH", "USDT"].includes(input.currency) ? "confirming" : "processing",
             externalReference: null,
             resolutionNote: null,
             createdAt: new Date().toISOString(),
@@ -266,7 +266,7 @@ async function main() {
         } else if (procedure === "customer.cancelPayoutRequest") {
           cancelCount += 1;
           const item = requests.find(row => Number(row.id) === Number(input.requestId));
-          if (item && item.status === "pending") {
+          if (item && (item.status === "confirming" || item.status === "processing")) {
             item.status = "cancelled";
             item.resolutionNote = "Cancelled by customer";
             item.updatedAt = new Date().toISOString();
@@ -355,7 +355,7 @@ async function main() {
       const busyDisabled = await pendingButton.isDisabled();
       const recordedMessage = page.getByText(/Payout request payout-browser-1 was recorded/);
       await recordedMessage.waitFor({ state: "visible", timeout: 10000 });
-      const pendingStatus = page.getByText("Pending manual review", { exact: true });
+      const pendingStatus = page.getByText("Processing", { exact: true });
       await pendingStatus.waitFor({ state: "visible", timeout: 10000 });
       const available70 = await page.getByText("Available for payout: USD 70.00").isVisible().catch(() => false);
       const recordedFeedbackVisible = await recordedMessage.isVisible().catch(() => false);

@@ -590,7 +590,7 @@ export function AdminManualPayouts() {
   const currencies = (currencyQuery.data ?? []) as unknown as Array<{ code: string; scale: number }>;
   const scales = new Map(currencies.map((currency) => [currency.code.toUpperCase(), Math.max(0, Math.min(8, Number(currency.scale) || 0))]));
   const payoutItems = payoutQuery.data?.items ?? [];
-  const pendingItems = payoutItems.filter((request) => request.status === "pending");
+  const pendingItems = payoutItems.filter((request) => request.status === "confirming" || request.status === "processing");
   const canGoNext = payoutQuery.data?.hasMore === true && Boolean(payoutQuery.data.nextCursor);
   const goToNextPayoutPage = () => {
     const nextCursor = payoutQuery.data?.nextCursor;
@@ -610,16 +610,16 @@ export function AdminManualPayouts() {
   };
 
   return (
-    <ToolPage eyebrow="Manual payout review" title="Manual Payouts" description="Review pending customer payout requests and record a manual outcome. No external bank or blockchain transfer is initiated here." icon={CircleDollarSign} action={<button className="admin-ops-button" type="button" onClick={() => payoutQuery.refetch()} disabled={payoutQuery.isFetching}><RefreshCw size={14} /> Refresh</button>}>
+    <ToolPage eyebrow="Manual payout review" title="Manual Payouts" description="Review open customer payout requests and record a manual outcome. No external bank or blockchain transfer is initiated here." icon={CircleDollarSign} action={<button className="admin-ops-button" type="button" onClick={() => payoutQuery.refetch()} disabled={payoutQuery.isFetching}><RefreshCw size={14} /> Refresh</button>}>
         <section className="admin-ops-panel">
           <div className="admin-ops-panel-head">
             <div><span className="admin-ops-kicker">Manual payout processing</span><h2>Customer payout requests</h2></div>
-            <span className="admin-ops-subtle">{payoutQuery.isLoading || payoutQuery.isError ? "Unavailable" : pendingItems.length} pending on this page</span>
+            <span className="admin-ops-subtle">{payoutQuery.isLoading || payoutQuery.isError ? "Unavailable" : pendingItems.length} open on this page</span>
           </div>
-          <div className="admin-ops-note"><ShieldCheck size={16} /><span>Funds were reserved when the request was created. Mark a request paid only after independently confirming the external transfer and entering its reference. Arbitrade does not send transfers from this screen.</span></div>
+          <div className="admin-ops-note"><ShieldCheck size={16} /><span>Funds were reserved when the request was created. Mark a request completed only after independently confirming the external transfer and entering its reference. Arbitrade does not send transfers from this screen.</span></div>
           {resolvePayout.error && <div className="admin-ops-empty error">{resolvePayout.error.message}</div>}
           {payoutQuery.isLoading ? <LoadingState /> : payoutQuery.isError ? <div className="admin-ops-empty error">Payout requests could not be loaded.</div> : <>
-            {!pendingItems.length ? <div className="admin-ops-empty compact">No pending payout requests on this page.</div> : <div className="admin-ops-table-wrap" role="region" tabIndex={0} aria-label="Customer payout requests">
+            {!pendingItems.length ? <div className="admin-ops-empty compact">No open payout requests on this page.</div> : <div className="admin-ops-table-wrap" role="region" tabIndex={0} aria-label="Customer payout requests">
               <table className="admin-ops-table"><thead><tr><th>Customer / reference</th><th>Requested amount</th><th>Destination details</th><th>External reference / note</th><th>Resolution</th></tr></thead>
                 <tbody>{pendingItems.map((request) => {
                   const draft = payoutDrafts[request.id] || { externalReference: "", note: "" };
@@ -628,12 +628,12 @@ export function AdminManualPayouts() {
                     <td>{formatAmount(Number(request.amountMinor), request.currency)}</td>
                     <td><div className="admin-payout-destination">{request.destinationDetails}</div></td>
                     <td>
-                      <input aria-label={`External transfer reference for ${request.requestReference}`} maxLength={160} value={draft.externalReference} onChange={(event) => setPayoutDrafts((current) => ({ ...current, [request.id]: { ...draft, externalReference: event.target.value } }))} placeholder="External reference (required for paid)" />
+                      <input aria-label={`External transfer reference for ${request.requestReference}`} maxLength={160} value={draft.externalReference} onChange={(event) => setPayoutDrafts((current) => ({ ...current, [request.id]: { ...draft, externalReference: event.target.value } }))} placeholder="External reference (required to mark completed)" />
                       <textarea aria-label={`Required operator note for ${request.requestReference}`} rows={2} minLength={3} maxLength={1000} value={draft.note} onChange={(event) => setPayoutDrafts((current) => ({ ...current, [request.id]: { ...draft, note: event.target.value } }))} placeholder="Operator note (required, at least 3 characters)" />
                     </td>
                     <td><div className="admin-payout-actions">
-                      <button className="admin-ops-button" type="button" disabled={resolvePayout.isPending || draft.externalReference.trim().length < 3 || draft.externalReference.trim().length > 160 || draft.note.trim().length < 3 || draft.note.trim().length > 1000} onClick={() => resolvePayout.mutate({ requestId: Number(request.id), action: "paid", externalReference: draft.externalReference.trim(), note: draft.note.trim() })}><CheckCircle2 size={14} /> Mark paid</button>
-                      <button className="admin-ops-button" type="button" disabled={resolvePayout.isPending || draft.note.trim().length < 3 || draft.note.trim().length > 1000} onClick={() => resolvePayout.mutate({ requestId: Number(request.id), action: "rejected", note: draft.note.trim() })}><XCircle size={14} /> Reject and release</button>
+                      <button className="admin-ops-button" type="button" disabled={resolvePayout.isPending || draft.externalReference.trim().length < 3 || draft.externalReference.trim().length > 160 || draft.note.trim().length < 3 || draft.note.trim().length > 1000} onClick={() => resolvePayout.mutate({ requestId: Number(request.id), action: "completed", externalReference: draft.externalReference.trim(), note: draft.note.trim() })}><CheckCircle2 size={14} /> Mark completed</button>
+                      <button className="admin-ops-button" type="button" disabled={resolvePayout.isPending || draft.note.trim().length < 3 || draft.note.trim().length > 1000} onClick={() => resolvePayout.mutate({ requestId: Number(request.id), action: "declined", note: draft.note.trim() })}><XCircle size={14} /> Decline and release</button>
                     </div></td>
                   </tr>;
                 })}</tbody>

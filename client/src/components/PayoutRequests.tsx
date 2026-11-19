@@ -35,12 +35,30 @@ function formatPayoutAmount(amountMinor: number, currency: string, scale: number
 
 function payoutStatusLabel(status: string) {
   switch (status) {
-    case "pending": return "Pending manual review";
-    case "paid": return "Marked paid";
-    case "rejected": return "Rejected · funds released";
+    case "confirming": return "Confirming";
+    case "processing": return "Processing";
+    case "completed":
+    case "paid": return "Completed";
+    case "declined":
+    case "rejected": return "Declined · funds released";
     case "cancelled": return "Cancelled · funds released";
+    // Legacy values shown only if a record predates the lifecycle migration.
+    case "pending": return "Processing";
     default: return status;
   }
+}
+
+// Confirming and processing are the open states a customer may still cancel.
+function isOpenPayoutStatus(status: string) {
+  return status === "confirming" || status === "processing" || status === "pending";
+}
+
+// Resolves a status to the icon tone. Legacy paid/pending are tolerated for
+// records that predate the lifecycle migration.
+function payoutStatusTone(status: string): "completed" | "open" | "closed" {
+  if (status === "completed" || status === "paid") return "completed";
+  if (isOpenPayoutStatus(status)) return "open";
+  return "closed";
 }
 
 export function CustomerPayoutRequests() {
@@ -70,7 +88,7 @@ export function CustomerPayoutRequests() {
 
   const requestMutation = trpc.customer.requestPayout.useMutation({
     onSuccess: (request) => {
-      setFeedback(`Payout request ${request.requestReference} was recorded. Funds are reserved pending manual review; no transfer has been sent.`);
+      setFeedback(`Payout request ${request.requestReference} was recorded. Funds are reserved while it is confirming or processing; no transfer has been sent.`);
       setAmountText("");
       setDestinationDetails("");
       setTotpCode("");
@@ -134,7 +152,7 @@ export function CustomerPayoutRequests() {
   };
 
   const cancelRequest = (requestId: number) => {
-    if (isBusy || !globalThis.confirm?.("Cancel this pending payout request and return its reserved funds to your available wallet?")) return;
+    if (isBusy || !globalThis.confirm?.("Cancel this payout request and return its reserved funds to your available wallet?")) return;
     setFeedback("");
     cancelMutation.mutate({ requestId });
   };
@@ -145,7 +163,7 @@ export function CustomerPayoutRequests() {
         <div>
           <span className="payout-request-eyebrow">Manual processing · no automatic transfers</span>
           <h2 id="payout-requests-heading">Payout requests</h2>
-          <p>Request payment from an eligible non-promotional wallet balance. Funds are reserved until an administrator marks the request paid or rejects it.</p>
+          <p>Request payment from an eligible non-promotional wallet balance. Funds are reserved until an administrator marks the request completed or declines it.</p>
         </div>
         <button className="payout-refresh" type="button" onClick={() => { void requests.refetch(); void balances.refetch(); void eligibility.refetch(); }} disabled={requests.isFetching || balances.isFetching || eligibility.isFetching}>
           <RefreshCw size={14} /> Refresh
@@ -211,10 +229,11 @@ export function CustomerPayoutRequests() {
         <div className="payout-request-list">
           {payoutItems.map((request) => {
             const requestScale = Math.max(0, Math.min(8, Number((balances.data?.currencies || []).find((item: any) => item.code === request.currency)?.scale ?? 2)));
+            const statusTone = payoutStatusTone(request.status);
             return <article className="payout-request-item" key={request.id}>
               <div className="payout-request-item-top">
                 <div><strong>{formatPayoutAmount(Number(request.amountMinor), request.currency, requestScale)}</strong><small>{request.requestReference}</small></div>
-                <span className={`payout-status payout-status-${request.status}`}>{request.status === "paid" ? <CheckCircle2 size={13} /> : request.status === "pending" ? <Clock3 size={13} /> : <XCircle size={13} />}{payoutStatusLabel(request.status)}</span>
+                <span className={`payout-status payout-status-${request.status}`}>{statusTone === "completed" ? <CheckCircle2 size={13} /> : statusTone === "open" ? <Clock3 size={13} /> : <XCircle size={13} />}{payoutStatusLabel(request.status)}</span>
               </div>
               <div className="payout-request-item-details">
                 <span>{request.destinationType === "bank_transfer" ? "Bank transfer" : "Crypto transfer"}</span>
@@ -222,7 +241,7 @@ export function CustomerPayoutRequests() {
               </div>
               {request.externalReference && <p>External reference: <strong>{request.externalReference}</strong></p>}
               {request.resolutionNote && <p>Administrator note: {request.resolutionNote}</p>}
-              {request.status === "pending" && <button className="payout-cancel" type="button" disabled={isBusy} onClick={() => cancelRequest(Number(request.id))}><XCircle size={14} /> {cancelMutation.isPending ? "Cancelling…" : "Cancel request"}</button>}
+              {isOpenPayoutStatus(request.status) && <button className="payout-cancel" type="button" disabled={isBusy} onClick={() => cancelRequest(Number(request.id))}><XCircle size={14} /> {cancelMutation.isPending ? "Cancelling…" : "Cancel request"}</button>}
             </article>;
           })}
         </div>

@@ -1756,7 +1756,7 @@ type CustomerPayoutInput = {
 
 type PayoutResolutionInput = {
   requestId: number;
-  action: "paid" | "rejected";
+  action: "completed" | "declined";
   externalReference?: string;
   note: string;
 };
@@ -1889,6 +1889,53 @@ async function notifyPayoutRequest(userId: number, title: string, body: string, 
   }
 }
 
+const PAYOUT_CRYPTO_CURRENCIES = ["BTC", "ETH", "USDT"] as const;
+const PAYOUT_OPEN_STATUSES = ["confirming", "processing"] as const;
+
+// A crypto payout is "confirming" (awaiting wallet/network confirmation) and a
+// fiat payout is "processing" (awaiting bank processing). Both are the initial,
+// unresolved states that an administrator later completes or declines.
+export function initialPayoutRequestStatus(currencyCode: string): "confirming" | "processing" {
+  return (PAYOUT_CRYPTO_CURRENCIES as readonly string[]).includes(String(currencyCode ?? "").toUpperCase()) ? "confirming" : "processing";
+}
+
+function isOpenPayoutStatus(status: unknown) {
+  return (PAYOUT_OPEN_STATUSES as readonly string[]).includes(String(status));
+}
+
+function formatPayoutMinorAmount(amountMinor: number, currency: string, scale: number) {
+  const safeScale = Number.isInteger(scale) && scale >= 0 && scale <= 8 ? scale : 2;
+  const value = Number(amountMinor) / (10 ** safeScale);
+  return `${String(currency).toUpperCase()} ${value.toFixed(safeScale)}`;
+}
+
+// Best-effort, post-commit admin alert carrying the full customer and destination
+// details so an administrator can act without opening the customer record.
+async function notifyAdminsOfPayoutRequest(
+  request: { userId: number; requestReference: string; currency: string; amountMinor: number; destinationType: string; destinationDetails: string },
+  scale: number,
+) {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const customer = (await db.select({ name: users.name, email: users.email })
+      .from(users).where(eq(users.id, Number(request.userId))).limit(1))[0];
+    const amount = formatPayoutMinorAmount(Number(request.amountMinor), request.currency, scale);
+    const destination = request.destinationType === "bank_transfer" ? "bank transfer" : "crypto wallet transfer";
+    const body = `Payout request ${request.requestReference} from ${customer?.name || "a customer"} (${customer?.email || "no email on file"}, account ${request.userId}). Amount: ${amount} via ${destination}. Destination details: ${request.destinationDetails}. Review it and mark it completed or declined in the manual payouts queue.`;
+    const admins = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin"));
+    const results = await Promise.allSettled(admins.map((admin) => createNotification(admin.id, "New payout request", body, {
+      eventKey: `payout-request:${request.requestReference}:admin:${admin.id}`,
+      category: "withdrawal",
+      priority: "high",
+      href: "/admin",
+    })));
+    if (results.some((result) => result.status === "rejected")) console.error("[Notifications] One or more admin payout notices failed after commit.");
+  } catch (error) {
+    console.error("[Notifications] Admin payout notices failed after commit:", error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
 type PayoutHistoryCursor = { createdAt: string; id: number };
 export function decodePayoutHistoryCursor(value?: string): PayoutHistoryCursor | null {
   if (value === undefined) return null;
@@ -1967,6 +2014,9 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
   const destinationDetails = normalizePayoutDestinationDetails(input.destinationDetails);
   const persistedKey = payoutIdempotencyKey(userId, input.idempotencyKey);
   const now = new Date();
+  // Captured from the enabled currency row so the post-commit admin alert can
+  // render the reserved amount in the currency's own minor units.
+  let resolvedScale = 2;
 
   const outcome = await db.transaction(async (tx) => {
     const user = (await tx.select({ id: users.id, role: users.role })
@@ -1993,6 +2043,7 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
     if (!Number.isInteger(Number(currency.scale)) || Number(currency.scale) < 0 || Number(currency.scale) > 8) {
       throw new Error("Payout currency precision is not configured correctly.");
     }
+    resolvedScale = Number(currency.scale);
 
     const wallet = (await tx.select().from(customerBalances)
       .where(and(eq(customerBalances.userId, userId), eq(customerBalances.currency, currencyCode)))
@@ -2034,7 +2085,7 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
       amountMinor: input.amountMinor,
       destinationType: input.destinationType,
       destinationDetails,
-      status: "pending",
+      status: initialPayoutRequestStatus(currencyCode),
       createdAt: now,
       updatedAt: now,
     });
@@ -2045,12 +2096,14 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
   });
 
   if (outcome.created) {
+    const pendingStatus = initialPayoutRequestStatus(currencyCode);
     await notifyPayoutRequest(
       userId,
       "Payout request received",
-      `Your ${currencyCode} payout request ${outcome.request.requestReference} is pending manual review. Funds have been reserved; no transfer has been sent.`,
+      `Your ${currencyCode} payout request ${outcome.request.requestReference} is ${pendingStatus === "confirming" ? "confirming with the network" : "processing"}. Funds have been reserved; no transfer has been sent. An administrator will review it and mark it completed or declined.`,
       `payout-request:${outcome.request.requestReference}`,
     );
+    await notifyAdminsOfPayoutRequest(outcome.request, resolvedScale);
   }
   return outcome.request;
 }
@@ -2067,7 +2120,7 @@ export async function cancelCustomerPayoutRequest(userId: number, requestId: num
       .where(and(eq(payoutRequests.id, requestId), eq(payoutRequests.userId, userId)))
       .limit(1).for("update"))[0];
     if (!request) throw new Error("Payout request was not found.");
-    if (request.status !== "pending") throw new Error("Only a pending payout request can be cancelled.");
+    if (!isOpenPayoutStatus(request.status)) throw new Error("Only a payout request that is still confirming or processing can be cancelled.");
 
     const wallet = (await tx.select().from(customerBalances)
       .where(and(eq(customerBalances.userId, userId), eq(customerBalances.currency, request.currency)))
@@ -2102,7 +2155,7 @@ export async function cancelCustomerPayoutRequest(userId: number, requestId: num
       resolvedBy: userId,
       resolvedAt: now,
       updatedAt: now,
-    }).where(and(eq(payoutRequests.id, requestId), eq(payoutRequests.status, "pending")));
+    }).where(and(eq(payoutRequests.id, requestId), inArray(payoutRequests.status, [...PAYOUT_OPEN_STATUSES])));
     assertExactlyOneAffectedRow(stateUpdate, "Payout cancellation state transition");
     return (await tx.select().from(payoutRequests).where(eq(payoutRequests.id, requestId)).limit(1))[0];
   });
@@ -2122,12 +2175,12 @@ export async function resolveCustomerPayoutRequest(adminId: number, input: Payou
   if (!Number.isSafeInteger(adminId) || adminId <= 0 || !Number.isSafeInteger(input.requestId) || input.requestId <= 0) {
     throw new Error("A valid administrator and payout request are required.");
   }
-  if (input.action !== "paid" && input.action !== "rejected") throw new Error("Choose whether to mark the request paid or reject it.");
+  if (input.action !== "completed" && input.action !== "declined") throw new Error("Choose whether to mark the request completed or decline it.");
   const externalReference = String(input.externalReference || "").trim();
   const note = String(input.note || "").replace(/\0/g, "").trim();
   if (note.length < 3) throw new Error("An operator reason of at least 3 characters is required to resolve a payout request.");
-  if (input.action === "paid" && (externalReference.length < 3 || externalReference.length > 160)) {
-    throw new Error("Enter the external transfer reference before marking a payout paid.");
+  if (input.action === "completed" && (externalReference.length < 3 || externalReference.length > 160)) {
+    throw new Error("Enter the external transfer reference before marking a payout completed.");
   }
   if (note.length > 1000) throw new Error("Payout resolution note must be 1,000 characters or fewer.");
   const now = new Date();
@@ -2136,7 +2189,7 @@ export async function resolveCustomerPayoutRequest(adminId: number, input: Payou
     const request = (await tx.select().from(payoutRequests)
       .where(eq(payoutRequests.id, input.requestId)).limit(1).for("update"))[0];
     if (!request) throw new Error("Payout request was not found.");
-    if (request.status !== "pending") throw new Error("Only a pending payout request can be resolved.");
+    if (!isOpenPayoutStatus(request.status)) throw new Error("Only a payout request that is still confirming or processing can be resolved.");
 
     const wallet = (await tx.select().from(customerBalances)
       .where(and(eq(customerBalances.userId, request.userId), eq(customerBalances.currency, request.currency)))
@@ -2149,7 +2202,7 @@ export async function resolveCustomerPayoutRequest(adminId: number, input: Payou
       throw new Error("The reserved payout funds could not be reconciled; the request was not resolved.");
     }
 
-    if (input.action === "paid") {
+    if (input.action === "completed") {
       const duplicateReference = (await tx.select({ id: payoutRequests.id }).from(payoutRequests)
         .where(eq(payoutRequests.externalReference, externalReference)).limit(1))[0];
       if (duplicateReference && Number(duplicateReference.id) !== Number(request.id)) {
@@ -2188,29 +2241,29 @@ export async function resolveCustomerPayoutRequest(adminId: number, input: Payou
 
     const stateUpdate = await tx.update(payoutRequests).set({
       status: input.action,
-      externalReference: input.action === "paid" ? externalReference : null,
+      externalReference: input.action === "completed" ? externalReference : null,
       resolutionNote: note || null,
       resolvedBy: adminId,
       resolvedAt: now,
       updatedAt: now,
-    }).where(and(eq(payoutRequests.id, input.requestId), eq(payoutRequests.status, "pending")));
+    }).where(and(eq(payoutRequests.id, input.requestId), inArray(payoutRequests.status, [...PAYOUT_OPEN_STATUSES])));
     assertExactlyOneAffectedRow(stateUpdate, "Payout resolution state transition");
     return (await tx.select().from(payoutRequests).where(eq(payoutRequests.id, input.requestId)).limit(1))[0];
   });
 
-  if (input.action === "paid") {
+  if (input.action === "completed") {
     await notifyPayoutRequest(
       result.userId,
-      "Payout marked paid",
-      `Your ${result.currency} payout request ${result.requestReference} was marked paid by an administrator. Reference: ${result.externalReference}. This record reflects a manual confirmation; no transfer was initiated by Arbitrade.`,
-      `payout:${result.requestReference}:paid`,
+      "Payout completed",
+      `Your ${result.currency} payout request ${result.requestReference} was marked completed by an administrator. Reference: ${result.externalReference}. This record reflects a manual confirmation; no transfer was initiated by Arbitrade.`,
+      `payout:${result.requestReference}:completed`,
     );
   } else {
     await notifyPayoutRequest(
       result.userId,
-      "Payout request rejected",
-      `Your payout request ${result.requestReference} was rejected. The reserved funds have been returned to your available balance. Reason: ${note}`,
-      `payout:${result.requestReference}:rejected`,
+      "Payout request declined",
+      `Your payout request ${result.requestReference} was declined. The reserved funds have been returned to your available balance. Reason: ${note}`,
+      `payout:${result.requestReference}:declined`,
     );
   }
   return result;
@@ -2407,7 +2460,7 @@ export async function applyAccountClosureDecision(adminId: number, input: { tick
     if (otherActiveSupport) throw new AccountClosureDecisionError("Resolve or close the customer's other open support cases before approving account closure.");
 
     const pendingPayout = (await tx.select({ id: payoutRequests.id }).from(payoutRequests).where(and(
-      eq(payoutRequests.userId, user.id), eq(payoutRequests.status, "pending"),
+      eq(payoutRequests.userId, user.id), inArray(payoutRequests.status, [...PAYOUT_OPEN_STATUSES]),
     )).limit(1).for("update"))[0];
     if (pendingPayout) throw new AccountClosureDecisionError("Resolve or cancel pending payout requests before approving account closure.");
 
@@ -6071,7 +6124,7 @@ export async function listWalletLedgerReconciliation(input?: {
     currency: payoutRequests.currency,
     pendingPayoutCount: count(),
     pendingPayoutMinor: sql<string>`COALESCE(SUM(${payoutRequests.amountMinor}), 0)`,
-  }).from(payoutRequests).where(and(payoutCursor, eq(payoutRequests.status, "pending")))
+  }).from(payoutRequests).where(and(payoutCursor, inArray(payoutRequests.status, [...PAYOUT_OPEN_STATUSES])))
     .groupBy(payoutRequests.userId, payoutRequests.currency)
     .orderBy(payoutRequests.userId, payoutRequests.currency).limit(safeLimit + 1);
 
