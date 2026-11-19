@@ -2311,10 +2311,16 @@
 .customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__label { font-size: 7px; line-height: 1; letter-spacing: .08em; }
 .customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__tile strong { font-size: 11px; line-height: 1.05; white-space: nowrap; }
 
-@media (min-width: 1200px) {
+@media (min-width: 1024px) {
   .customer-portal .portal-header .customer-daily-offer-record--header { display: flex; }
   .customer-portal .portal-header .portal-header-context { display: none !important; }
   .customer-portal .customer-daily-offer-record-band { display: none !important; }
+}
+
+/* In the tight 1024–1199 band the bar has less room, so drop the secondary
+   exchange scanner to keep the trade-record strip fully visible. */
+@media (min-width: 1024px) and (max-width: 1199px) {
+  .customer-portal .portal-header .customer-header-scanner { display: none !important; }
 }
 
 /* All-offers-used login notice. */
