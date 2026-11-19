@@ -414,14 +414,12 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     expect(payoutRows[0].status).toBe("cancelled");
   });
 
-  it("fails closed when customer withdrawal permission, global policy, or required KYC is missing", async () => {
-    const blockedCustomer = await createAccount("user", { withdrawalsEnabled: false, kycRequired: false });
-    expect(await getCustomerPayoutEligibility(blockedCustomer)).toEqual({
-      allowed: false,
-      reason: "Withdrawals are not enabled for this customer account.",
-    });
-    await expect(createCustomerPayoutRequest(blockedCustomer, requestInput(1000, unique("payout-disabled-customer"))))
-      .rejects.toThrow("Withdrawals are not enabled for this customer account");
+  it("fails closed when global policy or required KYC/2FA is missing, regardless of the per-customer withdrawal flag", async () => {
+    // The per-customer withdrawalsEnabled flag no longer blocks withdrawals;
+    // all active customers may request a payout subject to global policy, KYC,
+    // and 2FA only.
+    const flagDisabledCustomer = await createAccount("user", { withdrawalsEnabled: false, kycRequired: false });
+    expect(await getCustomerPayoutEligibility(flagDisabledCustomer)).toMatchObject({ allowed: true });
 
     const enabledCustomer = await createAccount("user", { withdrawalsEnabled: true, kycRequired: false });
     await setPolicy({ kyc: false, withdrawals: false, twofa: false, facial: false });

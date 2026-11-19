@@ -1792,7 +1792,6 @@ async function assertPayoutPolicyAllowsRequest(tx: any, userId: number, totpCode
     .where(eq(customerControls.userId, userId)).limit(1).for("update"))[0];
   if (!controls) throw new Error("Customer payout controls are not configured.");
   if (controls.accountStatus !== "active") throw new Error("Payout requests are unavailable while the account is restricted.");
-  if (controls.withdrawalsEnabled !== true) throw new Error("Withdrawals are not enabled for this customer account.");
 
   if (policy.twofa === true || controls.twoFactorRequired === true) {
     // Check enrollment before asking for a code, so accounts without an authenticator
@@ -1850,9 +1849,6 @@ export async function getCustomerPayoutEligibility(userId: number) {
   if (!controls) return { allowed: false, reason: "Customer payout controls are not configured." };
   if (controls.accountStatus !== "active") {
     return { allowed: false, reason: "Payout requests are unavailable while the account is restricted." };
-  }
-  if (controls.withdrawalsEnabled !== true) {
-    return { allowed: false, reason: "Withdrawals are not enabled for this customer account." };
   }
   if (policy.twofa === true || controls.twoFactorRequired === true) {
     const authenticator = (await db.select({ confirmedAt: customerTotpAuthenticators.confirmedAt }).from(customerTotpAuthenticators).where(eq(customerTotpAuthenticators.userId, userId)).limit(1))[0];

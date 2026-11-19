@@ -44,7 +44,7 @@ describe("manual payout request lifecycle contract", () => {
     expect(requestService).toContain("payoutIdempotencyKey(userId, input.idempotencyKey)");
     expect(requestService).toContain("assertPayoutPolicyAllowsRequest(tx, userId, input.totpCode)");
     expect(db).toContain('policy.withdrawals !== true');
-    expect(db).toContain('controls.withdrawalsEnabled !== true');
+    expect(db).not.toContain('controls.withdrawalsEnabled !== true');
     expect(db).toContain('profile?.overallStatus !== "VERIFIED"');
     expect(db).toContain("controls.emailVerified !== true");
     expect(db).toContain("policy.twofa === true || controls.twoFactorRequired === true");
