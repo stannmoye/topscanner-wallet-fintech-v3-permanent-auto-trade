@@ -4309,6 +4309,9 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   const settled:Array<{tradeId:number;rewardMinor:number;currency:string;totalMinor:number}>=[];
   const controls=await ensureCustomerControls(userId);
   const emptyResult=async (delivery:any,reason:string,counts:Record<string,number>={})=>({serverTime:new Date().toISOString(),offers:[],missed:await listMissedOpportunities(userId),autoTrades:[],settled,generatedOpportunityId:null,delivery,
+    dailySummary:{offersAllowance:Math.max(0,Number(delivery?.maxPopupsPerDay||0)),offersUsed:0,
+      offersRemaining:Boolean(delivery?.dailySuccessfulCapReached)?0:Math.max(0,Number(delivery?.maxPopupsPerDay||0)),
+      allOffersUsed:Boolean(delivery?.dailySuccessfulCapReached),earnedTodayUsd:0,nextOfferAvailableAt:null},
     generationDiagnostics:{attempted:false,reason,generationControlEnabled:options.automaticGenerationEnabled===true,
       globalControlsAvailable:globalPolicy.available,tierPolicyMasterEnabled:globalPolicy.tierPolicyMasterEnabled,
       popupDeliveryMasterEnabled:globalPolicy.informationalPopupDeliveryEnabled,...counts},
@@ -4565,6 +4568,10 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   const formulaCooling=packageNames.length>0&&packageNames.every(packageName=>packageSchedules.get(packageName)?.cooling===true);
   const dailyCap=maxPopupsPerDay;
   const deliveryCapacity=calculateTradingDeliveryCapacity({dailyCap,deliveredOfferCount,maxVisibleOffers,activeVisibleCount});
+  // Net profit credited to the wallet inside the active quota window, converted
+  // to USD with the same live rates the wallet summary uses. Drives the customer
+  // daily Trade record and the all-offers-used login notice.
+  const earnedTodayUsd=await getCustomerEarnedUsdInWindow(userId,effectiveQuotaStart,quotaWindow.end);
   let remainingQuota=deliveryCapacity.remainingQuota;
   const balancesSnapshot=await listBalances(userId);
   let newlyEligible:any[]=[];
@@ -4972,7 +4979,9 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     remainingDailyQuota:Math.max(0,deliveryCapacity.dailyRemaining-newlyEligible.length),
     remainingVisibleSlots:Math.max(0,deliveryCapacity.visibleRemaining-newlyEligible.length),
     remainingQuota,activeVisibleCount:activeVisibleCount+newlyEligible.length,schedulingPeriod:effectiveSchedulingPeriod,
-    formulaCooling,formulaReadyAt,nextPopupFormulaDelaySeconds:Number(policy?.postCompletionIntervalSeconds||0),rateProfile:{minHourlyTarget:Number(policy?.minHourlyTarget||0),normalHourlyTarget:Number(policy?.normalHourlyTarget||0),marketInfluenceBps:Number(policy?.marketInfluenceBps||0),burstEnabled:globalPolicy.burstDeliveryEnabled,maxBurstSize:Number(policy?.maxBurstSize||0)},popupPolicy}};
+    formulaCooling,formulaReadyAt,nextPopupFormulaDelaySeconds:Number(policy?.postCompletionIntervalSeconds||0),rateProfile:{minHourlyTarget:Number(policy?.minHourlyTarget||0),normalHourlyTarget:Number(policy?.normalHourlyTarget||0),marketInfluenceBps:Number(policy?.marketInfluenceBps||0),burstEnabled:globalPolicy.burstDeliveryEnabled,maxBurstSize:Number(policy?.maxBurstSize||0)},popupPolicy},dailySummary:{offersAllowance:dailyCap,offersUsed:deliveredOfferCount,
+      offersRemaining:Math.max(0,deliveryCapacity.dailyRemaining),allOffersUsed:dailyCap>0&&deliveredOfferCount>=dailyCap,
+      earnedTodayUsd,nextOfferAvailableAt:quotaWindow.end.toISOString(),windowPeriod:effectiveSchedulingPeriod}};
 }
 export async function claimAutoTradeCycleCustomers(input:{batchSize?:number}={}){
   const db=await getDb();
@@ -5548,6 +5557,39 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
   await tx.insert(tradeRewardReservations).values({userId,tradeId,packageName:activePackageSubscription.packageName,windowKey:today,currency:offer.currency,reservedMinor:reward,status:"reserved"});
   return {tradeId,publicTradeId,rewardMinor:reward,rewardBps:effectiveRateBps,minimumMinor:terms.minimumMinor,calculationMethod:"saved-tier-policy",configuredDurationSeconds:effectiveDurationSeconds,packagePolicyVersionSnapshot:snapshotVersion,settlesAt,settlementReviewAt,creditAt,currency:offer.currency,amountMinor:input.amountMinor,rateUsd:nativeRate,rateUpdatedAt:targetPreflightRate?targetPreflightRate.fetchedAt:null,amountUsd:nativeMinorToUsd(input.amountMinor,Number(currencyRow.scale),nativeRate),debitTransitionText:automaticDebit.transitionText,expectedProfitMinor:automaticDebit.expectedGrossProfitMinor,lifecycleStage:automaticDebit.stage,expectedCreditMinor:automaticDebit.expectedCreditMinor};
  });
+}
+// Net profit already credited to the wallet for settled trades whose credit
+// landed inside the requested window, converted to USD with the same live FX
+// rates the balance summary uses. A currency whose live rate is missing is
+// excluded (fail closed) rather than reported as a converted zero.
+async function getCustomerEarnedUsdInWindow(userId:number,start:Date,end:Date){
+  const db=await getDb();
+  if(!db) throw new Error("Database is not available");
+  const rows=await db.select({currency:tradePositions.currency,netProfitMinor:tradePositions.netProfitMinor})
+    .from(tradePositions).where(and(eq(tradePositions.userId,userId),eq(tradePositions.status,"settled"),
+      isNotNull(tradePositions.walletUpdatedAt),gte(tradePositions.walletUpdatedAt,start),lt(tradePositions.walletUpdatedAt,end)));
+  const byCurrency=new Map<string,number>();
+  for(const row of rows){
+    const code=String(row.currency||"").trim().toUpperCase();
+    if(!code) continue;
+    byCurrency.set(code,(byCurrency.get(code)||0)+Number(row.netProfitMinor||0));
+  }
+  if(!byCurrency.size) return 0;
+  const currencies=await listCurrencies();
+  const byCode=new Map(currencies.map((row:any)=>[String(row.code).toUpperCase(),row]));
+  let totalUsd=0;
+  for(const [code,minor] of byCurrency){
+    const currency:any=byCode.get(code);
+    if(!currency) continue;
+    const factor=Math.pow(10,Number(currency.scale||0));
+    let rate=1;
+    if(code!=="USD"){
+      try{ rate=Number((await resolveLiveCurrencyUsdRate(currency)).rateUsdPerUnit); }catch{ rate=0; }
+    }
+    if(!Number.isFinite(rate)||rate<=0) continue;
+    totalUsd+=(minor/factor)*rate;
+  }
+  return totalUsd;
 }
 export async function listTrades(userId:number){
   const db=await getDb();

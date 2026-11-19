@@ -2035,3 +2035,71 @@
   .customer-portal .reference-popup-route { grid-template-columns:1fr; }
 }
 @media (prefers-reduced-motion:reduce) { .customer-portal .reference-popup-provider-card,.customer-portal .reference-popup-provider-flag,.customer-portal .reference-popup-route > div:nth-child(2) svg { animation:none!important; } }
+
+/* Customer daily Trade record band (rendered beside the welcome panel). */
+.customer-portal .customer-daily-offer-record-band { position: relative; z-index: 60; width: 100%; padding: 0 24px 12px; }
+.customer-portal .customer-daily-offer-record {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--trade-accent) 22%, var(--trade-border));
+  border-radius: 18px;
+  background:
+    radial-gradient(520px 200px at 8% 0%, color-mix(in srgb, var(--trade-accent) 12%, transparent), transparent 68%),
+    linear-gradient(135deg, color-mix(in srgb, var(--trade-raised) 94%, transparent), var(--trade-surface));
+  box-shadow: var(--trade-shadow);
+}
+.customer-portal .customer-daily-offer-record__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.customer-portal .customer-daily-offer-record__head .eyebrow { display: inline-flex; align-items: center; gap: 6px; }
+.customer-portal .customer-daily-offer-record__head small { color: var(--arb-color-text-muted, #91a6b6); font-size: 11px; }
+.customer-portal .customer-daily-offer-record__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.customer-portal .customer-daily-offer-record__tile { display: grid; gap: 3px; padding: 12px 13px; border: 1px solid color-mix(in srgb, var(--trade-border) 80%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--trade-canvas) 34%, transparent); }
+.customer-portal .customer-daily-offer-record__tile span { color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.customer-portal .customer-daily-offer-record__tile strong { color: var(--arb-color-text, #f3f8fb); font-size: 20px; font-weight: 850; line-height: 1.1; }
+.customer-portal .customer-daily-offer-record__tile small { color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; }
+.customer-portal .customer-daily-offer-record__money { color: var(--trade-accent) !important; }
+.customer-portal .customer-daily-offer-record__meter { height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--trade-border) 70%, transparent); }
+.customer-portal .customer-daily-offer-record__meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--trade-accent), color-mix(in srgb, var(--trade-info) 60%, var(--trade-accent))); transition: width .5s ease; }
+@media (max-width: 900px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .customer-portal .customer-daily-offer-record-band { padding: 0 8px 10px; } }
+@media (max-width: 460px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: 1fr; } }
+
+/* All-offers-used login notice. */
+.customer-portal .customer-daily-limit-alert { position: fixed; inset: 0; z-index: 4000; display: grid; place-items: center; padding: 20px; }
+.customer-portal .customer-daily-limit-alert__scrim { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; padding: 0; cursor: pointer; background: color-mix(in srgb, var(--trade-canvas) 72%, transparent); backdrop-filter: blur(6px); animation: customerDailyLimitFade .3s ease both; }
+.customer-portal .customer-daily-limit-alert__card {
+  position: relative;
+  z-index: 1;
+  width: min(620px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  display: grid;
+  gap: 13px;
+  padding: 26px 26px 22px;
+  border: 1px solid color-mix(in srgb, var(--trade-accent) 30%, var(--trade-border));
+  border-radius: 22px;
+  background:
+    radial-gradient(680px 300px at 10% -10%, color-mix(in srgb, var(--trade-accent) 20%, transparent), transparent 62%),
+    linear-gradient(145deg, color-mix(in srgb, var(--trade-raised) 96%, transparent), var(--trade-surface));
+  box-shadow: 0 34px 90px color-mix(in srgb, var(--trade-canvas) 62%, transparent), inset 0 1px color-mix(in srgb, var(--arb-color-text, #fff) 8%, transparent);
+  animation: customerDailyLimitEnter .42s cubic-bezier(.2, .9, .25, 1) both;
+}
+.customer-portal .customer-daily-limit-alert__close { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--trade-border) 82%, transparent); border-radius: 11px; background: color-mix(in srgb, var(--trade-canvas) 40%, transparent); color: var(--arb-color-text, #e8f2f7); cursor: pointer; }
+.customer-portal .customer-daily-limit-alert__spark { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 14px; color: #05201b; background: linear-gradient(135deg, var(--trade-accent), color-mix(in srgb, var(--trade-accent) 62%, #ffffff)); box-shadow: 0 12px 26px color-mix(in srgb, var(--trade-accent) 30%, transparent); }
+.customer-portal .customer-daily-limit-alert__card h2 { margin: 0; color: var(--arb-color-text, #f3f8fb); font-size: 22px; line-height: 1.2; font-weight: 850; }
+.customer-portal .customer-daily-limit-alert__card p { margin: 0; color: var(--arb-color-text-muted, #a7b9c6); font-size: 13px; line-height: 1.5; }
+.customer-portal .customer-daily-limit-alert__stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.customer-portal .customer-daily-limit-alert__stats > div { display: grid; gap: 3px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--trade-border) 80%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--trade-canvas) 34%, transparent); }
+.customer-portal .customer-daily-limit-alert__stats span { color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.customer-portal .customer-daily-limit-alert__stats strong { color: var(--arb-color-text, #f3f8fb); font-size: 19px; font-weight: 850; }
+.customer-portal .customer-daily-limit-alert__stats small { color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; }
+.customer-portal .customer-daily-limit-alert__why { display: grid; gap: 6px; padding: 14px 15px; border: 1px solid color-mix(in srgb, var(--trade-info) 30%, var(--trade-border)); border-radius: 14px; background: color-mix(in srgb, var(--trade-info) 9%, transparent); }
+.customer-portal .customer-daily-limit-alert__why strong { color: var(--arb-color-text, #f3f8fb); font-size: 14px; }
+.customer-portal .customer-daily-limit-alert__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.customer-portal .customer-daily-limit-alert__actions .portal-action { flex: 1 1 220px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+@media (max-width: 520px) { .customer-portal .customer-daily-limit-alert__stats { grid-template-columns: 1fr; } .customer-portal .customer-daily-limit-alert__card { padding: 22px 18px 18px; } }
+@keyframes customerDailyLimitFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes customerDailyLimitEnter { from { opacity: 0; transform: translateY(16px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion:reduce) { .customer-portal .customer-daily-limit-alert__scrim, .customer-portal .customer-daily-limit-alert__card { animation: none !important; } }
