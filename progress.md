@@ -1,3 +1,38 @@
+## 2026-11-20 — Clear Trade: per-customer or all-customer scope
+
+Branch `main`. Follow-up to the Clear Trade button: because the platform will host many
+customers, the tool must clear records either for **one customer** or for **all customers**.
+
+Changes:
+- `server/db.ts`: `TradeRecordClearInput`/`TradeRecordClearSummary` carry an optional
+  `userId`. New `TradeRecordClearTarget` typing plus a scope column per table
+  (`userColumn` for direct `userId`/`targetUserId`, `tradeColumn` for `trade_positions.id`
+  references, `publicIdColumn` for `publicTradeId` references). `resolveTradeRecordClearCustomer()`
+  validates the id; `tradeRecordClearWhere(target, from, to, userId, executor)` adds the
+  customer predicate, scoping trade-referencing tables through an `IN (sub-select)` on the
+  customer's positions and applying `1 = 0` to system-level tables (e.g.
+  `opportunity_generation_batches`) so a per-customer run never deletes them. Exports
+  `previewTradeRecordClear`/`clearTradeRecords` thread the scope through and the audit row
+  records `entityId` `all` vs `customer:<id>` and a matching reason label.
+- `server/routers.ts`: both the `clearTradePreview` and `clearTrade` schemas accept
+  `userId: z.number().int().positive().nullable().optional()`.
+- `client/src/components/AdminOperationsPages.tsx`: `AdminClearTradeButton` takes a
+  `customers` prop and adds a "Whose records" radio group (**All customers** / **One
+  customer**), a searchable customer `<select>` (capped at 200 with a refine hint), a
+  scope-aware `buildInput()`/`scopeLabel`, and fixes the preview button's disabled state so
+  the action is blocked until the scope is valid.
+- `client/src/App.tsx`: passes `customers` (from `adminOperations.customers`) into
+  `AdminClearTradeButton`.
+- `client/src/admin-operations.css`: `.admin-clear-trade-scope*` and
+  `.admin-clear-trade-customer` styles plus theme overrides and responsive stacking.
+- `server/clear-trade-records.mysql.integration.test.ts`: adds a second pair of customers,
+  a system-level generation-batch fixture, per-customer preview assertions, and a
+  per-customer clear test proving only the target customer's records (incl. a
+  customer-targeted campaign) are removed while another customer's records, the
+  system-level batch, balances, ledger and accounts are preserved.
+
+Verified: `pnpm check`, `pnpm test` (196 files / 1545 tests passed, 7 skipped), `pnpm build`.
+
 ## 2026-11-20 — Admin "Clear Trade" maintenance button on the home page
 
 Branch `main`. Owner request: an admin-side **Clear Trade** button, placed at the very top of

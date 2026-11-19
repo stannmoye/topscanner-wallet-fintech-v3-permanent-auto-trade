@@ -73,6 +73,7 @@ const tradeRecordClearPreviewSchema = z.object({
   from: z.string().datetime({ offset: true }).nullable().optional(),
   to: z.string().datetime({ offset: true }).nullable().optional(),
   categories: tradeRecordClearCategoriesSchema,
+  userId: z.number().int().positive().nullable().optional(),
 }).strict()
   .refine(value => Object.values(value.categories).some(Boolean), { message: "Select at least one record group to clear." })
   .refine(value => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), { message: "Start of the clear window must not be after the end." });
@@ -80,6 +81,7 @@ const tradeRecordClearInputSchema = z.object({
   from: z.string().datetime({ offset: true }).nullable().optional(),
   to: z.string().datetime({ offset: true }).nullable().optional(),
   categories: tradeRecordClearCategoriesSchema,
+  userId: z.number().int().positive().nullable().optional(),
   operationId: z.string().uuid(),
 }).strict()
   .refine(value => Object.values(value.categories).some(Boolean), { message: "Select at least one record group to clear." })

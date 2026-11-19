@@ -1300,10 +1300,15 @@ const CLEAR_TRADE_DEFAULT_CATEGORIES: Record<ClearTradeCategoryKey, boolean> = {
 // "Clear Trade" is a guarded maintenance action reachable from the top of the
 // admin home page. It only ever deletes trade and notification records; wallet
 // balances, the balance ledger and customer data are never in scope.
-export function AdminClearTradeButton() {
+type ClearTradeCustomer = { id: number; name?: string | null; email?: string | null };
+
+export function AdminClearTradeButton({ customers = [] }: { customers?: ClearTradeCustomer[] }) {
   const utils = trpc.useUtils();
   const clear = trpc.adminOperations.clearTrade.useMutation();
   const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<"all" | "customer">("all");
+  const [customerId, setCustomerId] = useState<number | null>(null);
+  const [customerSearch, setCustomerSearch] = useState("");
   const [categories, setCategories] = useState<Record<ClearTradeCategoryKey, boolean>>(CLEAR_TRADE_DEFAULT_CATEGORIES);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -1315,12 +1320,33 @@ export function AdminClearTradeButton() {
 
   const selectedCategories = CLEAR_TRADE_CATEGORY_META.filter((meta) => categories[meta.key]).length;
   const windowValid = !from || !to || Date.parse(from) <= Date.parse(to);
-  const canAct = selectedCategories > 0 && windowValid;
+  const scopeValid = scope === "all" || customerId != null;
+  const canAct = selectedCategories > 0 && windowValid && scopeValid;
+
+  const customerMatches = (() => {
+    const term = customerSearch.trim().toLowerCase();
+    const pool = term ? customers.filter((c) => `${c.name || ""} ${c.email || ""}`.toLowerCase().includes(term)) : customers;
+    return pool.slice(0, 200);
+  })();
+  const selectedCustomer = customerId == null ? null : customers.find((c) => Number(c.id) === customerId) || null;
+  const scopeLabel = scope === "all" ? "all customers" : selectedCustomer ? `${selectedCustomer.name || "Customer"} (${selectedCustomer.email || `#${selectedCustomer.id}`})` : "the selected customer";
+
+  const changeScope = (next: "all" | "customer") => {
+    setScope(next);
+    setPreview(null);
+  };
+  const changeCustomer = (next: number | null) => {
+    setCustomerId(next);
+    setPreview(null);
+  };
 
   const openModal = () => {
     setErrorMessage("");
     setSuccessMessage("");
     setPreview(null);
+    setScope("all");
+    setCustomerId(null);
+    setCustomerSearch("");
     setFrom("");
     setTo("");
     setCategories({ ...CLEAR_TRADE_DEFAULT_CATEGORIES });
@@ -1338,6 +1364,7 @@ export function AdminClearTradeButton() {
     from: from ? new Date(from).toISOString() : null,
     to: to ? new Date(to).toISOString() : null,
     categories,
+    userId: scope === "customer" ? customerId : null,
   });
 
   const runPreview = async () => {
@@ -1362,7 +1389,7 @@ export function AdminClearTradeButton() {
     try {
       const summary = await clear.mutateAsync({ ...buildInput(), operationId: operationId.current });
       const tables = summary.tables.length;
-      setSuccessMessage(`Cleared ${summary.totalDeleted.toLocaleString()} record${summary.totalDeleted === 1 ? "" : "s"} across ${tables} table${tables === 1 ? "" : "s"}${summary.idempotentReplay ? " (this request had already completed, so nothing was deleted twice)" : ""}. Balances, the ledger and customer data were not touched. ${new Date(summary.clearedAt).toLocaleString()}.`);
+      setSuccessMessage(`Cleared ${summary.totalDeleted.toLocaleString()} record${summary.totalDeleted === 1 ? "" : "s"} for ${scopeLabel} across ${tables} table${tables === 1 ? "" : "s"}${summary.idempotentReplay ? " (this request had already completed, so nothing was deleted twice)" : ""}. Balances, the ledger and customer data were not touched. ${new Date(summary.clearedAt).toLocaleString()}.`);
       setPreview(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "The clear request could not be completed. No partial deletion was committed.");
@@ -1385,12 +1412,39 @@ export function AdminClearTradeButton() {
                 <h2 id="clear-trade-title">Clear trade &amp; notification records</h2>
               </div>
             </div>
-            <p className="admin-ops-subtle">Remove trade history and notification records. Wallet balances, the balance ledger and customer data are never deleted, and every run is written to the audit trail.</p>
+            <p className="admin-ops-subtle">Remove trade history and notification records for every customer or for one customer. Wallet balances, the balance ledger and customer data are never deleted, and every run is written to the audit trail.</p>
 
             {successMessage && <div className="admin-ops-note" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{successMessage}</span></div>}
             {errorMessage && <div className="admin-ops-empty error" role="alert">{errorMessage}</div>}
 
             <div className="admin-ops-note"><ShieldCheck size={16} /><span><strong>Never cleared:</strong> customer balances, wallet balances, the balance ledger, customer accounts, packages/subscriptions and all configuration.</span></div>
+
+            <fieldset style={{ border: 0, padding: 0, margin: "16px 0 0" }}>
+              <legend className="admin-ops-kicker" style={{ marginBottom: 10 }}>Whose records</legend>
+              <div className="admin-clear-trade-scope">
+                <label className={`admin-clear-trade-scope-option${scope === "all" ? " active" : ""}`}>
+                  <input type="radio" name="clear-trade-scope" checked={scope === "all"} onChange={() => changeScope("all")} />
+                  <span><strong>All customers</strong><small>Clear matching records for every customer.</small></span>
+                </label>
+                <label className={`admin-clear-trade-scope-option${scope === "customer" ? " active" : ""}`}>
+                  <input type="radio" name="clear-trade-scope" checked={scope === "customer"} onChange={() => changeScope("customer")} />
+                  <span><strong>One customer</strong><small>Clear matching records for a single customer only.</small></span>
+                </label>
+              </div>
+              {scope === "customer" && (
+                <div className="admin-clear-trade-customer">
+                  <input type="search" placeholder="Search customers by name or email" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} />
+                  <select value={customerId == null ? "" : String(customerId)} onChange={(event) => changeCustomer(event.target.value ? Number(event.target.value) : null)}>
+                    <option value="">Select a customer…</option>
+                    {customerMatches.map((c) => (
+                      <option key={c.id} value={c.id}>{`${c.name || "Customer"} — ${c.email || `#${c.id}`}`}</option>
+                    ))}
+                  </select>
+                  {customers.length > customerMatches.length && <p className="admin-ops-subtle" style={{ margin: 0 }}>Showing the first {customerMatches.length} of {customers.length} customers — refine your search to narrow the list.</p>}
+                  {!scopeValid && <div className="admin-ops-empty error" role="alert">Select a customer to continue.</div>}
+                </div>
+              )}
+            </fieldset>
 
             <fieldset style={{ border: 0, padding: 0, margin: "16px 0 0" }}>
               <legend className="admin-ops-kicker" style={{ marginBottom: 10 }}>Record groups to clear</legend>
@@ -1423,14 +1477,14 @@ export function AdminClearTradeButton() {
                 {preview.map((row) => (
                   <div className="admin-clear-trade-preview-row" key={row.table}><span>{row.table}</span><strong>{row.records.toLocaleString()}</strong></div>
                 ))}
-                <div className="admin-clear-trade-preview-row admin-clear-trade-preview-total"><span>Total records matched</span><strong>{previewTotal.toLocaleString()}</strong></div>
+                <div className="admin-clear-trade-preview-row admin-clear-trade-preview-total"><span>Total records matched for {scopeLabel}</span><strong>{previewTotal.toLocaleString()}</strong></div>
               </div>
             )}
 
             <div className="admin-payout-actions" style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="admin-ops-button" type="button" onClick={() => void runPreview()} disabled={!canAct || previewing}>{previewing ? "Checking…" : "Preview records"}</button>
               <button className="admin-ops-button" type="button" onClick={closeModal} disabled={clear.isPending}>Cancel</button>
-              <button className="primary-button" type="button" onClick={() => void submitClear()} disabled={!canAct || clear.isPending}>{clear.isPending ? "Clearing…" : "Confirm clear"}</button>
+              <button className="primary-button" type="button" onClick={() => void submitClear()} disabled={!canAct || clear.isPending}>{clear.isPending ? "Clearing…" : `Confirm clear for ${scopeLabel}`}</button>
             </div>
           </section>
         </div>

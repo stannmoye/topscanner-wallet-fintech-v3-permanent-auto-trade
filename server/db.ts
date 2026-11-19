@@ -7154,6 +7154,8 @@ export type TradeRecordClearInput = {
   from?: string | null;
   to?: string | null;
   categories?: Partial<Record<TradeRecordClearCategory, boolean>>;
+  /** Omit or pass null to clear every customer; pass a customer id to clear only that customer. */
+  userId?: number | null;
   operationId?: string | null;
 };
 export type TradeRecordClearTableCount = { category: TradeRecordClearCategory; table: string; records: number };
@@ -7161,37 +7163,57 @@ export type TradeRecordClearSummary = {
   clearedAt: string;
   from: string | null;
   to: string | null;
+  userId: number | null;
   categories: TradeRecordClearCategory[];
   tables: TradeRecordClearTableCount[];
   totalDeleted: number;
   idempotentReplay?: boolean;
 };
 
+// How a table is attributed to a single customer:
+//   userColumn     — the table carries a customer id directly.
+//   tradeColumn    — the column holds a trade_positions.id, so it is scoped by the
+//                    customer's trades (the position ids are read in the same statement).
+//   publicIdColumn — the column holds a trade_positions.publicTradeId.
+//   (none)         — a system-level table with no customer link, so a per-customer
+//                    clear never deletes from it.
+type TradeRecordClearTarget = {
+  category: TradeRecordClearCategory;
+  table: string;
+  entity: any;
+  column: any;
+  userColumn?: any;
+  tradeColumn?: any;
+  publicIdColumn?: any;
+};
+
 // Deletion order matters: rows are listed child-first so a foreign-key cascade
-// never removes a row the window filter would otherwise have kept. Only record
-// tables appear here; balances, the ledger and configuration tables never do.
-function tradeRecordClearTargets(): Array<{ category: TradeRecordClearCategory; table: string; entity: any; column: any }> {
+// never removes a row the window filter would otherwise have kept, and every
+// table that is scoped through trade_positions is listed before trade_positions
+// itself (whose rows still exist while those statements run). Only record tables
+// appear here; balances, the ledger and configuration tables never do.
+function tradeRecordClearTargets(): TradeRecordClearTarget[] {
   return [
-    { category: "opportunityRecords", table: "opportunity_delivery_history", entity: opportunityDeliveryHistory, column: opportunityDeliveryHistory.occurredAt },
-    { category: "opportunityRecords", table: "opportunity_delivery_events", entity: opportunityDeliveryEvents, column: opportunityDeliveryEvents.deliveredAt },
-    { category: "opportunityRecords", table: "opportunity_delivery_idempotency", entity: opportunityDeliveryIdempotency, column: opportunityDeliveryIdempotency.createdAt },
-    { category: "opportunityRecords", table: "opportunity_popup_events", entity: opportunityPopupEvents, column: opportunityPopupEvents.createdAt },
-    { category: "opportunityRecords", table: "opportunity_popup_daily", entity: opportunityPopupDaily, column: opportunityPopupDaily.createdAt },
-    { category: "opportunityRecords", table: "missed_opportunities", entity: missedOpportunities, column: missedOpportunities.createdAt },
-    { category: "opportunityRecords", table: "opportunity_generation_assignments", entity: opportunityGenerationAssignments, column: opportunityGenerationAssignments.generatedAt },
-    { category: "opportunityRecords", table: "opportunity_generation_batches", entity: opportunityGenerationBatches, column: opportunityGenerationBatches.createdAt },
-    { category: "opportunityRecords", table: "opportunity_offers", entity: opportunityOffers, column: opportunityOffers.createdAt },
-    { category: "tradeHistory", table: "settlement_evidence_audit_events", entity: settlementEvidenceAuditEvents, column: settlementEvidenceAuditEvents.createdAt },
-    { category: "tradeHistory", table: "settlement_evidence_records", entity: settlementEvidenceRecords, column: settlementEvidenceRecords.createdAt },
-    { category: "tradeHistory", table: "trade_settlement_recovery_cases", entity: tradeSettlementRecoveryCases, column: tradeSettlementRecoveryCases.createdAt },
-    { category: "tradeHistory", table: "trade_settlement_reference_claims", entity: tradeSettlementReferenceClaims, column: tradeSettlementReferenceClaims.createdAt },
-    { category: "tradeHistory", table: "trade_reward_reservations", entity: tradeRewardReservations, column: tradeRewardReservations.createdAt },
-    { category: "tradeHistory", table: "trade_lifecycle_events", entity: tradeLifecycleEvents, column: tradeLifecycleEvents.createdAt },
-    { category: "tradeHistory", table: "trade_positions", entity: tradePositions, column: tradePositions.confirmedAt },
-    { category: "tradeHistory", table: "trade_public_ids", entity: tradePublicIds, column: tradePublicIds.createdAt },
-    { category: "notificationCampaigns", table: "notification_campaign_deliveries", entity: notificationCampaignDeliveries, column: notificationCampaignDeliveries.createdAt },
-    { category: "notificationCampaigns", table: "notification_campaigns", entity: notificationCampaigns, column: notificationCampaigns.createdAt },
-    { category: "customerNotifications", table: "customer_notifications", entity: customerNotifications, column: customerNotifications.createdAt },
+    { category: "opportunityRecords", table: "opportunity_delivery_history", entity: opportunityDeliveryHistory, column: opportunityDeliveryHistory.occurredAt, userColumn: opportunityDeliveryHistory.userId },
+    { category: "opportunityRecords", table: "opportunity_delivery_events", entity: opportunityDeliveryEvents, column: opportunityDeliveryEvents.deliveredAt, userColumn: opportunityDeliveryEvents.userId },
+    { category: "opportunityRecords", table: "opportunity_delivery_idempotency", entity: opportunityDeliveryIdempotency, column: opportunityDeliveryIdempotency.createdAt, userColumn: opportunityDeliveryIdempotency.userId },
+    { category: "opportunityRecords", table: "opportunity_popup_events", entity: opportunityPopupEvents, column: opportunityPopupEvents.createdAt, userColumn: opportunityPopupEvents.userId },
+    { category: "opportunityRecords", table: "opportunity_popup_daily", entity: opportunityPopupDaily, column: opportunityPopupDaily.createdAt, userColumn: opportunityPopupDaily.userId },
+    { category: "opportunityRecords", table: "missed_opportunities", entity: missedOpportunities, column: missedOpportunities.createdAt, userColumn: missedOpportunities.userId },
+    { category: "opportunityRecords", table: "opportunity_generation_assignments", entity: opportunityGenerationAssignments, column: opportunityGenerationAssignments.generatedAt, userColumn: opportunityGenerationAssignments.userId },
+    { category: "opportunityRecords", table: "opportunity_generation_batches", entity: opportunityGenerationBatches, column: opportunityGenerationBatches.createdAt }, // system-level: only cleared for all customers
+    { category: "opportunityRecords", table: "opportunity_offers", entity: opportunityOffers, column: opportunityOffers.createdAt, userColumn: opportunityOffers.assignedUserId },
+    { category: "tradeHistory", table: "settlement_evidence_audit_events", entity: settlementEvidenceAuditEvents, column: settlementEvidenceAuditEvents.createdAt, tradeColumn: settlementEvidenceAuditEvents.tradeId },
+    { category: "tradeHistory", table: "settlement_evidence_records", entity: settlementEvidenceRecords, column: settlementEvidenceRecords.createdAt, tradeColumn: settlementEvidenceRecords.tradeId },
+    { category: "tradeHistory", table: "trade_settlement_reference_claims", entity: tradeSettlementReferenceClaims, column: tradeSettlementReferenceClaims.createdAt, tradeColumn: tradeSettlementReferenceClaims.tradeId },
+    { category: "tradeHistory", table: "trade_settlement_recovery_cases", entity: tradeSettlementRecoveryCases, column: tradeSettlementRecoveryCases.createdAt, userColumn: tradeSettlementRecoveryCases.userId },
+    { category: "tradeHistory", table: "trade_reward_reservations", entity: tradeRewardReservations, column: tradeRewardReservations.createdAt, userColumn: tradeRewardReservations.userId },
+    { category: "tradeHistory", table: "trade_lifecycle_events", entity: tradeLifecycleEvents, column: tradeLifecycleEvents.createdAt, userColumn: tradeLifecycleEvents.userId },
+    { category: "tradeHistory", table: "trade_public_ids", entity: tradePublicIds, column: tradePublicIds.createdAt, publicIdColumn: tradePublicIds.publicId },
+    { category: "tradeHistory", table: "trade_positions", entity: tradePositions, column: tradePositions.confirmedAt, userColumn: tradePositions.userId },
+    { category: "notificationCampaigns", table: "notification_campaign_deliveries", entity: notificationCampaignDeliveries, column: notificationCampaignDeliveries.createdAt, userColumn: notificationCampaignDeliveries.userId },
+    { category: "notificationCampaigns", table: "notification_campaigns", entity: notificationCampaigns, column: notificationCampaigns.createdAt, userColumn: notificationCampaigns.targetUserId },
+    { category: "customerNotifications", table: "customer_notifications", entity: customerNotifications, column: customerNotifications.createdAt, userColumn: customerNotifications.userId },
   ];
 }
 
@@ -7204,10 +7226,30 @@ function resolveTradeRecordClearWindow(input: TradeRecordClearInput) {
   return { from, to };
 }
 
-function tradeRecordClearWhere(column: any, from: Date | null, to: Date | null) {
+function resolveTradeRecordClearCustomer(input: TradeRecordClearInput) {
+  if (input.userId == null) return null;
+  const userId = Number(input.userId);
+  if (!Number.isSafeInteger(userId) || userId < 1) throw new Error("The selected customer is not valid.");
+  return userId;
+}
+
+function tradeRecordClearWhere(target: TradeRecordClearTarget, from: Date | null, to: Date | null, userId: number | null, executor: any) {
   const parts: any[] = [];
-  if (from) parts.push(gte(column, from));
-  if (to) parts.push(lte(column, to));
+  if (from) parts.push(gte(target.column, from));
+  if (to) parts.push(lte(target.column, to));
+  if (userId != null) {
+    if (target.userColumn) {
+      parts.push(eq(target.userColumn, userId));
+    } else if (target.tradeColumn) {
+      parts.push(inArray(target.tradeColumn, executor.select({ id: tradePositions.id }).from(tradePositions).where(eq(tradePositions.userId, userId))));
+    } else if (target.publicIdColumn) {
+      parts.push(inArray(target.publicIdColumn, executor.select({ id: tradePositions.publicTradeId }).from(tradePositions).where(eq(tradePositions.userId, userId))));
+    } else {
+      // System-level records (e.g. generation batches) cannot be attributed to a
+      // single customer, so a per-customer clear never deletes them.
+      parts.push(sql`1 = 0`);
+    }
+  }
   return parts.length ? and(...parts) : undefined;
 }
 
@@ -7215,11 +7257,12 @@ export async function previewTradeRecordClear(input: TradeRecordClearInput): Pro
   const selected = TRADE_RECORD_CLEAR_CATEGORIES.filter(category => Boolean(input.categories?.[category]));
   if (!selected.length) throw new Error("Select at least one record group to clear.");
   const { from, to } = resolveTradeRecordClearWindow(input);
+  const userId = resolveTradeRecordClearCustomer(input);
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const counts: TradeRecordClearTableCount[] = [];
   for (const target of tradeRecordClearTargets().filter(entry => selected.includes(entry.category))) {
-    const where = tradeRecordClearWhere(target.column, from, to);
+    const where = tradeRecordClearWhere(target, from, to, userId, db);
     const rows = where
       ? await db.select({ total: count() }).from(target.entity).where(where)
       : await db.select({ total: count() }).from(target.entity);
@@ -7233,6 +7276,7 @@ export async function clearTradeRecords(input: TradeRecordClearInput, actorId: n
   const selected = TRADE_RECORD_CLEAR_CATEGORIES.filter(category => Boolean(input.categories?.[category]));
   if (!selected.length) throw new Error("Select at least one record group to clear.");
   const { from, to } = resolveTradeRecordClearWindow(input);
+  const userId = resolveTradeRecordClearCustomer(input);
   const operationId = String(input.operationId || "").trim();
   if (operationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) {
     throw new Error("The clear request identifier is invalid.");
@@ -7263,7 +7307,7 @@ export async function clearTradeRecords(input: TradeRecordClearInput, actorId: n
     const tables: TradeRecordClearTableCount[] = [];
     let totalDeleted = 0;
     for (const target of tradeRecordClearTargets().filter(entry => selected.includes(entry.category))) {
-      const where = tradeRecordClearWhere(target.column, from, to);
+      const where = tradeRecordClearWhere(target, from, to, userId, tx);
       const result: any = where ? await tx.delete(target.entity).where(where) : await tx.delete(target.entity);
       const deleted = Number(result?.[0]?.affectedRows ?? 0);
       tables.push({ category: target.category, table: target.table, records: deleted });
@@ -7274,18 +7318,19 @@ export async function clearTradeRecords(input: TradeRecordClearInput, actorId: n
       clearedAt: new Date().toISOString(),
       from: from ? from.toISOString() : null,
       to: to ? to.toISOString() : null,
+      userId,
       categories: selected,
       tables,
       totalDeleted,
     };
+    const scopeLabel = userId == null ? "all customers" : `customer #${userId}`;
+    const windowLabel = from || to ? `between ${summary.from} and ${summary.to}` : "with no time limit";
     await tx.insert(v5AuditEvents).values({
       actorUserId: actorId,
       action: TRADE_RECORD_CLEAR_ACTION,
       entityType: "trade_records_clear",
-      entityId: "all",
-      reason: from || to
-        ? `Administrator cleared trade and notification records between ${summary.from} and ${summary.to}.`
-        : "Administrator cleared all trade and notification records.",
+      entityId: userId == null ? "all" : `customer:${userId}`,
+      reason: `Administrator cleared trade and notification records for ${scopeLabel} ${windowLabel}.`,
       reference,
       metadataJson: JSON.stringify(summary),
     });

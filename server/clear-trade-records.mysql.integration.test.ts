@@ -12,6 +12,9 @@ const DAY_MS = 86_400_000;
 let connection: SqlConnection | null = null;
 let adminId = 0;
 let customerId = 0;
+let scopeCustomerA = 0;
+let scopeCustomerB = 0;
+let systemBatchId = "";
 let customerCaller: ReturnType<typeof appRouter.createCaller>;
 let adminCaller: ReturnType<typeof appRouter.createCaller>;
 const campaignIds: number[] = [];
@@ -37,41 +40,51 @@ const windowFrom = new Date(Date.now() - DAY_MS).toISOString();
 const windowTo = new Date(Date.now() + 60_000).toISOString();
 const allCategories = { tradeHistory: true, opportunityRecords: true, customerNotifications: true, notificationCampaigns: true };
 
-async function insertOffer(suffix: string, createdAt: Date) {
+async function insertOffer(suffix: string, createdAt: Date, userId: number = customerId) {
   const result: any = await query(
     "INSERT INTO opportunity_offers (assignedUserId,symbol,venueFrom,venueTo,currency,minimumMinor,expectedRewardBps,durationSeconds,opensAt,closesAt,rewardAt,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    [customerId, "CLEAR", "fixture-a", "fixture-b", "USD", 1000, 500, 3600, createdAt, createdAt, createdAt, "closed", createdAt],
+    [userId, "CLEAR", "fixture-a", "fixture-b", "USD", 1000, 500, 3600, createdAt, createdAt, createdAt, "closed", createdAt],
   );
   return Number(result.insertId);
 }
 
-async function insertTradePosition(offerId: number, confirmedAt: Date) {
+async function insertTradePosition(offerId: number, confirmedAt: Date, userId: number = customerId) {
   await query(
     "INSERT INTO trade_positions (userId,offerId,currency,principalMinor,expectedRewardMinor,settlesAt,confirmedAt) VALUES (?,?,?,?,?,?,?)",
-    [customerId, offerId, "USD", 1000, 50, confirmedAt, confirmedAt],
+    [userId, offerId, "USD", 1000, 50, confirmedAt, confirmedAt],
   );
 }
 
-async function insertNotification(title: string, createdAt: Date) {
-  await query("INSERT INTO customer_notifications (userId,title,body,category,createdAt) VALUES (?,?,?,?,?)", [customerId, title, `${title} body`, "trade", createdAt]);
+async function insertNotification(title: string, createdAt: Date, userId: number = customerId) {
+  await query("INSERT INTO customer_notifications (userId,title,body,category,createdAt) VALUES (?,?,?,?,?)", [userId, title, `${title} body`, "trade", createdAt]);
 }
 
-async function insertCampaign(suffix: string, createdAt: Date) {
+// targetUserId null models a broadcast campaign (no single owner); a concrete id
+// models a campaign aimed at one customer. The delivery row always names a customer.
+async function insertCampaign(suffix: string, createdAt: Date, targetUserId: number | null = null) {
   const result: any = await query(
-    "INSERT INTO notification_campaigns (createdBy,eventKey,title,body,category,priority,status,createdAt) VALUES (?,?,?,?,?,?,?,?)",
-    [adminId, `${token}-${suffix}`, `Campaign ${suffix}`, `Campaign ${suffix} body`, "trade", "normal", "published", createdAt],
+    "INSERT INTO notification_campaigns (createdBy,eventKey,title,body,category,priority,status,targetUserId,createdAt) VALUES (?,?,?,?,?,?,?,?,?)",
+    [adminId, `${token}-${suffix}`, `Campaign ${suffix}`, `Campaign ${suffix} body`, "trade", "normal", "published", targetUserId, createdAt],
   );
   const id = Number(result.insertId);
   campaignIds.push(id);
-  await query("INSERT INTO notification_campaign_deliveries (campaignId,userId,status,createdAt) VALUES (?,?,?,?)", [id, customerId, "delivered", createdAt]);
+  await query("INSERT INTO notification_campaign_deliveries (campaignId,userId,status,createdAt) VALUES (?,?,?,?)", [id, targetUserId ?? customerId, "delivered", createdAt]);
   return id;
 }
 
-async function snapshotProtectedData() {
+// A system-level generation batch carries no customer id, so a per-customer clear
+// must never delete it (only an all-customer clear may).
+async function insertSystemBatch(suffix: string) {
+  const id = `${token}-${suffix}`.slice(0, 64);
+  await query("INSERT INTO opportunity_generation_batches (id,status,batchSize,createdAt) VALUES (?,?,?,?)", [id, "completed", 5, recentAt]);
+  return id;
+}
+
+async function snapshotProtectedData(userId: number = customerId) {
   return {
-    balances: await query("SELECT currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor FROM customer_balances WHERE userId=? ORDER BY id", [customerId]),
-    ledger: await query("SELECT currency,amountMinor,entryType,reference,withdrawable FROM balance_ledger WHERE userId=? ORDER BY id", [customerId]),
-    account: await query("SELECT name,email,role FROM users WHERE id=?", [customerId]),
+    balances: await query("SELECT currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor FROM customer_balances WHERE userId=? ORDER BY id", [userId]),
+    ledger: await query("SELECT currency,amountMinor,entryType,reference,withdrawable FROM balance_ledger WHERE userId=? ORDER BY id", [userId]),
+    account: await query("SELECT name,email,role FROM users WHERE id=?", [userId]),
   };
 }
 
@@ -84,6 +97,8 @@ const countRecentNotifications = async () => Number((await query("SELECT COUNT(*
 const countOldNotifications = async () => Number((await query("SELECT COUNT(*) AS count FROM customer_notifications WHERE userId=? AND createdAt<?", [customerId, cutoff]))[0].count);
 const countRecentCampaigns = async () => Number((await query("SELECT COUNT(*) AS count FROM notification_campaigns WHERE createdBy=? AND createdAt>=?", [adminId, cutoff]))[0].count);
 const countOldCampaigns = async () => Number((await query("SELECT COUNT(*) AS count FROM notification_campaigns WHERE createdBy=? AND createdAt<?", [adminId, cutoff]))[0].count);
+// Table and column names here are internal test constants, not user input.
+const countFor = async (table: string, column: string, userId: number) => Number((await query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column}=?`, [userId]))[0].count);
 
 describe.skipIf(!enabled)("Clear Trade records against disposable MySQL/MariaDB", () => {
   beforeAll(async () => {
@@ -104,22 +119,45 @@ describe.skipIf(!enabled)("Clear Trade records against disposable MySQL/MariaDB"
     await insertNotification("Old notification", oldAt);
     await insertCampaign("recent", recentAt);
     await insertCampaign("old", oldAt);
+
+    // Dedicated pair of customers for per-customer scope verification, each with
+    // their own offers, trades, notifications and a customer-targeted campaign.
+    const scopeAResult: any = await query("INSERT INTO users (openId,name,email,loginMethod,role) VALUES (?,?,?,?,?)", [`${token}-scope-a`, "Clear Scope A", `${token}-scope-a@example.invalid`, "integration", "user"]);
+    scopeCustomerA = Number(scopeAResult.insertId);
+    const scopeBResult: any = await query("INSERT INTO users (openId,name,email,loginMethod,role) VALUES (?,?,?,?,?)", [`${token}-scope-b`, "Clear Scope B", `${token}-scope-b@example.invalid`, "integration", "user"]);
+    scopeCustomerB = Number(scopeBResult.insertId);
+    for (const id of [scopeCustomerA, scopeCustomerB]) {
+      await query("INSERT INTO customer_balances (userId,currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor) VALUES (?,?,?,?,?,?)", [id, "USD", 50000 + id, 0, 0, 0]);
+      await query("INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,?)", [id, "USD", 50000 + id, "integration_fixture", `${token}-ledger-${id}`, 1]);
+    }
+    const scopeOfferA = await insertOffer("scope-a", recentAt, scopeCustomerA);
+    const scopeOfferB = await insertOffer("scope-b", recentAt, scopeCustomerB);
+    await insertTradePosition(scopeOfferA, recentAt, scopeCustomerA);
+    await insertTradePosition(scopeOfferB, recentAt, scopeCustomerB);
+    await insertNotification("Scope A notification", recentAt, scopeCustomerA);
+    await insertNotification("Scope B notification", recentAt, scopeCustomerB);
+    await insertCampaign("scope-a", recentAt, scopeCustomerA);
+    await insertCampaign("scope-b", recentAt, scopeCustomerB);
+    systemBatchId = await insertSystemBatch("batch");
+
     adminCaller = appRouter.createCaller({ user: { id: adminId, role: "admin" } } as any as never);
     customerCaller = appRouter.createCaller({ user: { id: customerId, role: "user" } } as any as never);
   });
 
   afterAll(async () => {
     if (connection) {
-      const placeholder = "?";
-      await query(`DELETE FROM opportunity_offers WHERE assignedUserId=${placeholder}`, [customerId]);
-      await query(`DELETE FROM trade_positions WHERE userId=${placeholder}`, [customerId]);
-      await query(`DELETE FROM customer_notifications WHERE userId=${placeholder}`, [customerId]);
+      const customerIds = [customerId, scopeCustomerA, scopeCustomerB];
+      const list = customerIds.map(() => "?").join(",");
+      await query(`DELETE FROM opportunity_offers WHERE assignedUserId IN (${list})`, customerIds);
+      await query(`DELETE FROM trade_positions WHERE userId IN (${list})`, customerIds);
+      await query(`DELETE FROM customer_notifications WHERE userId IN (${list})`, customerIds);
       if (campaignIds.length) await query(`DELETE FROM notification_campaign_deliveries WHERE campaignId IN (${campaignIds.map(() => "?").join(",")})`, campaignIds);
-      await query(`DELETE FROM notification_campaigns WHERE createdBy=${placeholder}`, [adminId]);
-      await query(`DELETE FROM balance_ledger WHERE userId=${placeholder}`, [customerId]);
-      await query(`DELETE FROM customer_balances WHERE userId=${placeholder}`, [customerId]);
-      await query(`DELETE FROM v5_audit_events WHERE actorUserId=${placeholder} OR entityType='trade_records_clear'`, [adminId]);
-      await query(`DELETE FROM users WHERE id IN (${placeholder},${placeholder})`, [adminId, customerId]);
+      await query(`DELETE FROM notification_campaigns WHERE createdBy=?`, [adminId]);
+      if (systemBatchId) await query(`DELETE FROM opportunity_generation_batches WHERE id=?`, [systemBatchId]);
+      await query(`DELETE FROM balance_ledger WHERE userId IN (${list})`, customerIds);
+      await query(`DELETE FROM customer_balances WHERE userId IN (${list})`, customerIds);
+      await query(`DELETE FROM v5_audit_events WHERE actorUserId=? OR entityType='trade_records_clear'`, [adminId]);
+      await query(`DELETE FROM users WHERE id IN (${[adminId, ...customerIds].map(() => "?").join(",")})`, [adminId, ...customerIds]);
       await connection.end();
       connection = null;
     }
@@ -134,14 +172,57 @@ describe.skipIf(!enabled)("Clear Trade records against disposable MySQL/MariaDB"
 
   it("previews the records that a clear would remove without mutating anything", async () => {
     const before = await snapshotProtectedData();
-    const preview = await adminCaller.adminOperations.clearTradePreview({ from: null, to: null, categories: allCategories });
-    const byTable = new Map(preview.map((row) => [row.table, row.records]));
-    expect(byTable.get("opportunity_offers")).toBe(2);
-    expect(byTable.get("trade_positions")).toBe(2);
-    expect(byTable.get("customer_notifications")).toBe(2);
-    expect(byTable.get("notification_campaigns")).toBe(2);
-    expect(byTable.get("notification_campaign_deliveries")).toBe(2);
+    const globalPreview = await adminCaller.adminOperations.clearTradePreview({ from: null, to: null, categories: allCategories });
+    const globalByTable = new Map(globalPreview.map((row) => [row.table, row.records]));
+    // A global preview always includes the main customer's own records.
+    expect(globalByTable.get("opportunity_offers")).toBeGreaterThanOrEqual(2);
+
+    // A per-customer preview scopes every table (including trade sub-selects) to one customer.
+    const scopedA = new Map((await adminCaller.adminOperations.clearTradePreview({ from: null, to: null, categories: allCategories, userId: scopeCustomerA })).map((row) => [row.table, row.records]));
+    expect(scopedA.get("opportunity_offers")).toBe(1);
+    expect(scopedA.get("trade_positions")).toBe(1);
+    expect(scopedA.get("customer_notifications")).toBe(1);
+    expect(scopedA.get("notification_campaigns")).toBe(1);
+    expect(scopedA.get("notification_campaign_deliveries")).toBe(1);
+    // System-level tables cannot be attributed to one customer, so they are excluded.
+    expect(scopedA.get("opportunity_generation_batches")).toBe(0);
+
     expect(await snapshotProtectedData()).toEqual(before);
+  });
+
+  it("clears records for one customer only, leaving other customers and system records intact", async () => {
+    const beforeA = await snapshotProtectedData(scopeCustomerA);
+    const beforeB = await snapshotProtectedData(scopeCustomerB);
+    const operationId = crypto.randomUUID();
+    const summary = await adminCaller.adminOperations.clearTrade({ from: null, to: null, categories: allCategories, userId: scopeCustomerA, operationId });
+    expect(summary.userId).toBe(scopeCustomerA);
+    expect(summary.totalDeleted).toBeGreaterThan(0);
+
+    // Every scoped table for the target customer is emptied.
+    expect(await countFor("opportunity_offers", "assignedUserId", scopeCustomerA)).toBe(0);
+    expect(await countFor("trade_positions", "userId", scopeCustomerA)).toBe(0);
+    expect(await countFor("customer_notifications", "userId", scopeCustomerA)).toBe(0);
+    expect(await countFor("notification_campaigns", "targetUserId", scopeCustomerA)).toBe(0);
+    expect(await countFor("notification_campaign_deliveries", "userId", scopeCustomerA)).toBe(0);
+
+    // The other customer's matching records are all retained.
+    expect(await countFor("opportunity_offers", "assignedUserId", scopeCustomerB)).toBe(1);
+    expect(await countFor("trade_positions", "userId", scopeCustomerB)).toBe(1);
+    expect(await countFor("customer_notifications", "userId", scopeCustomerB)).toBe(1);
+    expect(await countFor("notification_campaigns", "targetUserId", scopeCustomerB)).toBe(1);
+    expect(await countFor("notification_campaign_deliveries", "userId", scopeCustomerB)).toBe(1);
+
+    // A system-level generation batch carries no customer id and must survive.
+    expect(Number((await query("SELECT COUNT(*) AS count FROM opportunity_generation_batches WHERE id=?", [systemBatchId]))[0].count)).toBe(1);
+
+    // Balances, ledger and account data are preserved for both customers.
+    expect(await snapshotProtectedData(scopeCustomerA)).toEqual(beforeA);
+    expect(await snapshotProtectedData(scopeCustomerB)).toEqual(beforeB);
+
+    // A single audit row records the customer-scoped run.
+    const audit = await query("SELECT entityId,reason FROM v5_audit_events WHERE reference=?", [`trade-records-clear:${operationId}`]);
+    expect(audit.length).toBe(1);
+    expect(String(audit[0].entityId)).toBe(`customer:${scopeCustomerA}`);
   });
 
   it("clears only in-window records and never touches balances, ledger or customer data", async () => {
