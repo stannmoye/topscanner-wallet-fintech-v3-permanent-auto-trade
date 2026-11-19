@@ -86,7 +86,8 @@ import {
   CircleHelp, Database, Gauge, Globe2, Gift, Headphones, Layers3,
   Landmark, Lock, Menu, Pause, Plus, RefreshCw, Search, Settings2, ShieldCheck,
   Sparkles, TrendingUp, ToggleLeft, ToggleRight, Unlock, Users, WalletCards,
-  X, Zap, Check, KeyRound, FileText, PlugZap, BarChart3, Bot, Building2, SlidersHorizontal, Mail, UserRound, Smartphone, Eye, EyeOff, CheckCircle2, LogIn, Play, Server, Code2, UserRoundX, Copy, Download, RotateCcw
+  X, Zap, Check, KeyRound, FileText, PlugZap, BarChart3, Bot, Building2, SlidersHorizontal, Mail, UserRound, Smartphone, Eye, EyeOff, CheckCircle2, LogIn, Play, Server, Code2, UserRoundX, Copy, Download, RotateCcw,
+  Calendar, Filter, Printer, FileSpreadsheet, PieChart, ArrowUpDown, TrendingDown, BadgeCheck, Hash, Percent, ScrollText, Sigma, ArrowDownUp, FileSearch
 } from "lucide-react";
 
 function CustomerBotBadge({compact=false}:{compact?:boolean}) { return <span className={`customer-bot-badge${compact?" compact":""}`} role="img" aria-label="BOT"><Bot size={10} aria-hidden="true"/><span aria-hidden="true">BOT</span></span>; }
@@ -622,15 +623,184 @@ function CustomerPersonalDetailsContent({push}:{push:(message:string)=>void}) {
     </section>
   </form>;
 }
+const STATEMENT_HERO_IMAGE = "https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=" + encodeURIComponent("premium financial accounting statement dashboard, deep navy and teal gradient panels, floating ledger charts, receipt and invoice documents, gold accent light lines, minimal 3D fintech render, dark cinematic interface, no text, no words, no letters, no numbers") + "&image_size=landscape_16_9";
+type CustomerStatementEntry = { id:number; entryType:string; currency:string; amountMinor:number; createdAt:string|Date };
+type CustomerStatementPeriod = "7d" | "30d" | "90d" | "year" | "all";
+const customerStatementPeriods: Array<{id:CustomerStatementPeriod;label:string}> = [
+  { id:"7d", label:"Last 7 days" },
+  { id:"30d", label:"Last 30 days" },
+  { id:"90d", label:"Last 90 days" },
+  { id:"year", label:"Year to date" },
+  { id:"all", label:"All time" },
+];
+function statementCsvCell(value:unknown){ const text=String(value??""); return /[",\n]/.test(text) ? `"${text.replace(/"/g,'""')}"` : text; }
+function statementFileStamp(){ return new Date().toISOString().slice(0,10); }
+function CustomerStatementsCentre({push}:{push:(message:string)=>void}) {
+  const ledger=trpc.customer.walletLedger.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(CUSTOMER_BALANCE_POLL_INTERVAL_MS,query.state.fetchFailureCount),refetchOnWindowFocus:true});
+  const balances=trpc.customer.balances.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(CUSTOMER_BALANCE_POLL_INTERVAL_MS,query.state.fetchFailureCount)});
+  const details=trpc.customer.personalDetails.useQuery();
+  const [search,setSearch]=useState("");
+  const [period,setPeriod]=useState<CustomerStatementPeriod>("30d");
+  const [direction,setDirection]=useState<"all"|"credit"|"debit">("all");
+  const [currency,setCurrency]=useState("all");
+  const [minAmount,setMinAmount]=useState("");
+  const [sort,setSort]=useState<"date"|"amount">("date");
+  const [sortDir,setSortDir]=useState<"asc"|"desc">("desc");
+  const [visibleCount,setVisibleCount]=useState(15);
+  const [feedback,setFeedback]=useState("");
+  const entries=(ledger.data||[]) as CustomerStatementEntry[];
+  const currencies=(balances.data?.currencies||[]) as any[];
+  const balanceRows=(balances.data?.balances||[]) as any[];
+  const meta=(code:string)=>currencies.find((item:any)=>item.code===code);
+  const scaleOf=(code:string)=>{ const value=Number(meta(code)?.scale); return Number.isFinite(value)?value:(code==="BTC"||code==="ETH"?8:2); };
+  const symbolOf=(code:string)=>meta(code)?.symbol||code;
+  const formatNative=(minor:number,code:string)=>{ const scale=Math.max(0,Math.min(scaleOf(code),8)); const value=Math.abs(Number(minor||0))/Math.pow(10,scale); return `${symbolOf(code)}${value.toLocaleString(undefined,{minimumFractionDigits:Math.min(2,scale),maximumFractionDigits:scale})}`; };
+  const toUsd=(minor:number,code:string)=> (Number(minor||0)/Math.pow(10,scaleOf(code)))*Number(meta(code)?.usdRate||0);
+  const moneyUsd=(value:number)=>`$${Number(value||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const labelOf=(value:string)=>String(value||"").replace(/_/g," ").replace(/\b\w/g,letter=>letter.toUpperCase());
+  const currencyCodes=Array.from(new Set(entries.map(entry=>entry.currency))).filter(Boolean).sort();
+  const periodStart=(()=>{ if(period==="all")return 0; const at=new Date(); if(period==="7d")at.setDate(at.getDate()-7); else if(period==="30d")at.setDate(at.getDate()-30); else if(period==="90d")at.setDate(at.getDate()-90); else { at.setMonth(0,1); at.setDate(1); at.setHours(0,0,0,0); } return at.getTime(); })();
+  const threshold=minAmount.trim()===""?0:Math.max(0,Number(minAmount)||0);
+  const term=search.trim().toLowerCase();
+  const filtered=entries.filter(entry=>{
+    const at=new Date(entry.createdAt).getTime();
+    if(Number.isFinite(at)&&at<periodStart)return false;
+    const signed=Number(entry.amountMinor||0);
+    if(direction==="credit"&&signed<0)return false;
+    if(direction==="debit"&&signed>=0)return false;
+    if(currency!=="all"&&entry.currency!==currency)return false;
+    if(threshold>0&&Math.abs(toUsd(entry.amountMinor,entry.currency))<threshold)return false;
+    if(term){ const hay=`${entry.entryType} ${labelOf(entry.entryType)} ${entry.currency} ${entry.id} led-${entry.id} ${formatNative(entry.amountMinor,entry.currency)} ${entry.amountMinor} ${new Date(entry.createdAt).toLocaleString()}`.toLowerCase(); if(!hay.includes(term))return false; }
+    return true;
+  });
+  const sorted=[...filtered].sort((a,b)=>{
+    if(sort==="amount"){ const delta=Math.abs(toUsd(a.amountMinor,a.currency))-Math.abs(toUsd(b.amountMinor,b.currency)); return sortDir==="asc"?delta:-delta; }
+    const delta=new Date(a.createdAt).getTime()-new Date(b.createdAt).getTime(); return sortDir==="asc"?delta:-delta;
+  });
+  const totalCreditsUsd=filtered.reduce((sum,entry)=> entry.amountMinor>0?sum+toUsd(entry.amountMinor,entry.currency):sum,0);
+  const totalDebitsUsd=filtered.reduce((sum,entry)=> entry.amountMinor<0?sum+toUsd(entry.amountMinor,entry.currency):sum,0);
+  const netUsd=totalCreditsUsd+totalDebitsUsd;
+  const creditCount=filtered.filter(entry=>entry.amountMinor>0).length;
+  const debitCount=filtered.filter(entry=>entry.amountMinor<0).length;
+  const creditShare=(totalCreditsUsd+Math.abs(totalDebitsUsd))>0?Math.round(totalCreditsUsd/(totalCreditsUsd+Math.abs(totalDebitsUsd))*100):0;
+  const monthly=(()=>{ const map=new Map<string,number>(); filtered.forEach(entry=>{ const at=new Date(entry.createdAt); if(Number.isNaN(at.getTime()))return; const key=`${at.getFullYear()}-${String(at.getMonth()+1).padStart(2,"0")}`; map.set(key,(map.get(key)||0)+toUsd(entry.amountMinor,entry.currency)); }); return Array.from(map.entries()).sort((a,b)=>a[0]<b[0]?-1:1).slice(-9); })();
+  const maxAbsMonthly=Math.max(1,...monthly.map(([,value])=>Math.abs(value)));
+  const monthLabel=(key:string)=>{ const [year,month]=key.split("-"); const at=new Date(Number(year),Number(month)-1,1); return `${at.toLocaleString(undefined,{month:"short"})} ${String(year).slice(2)}`; };
+  const availableUsd=balanceRows.reduce((sum,row)=>sum+toUsd(Number(row.availableMinor||0),row.currency),0);
+  const lockedUsd=balanceRows.reduce((sum,row)=>sum+toUsd(Number(row.lockedMinor||0),row.currency),0);
+  const totalHeldUsd=availableUsd+lockedUsd;
+  const periodLabel=period==="all"?"All recorded activity":(customerStatementPeriods.find(item=>item.id===period)?.label||"");
+  const generatedAt=new Date();
+  const accountName=[details.data?.firstName,details.data?.lastName].filter(Boolean).join(" ").trim()||"WiseBond customer";
+  const shown=sorted.slice(0,visibleCount);
+  const statementRows=sorted.map(entry=>({ Date:new Date(entry.createdAt).toISOString(), Reference:`LED-${entry.id}`, Type:labelOf(entry.entryType), Currency:entry.currency, Amount:(Number(entry.amountMinor||0)/Math.pow(10,scaleOf(entry.currency))).toFixed(Math.min(scaleOf(entry.currency),8)), Direction:entry.amountMinor>=0?"Credit":"Debit", "USD value":toUsd(entry.amountMinor,entry.currency).toFixed(2) }));
+  const triggerDownload=(filename:string,content:string,type:string)=>{ const blob=new Blob([content],{type}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=filename; document.body.appendChild(link); link.click(); document.body.removeChild(link); window.setTimeout(()=>URL.revokeObjectURL(url),1000); };
+  const resetFilters=()=>{ setSearch(""); setPeriod("30d"); setDirection("all"); setCurrency("all"); setMinAmount(""); setVisibleCount(15); setFeedback("Filters reset to the last 30 days."); };
+  const refresh=()=>{ setFeedback(""); void ledger.refetch(); void balances.refetch(); };
+  const toggleSort=(next:"date"|"amount")=>{ if(sort===next){ setSortDir(prev=>prev==="asc"?"desc":"asc"); } else { setSort(next); setSortDir("desc"); } };
+  const downloadCsv=()=>{ if(!statementRows.length){ setFeedback("No ledger entries match the current filters to export."); return; } const header=["Date","Reference","Type","Currency","Amount","Direction","USD value"]; const lines=[header.join(",")].concat(statementRows.map(row=>header.map(key=>statementCsvCell((row as any)[key])).join(","))); triggerDownload(`arbitrade-statement-${statementFileStamp()}.csv`, lines.join("\r\n"), "text/csv;charset=utf-8"); setFeedback(`Statement CSV with ${statementRows.length} entries downloaded.`); push("Statement CSV downloaded"); };
+  const downloadJson=()=>{ if(!statementRows.length){ setFeedback("No ledger entries match the current filters to export."); return; } const payload={ account:accountName, generatedAt:generatedAt.toISOString(), period:periodLabel, filters:{ direction, currency, minUsd:threshold||null, search:search||null }, totals:{ creditsUsd:Number(totalCreditsUsd.toFixed(2)), debitsUsd:Number(Math.abs(totalDebitsUsd).toFixed(2)), netUsd:Number(netUsd.toFixed(2)), closingAvailableUsd:Number(availableUsd.toFixed(2)) }, entries:statementRows }; triggerDownload(`arbitrade-statement-${statementFileStamp()}.json`, JSON.stringify(payload,null,2), "application/json"); setFeedback(`Statement JSON with ${statementRows.length} entries downloaded.`); push("Statement JSON downloaded"); };
+  const printStatement=()=>{ setFeedback("Opening the print view — choose “Save as PDF” to keep a copy."); window.setTimeout(()=>window.print(),60); };
+  const copySummary=async()=>{ const text=[accountName,`Statement · ${periodLabel}`,`Generated ${generatedAt.toLocaleString()}`,`Credits: ${moneyUsd(totalCreditsUsd)} (${creditCount})`,`Debits: ${moneyUsd(Math.abs(totalDebitsUsd))} (${debitCount})`,`Net movement: ${netUsd>=0?"+":"−"}${moneyUsd(Math.abs(netUsd))}`,`Closing available: ${moneyUsd(availableUsd)}`].join("\n"); try{ await navigator.clipboard.writeText(text); setFeedback("Statement summary copied to your clipboard."); }catch{ setFeedback("Clipboard access is unavailable in this browser. Use Download or Print instead."); } };
+  return <div className="customer-statement">
+    <div className="customer-statement-print-head" aria-hidden="true"><strong>Arbitrade · WiseBond account statement</strong><span>{accountName} · {periodLabel} · generated {generatedAt.toLocaleString()}</span></div>
+    <section className="customer-statement-hero">
+      <img className="customer-statement-hero-image" src={STATEMENT_HERO_IMAGE} alt="" aria-hidden="true" loading="lazy" />
+      <div className="customer-statement-hero-copy">
+        <span className="eyebrow"><ScrollText size={13}/> Accounting statements</span>
+        <h2>Every movement, reconciled and ready to download.</h2>
+        <p>Search, filter, and export a complete record of your account credits and debits. Statements are generated from the server wallet ledger, so the figures always match your balances.</p>
+        <div className="customer-statement-hero-chips">
+          <span className="customer-statement-chip"><BadgeCheck size={13}/> Ledger-verified</span>
+          <span className="customer-statement-chip"><Calendar size={13}/> {periodLabel}</span>
+          <span className="customer-statement-chip"><Sigma size={13}/> {filtered.length} {filtered.length===1?"entry":"entries"}</span>
+        </div>
+      </div>
+      <div className="customer-statement-hero-glow" aria-hidden="true"/>
+    </section>
+    <section className="customer-statement-kpis" aria-label="Statement totals">
+      <article className="customer-statement-kpi tone-credit"><span className="customer-statement-kpi-icon"><TrendingUp size={16}/></span><small>Total credits</small><strong>{moneyUsd(totalCreditsUsd)}</strong><em>{creditCount} credit {creditCount===1?"entry":"entries"}</em></article>
+      <article className="customer-statement-kpi tone-debit"><span className="customer-statement-kpi-icon"><TrendingDown size={16}/></span><small>Total debits</small><strong>{moneyUsd(Math.abs(totalDebitsUsd))}</strong><em>{debitCount} debit {debitCount===1?"entry":"entries"}</em></article>
+      <article className="customer-statement-kpi tone-net"><span className="customer-statement-kpi-icon"><ArrowDownUp size={16}/></span><small>Net movement</small><strong className={netUsd>=0?"is-positive":"is-negative"}>{netUsd>=0?"+":"−"}{moneyUsd(Math.abs(netUsd))}</strong><em>{periodLabel}</em></article>
+      <article className="customer-statement-kpi tone-balance"><span className="customer-statement-kpi-icon"><WalletCards size={16}/></span><small>Closing available</small><strong>{moneyUsd(availableUsd)}</strong><em>{moneyUsd(lockedUsd)} locked</em></article>
+    </section>
+    <section className="customer-statement-controls settings-card" aria-label="Statement search and filters">
+      <div className="customer-statement-search"><Search size={15} aria-hidden="true"/><input type="search" value={search} onChange={event=>{ setSearch(event.target.value); setVisibleCount(15); }} placeholder="Search by type, currency, reference (LED-…) or amount" aria-label="Search statements"/>{search&&<button type="button" onClick={()=>setSearch("")} aria-label="Clear search"><X size={13}/></button>}</div>
+      <div className="customer-statement-filters">
+        <label className="customer-statement-filter"><span><Calendar size={13}/> Period</span><select value={period} onChange={event=>{ setPeriod(event.target.value as CustomerStatementPeriod); setVisibleCount(15); }}>{customerStatementPeriods.map(option=><option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+        <label className="customer-statement-filter"><span><Filter size={13}/> Currency</span><select value={currency} onChange={event=>{ setCurrency(event.target.value); setVisibleCount(15); }}><option value="all">All currencies</option>{currencyCodes.map(code=><option key={code} value={code}>{code}</option>)}</select></label>
+        <label className="customer-statement-filter"><span><Percent size={13}/> Min USD</span><input type="number" min="0" value={minAmount} onChange={event=>{ setMinAmount(event.target.value); setVisibleCount(15); }} placeholder="0"/></label>
+        <div className="customer-statement-segment" role="group" aria-label="Entry direction">
+          {([["all","All"],["credit","Credits"],["debit","Debits"]] as const).map(([value,label])=><button key={value} type="button" className={direction===value?"is-active":""} aria-pressed={direction===value} onClick={()=>{ setDirection(value); setVisibleCount(15); }}>{label}</button>)}
+        </div>
+        <button type="button" className="secondary-button customer-statement-reset" onClick={resetFilters}><RotateCcw size={13}/> Reset</button>
+      </div>
+      <div className="customer-statement-actions">
+        <button type="button" className="secondary-button" onClick={refresh} disabled={ledger.isFetching}><RefreshCw size={13} className={ledger.isFetching?"customer-statement-spin":""}/>{ledger.isFetching?"Refreshing…":"Refresh"}</button>
+        <button type="button" className="secondary-button" onClick={()=>void copySummary()}><Copy size={13}/> Copy summary</button>
+        <button type="button" className="secondary-button" onClick={downloadJson}><Download size={13}/> JSON</button>
+        <button type="button" className="secondary-button" onClick={downloadCsv}><FileSpreadsheet size={13}/> CSV</button>
+        <button type="button" className="primary-button" onClick={printStatement}><Printer size={13}/> Print / PDF statement</button>
+      </div>
+      {feedback&&<div className="customer-statement-feedback" role="status">{feedback}</div>}
+    </section>
+    <div className="customer-statement-grid">
+      <section className="settings-card customer-statement-recon" aria-label="Statement reconciliation">
+        <div className="customer-statement-section-head"><div><span className="eyebrow">Reconciliation</span><h3>Credits, debits &amp; closing balance</h3></div><Sigma size={16}/></div>
+        <div className="customer-statement-recon-rows">
+          <div><span>Total credits</span><b className="is-positive">+{moneyUsd(totalCreditsUsd)}</b></div>
+          <div><span>Total debits</span><b className="is-negative">−{moneyUsd(Math.abs(totalDebitsUsd))}</b></div>
+          <div className="is-total"><span>Net movement</span><b className={netUsd>=0?"is-positive":"is-negative"}>{netUsd>=0?"+":"−"}{moneyUsd(Math.abs(netUsd))}</b></div>
+          <div><span>Current available balance</span><b>{moneyUsd(availableUsd)}</b></div>
+          <div><span>Locked / in active use</span><b>{moneyUsd(lockedUsd)}</b></div>
+          <div className="is-total"><span>Total held on account</span><b>{moneyUsd(totalHeldUsd)}</b></div>
+        </div>
+        <div className="customer-statement-split">
+          <div className="customer-statement-split-head"><span>Credit / debit mix</span><strong>{creditShare}% credit</strong></div>
+          <div className="customer-statement-split-bar"><i style={{width:`${creditShare}%`}}/></div>
+          <small>{creditCount} credits · {debitCount} debits in {periodLabel.toLowerCase()}</small>
+        </div>
+      </section>
+      <section className="settings-card customer-statement-chart-card" aria-label="Monthly net movement">
+        <div className="customer-statement-section-head"><div><span className="eyebrow">Trend</span><h3>Monthly net movement</h3></div><BarChart3 size={16}/></div>
+        {monthly.length===0?<div className="customer-statement-empty"><PieChart size={18}/><span>No activity in this period yet.</span></div>:<div className="customer-statement-chart" role="img" aria-label="Monthly net movement chart">{monthly.map(([key,value])=><div className="customer-statement-chart-col" key={key}><div className="customer-statement-chart-track"><div className={`customer-statement-chart-bar ${value>=0?"is-credit":"is-debit"}`} style={{height:`${Math.max(6,Math.round(Math.abs(value)/maxAbsMonthly*100))}%`}}><span>{moneyUsd(value)}</span></div></div><small>{monthLabel(key)}</small></div>)}</div>}
+      </section>
+    </div>
+    <section className="settings-card customer-statement-ledger" aria-label="Statement ledger">
+      <div className="customer-statement-section-head">
+        <div><span className="eyebrow">Ledger detail</span><h3>{filtered.length} {filtered.length===1?"entry":"entries"} · {periodLabel}</h3></div>
+        <div className="customer-statement-sort" role="group" aria-label="Sort ledger">
+          <button type="button" className={sort==="date"?"is-active":""} aria-pressed={sort==="date"} onClick={()=>toggleSort("date")}>Date <ArrowUpDown size={12}/></button>
+          <button type="button" className={sort==="amount"?"is-active":""} aria-pressed={sort==="amount"} onClick={()=>toggleSort("amount")}>Amount <ArrowUpDown size={12}/></button>
+        </div>
+      </div>
+      {ledger.isLoading?<div className="customer-statement-empty" role="status"><WalletCards size={18}/><span>Loading your statement…</span></div>:ledger.isError?<div className="customer-statement-empty is-error" role="alert"><ShieldAlert size={18}/><span>We could not load your statement right now. <button type="button" onClick={refresh}>Retry</button></span></div>:filtered.length===0?<div className="customer-statement-empty"><FileSearch size={18}/><span>No entries match your search and filters. Try widening the period or clearing filters.</span></div>:<>
+        <div className="customer-statement-table" role="table" aria-label="Statement entries">
+          <div className="customer-statement-table-head" role="row"><span role="columnheader">Date</span><span role="columnheader">Type</span><span role="columnheader">Reference</span><span role="columnheader">Direction</span><span role="columnheader" className="is-right">Amount</span></div>
+          {shown.map(entry=>{ const credit=entry.amountMinor>=0; return <div className="customer-statement-table-row" role="row" key={entry.id}>
+            <span role="cell" className="customer-statement-date"><strong>{new Date(entry.createdAt).toLocaleDateString()}</strong><small>{new Date(entry.createdAt).toLocaleTimeString()}</small></span>
+            <span role="cell" className="customer-statement-type"><i className={`customer-statement-dot ${credit?"is-credit":"is-debit"}`}/>{labelOf(entry.entryType)}</span>
+            <span role="cell" className="customer-statement-ref"><Hash size={12}/>LED-{entry.id}</span>
+            <span role="cell">{credit?<span className="customer-statement-pill is-credit"><TrendingUp size={12}/>Credit</span>:<span className="customer-statement-pill is-debit"><TrendingDown size={12}/>Debit</span>}</span>
+            <span role="cell" className="is-right customer-statement-amount"><b className={credit?"is-positive":"is-negative"}>{credit?"+":"−"}{formatNative(entry.amountMinor,entry.currency)}</b><small>{moneyUsd(Math.abs(toUsd(entry.amountMinor,entry.currency)))}</small></span>
+          </div>; })}
+        </div>
+        {visibleCount<sorted.length&&<button type="button" className="secondary-button customer-statement-more" onClick={()=>setVisibleCount(count=>count+15)}>Show {Math.min(15,sorted.length-visibleCount)} more <ChevronDown size={14}/></button>}
+      </>}
+    </section>
+    <div className="customer-statement-foot"><ShieldCheck size={14}/><span>Statement figures are read directly from the server wallet ledger and every amount reconciles to your balances. Download or print a copy for your records at any time.</span></div>
+  </div>;
+}
 function CustomerPreferencePanel({itemId,push}:{itemId:string;push:(message:string)=>void}) {
   const item = customerPreferenceItems.find(x => x.id === itemId) || customerPreferenceItems[0];
   const Icon = item.icon;
   const isClosure=item.id==="close-account";
   const isPersonal=item.id==="personal-details";
+  const isStatements=item.id==="statements";
   const action = item.id === "close-account" ? "Review closure requirements" : item.id === "api-access" ? "Review API permissions" : item.id === "statements" ? "Open statements centre" : "Save preference";
   return <div className="arb-page portal-page settings-page customer-preference-page">
-    <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":isPersonal?"Keep your first name, last name, gender, country, state, address, and telephone up to date, and save changes whenever you need.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":isPersonal?"Editable profile":"Account preference"}</span></div>
-    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:<>
+    <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":isPersonal?"Keep your first name, last name, gender, country, state, address, and telephone up to date, and save changes whenever you need.":isStatements?"Search, filter, reconcile, and download a complete accounting statement of your credits, debits, and closing balances.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":isPersonal?"Editable profile":isStatements?"Ledger-backed statements":"Account preference"}</span></div>
+    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:isStatements?<CustomerStatementsCentre push={push}/>:<>
       <div className="preference-hero"><div className="preference-hero-icon"><Icon size={22}/></div><div><span className="eyebrow">WiseBond account controls</span><h2>{item.label}</h2><p>These controls are designed around clear ownership, secure access, and an auditable customer experience.</p></div></div>
       <div className="preference-card-grid"><div className="settings-card preference-card"><div className="settings-card-icon"><Icon size={18}/></div><h2>{item.label}</h2><p>{item.description}</p><button className="primary-button" onClick={()=>push(item.label + " settings opened")}>{action} <ArrowUpRight size={14}/></button></div><div className="settings-card preference-card preference-card-secondary"><div className="settings-card-icon"><ShieldCheck size={18}/></div><h2>Protected workspace</h2><p>Changes remain subject to account status, administrator policy, and server-side security checks. No setting on this page moves funds by itself.</p><span className="preference-status"><CheckCircle2 size={14}/> Ready for secure configuration</span></div></div>
     </>}

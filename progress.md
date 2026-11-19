@@ -1,3 +1,29 @@
+## 2026-11-20 — Statements centre (Account Preferences → Statements)
+
+Branch `main`. Owner request: build a full accounting statement page — very advanced, with
+customer search, downloads, and at least four features — using beautiful icons and imagery,
+and push to the correct repository (`stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`).
+
+- `client/src/App.tsx`: replaced the statements stub with `CustomerStatementsCentre`, wired into
+  `CustomerPreferencePanel` via a new `isStatements` branch. Data is read from the server wallet
+  ledger and balances (`customer.walletLedger`, `customer.balances`) plus the customer name from
+  `customer.personalDetails`, so every figure reconciles to real balances. Features (well over the
+  four required): (1) free-text search across type, currency, reference (LED-…), amount and date;
+  (2) filters for period (7/30/90 days, year-to-date, all time), currency, min USD and direction
+  (All / Credits / Debits); (3) four KPI cards (total credits, total debits, net movement, closing
+  available); (4) a reconciliation panel with credits/debits/net/available/locked/total held and a
+  credit-vs-debit mix bar; (5) a monthly net-movement bar chart; (6) a sortable, paginated ledger
+  table (sort by date or amount, “show more”); (7) downloads — CSV, JSON, Print/PDF and Copy
+  summary (with clipboard fallback). Added a hero illustration (text_to_image) with an animated
+  glow and status chips, and a diverse icon set from `lucide-react`.
+- `client/src/customer-reference.css`: added the `/* ---- Customer statements centre ---- */`
+  block — layered hero with cover image and aurora glow, KPI cards with tone accents, search and
+  filter controls, action toolbar, reconciliation and chart cards, ledger table with credit/debit
+  pills, plus responsive breakpoints (1180/900/620), reduced-motion and print styles.
+- Verified: `pnpm check` (`tsc --noEmit`), `pnpm test` (196 files / 1,545 tests passed, 7 files /
+  36 skipped), and `pnpm build`. `createdAt` from `walletLedger` is a `Date`, so the statement
+  entry type accepts `string | Date`.
+
 ## 2026-11-20 — Personal Details profile dashboard
 
 Branch `main`. Owner request: make the Personal Details page more advanced and provide more
