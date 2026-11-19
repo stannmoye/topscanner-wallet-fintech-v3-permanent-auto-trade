@@ -2047,13 +2047,18 @@
   padding: 0 clamp(10px, 2.2vw, 24px) clamp(8px, 1.4vw, 12px);
 }
 
-.customer-portal .customer-daily-offer-record {
+/* Shared multi-colour palette for the dashboard band and the header strip. */
+.customer-portal .customer-daily-offer-record,
+.customer-portal .customer-daily-offer-record--header {
   /* Distinct accent per section so each tile and the meter use several colours. */
   --cdor-teal: var(--trade-accent, #34e0c0);
   --cdor-blue: var(--trade-info, #4aa8ff);
   --cdor-gold: var(--trade-warning, #f0b95a);
   --cdor-violet: #b58cff;
   --cdor-mint: var(--trade-success, #55d6a4);
+}
+
+.customer-portal .customer-daily-offer-record {
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -2251,6 +2256,65 @@
   .customer-portal .customer-daily-offer-record__tile { border: 1px solid CanvasText; }
   .customer-portal .customer-daily-offer-record__aurora,
   .customer-portal .customer-daily-offer-record::after { display: none; }
+}
+
+/* Header variant: a compact always-on strip that lives in the fixed top bar next to
+   the console control. It reuses the band's palette and aurora, but is sized to the
+   header so the bar height never grows; the roomy dashboard band is hidden while it
+   is on screen (and takes over again when the bar gets too narrow to hold it). */
+.customer-portal .customer-daily-offer-record--header {
+  display: none;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 7px;
+  height: 42px;
+  padding: 0 9px;
+  margin: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--cdor-teal) 30%, var(--trade-border));
+  border-radius: 11px;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--trade-raised) 90%, transparent), var(--trade-surface));
+  box-shadow: var(--trade-shadow), 0 0 16px color-mix(in srgb, var(--cdor-teal) 12%, transparent);
+}
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__aurora {
+  inset: -90% -6%;
+  opacity: .5;
+  filter: blur(16px) saturate(1.2);
+}
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__grid {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  z-index: 1;
+}
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__tile {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "icon label" "icon value";
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 0;
+  padding: 3px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tile-accent) 14%, transparent);
+  box-shadow: none;
+  animation: none;
+}
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+}
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__icon svg { width: 12px; height: 12px; }
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__label { font-size: 7px; line-height: 1; letter-spacing: .08em; }
+.customer-portal .customer-daily-offer-record--header .customer-daily-offer-record__tile strong { font-size: 11px; line-height: 1.05; white-space: nowrap; }
+
+@media (min-width: 1200px) {
+  .customer-portal .portal-header .customer-daily-offer-record--header { display: flex; }
+  .customer-portal .portal-header .portal-header-context { display: none !important; }
+  .customer-portal .customer-daily-offer-record-band { display: none !important; }
 }
 
 /* All-offers-used login notice. */
