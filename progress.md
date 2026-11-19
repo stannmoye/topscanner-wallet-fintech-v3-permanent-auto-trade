@@ -1,3 +1,35 @@
+## 2026-11-20 — Fix: trade-record band hid the account menu; band reduced ~2×
+
+Branch `main`. Owner report: after the "today trade record" container was added, the top
+header/account menu disappeared — the container appeared to block the menu — and the record
+container was too big.
+
+Root cause: the new `.customer-daily-offer-record-band` sits in the same in-flow top-band stack
+as the wallet/welcome/workspace bands (direct children of `.customer-portal`, above `.portal-body`).
+At `min-width: 901px` the account rail is a fixed 194px sidebar (`z-index:50`) and the bands must
+clear it exactly like `.portal-main` does; the wallet, welcome and workspace bands were offset in a
+`@media (min-width: 901px)` rule, but the record band was omitted. With `width:100%` and
+`z-index:60` (higher than the rail) it painted full width straight across the top of the rail and
+covered the left account menu. Below 901px the rail is an off-canvas drawer
+(`customer-theme-overrides.css` hides it behind `translateX(-105%)`), so the bands must stay full
+width there.
+
+Changes:
+- `client/src/customer-reference.css`: added `.customer-portal .customer-daily-offer-record-band`
+  to the `@media (min-width: 901px)` band-offset rule so it receives the same
+  `margin-left: calc(194px + max(0px, (100% - 194px - 1100px) / 2))`, `max-width:1100px`,
+  `margin-right:auto` treatment as its sibling bands; refreshed the rule comment.
+- `client/src/trading-experience.css`: rewrote the `.customer-daily-offer-record*` block to be
+  roughly half the previous size — band padding `0 24px 8px`; card padding `16px 18px`→`9px 11px`,
+  gap `12px`→`6px`, radius `18px`→`12px`; tile padding `12px 13px`→`6px 8px`; value font
+  `20px`→`12px`, label/sub text `10px`→`8px`; meter `6px`→`3px`; and replaced the old 460px
+  single-column breakpoint with a 420px rule that keeps a 2-column grid and hides the head note.
+  The band still collapses to a 2-column grid at ≤900px so it remains compact on phones.
+
+Verified: `pnpm check`; `pnpm test` (196 files / 1545 tests passed, 7 files / 36 tests skipped);
+`pnpm build`; confirmed both the offset rule and the compact block are present in the emitted
+`dist/public/assets` CSS.
+
 ## 2026-11-20 — Clear Trade: per-customer or all-customer scope
 
 Branch `main`. Follow-up to the Clear Trade button: because the platform will host many

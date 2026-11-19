@@ -2036,35 +2036,36 @@
 }
 @media (prefers-reduced-motion:reduce) { .customer-portal .reference-popup-provider-card,.customer-portal .reference-popup-provider-flag,.customer-portal .reference-popup-route > div:nth-child(2) svg { animation:none!important; } }
 
-/* Customer daily Trade record band (rendered beside the welcome panel). */
-.customer-portal .customer-daily-offer-record-band { position: relative; z-index: 60; width: 100%; padding: 0 24px 12px; }
+/* Customer daily Trade record band (rendered beside the welcome panel).
+   Kept deliberately compact so it never crowds the workspace header. */
+.customer-portal .customer-daily-offer-record-band { position: relative; z-index: 60; width: 100%; box-sizing: border-box; padding: 0 24px 8px; }
 .customer-portal .customer-daily-offer-record {
   position: relative;
   overflow: hidden;
   display: grid;
-  gap: 12px;
-  padding: 16px 18px;
+  gap: 6px;
+  padding: 9px 11px;
   border: 1px solid color-mix(in srgb, var(--trade-accent) 22%, var(--trade-border));
-  border-radius: 18px;
+  border-radius: 12px;
   background:
-    radial-gradient(520px 200px at 8% 0%, color-mix(in srgb, var(--trade-accent) 12%, transparent), transparent 68%),
+    radial-gradient(360px 130px at 8% 0%, color-mix(in srgb, var(--trade-accent) 12%, transparent), transparent 68%),
     linear-gradient(135deg, color-mix(in srgb, var(--trade-raised) 94%, transparent), var(--trade-surface));
   box-shadow: var(--trade-shadow);
 }
-.customer-portal .customer-daily-offer-record__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.customer-portal .customer-daily-offer-record__head .eyebrow { display: inline-flex; align-items: center; gap: 6px; }
-.customer-portal .customer-daily-offer-record__head small { color: var(--arb-color-text-muted, #91a6b6); font-size: 11px; }
-.customer-portal .customer-daily-offer-record__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.customer-portal .customer-daily-offer-record__tile { display: grid; gap: 3px; padding: 12px 13px; border: 1px solid color-mix(in srgb, var(--trade-border) 80%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--trade-canvas) 34%, transparent); }
-.customer-portal .customer-daily-offer-record__tile span { color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
-.customer-portal .customer-daily-offer-record__tile strong { color: var(--arb-color-text, #f3f8fb); font-size: 20px; font-weight: 850; line-height: 1.1; }
-.customer-portal .customer-daily-offer-record__tile small { color: var(--arb-color-text-muted, #91a6b6); font-size: 10px; }
+.customer-portal .customer-daily-offer-record__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.customer-portal .customer-daily-offer-record__head .eyebrow { display: inline-flex; align-items: center; gap: 5px; font-size: 8px; }
+.customer-portal .customer-daily-offer-record__head small { color: var(--arb-color-text-muted, #91a6b6); font-size: 9px; }
+.customer-portal .customer-daily-offer-record__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.customer-portal .customer-daily-offer-record__tile { display: grid; gap: 1px; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--trade-border) 80%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--trade-canvas) 34%, transparent); }
+.customer-portal .customer-daily-offer-record__tile span { color: var(--arb-color-text-muted, #91a6b6); font-size: 8px; letter-spacing: .05em; text-transform: uppercase; }
+.customer-portal .customer-daily-offer-record__tile strong { color: var(--arb-color-text, #f3f8fb); font-size: 12px; font-weight: 850; line-height: 1.1; }
+.customer-portal .customer-daily-offer-record__tile small { color: var(--arb-color-text-muted, #91a6b6); font-size: 8px; }
 .customer-portal .customer-daily-offer-record__money { color: var(--trade-accent) !important; }
-.customer-portal .customer-daily-offer-record__meter { height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--trade-border) 70%, transparent); }
+.customer-portal .customer-daily-offer-record__meter { height: 3px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--trade-border) 70%, transparent); }
 .customer-portal .customer-daily-offer-record__meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--trade-accent), color-mix(in srgb, var(--trade-info) 60%, var(--trade-accent))); transition: width .5s ease; }
 @media (max-width: 900px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .customer-portal .customer-daily-offer-record-band { padding: 0 8px 10px; } }
-@media (max-width: 460px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .customer-portal .customer-daily-offer-record-band { padding: 0 8px 8px; } }
+@media (max-width: 420px) { .customer-portal .customer-daily-offer-record__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; } .customer-portal .customer-daily-offer-record__head small { display: none; } }
 
 /* All-offers-used login notice. */
 .customer-portal .customer-daily-limit-alert { position: fixed; inset: 0; z-index: 4000; display: grid; place-items: center; padding: 20px; }

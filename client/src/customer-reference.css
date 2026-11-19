@@ -521,14 +521,15 @@
   white-space: nowrap;
 }
 
-/* These three bands are the page header of the main column, so wherever the account rail is a
+/* These bands are the page header of the main column, so wherever the account rail is a
    fixed sidebar they must clear it exactly like .portal-main does (194px offset). Otherwise
    they float across the top of the rail and hide the left menu behind their higher z-index.
    Below 901px the rail is an off-canvas drawer, so the bands stay full width there. */
 @media (min-width: 901px) {
   .customer-portal .customer-top-wallet-band,
   .customer-portal .customer-top-workspace-menu,
-  .customer-portal .customer-top-welcome-band {
+  .customer-portal .customer-top-welcome-band,
+  .customer-portal .customer-daily-offer-record-band {
     width: auto !important;
     max-width: 1100px !important;
     margin-left: calc(194px + max(0px, (100% - 194px - 1100px) / 2)) !important;
