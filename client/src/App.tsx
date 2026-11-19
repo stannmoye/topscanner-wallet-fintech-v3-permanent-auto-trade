@@ -21,6 +21,7 @@ import { createServerClockAnchor, remainingOpportunityMilliseconds, serverNowMil
 import { CustomerOpportunityHistoryPanel, hasPersistedCustomerOpportunityDismissal } from "./customer-opportunity-history";
 import { runPopupDeliveryAcknowledgement } from "./popup-delivery-acknowledgement";
 import { waitForPopupVisibility } from "./popup-visibility-confirmation";
+import { resolveWalletStatusAmounts, walletStatusesNeedAlternation } from "./customer-wallet-status";
 import { CustomerSlideMenu } from "@/components/CustomerSlideMenu";
 import { CustomerTradingEligibility } from "@/components/CustomerTradingEligibility";
 import { CustomerExchangeScanner } from "@/components/CustomerExchangeScanner";
@@ -194,13 +195,22 @@ function CustomerBalanceRibbon({push}:{push:(message:string)=>void}) {
   const q=trpc.customer.balances.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(CUSTOMER_BALANCE_RIBBON_POLL_INTERVAL_MS,query.state.fetchFailureCount),refetchOnWindowFocus:true});
   const [expanded,setExpanded]=useState<string|null>(null);
   const [walletDeltas,setWalletDeltas]=useState<Record<string,number>>({});
-  // When a wallet carries both trade-locked capital and a payout still under review the
-  // single status pill alternates between the two, so neither state is hidden.
+  const [popupTradeCapital,setPopupTradeCapital]=useState<{currency:string;amountMinor:number}|null>(null);
   const [flipWithdrawal,setFlipWithdrawal]=useState(false);
   const previousAvailable=useRef<Record<string,number>|null>(null);
   const previousLocked=useRef<Record<string,number>|null>(null);
   const rows=q.data?.balances||[];
   const currencies=q.data?.currencies||[];
+  useEffect(()=>{
+    const onPopupState=(event:Event)=>{
+      const detail=(event as CustomEvent<{visible?:boolean;trade?:{currency?:unknown;amountMinor?:unknown}|null}>).detail;
+      const currency=String(detail?.trade?.currency||"").trim().toUpperCase();
+      const amountMinor=Number(detail?.trade?.amountMinor);
+      setPopupTradeCapital(detail?.visible&&currency&&Number.isSafeInteger(amountMinor)&&amountMinor>0?{currency,amountMinor}:null);
+    };
+    window.addEventListener("arbitrade:customer-popup-state",onPopupState);
+    return()=>window.removeEventListener("arbitrade:customer-popup-state",onPopupState);
+  },[]);
   useEffect(()=>{
     if(!rows.length) return;
     const nextAvailable=Object.fromEntries(rows.map((row:any)=>[row.currency,Number(row.availableMinor||0)]));
@@ -231,17 +241,60 @@ function CustomerBalanceRibbon({push}:{push:(message:string)=>void}) {
     previousAvailable.current=nextAvailable;
     previousLocked.current=nextLocked;
   },[rows, currencies, push]);
-  // Only run the alternating timer while at least one wallet actually holds both a trade
-  // lock and a pending payout; otherwise the pill keeps its single static status.
   useEffect(()=>{
-    const hasDualStatus=rows.some((row:any)=>{const pending=Number(row.pendingWithdrawalMinor||0);return pending>0&&Math.max(0,Number(row.lockedMinor||0)-pending)>0;});
+    const hasDualStatus=rows.some((row:any)=>walletStatusesNeedAlternation(resolveWalletStatusAmounts(row,popupTradeCapital)));
     if(!hasDualStatus){setFlipWithdrawal(false);return;}
     const id=window.setInterval(()=>setFlipWithdrawal((value)=>!value),3200);
     return ()=>window.clearInterval(id);
-  },[rows]);
+  },[rows,popupTradeCapital]);
   const meta=(code:string)=>currencies.find((x:any)=>x.code===code);
   const format=(minor:number,code:string)=>{const c=meta(code);const scale=c?.scale??2;return `${c?.symbol||code}${(minor/Math.pow(10,scale)).toLocaleString(undefined,{minimumFractionDigits:Math.min(scale,2),maximumFractionDigits:scale})}`};
-  return <section className="customer-balance-ribbon"><div className="customer-balance-cards">{q.isLoading?[1,2,3,4,5].map(x=><div className="customer-balance-card loading" key={x}>Loading wallet…</div>):rows.map(row=>{const c=meta(row.currency);const open=expanded===row.currency;return <div className={`customer-balance-card ${open?'open':''}${walletDeltas[row.currency]?(walletDeltas[row.currency]<0?' wallet-delta-flash-debit':' wallet-delta-flash-credit'):''}`} key={row.currency} data-currency={row.currency}><button className="customer-balance-trigger" onClick={()=>setExpanded(open?null:row.currency)}><span className="customer-balance-icon"><CurrencyMark code={row.currency}/></span><span className="customer-balance-name"><strong>{c?.name||row.currency}</strong><small>{row.currency}</small></span><b className="customer-balance-value">{format(row.availableMinor,row.currency)}</b><ChevronDown size={15} className={open?'rotated':''}/>{(()=>{const pendingWithdrawal=Number(row.pendingWithdrawalMinor||0);const tradeLocked=Math.max(0,Number(row.lockedMinor||0)-pendingWithdrawal);const delta=walletDeltas[row.currency];if(delta===undefined&&tradeLocked<=0&&pendingWithdrawal<=0)return null;let tag:any;if(delta!==undefined){tag=<span className={`customer-balance-delta ${delta<0?'is-debit money-debit':'is-credit money-credit'}`} aria-hidden="true">{delta<0?'−':'+'}{format(Math.abs(delta),row.currency)}</span>;}else if(tradeLocked>0&&pendingWithdrawal>0){tag=flipWithdrawal?<span key="pending" className="wallet-status-tag is-processing"><Clock size={9}/>Processing {format(pendingWithdrawal,row.currency)}</span>:<span key="locked" className="wallet-status-tag is-locked"><Lock size={9}/>Locked {format(tradeLocked,row.currency)}</span>;}else if(pendingWithdrawal>0){tag=<span className="wallet-status-tag is-processing"><Clock size={9}/>Processing {format(pendingWithdrawal,row.currency)}</span>;}else{tag=<span className="wallet-status-tag is-locked"><Lock size={9}/>Locked {format(tradeLocked,row.currency)}</span>;}return <span className="customer-balance-badge">{tag}</span>;})()}</button>{open&&<div className="customer-balance-actions"><button onClick={()=>push(`Deposit ${c?.name||row.currency}: provider flow opened`)}><ArrowDownToLine size={14}/><span><strong>Deposit</strong><small>Add funds to {row.currency}</small></span></button><button onClick={()=>requestWalletWithdrawal(row.currency)}><ArrowUpRight size={14}/><span><strong>Withdraw</strong><small>Request withdrawal from {row.currency}</small></span></button></div>}</div>})}</div><p className="customer-balance-note"><ShieldCheck size={13}/> Balances are live database-backed practice ledger values. Deposit and withdrawal requests require configured providers and approval.</p></section>;
+  const balanceBadge=(row:any)=>{
+    const {pendingWithdrawalMinor,tradeLockedMinor}=resolveWalletStatusAmounts(row,popupTradeCapital);
+    const delta=walletDeltas[row.currency];
+    if(delta===undefined&&tradeLockedMinor<=0&&pendingWithdrawalMinor<=0)return null;
+    let tag:any;
+    if(walletStatusesNeedAlternation({pendingWithdrawalMinor,tradeLockedMinor})){
+      tag=flipWithdrawal
+        ?<span key="pending" className="wallet-status-tag is-processing"><Clock size={9}/>Processing {format(pendingWithdrawalMinor,row.currency)}</span>
+        :<span key="locked" className="wallet-status-tag is-locked"><Lock size={9}/>Locked {format(tradeLockedMinor,row.currency)}</span>;
+    }else if(delta!==undefined){
+      tag=<span className={`customer-balance-delta ${delta<0?'is-debit money-debit':'is-credit money-credit'}`} aria-hidden="true">{delta<0?'−':'+'}{format(Math.abs(delta),row.currency)}</span>;
+    }else if(pendingWithdrawalMinor>0){
+      tag=<span className="wallet-status-tag is-processing"><Clock size={9}/>Processing {format(pendingWithdrawalMinor,row.currency)}</span>;
+    }else{
+      tag=<span className="wallet-status-tag is-locked"><Lock size={9}/>Locked {format(tradeLockedMinor,row.currency)}</span>;
+    }
+    return <span className="customer-balance-badge">{tag}</span>;
+  };
+  return (
+    <section className="customer-balance-ribbon">
+      <div className="customer-balance-cards">
+        {q.isLoading
+          ?[1,2,3,4,5].map(x=><div className="customer-balance-card loading" key={x}>Loading wallet…</div>)
+          :rows.map((row:any)=>{
+            const c=meta(row.currency);
+            const open=expanded===row.currency;
+            return (
+              <div className={`customer-balance-card ${open?'open':''}${walletDeltas[row.currency]?(walletDeltas[row.currency]<0?' wallet-delta-flash-debit':' wallet-delta-flash-credit'):''}`} key={row.currency} data-currency={row.currency}>
+                <button className="customer-balance-trigger" onClick={()=>setExpanded(open?null:row.currency)}>
+                  <span className="customer-balance-icon"><CurrencyMark code={row.currency}/></span>
+                  <span className="customer-balance-name"><strong>{c?.name||row.currency}</strong><small>{row.currency}</small></span>
+                  <b className="customer-balance-value">{format(row.availableMinor,row.currency)}</b>
+                  <ChevronDown size={15} className={open?'rotated':''}/>
+                  {balanceBadge(row)}
+                </button>
+                {open&&<div className="customer-balance-actions">
+                  <button onClick={()=>push(`Deposit ${c?.name||row.currency}: provider flow opened`)}><ArrowDownToLine size={14}/><span><strong>Deposit</strong><small>Add funds to {row.currency}</small></span></button>
+                  <button onClick={()=>requestWalletWithdrawal(row.currency)}><ArrowUpRight size={14}/><span><strong>Withdraw</strong><small>Request withdrawal from {row.currency}</small></span></button>
+                </div>}
+              </div>
+            );
+          })}
+      </div>
+      <p className="customer-balance-note"><ShieldCheck size={13}/> Balances are live database-backed practice ledger values. Deposit and withdrawal requests require configured providers and approval.</p>
+    </section>
+  );
 }
 
 function UXConnectionStatus(){ const [online,setOnline]=useState(typeof navigator === "undefined" ? true : navigator.onLine); const [restored,setRestored]=useState(false); useEffect(()=>{const on=()=>{setOnline(true);setRestored(true);window.setTimeout(()=>setRestored(false),2400)};const off=()=>setOnline(false);window.addEventListener("online",on);window.addEventListener("offline",off);return()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off)}},[]); return <div className={`ux-connection-status ${online?"online":"offline"}`} role="status" aria-live="polite"><span className="ux-status-led"/>{online?(restored?"Connection restored":"Secure session"):("Connection interrupted · reconnecting")}</div>; }
@@ -686,7 +739,12 @@ function CustomerOpportunityAlert({sound,soundSettings,onOpen,delivery,opportuni
       seen.current.add(offerId);
       popupRef.current=offer;
       setPopup(offer);
-      window.dispatchEvent(new CustomEvent("arbitrade:customer-popup-state",{detail:{visible:true}}));
+      const tradeAmountMinor=Number(offer.minimumMinor);
+      const tradeCurrency=String(offer.currency||"").trim().toUpperCase();
+      const tradeCapital=Boolean(offer.automaticTrade||offer.tradeId)&&tradeCurrency&&Number.isSafeInteger(tradeAmountMinor)&&tradeAmountMinor>0
+        ?{currency:tradeCurrency,amountMinor:tradeAmountMinor}
+        :null;
+      window.dispatchEvent(new CustomEvent("arbitrade:customer-popup-state",{detail:{visible:true,trade:tradeCapital}}));
       setMinimized(false);
       setDetailsExpanded(false);
       if(offer.deliveryEventId){

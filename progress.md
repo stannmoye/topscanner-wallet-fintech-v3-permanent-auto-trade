@@ -2367,3 +2367,13 @@ Owner feedback: the single red status pill on the customer balance ribbon showed
 - `client/src/customer-reference.css`: `.wallet-status-tag.is-processing` shares the red pill styling of `.is-locked`, a `wallet-status-swap` entrance animation replays on each flip, and both tags are excluded under `prefers-reduced-motion`.
 
 Verification: `pnpm check` clean; `pnpm test` 1542 passed / 31 skipped.
+
+### Correction — use the active popup trade amount in the wallet badge
+
+Owner clarified that the popup's required capital (for example, `$100`) must alternate with a pending withdrawal amount (for example, `$400`) on the matching wallet card. The popup trade amount may not be represented by `lockedMinor`, so subtracting pending payouts from that aggregate alone cannot display it.
+
+- `CustomerOpportunityAlert` now includes the allocated popup trade's currency and `minimumMinor` in the existing popup-state event. Informational or insufficient-balance offers do not publish trade capital.
+- `CustomerBalanceRibbon` listens for the active trade amount and uses it on the matching currency card, alternating it with `pendingWithdrawalMinor` every 3.2 seconds. The two statuses take priority over the transient balance-delta badge while both amounts are present. Without an active popup, the ledger-derived trade lock remains the fallback.
+- Added `client/src/customer-wallet-status.ts` and a focused regression test for concurrent `$400` pending withdrawal and `$100` popup trade, including currency matching and the ledger fallback.
+
+Verification: `pnpm check` clean; `pnpm test` 1544 passed / 31 skipped (196 test files passed / 6 skipped); `pnpm build` clean (existing large-chunk warning only). No financial ledger behavior changed. Hosted verification and deployment remain outstanding.
