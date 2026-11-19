@@ -86,7 +86,7 @@ import {
   CircleHelp, Database, Gauge, Globe2, Gift, Headphones, Layers3,
   Landmark, Lock, Menu, Pause, Plus, RefreshCw, Search, Settings2, ShieldCheck,
   Sparkles, TrendingUp, ToggleLeft, ToggleRight, Unlock, Users, WalletCards,
-  X, Zap, Check, KeyRound, FileText, PlugZap, BarChart3, Bot, Building2, SlidersHorizontal, Mail, UserRound, Smartphone, Eye, EyeOff, CheckCircle2, LogIn, Play, Server, Code2, UserRoundX
+  X, Zap, Check, KeyRound, FileText, PlugZap, BarChart3, Bot, Building2, SlidersHorizontal, Mail, UserRound, Smartphone, Eye, EyeOff, CheckCircle2, LogIn, Play, Server, Code2, UserRoundX, Copy, Download, RotateCcw
 } from "lucide-react";
 
 function CustomerBotBadge({compact=false}:{compact?:boolean}) { return <span className={`customer-bot-badge${compact?" compact":""}`} role="img" aria-label="BOT"><Bot size={10} aria-hidden="true"/><span aria-hidden="true">BOT</span></span>; }
@@ -534,6 +534,7 @@ function CustomerPersonalDetailsContent({push}:{push:(message:string)=>void}) {
   const update = (key:keyof typeof customerPersonalDefaults) => (event:any) => setForm(prev => ({ ...prev, [key]: event.target.value }));
   const startEdit = () => { setFeedback(""); setEditing(true); };
   const cancel = () => { seedFrom(details.data); setEditing(false); setFeedback(""); };
+  const restoreSaved = () => { seedFrom(details.data); setFeedback("Unsaved edits restored to your saved details."); };
   const submit = (event:any) => {
     event.preventDefault();
     setFeedback("");
@@ -542,31 +543,83 @@ function CustomerPersonalDetailsContent({push}:{push:(message:string)=>void}) {
       gender: form.gender ? (form.gender as (typeof customerGenderOptions)[number]) : undefined,
     });
   };
+  const changedCount = customerPersonalFields.filter(field => form[field.key].trim() !== String(details.data?.[field.key] || "").trim()).length;
+  const completedCount = customerPersonalFields.filter(field => form[field.key].trim()).length;
+  const completion = Math.round((completedCount / customerPersonalFields.length) * 100);
+  const displayName = [form.firstName, form.lastName].filter(Boolean).join(" ").trim() || "Your profile";
+  const initials = `${form.firstName.trim().charAt(0)}${form.lastName.trim().charAt(0)}`.toUpperCase() || "WB";
+  const refresh = () => { setFeedback(""); void details.refetch(); };
+  const copySummary = async () => {
+    const summary = customerPersonalFields.map(field => `${field.label}: ${form[field.key] || "Not provided"}`).join("\n");
+    try {
+      await navigator.clipboard.writeText(summary);
+      setFeedback("Profile summary copied to your clipboard.");
+    } catch {
+      setFeedback("Clipboard access is unavailable in this browser. You can still download your profile.");
+    }
+  };
+  const downloadProfile = () => {
+    const profile = Object.fromEntries(customerPersonalFields.map(field => [field.key, form[field.key]]));
+    const blob = new Blob([JSON.stringify({ profile, exportedAt: new Date().toISOString() }, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "arbitrade-personal-details.json";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setFeedback("Your profile download is ready.");
+  };
   return <form className="customer-personal-panel" onSubmit={submit}>
-    <div className="preference-hero"><div className="preference-hero-icon"><UserRound size={22}/></div><div><span className="eyebrow">Personal profile</span><h2>Personal details</h2><p>Keep your name, gender, location, address, and contact number current. Edit and save them at any time — changes apply to your account immediately.</p></div></div>
-    <div className="settings-card customer-personal-card">
-      <div className="customer-personal-card-head"><div><span className="eyebrow">Account holder</span><h2>Your information</h2></div><span className={`customer-personal-state${editing?" is-editing":""}`} role="status"><span className="pulse"/> {editing?"Editing":"Saved"}</span></div>
+    <div className="customer-personal-hero">
+      <div className="customer-personal-hero-mark"><UserRound size={20}/><span>SECURE PROFILE</span></div>
+      <div className="customer-personal-hero-copy"><span className="eyebrow">Account identity</span><h2>Make your profile work for you.</h2><p>Keep your account information accurate and in your control. Your updates are saved securely to your customer profile.</p></div>
+      <div className="customer-personal-hero-glow" aria-hidden="true"/>
+    </div>
+    <section className="settings-card customer-personal-card" aria-labelledby="customer-personal-heading">
+      <div className="customer-personal-overview">
+        <div className="customer-personal-identity">
+          <div className="customer-personal-avatar" aria-hidden="true">{initials}</div>
+          <div className="customer-personal-identity-copy"><span className="eyebrow">Customer profile</span><h2 id="customer-personal-heading">{displayName}</h2><p>{editing?`${changedCount} unsaved ${changedCount===1?"change":"changes"}`:"Private to your authenticated account"}</p></div>
+        </div>
+        <div className="customer-personal-completion">
+          <div className="customer-personal-completion-head"><span>PROFILE COMPLETION</span><strong>{completion}%</strong></div>
+          <div className="customer-personal-progress" role="progressbar" aria-label="Profile completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completion}><span style={{width:`${completion}%`}}/></div>
+          <small>{completedCount} of {customerPersonalFields.length} details added</small>
+        </div>
+      </div>
+      <div className="customer-personal-card-head"><div><span className="eyebrow">Your information</span><h3>Personal details</h3></div><span className={`customer-personal-state${editing?" is-editing":""}`} role="status"><span className="pulse"/>{editing?"Editing profile":"Profile saved"}</span></div>
+      <div className="customer-personal-toolbar" aria-label="Profile actions">
+        {editing ? <>
+          <button type="button" className="secondary-button" onClick={restoreSaved} disabled={save.isPending}><RotateCcw size={14}/> Restore saved</button>
+          <div className="customer-personal-toolbar-primary"><button type="button" className="secondary-button" onClick={cancel} disabled={save.isPending}>Cancel <X size={14}/></button><button type="submit" className="primary-button" disabled={save.isPending||changedCount===0}>{save.isPending?"Saving…":"Save changes"} <Check size={14}/></button></div>
+        </> : <>
+          <button type="button" className="secondary-button" onClick={refresh} disabled={details.isFetching}><RefreshCw size={14} className={details.isFetching?"customer-personal-spin":""}/>{details.isFetching?"Refreshing…":"Refresh"}</button>
+          <button type="button" className="secondary-button" onClick={()=>void copySummary()} disabled={details.isLoading||details.isError}><Copy size={14}/>Copy summary</button>
+          <button type="button" className="secondary-button" onClick={downloadProfile} disabled={details.isLoading||details.isError}><Download size={14}/>Download</button>
+          <button type="button" className="primary-button" onClick={startEdit} disabled={details.isLoading||details.isError}><UserRound size={14}/>Edit details</button>
+        </>}
+      </div>
       {details.isLoading?<div className="test-notice" role="status">Loading your personal details…</div>:details.isError?<div className="customer-personal-feedback error" role="alert">We could not load your personal details right now. Please refresh and try again.</div>:(
         <div className="customer-personal-grid">
           {customerPersonalFields.map(field => {
             const value = form[field.key];
-            return <div className="customer-personal-field" key={field.key}>
-              <label htmlFor={`personal-${field.key}`}>{field.label}</label>
-              {editing ? (field.key === "gender"
+            const FieldIcon = field.key === "country" ? Globe2 : field.key === "telephone" ? Smartphone : field.key === "address" || field.key === "state" ? MapIcon : UserRound;
+            const autoComplete = field.key === "firstName" ? "given-name" : field.key === "lastName" ? "family-name" : field.key === "telephone" ? "tel" : field.key === "country" ? "country-name" : field.key === "state" ? "address-level1" : field.key === "address" ? "street-address" : "off";
+            return <div className={`customer-personal-field${field.key==="address"?" is-wide":""}`} key={field.key}>
+              <div className="customer-personal-field-head"><label htmlFor={`personal-${field.key}`}>{field.label}</label><span className={`customer-personal-field-status${value?" is-complete":""}`}>{value?<CheckCircle2 size={11}/>:<Plus size={11}/>} {value?"On file":"Add detail"}</span></div>
+              {editing ? <div className="customer-personal-input-wrap"><FieldIcon size={15} aria-hidden="true"/>{field.key === "gender"
                 ? <select id={`personal-${field.key}`} value={value} onChange={update(field.key)}><option value="">{field.placeholder}</option>{customerGenderOptions.map(option => <option key={option} value={option}>{option}</option>)}</select>
-                : <input id={`personal-${field.key}`} type={field.key === "telephone" ? "tel" : "text"} value={value} placeholder={field.placeholder} maxLength={field.maxLength} onChange={update(field.key)} />)
-                : <div className={`customer-personal-value${value?"":" is-empty"}`}>{value || "Not provided"}</div>}
+                : field.key === "address"
+                  ? <textarea id={`personal-${field.key}`} value={value} placeholder={field.placeholder} maxLength={field.maxLength} autoComplete={autoComplete} rows={3} onChange={update(field.key)} />
+                  : <input id={`personal-${field.key}`} type={field.key === "telephone" ? "tel" : "text"} value={value} placeholder={field.placeholder} maxLength={field.maxLength} autoComplete={autoComplete} onChange={update(field.key)} />}
+              </div> : <div className={`customer-personal-value${value?"":" is-empty"}`}><FieldIcon size={15} aria-hidden="true"/><span>{value || "Not provided"}</span></div>}
             </div>;
           })}
         </div>
       )}
-      {feedback && <div className={`customer-personal-feedback${save.isError?" error":""}`} role="status">{feedback}</div>}
-      <div className="customer-personal-actions">
-        {editing
-          ? <><button type="submit" className="primary-button" disabled={save.isPending}>{save.isPending?"Saving…":"Save details"} <Check size={14}/></button><button type="button" className="secondary-button" onClick={cancel} disabled={save.isPending}>Cancel <X size={14}/></button></>
-          : <button type="button" className="primary-button" onClick={startEdit} disabled={details.isLoading}>Edit details <UserRound size={14}/></button>}
-      </div>
-    </div>
+      {feedback && <div className={`customer-personal-feedback${save.isError?" error":""}`} role={save.isError?"alert":"status"}>{feedback}</div>}
+      <div className="customer-personal-privacy"><ShieldCheck size={15}/><span>Your personal details are visible only to you and authorized account services. Never include passwords or payment credentials in these fields.</span><Sparkles size={14} aria-hidden="true"/></div>
+    </section>
   </form>;
 }
 function CustomerPreferencePanel({itemId,push}:{itemId:string;push:(message:string)=>void}) {

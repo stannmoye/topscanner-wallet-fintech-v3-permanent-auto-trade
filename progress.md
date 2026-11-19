@@ -1,3 +1,23 @@
+## 2026-11-20 — Personal Details profile dashboard
+
+Branch `main`. Owner request: make the Personal Details page more advanced and provide more
+useful actions than a single Edit button.
+
+- `client/src/App.tsx`: upgraded the customer profile to show identity initials, profile
+  completion progress, per-field completion states, and clearer privacy guidance. Added
+  functional Refresh, Copy summary, Download, and Edit actions in view mode. Edit mode now
+  provides Restore saved, Cancel, and Save changes controls; saving remains wired to the
+  authenticated customer profile mutation.
+- `client/src/customer-reference.css`: added a layered profile hero, responsive identity and
+  completion summary, field tiles with icons/status, refined controls, mobile breakpoints,
+  focus treatment, and reduced-motion handling.
+- Live portal was inspected at `/customer`; its current source bundle corresponds to the
+  linked repository's `main`. The repository build manifest still names `Arbitrade_platform`
+  as canonical, so deployment documentation and the actual live source should be reconciled
+  separately.
+- Verified: `pnpm check`, `pnpm test` (1,545 passed; 36 skipped), `pnpm build`, and
+  `git diff --check`.
+
 ## 2026-11-20 — Customer Personal Details page (Account Preferences → Personal Details)
 
 Branch `main`. Owner request: on the left menu's Personal Details page, store the
