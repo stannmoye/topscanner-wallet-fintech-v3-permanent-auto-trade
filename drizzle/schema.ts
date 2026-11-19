@@ -1106,6 +1106,21 @@ export const customerWalletPreferences = mysqlTable("customer_wallet_preferences
   withdrawalWhitelistEnabled: boolean("withdrawalWhitelistEnabled").default(true).notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+// Editable personal details that a customer maintains from the Account Preferences page.
+// These are display/contact attributes, distinct from KYC verification evidence.
+export const customerPersonalDetails = mysqlTable("customer_personal_details", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  firstName: varchar("firstName", { length: 80 }),
+  lastName: varchar("lastName", { length: 80 }),
+  gender: varchar("gender", { length: 32 }),
+  country: varchar("country", { length: 80 }),
+  state: varchar("state", { length: 120 }),
+  address: varchar("address", { length: 255 }),
+  telephone: varchar("telephone", { length: 40 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
 export const customerOpportunityRules = mysqlTable("customer_opportunity_rules", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().unique(),

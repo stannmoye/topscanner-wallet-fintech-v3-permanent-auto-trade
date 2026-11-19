@@ -603,6 +603,13 @@
       "when": 1794484800003,
       "tag": "0116_immediate_trade_settlement",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1794484800004,
+      "tag": "0119_customer_personal_details",
+      "breakpoints": true
     }
   ]
 }

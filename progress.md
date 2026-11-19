@@ -1,3 +1,51 @@
+## 2026-11-20 — Customer Personal Details page (Account Preferences → Personal Details)
+
+Branch `main`. Owner request: on the left menu's Personal Details page, store the
+customer's first name, last name, gender, country, state, address, and telephone,
+with an edit/save button the customer can use whenever they want.
+
+The page was previously a generic stub (a card and a "Save preference" button with
+no fields and no persistence). Implemented the full stack:
+
+- `drizzle/schema.ts`: new `customerPersonalDetails` table (`customer_personal_details`),
+  one row per customer (`userId` unique) with `firstName`, `lastName`, `gender`,
+  `country`, `state`, `address`, `telephone`, `createdAt`, `updatedAt`.
+- `drizzle/0119_customer_personal_details.sql` (new, idempotent/additive): creates the
+  table with `CREATE TABLE IF NOT EXISTS`; registered as a new canonical entry in
+  `drizzle/meta/_journal.json` so the guarded main-migration runner applies it on deploy.
+- `server/db.ts`: `getCustomerPersonalDetails(userId)` (lazily creates the row) and
+  `updateCustomerPersonalDetails(userId, input)` (partial update, only supplied fields).
+- `server/routers.ts`: `customer.personalDetails` query and `customer.updatePersonalDetails`
+  mutation (zod-validated, gender restricted to a fixed option set).
+- `client/src/App.tsx`: replaced the `personal-details` stub with `CustomerPersonalDetailsContent`
+  — a view/edit form with a read-only value grid, an **Edit details** button that reveals
+  inputs + a gender select, and **Save details** / **Cancel** actions wired to the mutation
+  (with saving/feedback/error states).
+- `client/src/customer-reference.css`: `.customer-personal-*` styles matching the preference
+  palette (2-column grid collapsing to 1 on ≤760px, status chip with an animated pulse and a
+  reduced-motion fallback).
+
+Verified: `pnpm exec tsc --noEmit`; `pnpm test` (196 files / 1545 tests passed, 7 files / 36
+skipped); `pnpm build`; and the updated `_journal.json` loads cleanly through
+`installer/main-migration-preflight.mjs` (87 entries; last = `0119_customer_personal_details`).
+
+## 2026-11-20 — Today's trade record moved into the fixed console bar
+
+Branch `main`. Owner request: move the "today trade record" from the dashboard band into the
+top console container and fit it there without increasing the bar height.
+
+Changes:
+- `client/src/App.tsx`: `CustomerDailyOfferRecord` gained a `variant` prop; `variant="header"`
+  renders a compact 42px strip. `PortalHeader` received an optional `dailySummary` prop and
+  renders the strip after the console control for customer mode; `CustomerPortal` passes
+  `opportunityMeta.data?.dailySummary` into it (the roomy dashboard band remains for smaller widths).
+- `client/src/trading-experience.css`: added the header-strip styles (hidden by default) and a
+  `@media (min-width: 1024px)` rule that shows the strip while hiding `.portal-header-context`
+  and the dashboard band; a `1024–1199px` rule drops the secondary scanner so the strip stays
+  fully visible. The fixed `.portal-header` stays at its 66px height.
+
+Verified: `pnpm check`, `pnpm test`, and `pnpm build` pass.
+
 ## 2026-11-20 — Customer primary workspace menu restored
 
 Owner report: the customer workspace's visible Home / Crypto Mining / Token Launch

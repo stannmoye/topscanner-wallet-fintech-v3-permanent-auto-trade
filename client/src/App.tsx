@@ -508,14 +508,76 @@ const customerPreferenceGroups: CustomerPreferenceGroup[] = [
   ] },
 ];
 const customerPreferenceItems = customerPreferenceGroups.flatMap(group => group.items);
+const customerGenderOptions = ["Male", "Female", "Other", "Prefer not to say"] as const;
+const customerPersonalFields: Array<{ key: "firstName" | "lastName" | "gender" | "country" | "state" | "address" | "telephone"; label: string; placeholder: string; maxLength: number }> = [
+  { key: "firstName", label: "First name", placeholder: "Enter your first name", maxLength: 80 },
+  { key: "lastName", label: "Last name", placeholder: "Enter your last name", maxLength: 80 },
+  { key: "gender", label: "Gender", placeholder: "Select gender", maxLength: 32 },
+  { key: "country", label: "Country", placeholder: "Enter your country", maxLength: 80 },
+  { key: "state", label: "State / Region", placeholder: "Enter your state or region", maxLength: 120 },
+  { key: "address", label: "Address", placeholder: "Enter your address", maxLength: 255 },
+  { key: "telephone", label: "Telephone", placeholder: "Enter your telephone number", maxLength: 40 },
+];
+const customerPersonalDefaults = { firstName: "", lastName: "", gender: "", country: "", state: "", address: "", telephone: "" };
+function CustomerPersonalDetailsContent({push}:{push:(message:string)=>void}) {
+  const details = trpc.customer.personalDetails.useQuery();
+  const [editing,setEditing] = useState(false);
+  const [feedback,setFeedback] = useState("");
+  const [form,setForm] = useState(customerPersonalDefaults);
+  const [seeded,setSeeded] = useState(false);
+  const seedFrom = (data:any) => setForm({ firstName:data?.firstName||"", lastName:data?.lastName||"", gender:data?.gender||"", country:data?.country||"", state:data?.state||"", address:data?.address||"", telephone:data?.telephone||"" });
+  useEffect(() => { if(!seeded && details.data){ seedFrom(details.data); setSeeded(true); } }, [details.data, seeded]);
+  const save = trpc.customer.updatePersonalDetails.useMutation({
+    onSuccess: () => { setEditing(false); setFeedback("Your personal details were saved."); setSeeded(false); void details.refetch(); push("Personal details saved"); },
+    onError: (error) => setFeedback(error.message),
+  });
+  const update = (key:keyof typeof customerPersonalDefaults) => (event:any) => setForm(prev => ({ ...prev, [key]: event.target.value }));
+  const startEdit = () => { setFeedback(""); setEditing(true); };
+  const cancel = () => { seedFrom(details.data); setEditing(false); setFeedback(""); };
+  const submit = (event:any) => {
+    event.preventDefault();
+    setFeedback("");
+    save.mutate({
+      firstName: form.firstName, lastName: form.lastName, country: form.country, state: form.state, address: form.address, telephone: form.telephone,
+      gender: form.gender ? (form.gender as (typeof customerGenderOptions)[number]) : undefined,
+    });
+  };
+  return <form className="customer-personal-panel" onSubmit={submit}>
+    <div className="preference-hero"><div className="preference-hero-icon"><UserRound size={22}/></div><div><span className="eyebrow">Personal profile</span><h2>Personal details</h2><p>Keep your name, gender, location, address, and contact number current. Edit and save them at any time — changes apply to your account immediately.</p></div></div>
+    <div className="settings-card customer-personal-card">
+      <div className="customer-personal-card-head"><div><span className="eyebrow">Account holder</span><h2>Your information</h2></div><span className={`customer-personal-state${editing?" is-editing":""}`} role="status"><span className="pulse"/> {editing?"Editing":"Saved"}</span></div>
+      {details.isLoading?<div className="test-notice" role="status">Loading your personal details…</div>:details.isError?<div className="customer-personal-feedback error" role="alert">We could not load your personal details right now. Please refresh and try again.</div>:(
+        <div className="customer-personal-grid">
+          {customerPersonalFields.map(field => {
+            const value = form[field.key];
+            return <div className="customer-personal-field" key={field.key}>
+              <label htmlFor={`personal-${field.key}`}>{field.label}</label>
+              {editing ? (field.key === "gender"
+                ? <select id={`personal-${field.key}`} value={value} onChange={update(field.key)}><option value="">{field.placeholder}</option>{customerGenderOptions.map(option => <option key={option} value={option}>{option}</option>)}</select>
+                : <input id={`personal-${field.key}`} type={field.key === "telephone" ? "tel" : "text"} value={value} placeholder={field.placeholder} maxLength={field.maxLength} onChange={update(field.key)} />)
+                : <div className={`customer-personal-value${value?"":" is-empty"}`}>{value || "Not provided"}</div>}
+            </div>;
+          })}
+        </div>
+      )}
+      {feedback && <div className={`customer-personal-feedback${save.isError?" error":""}`} role="status">{feedback}</div>}
+      <div className="customer-personal-actions">
+        {editing
+          ? <><button type="submit" className="primary-button" disabled={save.isPending}>{save.isPending?"Saving…":"Save details"} <Check size={14}/></button><button type="button" className="secondary-button" onClick={cancel} disabled={save.isPending}>Cancel <X size={14}/></button></>
+          : <button type="button" className="primary-button" onClick={startEdit} disabled={details.isLoading}>Edit details <UserRound size={14}/></button>}
+      </div>
+    </div>
+  </form>;
+}
 function CustomerPreferencePanel({itemId,push}:{itemId:string;push:(message:string)=>void}) {
   const item = customerPreferenceItems.find(x => x.id === itemId) || customerPreferenceItems[0];
   const Icon = item.icon;
   const isClosure=item.id==="close-account";
+  const isPersonal=item.id==="personal-details";
   const action = item.id === "close-account" ? "Review closure requirements" : item.id === "api-access" ? "Review API permissions" : item.id === "statements" ? "Open statements centre" : "Save preference";
   return <div className="arb-page portal-page settings-page customer-preference-page">
-    <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":"Account preference"}</span></div>
-    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:<>
+    <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":isPersonal?"Keep your first name, last name, gender, country, state, address, and telephone up to date, and save changes whenever you need.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":isPersonal?"Editable profile":"Account preference"}</span></div>
+    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:<>
       <div className="preference-hero"><div className="preference-hero-icon"><Icon size={22}/></div><div><span className="eyebrow">WiseBond account controls</span><h2>{item.label}</h2><p>These controls are designed around clear ownership, secure access, and an auditable customer experience.</p></div></div>
       <div className="preference-card-grid"><div className="settings-card preference-card"><div className="settings-card-icon"><Icon size={18}/></div><h2>{item.label}</h2><p>{item.description}</p><button className="primary-button" onClick={()=>push(item.label + " settings opened")}>{action} <ArrowUpRight size={14}/></button></div><div className="settings-card preference-card preference-card-secondary"><div className="settings-card-icon"><ShieldCheck size={18}/></div><h2>Protected workspace</h2><p>Changes remain subject to account status, administrator policy, and server-side security checks. No setting on this page moves funds by itself.</p><span className="preference-status"><CheckCircle2 size={14}/> Ready for secure configuration</span></div></div>
     </>}
