@@ -313,17 +313,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.wallet-status-tag.is-locked {
+.wallet-status-tag.is-locked,
+.wallet-status-tag.is-processing {
   border: 1px solid rgba(254, 202, 202, .55);
   background: linear-gradient(135deg, #ef4444, #b91c1c 60%, #7f1d1d);
   color: #ffffff !important;
   box-shadow: 0 6px 16px rgba(220, 38, 38, .5), inset 0 1px rgba(255, 255, 255, .3);
   text-shadow: 0 1px 2px rgba(80, 0, 0, .55);
+  /* Replays when the status alternates between the trade lock and the payout. */
+  animation: wallet-status-swap .38s ease-out both;
 }
-.wallet-status-tag.is-locked svg {
+.wallet-status-tag.is-locked svg,
+.wallet-status-tag.is-processing svg {
   flex: 0 0 auto;
   color: #ffffff !important;
   animation: wallet-lock-pulse 2.4s ease-in-out infinite;
+}
+@keyframes wallet-status-swap {
+  from { opacity: 0; transform: translateY(4px) scale(.92); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes wallet-lock-pulse {
   0%, 100% { opacity: .78; }
@@ -383,7 +391,10 @@
 @media (prefers-reduced-motion: reduce) {
   .customer-balance-delta,
   .customer-balance-delta::after,
-  .wallet-status-tag.is-locked svg { animation: none; }
+  .wallet-status-tag.is-locked,
+  .wallet-status-tag.is-processing,
+  .wallet-status-tag.is-locked svg,
+  .wallet-status-tag.is-processing svg { animation: none; }
 }
 
 .customer-portal .portal-body {

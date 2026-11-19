@@ -2358,3 +2358,12 @@ Owner feedback: after submitting a withdrawal the balance read as "Locked", but 
 - No accounting change: the reserve/release lifecycle (`payout_reserve`/`payout_release`/`payout_paid`) is untouched; only the customer-facing presentation of the reserved amount changed.
 
 Verification: `pnpm check` clean; `pnpm test` 1573 tests — 1542 passed / 31 skipped (including the `getCustomerBalanceSummary` source-contract tests, whose asserted substrings were preserved).
+
+### Follow-up — the wallet status pill alternates between the trade lock and the pending payout
+
+Owner feedback: the single red status pill on the customer balance ribbon showed only one state. When a wallet carries both trade-locked capital and a payout under review, both must be visible instead of one suppressing the other.
+
+- `client/src/App.tsx` (`CustomerBalanceRibbon`): the per-wallet badge previously rendered `Locked {lockedMinor}` (which included the payout reservation). It now derives `tradeLocked = max(0, lockedMinor - pendingWithdrawalMinor)` and `pendingWithdrawal = pendingWithdrawalMinor`, then renders: the movement delta while one is live; otherwise `Locked {tradeLocked}` when only a trade lock exists; `Processing {pendingWithdrawal}` when only a payout is pending; and when both exist it alternates between the two every 3.2s (timer runs only while a wallet holds both). The temporary debit/credit delta keeps priority so balance movements are never masked.
+- `client/src/customer-reference.css`: `.wallet-status-tag.is-processing` shares the red pill styling of `.is-locked`, a `wallet-status-swap` entrance animation replays on each flip, and both tags are excluded under `prefers-reduced-motion`.
+
+Verification: `pnpm check` clean; `pnpm test` 1542 passed / 31 skipped.
