@@ -1,3 +1,33 @@
+## 2026-11-19 — Daily successful-trade cap now gates opportunity creation
+
+Branch `main`. Owner report: "during trade the amount is no longer deducted / no longer locked" —
+pop-ups appeared but the wallet showed nothing locked. Root cause: commit `3d4e129` (Fix #10) added a
+per-tier `maxSuccessfulTradesPerDay` gate inside `createTrade` (default `5`). Once 5 trades settled in
+the UTC day, every later pop-up was recorded as Missed (`DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED`) — the
+pop-up still showed, but no hold/debit/lock ever happened.
+
+Owner decision: **`maxSuccessfulTradesPerDay` (per package) is the single opportunity-generation cap.**
+Once a package's customer-wide UTC-day settled-trade ceiling is reached, no further opportunity or
+pop-up is created for that package; applies to every package; the value stays administrator-configurable
+per package; all other gates stay in force and must be enforced.
+
+Changes (`server/db.ts`, `listCustomerOpportunities`):
+- Added a customer-wide UTC-day settled-trade count (`status='settled' AND settlementStatus='completed'`,
+  same `settledAt` window as `createTrade`) and a `packageHasDailySuccessfulCapacity` helper
+  (0 = no extra cap; malformed value fails closed).
+- When **every** eligible package is at its cap, the function returns early with
+  `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED` and `offers:[]` — no generation, delivery, hold, or debit.
+- `subscriptionHasQuota`, the generation candidate list, and `hasUsableAssignedOffer` now exclude
+  packages at their cap; a capped package's existing pop-ups are dropped from the customer offer feed.
+- `createTrade`'s existing `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED` gate is unchanged and retained as the
+  authoritative safety net; all other caps (`maxConcurrentActiveTrades`, `maxActiveInvestments`, daily
+  reward ceiling, previous-settlement, pause, FX) unchanged.
+
+Docs: `PERMANENT_AUTO_TRADE_UNLOCK.md` gate table and `docs/TRADING_SYSTEM_SPECIFICATION.md` §5 updated;
+admin tier-editor help for "Maximum successful trades per day" reworded.
+
+Verified: `pnpm check`, `pnpm test` (196 files / 1544 tests passed), `pnpm build`.
+
 ## 2026-11-18 — 64-item audit remediation (work order)
 
 Branch `main`. 64 numbered items fixed one at a time, in batches of 3. Each item is

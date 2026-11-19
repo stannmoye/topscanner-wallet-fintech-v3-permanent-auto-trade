@@ -79,4 +79,27 @@ describe("allocation cap enforcement (item 10)", () => {
     expect(canReserveReward(1000, 600, 400, 1)).toBe(false);
     expect(remainingRewardAllowance(1000, 600, 300)).toBe(100);
   });
+
+  it("stops creating or showing an opportunity for a package once its daily successful-trade cap is reached", () => {
+    const start = source.indexOf("export async function listCustomerOpportunities(");
+    const end = source.indexOf("\nexport async function claimAutoTradeCycleCustomers(", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const delivery = source.slice(start, end);
+    // The cap is the single generation gate: a package at its UTC-day settled-trade
+    // ceiling is dropped from generation, delivery, execution and the offer feed.
+    expect(delivery).toContain("const packageHasDailySuccessfulCapacity=(packageName:string|null|undefined):boolean=>");
+    expect(delivery).toContain("return successfulTradesTodayUtc<cap;");
+    expect(delivery).toContain(".filter(subscription=>subscriptionHasDailySuccessfulCapacity(subscription))");
+    expect(delivery).toContain(".filter(row=>packageHasDailySuccessfulCapacity(row.packageName));");
+    expect(delivery).toContain("&&subscriptionHasDailySuccessfulCapacity(subscription);");
+    expect(delivery).toContain("&&subscriptionHasDailySuccessfulCapacity(assignedSubscription);");
+    // No pop-up (and therefore no hold or debit) is produced once every package is capped.
+    expect(delivery).toContain("if(eligibleSubscriptions.every(subscription=>!subscriptionHasDailySuccessfulCapacity(subscription))){");
+    expect(delivery).toContain('"DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED"');
+    const earlyReturn = delivery.indexOf("if(eligibleSubscriptions.every(subscription=>!subscriptionHasDailySuccessfulCapacity(subscription))){");
+    const generation = delivery.indexOf("await generateAutomaticCustomerOpportunity({");
+    expect(earlyReturn).toBeGreaterThanOrEqual(0);
+    expect(generation).toBeGreaterThan(earlyReturn);
+  });
 });

@@ -4411,9 +4411,41 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     GROUP BY packageSubscriptionId`) as any;
   const usedBySubscription=new Map<number,number>();
   for(const row of (usedQuotaRows?.[0]||[])) usedBySubscription.set(Number(row.packageSubscriptionId),Number(row.used||0));
+  // Owner directive: the per-tier "maximum successful trades per day" cap is the
+  // single opportunity-generation cap. Once a package's customer-wide daily
+  // settled-trade ceiling is met, no further opportunity or popup is created,
+  // delivered, or shown for that package. The count mirrors the allocation gate in
+  // createTrade exactly (UTC day, status='settled' AND settlementStatus='completed')
+  // so an opportunity generated here can never be rejected by that gate afterwards.
+  const dailySuccessDayStartUtc=new Date(quotaDay+"T00:00:00.000Z");
+  const dailySuccessDayEndUtc=new Date(dailySuccessDayStartUtc.getTime()+24*60*60*1000);
+  const successfulTodayRows=await db.execute(sql`SELECT COUNT(*) AS settled FROM trade_positions
+    WHERE userId=${userId} AND status='settled' AND settlementStatus='completed'
+      AND settledAt>=${dailySuccessDayStartUtc} AND settledAt<${dailySuccessDayEndUtc}`) as any;
+  const successfulTradesTodayUtc=Number(successfulTodayRows?.[0]?.[0]?.settled||0);
+  const packageHasDailySuccessfulCapacity=(packageName:string|null|undefined):boolean=>{
+    const subscriptionPolicy=policyByName.get(normalizeTradingPackagePolicyKey(String(packageName||"")));
+    // No saved policy row means createTrade also skips its daily cap gate; stay consistent.
+    if(!subscriptionPolicy) return true;
+    const cap=Number(subscriptionPolicy.maxSuccessfulTradesPerDay);
+    // Fail closed on a malformed cap, matching createTrade's validation throw.
+    if(!Number.isSafeInteger(cap)||cap<0) return false;
+    // Zero means "no extra daily cap" (documented in the tier editor).
+    if(cap===0) return true;
+    return successfulTradesTodayUtc<cap;
+  };
+  const subscriptionHasDailySuccessfulCapacity=(subscription:any)=>packageHasDailySuccessfulCapacity(subscription?.packageName);
+  // Every eligible package has reached its daily successful-trade cap: create no
+  // opportunity at all (no popup, no hold, no debit) and report the reason so the
+  // customer never sees a popup whose amount would not be deducted and locked.
+  if(eligibleSubscriptions.every(subscription=>!subscriptionHasDailySuccessfulCapacity(subscription))){
+    return emptyResult({packageName:eligibleSubscriptions.map(row=>row.packageName).join(", "),maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,dailySuccessfulCapReached:true,popupPolicy:{}},
+      "DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED",{activeAutomaticSubscriptions:subscriptions.length,validPolicySubscriptions:eligibleSubscriptions.length});
+  }
   const subscriptionHasQuota=(subscription:any)=>{
     const dailyQuota=quotaFor(subscription);
-    return dailyQuota>0&&(usedBySubscription.get(Number(subscription.subscriptionId))||0)<dailyQuota;
+    return dailyQuota>0&&(usedBySubscription.get(Number(subscription.subscriptionId))||0)<dailyQuota
+      &&subscriptionHasDailySuccessfulCapacity(subscription);
   };
   const activePopupRows=await db.select({
     eventId:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,packageId:opportunityPopupEvents.packageId,packageName:opportunityPopupEvents.packageName,
@@ -4558,7 +4590,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     const assignmentStatus=String(generationAssignmentByOffer.get(offerId)?.status||"");
     const assignedSubscription=eligibleSubscriptions.find(subscription=>Number(subscription.subscriptionId)===Number(offer.assignedPackageSubscriptionId));
     const assignedPackageCooling=Boolean(assignedSubscription&&packageSchedules.get(String(assignedSubscription.packageName))?.cooling===true);
-    return activeSubscriptionIds.includes(Number(offer.assignedPackageSubscriptionId))&&!assignedPackageCooling&&["generated","delivered"].includes(assignmentStatus);
+    return activeSubscriptionIds.includes(Number(offer.assignedPackageSubscriptionId))&&!assignedPackageCooling&&["generated","delivered"].includes(assignmentStatus)&&subscriptionHasDailySuccessfulCapacity(assignedSubscription);
   });
   const generationGateReason=options.workerCycle!==true?"NOT_WORKER_CYCLE"
     :options.automaticGenerationEnabled!==true?"GENERATION_CONTROL_DISABLED_OR_UNAVAILABLE"
@@ -4578,6 +4610,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
       userId,batchId:options.generationBatchId!,now,quotaWindowStart:quotaWindow.start,
       activeSubscriptionIds,
       eligibleSubscriptions:eligibleSubscriptions.filter(subscription=>packageSchedules.get(String(subscription.packageName))?.cooling!==true)
+        .filter(subscription=>subscriptionHasDailySuccessfulCapacity(subscription))
         .map(subscription=>({subscriptionId:Number(subscription.subscriptionId),packageId:Number(subscription.packageId),packageName:String(subscription.packageName)})),
       companyRotationEnabled:Boolean(globalPolicy.companyRotationEnabled),
       customerCompanyCountryRestrictions:normalizeCustomerCompanyCountryRestrictions(controls.companyCountryRestrictions||""),
@@ -4738,7 +4771,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
       deliveredOfferIds.add(Number(offer.id));
     }
   }
-  const popupRows=await db.select({
+  const popupRows=(await db.select({
     eventId:opportunityPopupEvents.id,offerId:opportunityPopupEvents.offerId,packageId:opportunityPopupEvents.packageId,packageName:opportunityPopupEvents.packageName,
     publicTradeId:opportunityPopupEvents.publicTradeId,
     executionStatus:opportunityPopupEvents.executionStatus,executionAttemptCount:opportunityPopupEvents.executionAttemptCount,executionRetryAfter:opportunityPopupEvents.executionRetryAfter,executionRetryDay:opportunityPopupEvents.executionRetryDay,executionLastErrorCode:opportunityPopupEvents.executionLastErrorCode,
@@ -4759,7 +4792,10 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     sector:opportunityOffers.sector,industry:opportunityOffers.industry,listingStatus:opportunityOffers.listingStatus,
   }).from(opportunityPopupEvents).leftJoin(opportunityOffers,eq(opportunityPopupEvents.offerId,opportunityOffers.id))
     .where(and(eq(opportunityPopupEvents.userId,userId),notInArray(opportunityPopupEvents.eventStatus,["TRADED","SETTLED","WITHDRAWN"])))
-    .orderBy(desc(opportunityPopupEvents.deliveredAt));
+    .orderBy(desc(opportunityPopupEvents.deliveredAt)))
+    // A package that reached its daily successful-trade cap must not keep showing a
+    // popup the customer can no longer trade; drop those rows from the offer feed.
+    .filter(row=>packageHasDailySuccessfulCapacity(row.packageName));
   // Enforce current admin status at read time too: previously-created active popups
   // lose their company identity immediately when that company is unverified/archived.
   const catalogueAdminRow=(await db.select({settingValue:appSettings.settingValue})

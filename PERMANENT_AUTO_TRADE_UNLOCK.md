@@ -43,7 +43,7 @@ opportunity reason:
 | Daily opportunity entitlement | per-subscription daily quota (snapshot else package quota) | `DAILY_OPPORTUNITY_QUOTA_EXHAUSTED` |
 | Tier active investments | `maxActiveInvestments` when `> 0` (0 = no tier-specific cap) | `TIER_ACTIVE_INVESTMENT_LIMIT_REACHED` |
 | Concurrent active trades | `maxConcurrentActiveTrades` (>= 1) | `CONCURRENT_ACTIVE_TRADE_LIMIT_REACHED` |
-| Daily successful trades | `maxSuccessfulTradesPerDay` when `> 0` (0 = no extra cap) | `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED` |
+| Daily successful trades | `maxSuccessfulTradesPerDay` when `> 0` (0 = no extra cap). This is the **single opportunity-generation cap**: once a package's customer-wide UTC-day settled-trade ceiling is reached, the package is dropped from popup generation and delivery, so **no further opportunity is created or shown** for it (and every other gate below still applies). | `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED` (no popup/opportunity is created; the allocation gate keeps the same code as a safety net) |
 | Daily reward ceiling | per-tier `maxDailyRewardMinor` counted from realized net profit (when `> 0`) | blocked review/reservation |
 | Previous settlement | global `requirePreviousSettlement` (default ON) | blocked while an earlier trade is unsettled |
 | Package fee policy | a saved fee policy must exist for the selected package | blocked until an admin configures one |
