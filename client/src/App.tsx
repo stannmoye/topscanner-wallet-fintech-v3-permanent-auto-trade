@@ -1090,7 +1090,8 @@ function CustomerWallet({push}:{push:(x:string)=>void}) {
         const stablecoin=["USDT","USDC","DAI"].includes(row.currency);
         const assetType=currency?.assetType||"digital asset";
         const usdValue=usd(row.availableMinor,row.currency);
-        const locked=Number(row.lockedMinor||0);
+        const pendingWithdrawal=Number(row.pendingWithdrawalMinor||0);
+        const locked=Math.max(0,Number(row.lockedMinor||0)-pendingWithdrawal);
         return <article className={`wallet-currency-card wallet-tone-${tone(row.currency)}`} key={row.currency}>
           <div className="wallet-card-top">
             <span className="wallet-currency-mark" aria-hidden="true">{currency?.symbol||row.currency.slice(0,1)}</span>
@@ -1101,7 +1102,8 @@ function CustomerWallet({push}:{push:(x:string)=>void}) {
           <div className="wallet-card-balance">{amount(row)}</div>
           <div className="wallet-card-equivalent"><span>Estimated USD value</span><strong>≈ {usdMoney(usdValue)}</strong></div>
           <div className="wallet-card-divider" />
-          <div className="wallet-card-meta"><span>Pending holds</span><b>{locked>0?money(locked,row.currency):"None"}</b></div>
+          <div className="wallet-card-meta"><span>Locked (trades)</span><b>{locked>0?money(locked,row.currency):"None"}</b></div>
+          {pendingWithdrawal>0&&<div className="wallet-card-meta"><span>Withdrawing</span><b>{money(pendingWithdrawal,row.currency)}</b></div>}
           {Number(row.promotionalMinor||0)>0&&<div className="wallet-card-footnote"><Sparkles size={12}/> Includes promotional credit</div>}
           {["USD","EUR","GBP","BTC","ETH","USDT"].includes(row.currency)&&<button className="wallet-card-withdraw" type="button" aria-label={`Withdraw ${row.currency}`} onClick={()=>requestWalletWithdrawal(row.currency)}><ArrowUpRight size={14}/> Withdraw</button>}
         </article>;
@@ -1119,7 +1121,8 @@ function CustomerWallet({push}:{push:(x:string)=>void}) {
       </div>
       <div className="wallet-summary-strip">
         <div><span>Available</span><strong>{usdMoney(balances.data?.summary.availableUsd||0)}</strong><small>Ready to allocate</small></div>
-        <div><span>Locked</span><strong>{usdMoney(balances.data?.summary.lockedUsd||0)}</strong><small>Held in active positions</small></div>
+        <div><span>Withdrawing</span><strong>{usdMoney(balances.data?.summary.withdrawingUsd||0)}</strong><small>Awaiting payout review</small></div>
+        <div><span>Locked</span><strong>{usdMoney(Math.max(0,(balances.data?.summary.lockedUsd||0)-(balances.data?.summary.withdrawingUsd||0)))}</strong><small>Held in active trades</small></div>
         <div><span>Total earned</span><strong>{usdMoney(balances.data?.summary.earnedUsd||0)}</strong><small>Ledger-recorded rewards</small></div>
         <div><span>Promotional</span><strong>{usdMoney(balances.data?.summary.promotionalUsd||0)}</strong><small>Practice credit</small></div>
       </div>

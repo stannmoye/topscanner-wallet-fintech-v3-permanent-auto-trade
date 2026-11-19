@@ -1926,7 +1926,7 @@
 .customer-portal .portal-main .wallet-estimated-total>strong{color:#f6f7ff;font-size:clamp(25px,3vw,38px);font-weight:740;letter-spacing:-.055em;line-height:1.08;font-variant-numeric:tabular-nums}
 .customer-portal .portal-main .wallet-estimated-total>small{display:inline-flex;align-items:center;gap:5px;margin-top:3px;color:#98a5bf;font-size:9px}
 .customer-portal .portal-main .wallet-estimated-total>small svg{color:#77dcb4}
-.customer-portal .portal-main .wallet-summary-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:25px;border:1px solid rgba(150,168,204,.13);border-radius:15px;background:linear-gradient(110deg,rgba(28,37,58,.72),rgba(20,28,45,.64))}
+.customer-portal .portal-main .wallet-summary-strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:25px;border:1px solid rgba(150,168,204,.13);border-radius:15px;background:linear-gradient(110deg,rgba(28,37,58,.72),rgba(20,28,45,.64))}
 .customer-portal .portal-main .wallet-summary-strip>div{display:flex;min-width:0;flex-direction:column;gap:4px;padding:12px 16px;border-left:1px solid rgba(150,168,204,.12)}
 .customer-portal .portal-main .wallet-summary-strip>div:first-child{border-left:0}
 .customer-portal .portal-main .wallet-summary-strip span{color:#a0abc3;font-size:9px}

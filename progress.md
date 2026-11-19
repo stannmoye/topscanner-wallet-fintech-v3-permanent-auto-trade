@@ -2347,3 +2347,14 @@ Changes:
 - Docs: `docs/admin-portal-menu-guide.md` (Withdrawal control + Policy gates) and `docs/arbitrade-platform-spec.md` (account-control matrix) now state customer withdrawals are never restricted.
 
 Verification: `pnpm check` (`tsc --noEmit`) clean; `pnpm test` 1573 tests — 1542 passed / 31 skipped. Note: the customer-facing error string no longer exists anywhere in the source, so a deployment still showing it is running an older build and must be redeployed from this commit.
+
+### Follow-up — pending withdrawals are labelled "Withdrawing", not "Locked"
+
+Owner feedback: after submitting a withdrawal the balance read as "Locked", but "locked" should be for trades only; a pending payout must read as "Withdrawing"/"Processing".
+
+- `server/db.ts` `getCustomerBalanceSummary`: the funds reserved for a payout request are held in the same `lockedMinor` bucket as trade capital, so the pending payout amount is now queried separately (payout requests in `confirming`/`processing`), returned per wallet as `pendingWithdrawalMinor`, and totalled as `summary.withdrawingUsd`. `lockedUsd` is unchanged (total held); the customer UI subtracts `withdrawingUsd` to show trade-only locked.
+- `client/src/App.tsx` (CustomerWallet): per-currency card now shows "Locked (trades)" (locked minus pending payout) and a separate "Withdrawing" row when a payout is pending; the summary strip gains a "Withdrawing / Awaiting payout review" tile and the "Locked" tile now reads "Held in active trades".
+- `client/src/customer-reference.css`: wallet summary strip grid widened to five columns (`repeat(5,minmax(0,1fr))`); the existing ≤650px two-column override still lays out correctly.
+- No accounting change: the reserve/release lifecycle (`payout_reserve`/`payout_release`/`payout_paid`) is untouched; only the customer-facing presentation of the reserved amount changed.
+
+Verification: `pnpm check` clean; `pnpm test` 1573 tests — 1542 passed / 31 skipped (including the `getCustomerBalanceSummary` source-contract tests, whose asserted substrings were preserved).
