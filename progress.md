@@ -1,3 +1,22 @@
+## 2026-11-20 — Customer primary workspace menu restored
+
+Owner report: the customer workspace's visible Home / Crypto Mining / Token Launch
+menu was missing. After reviewing the screenshot and signing into the customer portal,
+confirmed that the horizontal strip had been removed by Item 41 while its responsive
+styles and the full drawer remained.
+
+Changes:
+- `client/src/components/CustomerSlideMenu.tsx`: restored a 12-destination
+  WORKSPACE & INVESTMENTS strip (Home, ten investment categories, Support Centre)
+  and active-page accessibility state. The searchable drawer continues to expose
+  all 31 customer destinations.
+- `client/src/customer-navigation-consolidation.contract.test.ts`: replaced the
+  no-duplicate-strip assertion with coverage for the 12 primary destinations and
+  retained full drawer/accessibility/desktop visibility checks.
+
+Validation: `pnpm exec vitest run client/src/customer-navigation-consolidation.contract.test.ts`
+(4/4), `pnpm check`, `pnpm build`, and `git diff --check` pass.
+
 ## 2026-11-20 — Fix: trade-record band hid the account menu; band reduced ~2×
 
 Branch `main`. Owner report: after the "today trade record" container was added, the top

@@ -79,6 +79,14 @@ const destinationGroups: CustomerDestinationGroup[] = [
 ];
 
 const destinations = destinationGroups.flatMap((group) => group.items);
+const topWorkspaceTargets = [
+  "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
+  "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
+  "carbon-credit", "green-energy", "support",
+];
+const topWorkspaceDestinations = topWorkspaceTargets
+  .map((target) => destinations.find((item) => item.target === target))
+  .filter((item): item is CustomerDestination => Boolean(item));
 const mainPageSearchDestinations: CustomerDestination[] = [
   { label: "Home", detail: "Main customer dashboard", target: "dashboard", icon: Home },
   { label: "Wallet", detail: "Balances, funding and transaction history", target: "wallet", icon: WalletCards },
@@ -107,6 +115,21 @@ const primaryLabels: Record<string, string> = {
   "litigation-funds": "Litigation Funds", "ip-royalties": "IP Royalties", "music-royalties": "Music Royalties", "agro-investment": "Agro Investment",
   "carbon-credit": "Carbon Credit", "green-energy": "Green Energy",
 };
+
+function CustomerTopWorkspaceMenu({ section, onNavigate }: CustomerSlideMenuProps) {
+  return <section className="customer-top-workspace-menu arb-page" aria-label="Workspace and investments">
+    <div className="customer-menu-label">WORKSPACE &amp; INVESTMENTS</div>
+    <nav className="customer-workspace-categories" aria-label="Primary workspace pages">
+      {topWorkspaceDestinations.map((item) => {
+        const Icon = item.icon;
+        const label = item.target === "support" ? "Support Centre" : item.label;
+        return <button key={item.target} type="button" className={section === item.target ? "active" : ""} aria-current={section === item.target ? "page" : undefined} onClick={() => onNavigate(item.target)}>
+          <Icon size={15} /><span>{label}</span>
+        </button>;
+      })}
+    </nav>
+  </section>;
+}
 
 export function CustomerSlideMenu({ section, onNavigate }: CustomerSlideMenuProps) {
   const [open, setOpen] = useState(false);
@@ -179,7 +202,7 @@ export function CustomerSlideMenu({ section, onNavigate }: CustomerSlideMenuProp
     return <button key={item.target} type="button" className={`admin-slide-item${section === item.target ? " is-active" : ""}`} tabIndex={open ? 0 : -1} aria-current={section === item.target ? "page" : undefined} onClick={() => navigate(item.target)}><span className="admin-slide-item-icon"><Icon size={17} /></span><span className="admin-slide-item-copy"><strong>{item.label}{item.planned && <em className="customer-slide-planned">PLANNED</em>}</strong><small>{item.detail}</small></span><span className="admin-slide-item-arrow">→</span></button>;
   };
 
-  return <><div className={`admin-slide-layer customer-slide-layer arb-page${open ? " is-open" : ""}`}>
+  return <><CustomerTopWorkspaceMenu section={section} onNavigate={navigate} /><div className={`admin-slide-layer customer-slide-layer arb-page${open ? " is-open" : ""}`}>
     <button ref={triggerRef} className="admin-slide-trigger customer-slide-trigger customer-resource-peek-trigger" type="button" aria-label={open ? "Close customer navigation" : "Open customer navigation"} title={open ? "Close customer navigation" : "Open customer navigation"} aria-controls="customer-navigation-drawer" aria-expanded={open} tabIndex={open ? -1 : 0} onClick={() => setOpen(true)}><span className="customer-resource-bulb" aria-hidden="true"><Menu size={24} strokeWidth={1.9} /></span><span className="customer-resource-bulb-label">MENU</span><span className="admin-slide-trigger-led" /></button>
     </div>{typeof document !== "undefined" && createPortal(
       <div className={`admin-slide-layer admin-slide-portal-layer customer-slide-portal arb-page${open ? " is-open" : ""}`}>

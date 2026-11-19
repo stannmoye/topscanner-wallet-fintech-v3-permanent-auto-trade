@@ -1,12 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// Item 41 — the customer portal must expose a single navigation menu and no
-// destination may become unreachable. These assertions read the source files
-// directly (source-contract pattern used elsewhere in this repo) so a future
-// change cannot silently re-introduce a duplicate menu or drop a destination.
+// The customer portal keeps a 12-destination quick strip and a complete
+// searchable drawer so primary pages and additional resources remain reachable.
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const slideMenu = readFileSync(new URL("./components/CustomerSlideMenu.tsx", import.meta.url), "utf8");
 const layoutCss = readFileSync(new URL("./index.css", import.meta.url), "utf8");
 
@@ -27,13 +24,21 @@ const requiredDestinations = [
   "music-royalties", "agro-investment", "carbon-credit", "green-energy",
 ];
 
-describe("customer navigation consolidation", () => {
-  it("removes the duplicate top workspace strip", () => {
-    expect(appSource).not.toContain("CustomerTopWorkspaceMenu");
-    expect(appSource).not.toContain("customer-top-workspace-menu");
+describe("customer navigation", () => {
+  it("restores the primary workspace strip with all 12 destinations", () => {
+    expect(slideMenu).toContain('aria-label="Workspace and investments"');
+    const primaryDestinations = [
+      "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
+      "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
+      "carbon-credit", "green-energy", "support",
+    ];
+    const targetBlock = slideMenu.match(/const topWorkspaceTargets = \[([\s\S]*?)\];/);
+    expect(targetBlock).not.toBeNull();
+    const actualTargets = Array.from(targetBlock?.[1].matchAll(/"([a-z-]+)"/g) || [], (match) => match[1]);
+    expect(actualTargets).toEqual(primaryDestinations);
   });
 
-  it("keeps the workspace drawer as the single navigation with every destination", () => {
+  it("keeps every customer destination reachable through the searchable drawer", () => {
     for (const target of requiredDestinations) {
       expect(drawerTargets.has(target), `drawer is missing destination "${target}"`).toBe(true);
     }
