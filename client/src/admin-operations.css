@@ -177,6 +177,30 @@
   outline: 2px solid var(--arb-focus-ring);
   outline-offset: 3px;
 }
+
+
+/* "Clear Trade" maintenance action on the admin home page. */
+.admin-overview-hero-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.admin-overview-hero-actions .admin-live-chip{align-self:center}
+.admin-clear-trade-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:0 14px;border:1px solid rgba(245,126,126,.4);border-radius:11px;color:#ffd2ce;background:linear-gradient(135deg,rgba(245,126,126,.18),rgba(245,126,126,.06));font-size:11px;font-weight:800;letter-spacing:.02em;cursor:pointer;transition:transform .18s,border-color .18s,background .18s}
+.admin-clear-trade-button:hover:not(:disabled){transform:translateY(-1px);border-color:rgba(245,126,126,.72);background:rgba(245,126,126,.2)}
+.admin-clear-trade-button:disabled{opacity:.5;cursor:not-allowed}
+.admin-clear-trade-categories{display:grid;gap:9px}
+.admin-clear-trade-category{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border:1px solid rgba(132,164,177,.16);border-radius:12px;background:rgba(255,255,255,.02);cursor:pointer}
+.admin-clear-trade-category input{margin-top:2px;flex:0 0 auto}
+.admin-clear-trade-category strong{display:block;color:#e8f2f1;font-size:11.5px}
+.admin-clear-trade-category small{display:block;margin-top:3px;color:#7f97a2;font-size:10px;line-height:1.5}
+.admin-clear-trade-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin-top:14px}
+.admin-clear-trade-grid label{display:grid;gap:6px;color:#c9d9dd;font-size:10.5px}
+.admin-clear-trade-preview{margin-top:14px;border:1px solid rgba(132,164,177,.16);border-radius:12px;overflow:hidden}
+.admin-clear-trade-preview-row{display:flex;justify-content:space-between;gap:12px;padding:9px 13px;border-top:1px solid rgba(132,164,177,.1);color:#9db2bb;font-size:10.5px}
+.admin-clear-trade-preview-row:first-child{border-top:0}
+.admin-clear-trade-preview-row strong{color:#e8f2f1;font-variant-numeric:tabular-nums}
+.admin-clear-trade-preview-total{background:rgba(124,231,194,.06)}
+@media(max-width:680px){.admin-clear-trade-grid{grid-template-columns:minmax(0,1fr)}}
+:root[data-arb-theme] .admin-ops-page :where(.admin-clear-trade-category, .admin-clear-trade-preview){border-color:var(--arb-color-border);background:var(--arb-color-surface)}
+:root[data-arb-theme] .admin-ops-page :where(.admin-clear-trade-category strong, .admin-clear-trade-preview-row strong){color:var(--arb-color-text)}
+:root[data-arb-theme] .admin-ops-page :where(.admin-clear-trade-category small, .admin-clear-trade-preview-row){color:var(--arb-color-text-soft)}
 .admin-ops-page .admin-ops-actions {
   display: flex;
   flex-wrap: wrap;

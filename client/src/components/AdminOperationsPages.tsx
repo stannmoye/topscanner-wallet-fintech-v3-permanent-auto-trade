@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
+  Trash2,
   Users,
   XCircle,
   Zap,
@@ -1276,5 +1277,164 @@ export function AdminTradeOpportunityReset() {
         </section>
       </div>}
     </ToolPage>
+  );
+}
+
+type ClearTradeCategoryKey = "tradeHistory" | "opportunityRecords" | "customerNotifications" | "notificationCampaigns";
+type ClearTradeTableCount = { category: ClearTradeCategoryKey; table: string; records: number };
+
+const CLEAR_TRADE_CATEGORY_META: Array<{ key: ClearTradeCategoryKey; label: string; detail: string }> = [
+  { key: "tradeHistory", label: "Trade history", detail: "Executed trades, settlements, lifecycle events and settlement evidence records." },
+  { key: "opportunityRecords", label: "Opportunity & pop-up records", detail: "Generated offers, delivery history, pop-up events and missed opportunities." },
+  { key: "customerNotifications", label: "Customer notifications", detail: "Notifications delivered to customers in their portal." },
+  { key: "notificationCampaigns", label: "Admin notification campaigns", detail: "Campaign definitions and their per-customer delivery records." },
+];
+
+const CLEAR_TRADE_DEFAULT_CATEGORIES: Record<ClearTradeCategoryKey, boolean> = {
+  tradeHistory: true,
+  opportunityRecords: true,
+  customerNotifications: true,
+  notificationCampaigns: true,
+};
+
+// "Clear Trade" is a guarded maintenance action reachable from the top of the
+// admin home page. It only ever deletes trade and notification records; wallet
+// balances, the balance ledger and customer data are never in scope.
+export function AdminClearTradeButton() {
+  const utils = trpc.useUtils();
+  const clear = trpc.adminOperations.clearTrade.useMutation();
+  const [open, setOpen] = useState(false);
+  const [categories, setCategories] = useState<Record<ClearTradeCategoryKey, boolean>>(CLEAR_TRADE_DEFAULT_CATEGORIES);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [preview, setPreview] = useState<ClearTradeTableCount[] | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const operationId = useRef("");
+
+  const selectedCategories = CLEAR_TRADE_CATEGORY_META.filter((meta) => categories[meta.key]).length;
+  const windowValid = !from || !to || Date.parse(from) <= Date.parse(to);
+  const canAct = selectedCategories > 0 && windowValid;
+
+  const openModal = () => {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setPreview(null);
+    setFrom("");
+    setTo("");
+    setCategories({ ...CLEAR_TRADE_DEFAULT_CATEGORIES });
+    operationId.current = crypto.randomUUID();
+    setOpen(true);
+  };
+
+  const closeModal = () => {
+    setOpen(false);
+    setPreview(null);
+    setErrorMessage("");
+  };
+
+  const buildInput = () => ({
+    from: from ? new Date(from).toISOString() : null,
+    to: to ? new Date(to).toISOString() : null,
+    categories,
+  });
+
+  const runPreview = async () => {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setPreviewing(true);
+    try {
+      const rows = await utils.adminOperations.clearTradePreview.fetch(buildInput());
+      setPreview(rows as ClearTradeTableCount[]);
+    } catch (error) {
+      setPreview(null);
+      setErrorMessage(error instanceof Error ? error.message : "The record preview could not be loaded.");
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const submitClear = async () => {
+    if (!canAct) return;
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const summary = await clear.mutateAsync({ ...buildInput(), operationId: operationId.current });
+      const tables = summary.tables.length;
+      setSuccessMessage(`Cleared ${summary.totalDeleted.toLocaleString()} record${summary.totalDeleted === 1 ? "" : "s"} across ${tables} table${tables === 1 ? "" : "s"}${summary.idempotentReplay ? " (this request had already completed, so nothing was deleted twice)" : ""}. Balances, the ledger and customer data were not touched. ${new Date(summary.clearedAt).toLocaleString()}.`);
+      setPreview(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "The clear request could not be completed. No partial deletion was committed.");
+    }
+  };
+
+  const previewTotal = preview ? preview.reduce((sum, row) => sum + row.records, 0) : 0;
+
+  return (
+    <>
+      <button type="button" className="admin-clear-trade-button" onClick={openModal}>
+        <Trash2 size={15} /> Clear Trade
+      </button>
+      {open && (
+        <div role="presentation" style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", padding: 18, background: "rgba(2, 8, 14, .82)" }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="clear-trade-title" className="admin-ops-panel" style={{ width: "min(680px, 100%)", margin: 0, maxHeight: "90vh", overflow: "auto" }}>
+            <div className="admin-ops-panel-head">
+              <div>
+                <span className="admin-ops-kicker">Trading operations · guarded action</span>
+                <h2 id="clear-trade-title">Clear trade &amp; notification records</h2>
+              </div>
+            </div>
+            <p className="admin-ops-subtle">Remove trade history and notification records. Wallet balances, the balance ledger and customer data are never deleted, and every run is written to the audit trail.</p>
+
+            {successMessage && <div className="admin-ops-note" role="status" aria-live="polite"><CheckCircle2 size={16} /><span>{successMessage}</span></div>}
+            {errorMessage && <div className="admin-ops-empty error" role="alert">{errorMessage}</div>}
+
+            <div className="admin-ops-note"><ShieldCheck size={16} /><span><strong>Never cleared:</strong> customer balances, wallet balances, the balance ledger, customer accounts, packages/subscriptions and all configuration.</span></div>
+
+            <fieldset style={{ border: 0, padding: 0, margin: "16px 0 0" }}>
+              <legend className="admin-ops-kicker" style={{ marginBottom: 10 }}>Record groups to clear</legend>
+              <div className="admin-clear-trade-categories">
+                {CLEAR_TRADE_CATEGORY_META.map((meta) => (
+                  <label className="admin-clear-trade-category" key={meta.key}>
+                    <input
+                      type="checkbox"
+                      checked={categories[meta.key]}
+                      onChange={(event) => {
+                        setCategories((current) => ({ ...current, [meta.key]: event.target.checked }));
+                        setPreview(null);
+                      }}
+                    />
+                    <span><strong>{meta.label}</strong><small>{meta.detail}</small></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <div className="admin-clear-trade-grid">
+              <label>From (optional)<input type="datetime-local" value={from} onChange={(event) => { setFrom(event.target.value); setPreview(null); }} /></label>
+              <label>To (optional)<input type="datetime-local" value={to} onChange={(event) => { setTo(event.target.value); setPreview(null); }} /></label>
+            </div>
+            <p className="admin-ops-subtle" style={{ marginTop: 8 }}>Leave both blank to clear everything in the selected groups. Times use this device&apos;s local clock.</p>
+            {!windowValid && <div className="admin-ops-empty error" role="alert">The start of the window must not be after the end.</div>}
+
+            {preview && (
+              <div className="admin-clear-trade-preview" aria-live="polite">
+                {preview.map((row) => (
+                  <div className="admin-clear-trade-preview-row" key={row.table}><span>{row.table}</span><strong>{row.records.toLocaleString()}</strong></div>
+                ))}
+                <div className="admin-clear-trade-preview-row admin-clear-trade-preview-total"><span>Total records matched</span><strong>{previewTotal.toLocaleString()}</strong></div>
+              </div>
+            )}
+
+            <div className="admin-payout-actions" style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="admin-ops-button" type="button" onClick={() => void runPreview()} disabled={!canAct || previewing}>{previewing ? "Checking…" : "Preview records"}</button>
+              <button className="admin-ops-button" type="button" onClick={closeModal} disabled={clear.isPending}>Cancel</button>
+              <button className="primary-button" type="button" onClick={() => void submitClear()} disabled={!canAct || clear.isPending}>{clear.isPending ? "Clearing…" : "Confirm clear"}</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
   );
 }

@@ -3,7 +3,7 @@ import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, not
 import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
 import { createPool, type Pool } from "mysql2/promise";
 import { ENV } from "./_core/env";
-import { InsertUser, appSettings, authEmailTokens, customerBalances, customerEmailPreferences, customerNotifications, customerPackageSubscriptions, packages, customerSessions, customerTotpAuthenticators, customerWalletPreferences, currencyRegistry, fxRateSnapshots, customerControls, emailOutbox, kycProfiles, payoutRequests, notificationCampaigns, notificationCampaignDeliveries, customerOpportunityRules, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityOffers, opportunityPackagePolicies, opportunityPopupEvents, opportunityGenerationTemplates, opportunityGenerationAssignments, opportunityGenerationBatches, balanceLedger, tradingTierQualificationJobs, tradingPackageFeePolicyVersions, adminWalletAdjustmentIdempotency, stakePositions, tradePositions, tradePublicIds, tradeRewardReservations, tradeSettlementReferenceClaims, tradeLifecycleEvents, settlementEvidenceRecords, settlementEvidenceAuditEvents, users, v5AuditEvents, v5Wallets, missedOpportunities, marketSnapshots } from "../drizzle/schema";
+import { InsertUser, appSettings, authEmailTokens, customerBalances, customerEmailPreferences, customerNotifications, customerPackageSubscriptions, packages, customerSessions, customerTotpAuthenticators, customerWalletPreferences, currencyRegistry, fxRateSnapshots, customerControls, emailOutbox, kycProfiles, payoutRequests, notificationCampaigns, notificationCampaignDeliveries, customerOpportunityRules, opportunityDeliveryEvents, opportunityDeliveryIdempotency, opportunityOffers, opportunityPackagePolicies, opportunityPopupEvents, opportunityGenerationTemplates, opportunityGenerationAssignments, opportunityGenerationBatches, balanceLedger, tradingTierQualificationJobs, tradingPackageFeePolicyVersions, adminWalletAdjustmentIdempotency, stakePositions, tradePositions, tradePublicIds, tradeRewardReservations, tradeSettlementReferenceClaims, tradeLifecycleEvents, settlementEvidenceRecords, settlementEvidenceAuditEvents, users, v5AuditEvents, v5Wallets, missedOpportunities, opportunityPopupDaily, opportunityDeliveryHistory, tradeSettlementRecoveryCases, marketSnapshots } from "../drizzle/schema";
 import { consumeTotpRecoveryCode, decryptTotpSecret, encryptTotpSecret, generateTotpRecoveryCodes, generateTotpSecret, hashTotpRecoveryCode, totpProvisioningUri, verifyTotpCode } from "./modules/totp";
 import { calculateTradeSettlement } from "./modules/trade-settlement";
 import { calculateAutomaticTradeDebit, calculateAutomaticTradeCredit } from "./modules/automatic-trade-lifecycle-math";
@@ -7131,6 +7131,163 @@ export async function resetTradeOpportunityUsage(input: {
       reference,
       metadataJson: JSON.stringify({ scope: input.scope, operationId: input.operationId, resetAt: resetAtIso, summary }),
       createdAt: resetAt,
+    });
+    return summary;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Administrator "Clear Trade" maintenance tool.
+//
+// Owner-requested cleanup of trade and notification records only. Wallet
+// balances, the balance ledger, customer accounts, package subscriptions and
+// all configuration are never touched. Each run is a single transaction and is
+// recorded in the audit trail; a repeated operationId replays the prior result
+// instead of clearing twice.
+// ---------------------------------------------------------------------------
+
+export const TRADE_RECORD_CLEAR_CATEGORIES = ["tradeHistory", "opportunityRecords", "customerNotifications", "notificationCampaigns"] as const;
+export type TradeRecordClearCategory = (typeof TRADE_RECORD_CLEAR_CATEGORIES)[number];
+export const TRADE_RECORD_CLEAR_ACTION = "trade_records_cleared";
+
+export type TradeRecordClearInput = {
+  from?: string | null;
+  to?: string | null;
+  categories?: Partial<Record<TradeRecordClearCategory, boolean>>;
+  operationId?: string | null;
+};
+export type TradeRecordClearTableCount = { category: TradeRecordClearCategory; table: string; records: number };
+export type TradeRecordClearSummary = {
+  clearedAt: string;
+  from: string | null;
+  to: string | null;
+  categories: TradeRecordClearCategory[];
+  tables: TradeRecordClearTableCount[];
+  totalDeleted: number;
+  idempotentReplay?: boolean;
+};
+
+// Deletion order matters: rows are listed child-first so a foreign-key cascade
+// never removes a row the window filter would otherwise have kept. Only record
+// tables appear here; balances, the ledger and configuration tables never do.
+function tradeRecordClearTargets(): Array<{ category: TradeRecordClearCategory; table: string; entity: any; column: any }> {
+  return [
+    { category: "opportunityRecords", table: "opportunity_delivery_history", entity: opportunityDeliveryHistory, column: opportunityDeliveryHistory.occurredAt },
+    { category: "opportunityRecords", table: "opportunity_delivery_events", entity: opportunityDeliveryEvents, column: opportunityDeliveryEvents.deliveredAt },
+    { category: "opportunityRecords", table: "opportunity_delivery_idempotency", entity: opportunityDeliveryIdempotency, column: opportunityDeliveryIdempotency.createdAt },
+    { category: "opportunityRecords", table: "opportunity_popup_events", entity: opportunityPopupEvents, column: opportunityPopupEvents.createdAt },
+    { category: "opportunityRecords", table: "opportunity_popup_daily", entity: opportunityPopupDaily, column: opportunityPopupDaily.createdAt },
+    { category: "opportunityRecords", table: "missed_opportunities", entity: missedOpportunities, column: missedOpportunities.createdAt },
+    { category: "opportunityRecords", table: "opportunity_generation_assignments", entity: opportunityGenerationAssignments, column: opportunityGenerationAssignments.generatedAt },
+    { category: "opportunityRecords", table: "opportunity_generation_batches", entity: opportunityGenerationBatches, column: opportunityGenerationBatches.createdAt },
+    { category: "opportunityRecords", table: "opportunity_offers", entity: opportunityOffers, column: opportunityOffers.createdAt },
+    { category: "tradeHistory", table: "settlement_evidence_audit_events", entity: settlementEvidenceAuditEvents, column: settlementEvidenceAuditEvents.createdAt },
+    { category: "tradeHistory", table: "settlement_evidence_records", entity: settlementEvidenceRecords, column: settlementEvidenceRecords.createdAt },
+    { category: "tradeHistory", table: "trade_settlement_recovery_cases", entity: tradeSettlementRecoveryCases, column: tradeSettlementRecoveryCases.createdAt },
+    { category: "tradeHistory", table: "trade_settlement_reference_claims", entity: tradeSettlementReferenceClaims, column: tradeSettlementReferenceClaims.createdAt },
+    { category: "tradeHistory", table: "trade_reward_reservations", entity: tradeRewardReservations, column: tradeRewardReservations.createdAt },
+    { category: "tradeHistory", table: "trade_lifecycle_events", entity: tradeLifecycleEvents, column: tradeLifecycleEvents.createdAt },
+    { category: "tradeHistory", table: "trade_positions", entity: tradePositions, column: tradePositions.confirmedAt },
+    { category: "tradeHistory", table: "trade_public_ids", entity: tradePublicIds, column: tradePublicIds.createdAt },
+    { category: "notificationCampaigns", table: "notification_campaign_deliveries", entity: notificationCampaignDeliveries, column: notificationCampaignDeliveries.createdAt },
+    { category: "notificationCampaigns", table: "notification_campaigns", entity: notificationCampaigns, column: notificationCampaigns.createdAt },
+    { category: "customerNotifications", table: "customer_notifications", entity: customerNotifications, column: customerNotifications.createdAt },
+  ];
+}
+
+function resolveTradeRecordClearWindow(input: TradeRecordClearInput) {
+  const from = input.from ? new Date(input.from) : null;
+  const to = input.to ? new Date(input.to) : null;
+  if (from && Number.isNaN(from.getTime())) throw new Error("The clear window start is not a valid date and time.");
+  if (to && Number.isNaN(to.getTime())) throw new Error("The clear window end is not a valid date and time.");
+  if (from && to && from.getTime() > to.getTime()) throw new Error("The clear window start must not be after the window end.");
+  return { from, to };
+}
+
+function tradeRecordClearWhere(column: any, from: Date | null, to: Date | null) {
+  const parts: any[] = [];
+  if (from) parts.push(gte(column, from));
+  if (to) parts.push(lte(column, to));
+  return parts.length ? and(...parts) : undefined;
+}
+
+export async function previewTradeRecordClear(input: TradeRecordClearInput): Promise<TradeRecordClearTableCount[]> {
+  const selected = TRADE_RECORD_CLEAR_CATEGORIES.filter(category => Boolean(input.categories?.[category]));
+  if (!selected.length) throw new Error("Select at least one record group to clear.");
+  const { from, to } = resolveTradeRecordClearWindow(input);
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const counts: TradeRecordClearTableCount[] = [];
+  for (const target of tradeRecordClearTargets().filter(entry => selected.includes(entry.category))) {
+    const where = tradeRecordClearWhere(target.column, from, to);
+    const rows = where
+      ? await db.select({ total: count() }).from(target.entity).where(where)
+      : await db.select({ total: count() }).from(target.entity);
+    counts.push({ category: target.category, table: target.table, records: Number(rows[0]?.total ?? 0) });
+  }
+  return counts;
+}
+
+export async function clearTradeRecords(input: TradeRecordClearInput, actorId: number): Promise<TradeRecordClearSummary> {
+  if (!Number.isSafeInteger(actorId) || actorId < 1) throw new Error("An authenticated administrator is required.");
+  const selected = TRADE_RECORD_CLEAR_CATEGORIES.filter(category => Boolean(input.categories?.[category]));
+  if (!selected.length) throw new Error("Select at least one record group to clear.");
+  const { from, to } = resolveTradeRecordClearWindow(input);
+  const operationId = String(input.operationId || "").trim();
+  if (operationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) {
+    throw new Error("The clear request identifier is invalid.");
+  }
+  const reference = operationId ? `trade-records-clear:${operationId}` : null;
+
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.transaction(async tx => {
+    if (reference) {
+      const prior = (await tx.select({ action: v5AuditEvents.action, entityType: v5AuditEvents.entityType, metadataJson: v5AuditEvents.metadataJson })
+        .from(v5AuditEvents).where(eq(v5AuditEvents.reference, reference)).limit(1))[0];
+      if (prior) {
+        if (prior.action !== TRADE_RECORD_CLEAR_ACTION || prior.entityType !== "trade_records_clear") {
+          throw new Error("This clear request identifier was already used for a different operation.");
+        }
+        try {
+          const metadata = JSON.parse(String(prior.metadataJson || "{}"));
+          const summary = metadata?.summary;
+          if (!summary || !Array.isArray(summary.tables)) throw new Error("invalid replay metadata");
+          return { ...summary, idempotentReplay: true } as TradeRecordClearSummary;
+        } catch {
+          throw new Error("The prior clear request could not be safely replayed; review the audit history.");
+        }
+      }
+    }
+
+    const tables: TradeRecordClearTableCount[] = [];
+    let totalDeleted = 0;
+    for (const target of tradeRecordClearTargets().filter(entry => selected.includes(entry.category))) {
+      const where = tradeRecordClearWhere(target.column, from, to);
+      const result: any = where ? await tx.delete(target.entity).where(where) : await tx.delete(target.entity);
+      const deleted = Number(result?.[0]?.affectedRows ?? 0);
+      tables.push({ category: target.category, table: target.table, records: deleted });
+      totalDeleted += deleted;
+    }
+
+    const summary: TradeRecordClearSummary = {
+      clearedAt: new Date().toISOString(),
+      from: from ? from.toISOString() : null,
+      to: to ? to.toISOString() : null,
+      categories: selected,
+      tables,
+      totalDeleted,
+    };
+    await tx.insert(v5AuditEvents).values({
+      actorUserId: actorId,
+      action: TRADE_RECORD_CLEAR_ACTION,
+      entityType: "trade_records_clear",
+      entityId: "all",
+      reason: from || to
+        ? `Administrator cleared trade and notification records between ${summary.from} and ${summary.to}.`
+        : "Administrator cleared all trade and notification records.",
+      reference,
+      metadataJson: JSON.stringify(summary),
     });
     return summary;
   });

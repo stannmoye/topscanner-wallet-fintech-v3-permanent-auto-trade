@@ -1,3 +1,33 @@
+## 2026-11-20 — Admin "Clear Trade" maintenance button on the home page
+
+Branch `main`. Owner request: an admin-side **Clear Trade** button, placed at the very top of
+the admin home page (not in the Trade submenu), that deletes trade history and notification
+records — optionally limited to a time range — while never touching balances or customer data.
+
+Changes:
+- `server/db.ts`: new `TRADE_RECORD_CLEAR_CATEGORIES` (`tradeHistory`, `opportunityRecords`,
+  `customerNotifications`, `notificationCampaigns`), `tradeRecordClearTargets()` (child-first
+  ordered list of the 20 record tables with their window column), `previewTradeRecordClear()`
+  (read-only counts) and `clearTradeRecords()` (single transaction, per-table `affectedRows`,
+  one `v5AuditEvents` row, idempotent replay keyed on `trade-records-clear:<operationId>`).
+  No balance, ledger (incl. `balance_ledger`), customer, subscription or configuration table
+  is in scope.
+- `server/routers.ts`: two `adminProcedure`s — `clearTradePreview` (query) and `clearTrade`
+  (mutation) — with strict zod schemas (≥1 category, `from <= to`, UUID `operationId`).
+- `client/src/components/AdminOperationsPages.tsx`: new `AdminClearTradeButton` (button +
+  modal): four category checkboxes (all on by default), optional from/to `datetime-local`
+  window (blank = clear all), a Preview button wired to `clearTradePreview`, a simple
+  Confirm clear button (no typed phrase), and a success/error summary.
+- `client/src/App.tsx`: lazy import + the button placed in the admin home hero
+  (`AdminOverview` `portal-page-top`), with the "Production configuration" chip.
+- `client/src/admin-operations.css`: `.admin-clear-trade-*` and `.admin-overview-hero-actions`
+  styles (incl. theme overrides).
+- `server/clear-trade-records.mysql.integration.test.ts`: gated disposable-MySQL test
+  (`RUN_CLEAR_TRADE_DB_INTEGRATION=1`) covering authorization, preview immutability,
+  window-scoped deletion, balance/ledger/customer preservation, audit row and idempotent replay.
+
+Verified: `pnpm check`, `pnpm test` (196 files / 1545 tests passed, 7 files skipped), `pnpm build`.
+
 ## 2026-11-20 — Customer daily offer usage record + all-offers-used login notice
 
 Branch `main`. Owner request: give customers a visible daily trading record and a login

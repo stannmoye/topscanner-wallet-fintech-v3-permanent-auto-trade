@@ -4,7 +4,7 @@ import { parse as parseCookieHeader } from "cookie";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { listAdminTradeAuditHistory, listAdminTradingHistory, resetTradeOpportunityUsage, resolveCustomerPackageName } from "./db";
+import { listAdminTradeAuditHistory, listAdminTradingHistory, resetTradeOpportunityUsage, resolveCustomerPackageName, clearTradeRecords, previewTradeRecordClear } from "./db";
 import { countCompanyReferences, findCompanyReferencesBySymbol, getCompanyReferenceById, getCompanyReferenceSummary, getRandomCompanyReference, searchCompanyReferences } from "./modules/company-catalogue-reference";
 import { z } from "zod";
 import { communicationSettingsInput, getAdminCommunicationSettings, getCustomerCommunicationOptions, saveAdminCommunicationSettings, validateCommunicationSettingsInput } from "./communicationSettings";
@@ -60,6 +60,30 @@ const opportunityDeliveryFiltersSchema = z.object({
     context.addIssue({ code: "custom", message: "Start date must not be after end date.", path: ["from"] });
   }
 });
+
+// "Clear Trade" maintenance tool. Balances, the ledger and customer data are
+// never in scope; only the four record groups below can be cleared.
+const tradeRecordClearCategoriesSchema = z.object({
+  tradeHistory: z.boolean(),
+  opportunityRecords: z.boolean(),
+  customerNotifications: z.boolean(),
+  notificationCampaigns: z.boolean(),
+}).strict();
+const tradeRecordClearPreviewSchema = z.object({
+  from: z.string().datetime({ offset: true }).nullable().optional(),
+  to: z.string().datetime({ offset: true }).nullable().optional(),
+  categories: tradeRecordClearCategoriesSchema,
+}).strict()
+  .refine(value => Object.values(value.categories).some(Boolean), { message: "Select at least one record group to clear." })
+  .refine(value => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), { message: "Start of the clear window must not be after the end." });
+const tradeRecordClearInputSchema = z.object({
+  from: z.string().datetime({ offset: true }).nullable().optional(),
+  to: z.string().datetime({ offset: true }).nullable().optional(),
+  categories: tradeRecordClearCategoriesSchema,
+  operationId: z.string().uuid(),
+}).strict()
+  .refine(value => Object.values(value.categories).some(Boolean), { message: "Select at least one record group to clear." })
+  .refine(value => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), { message: "Start of the clear window must not be after the end." });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -637,6 +661,8 @@ export const appRouter = router({
       reason: input.reason,
       operationId: input.operationId,
     }, ctx.user.id)),
+    clearTradePreview: adminProcedure.input(tradeRecordClearPreviewSchema).query(({ input }) => previewTradeRecordClear(input)),
+    clearTrade: adminProcedure.input(tradeRecordClearInputSchema).mutation(({ ctx, input }) => clearTradeRecords(input, ctx.user.id)),
     audit: adminProcedure.query(() => listAdminAuditEvents()),
     tradeAuditHistory: adminProcedure.input(z.object({
       actorUserId: z.number().int().positive().max(2_147_483_647).optional(),
