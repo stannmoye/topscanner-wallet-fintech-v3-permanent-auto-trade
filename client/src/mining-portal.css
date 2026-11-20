@@ -176,7 +176,9 @@
 
 /* CoinKi customer mining dashboard: scoped layout plus the ZIP-derived ASIC display. */
 .customer-portal:has(.cm-dashboard-frame){background:#020d1c!important}
-.customer-portal:has(.cm-dashboard-frame)>:not(.portal-body):not(.customer-toast-stack){display:none!important}
+.customer-portal:has(.cm-dashboard-frame)>:not(.portal-body):not(.customer-toast-stack):not(.customer-top-workspace-menu):not(.customer-slide-layer){display:none!important}
+/* Keep the homepage workspace menu and the MENU drawer reachable from the mining dashboard so the mining page can navigate the whole customer portal. */
+.customer-portal:has(.cm-dashboard-frame) .customer-top-workspace-menu{margin:14px auto!important;margin-left:auto!important;margin-right:auto!important;width:min(100% - 28px,1180px)!important;max-width:1180px!important;border-color:#164775!important;background:linear-gradient(145deg,rgba(5,22,40,.97),rgba(4,18,34,.94))!important;box-shadow:0 12px 28px rgba(0,0,0,.34)!important}
 .customer-portal:has(.cm-dashboard-frame) .portal-body{display:block!important;min-height:100vh!important;padding:0!important;background:#020d1c!important}
 .customer-portal:has(.cm-dashboard-frame) .customer-primary-rail{display:none!important}
 .customer-portal:has(.cm-dashboard-frame) .portal-main{display:block!important;width:100%!important;min-width:0!important;max-width:none!important;min-height:100vh!important;padding:0!important;margin:0!important;background:#020d1c!important}
