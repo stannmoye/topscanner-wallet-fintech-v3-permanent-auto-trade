@@ -7,7 +7,8 @@ import { registerProviderOAuthRoutes } from "./providerOAuth";
 import { publicPlatformScript } from "./publicConfig";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, resolveCustomerPackageName, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
+import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, createNotification, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, resolveCustomerPackageName, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
+import { buildDeviceContext, isDeviceBlocked, recordDeviceLogin, safeLogDeviceEvent } from "../trusted-devices";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { configuredAuthRateLimitStore, createAuthRateLimiter } from "./authRateLimit";
@@ -120,15 +121,46 @@ async function startServer() {
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ limit: "1mb", extended: true }));
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-  const setLocalSession = (req: express.Request, res: express.Response, user: { id: number; authVersion?: number }) => {
-    res.cookie(COOKIE_NAME, createLocalSession(user.id, user.authVersion || 0), { ...getSessionCookieOptions(req), maxAge: 30 * 24 * 60 * 60 * 1000 });
+  const setLocalSession = (req: express.Request, res: express.Response, user: { id: number; authVersion?: number }, deviceKey?: string | null) => {
+    res.cookie(COOKIE_NAME, createLocalSession(user.id, user.authVersion || 0, deviceKey), { ...getSessionCookieOptions(req), maxAge: 30 * 24 * 60 * 60 * 1000 });
+  };
+  const requestDeviceContext = (req: express.Request, userId: number, device: unknown) =>
+    buildDeviceContext(userId, (device && typeof device === "object" ? device : undefined) as never, {
+      userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+      ipAddress: req.ip || req.socket?.remoteAddress || undefined,
+    });
+  /**
+   * Shared post-authentication device step. Refuses a blocked device and records
+   * a first-seen or returning login. Returns the device key used to bind the
+   * session cookie, or null when the sign-in must be refused.
+   */
+  const registerLoginDevice = async (req: express.Request, userId: number, device: unknown): Promise<{ deviceKey: string; blocked: boolean }> => {
+    const context = requestDeviceContext(req, userId, device);
+    let blocked = false;
+    try {
+      blocked = await isDeviceBlocked(userId, context.deviceKey);
+    } catch {
+      blocked = false;
+    }
+    if (blocked) {
+      await safeLogDeviceEvent(userId, { deviceKey: context.deviceKey, deviceName: context.deviceName, action: "login_blocked", actorRole: "system", detail: "Sign-in refused: this device is blocked for the account.", ipAddress: context.ipAddress, userAgent: context.userAgent });
+      return { deviceKey: context.deviceKey, blocked: true };
+    }
+    const record = await recordDeviceLogin(userId, context);
+    await safeLogDeviceEvent(userId, { deviceKey: context.deviceKey, deviceName: context.deviceName, action: record.isNew ? "device_first_seen" : "login", actorRole: "customer", actorId: userId, detail: record.isNew ? "New device signed in." : "Signed in from a recognised device.", ipAddress: context.ipAddress, userAgent: context.userAgent });
+    if (record.isNew) {
+      void createNotification(userId, "New device signed in", `A new device signed in to your account: ${context.deviceName}. If this was not you, open Account Settings → Trusted Devices to block it and change your password.`, { eventKey: `device-new:${record.id}`, category: "security", priority: "high", href: "/customer" })
+        .catch((error) => console.error("[TrustedDevices] New-device notice failed:", error instanceof Error ? error.name : "UnknownError"));
+    }
+    return { deviceKey: context.deviceKey, blocked: false };
   };
   app.post("/api/customer/register", registrationRateLimit, async (req, res) => {
     try {
       const { email, password, firstName, lastName } = req.body || {};
       if (typeof email !== "string" || typeof password !== "string" || password.length < 12) return res.status(400).json({ error: "Use an email and a password of at least 12 characters" });
       const user = await createLocalCustomer({ email, passwordHash: passwordHash(password), name: `${firstName || ""} ${lastName || ""}`.trim() || email });
-      setLocalSession(req, res, user);
+      const device = await registerLoginDevice(req, user.id, req.body?.device);
+      setLocalSession(req, res, user, device.deviceKey);
       void requestEmailVerification(user.id).catch(error => console.error("[Email] Registration verification enqueue failed:", error instanceof Error ? error.name : "UnknownError"));
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
@@ -149,7 +181,9 @@ async function startServer() {
       const passwordMatches = verifyPassword(String(password || ""), user?.passwordHash ?? TIMING_DECOY_PASSWORD_HASH);
       // Administrators may sign into their own customer workspace; authorization remains database-role based.
       if (!user || (user.role !== "user" && user.role !== "admin") || !passwordMatches) return res.status(401).json({ error: "Invalid email or password" });
-      setLocalSession(req, res, user);
+      const device = await registerLoginDevice(req, user.id, req.body?.device);
+      if (device.blocked) return res.status(403).json({ error: "This device has been blocked for this account. If you believe this is a mistake, contact support or ask an administrator to restore access." });
+      setLocalSession(req, res, user, device.deviceKey);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
@@ -165,7 +199,9 @@ async function startServer() {
       // unknown email) so the response cannot reveal whether an administrator account exists.
       const passwordMatches = verifyPassword(String(password || ""), user?.passwordHash ?? TIMING_DECOY_PASSWORD_HASH);
       if (!user || user.role !== "admin" || !passwordMatches) return res.status(401).json({ error: "Invalid email or password" });
-      setLocalSession(req, res, user);
+      const device = await registerLoginDevice(req, user.id, req.body?.device);
+      if (device.blocked) return res.status(403).json({ error: "This device has been blocked for this account. If you believe this is a mistake, contact support or ask an administrator to restore access." });
+      setLocalSession(req, res, user, device.deviceKey);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });

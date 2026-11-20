@@ -1408,3 +1408,69 @@ export const adminWalletAdjustmentIdempotency = mysqlTable("admin_wallet_adjustm
   keyUnique: uniqueIndex("admin_wallet_adjustment_key_uq").on(table.idempotencyKey),
   createdAtIdx: index("admin_wallet_adjustment_created_idx").on(table.createdAt),
 }));
+
+/**
+ * Trusted-device registry. One row per device (a stable server-derived
+ * fingerprint) that has signed into a customer workspace. The customer portal's
+ * Trusted Devices page lists these rows and lets the customer rename or block a
+ * device; the admin portal can see every device blocked across customers and
+ * restore access.
+ *
+ * Browsers cannot expose a hardware MAC address, so `deviceKey` is a
+ * pseudonymous, server-derived fingerprint that differentiates one device from
+ * another for the same account.
+ */
+export const trustedDevices = mysqlTable("trusted_devices", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  /** Stable pseudonymous device ID (server hash of the client fingerprint + account). */
+  deviceKey: varchar("deviceKey", { length: 96 }).notNull(),
+  /** Customer-editable friendly device name. */
+  deviceName: varchar("deviceName", { length: 120 }).notNull().default("Unknown device"),
+  deviceType: varchar("deviceType", { length: 32 }).notNull().default("unknown"),
+  platform: varchar("platform", { length: 64 }),
+  browser: varchar("browser", { length: 64 }),
+  userAgent: text("userAgent"),
+  firstIpAddress: varchar("firstIpAddress", { length: 128 }),
+  lastIpAddress: varchar("lastIpAddress", { length: 128 }),
+  countryCode: varchar("countryCode", { length: 8 }),
+  status: mysqlEnum("status", ["trusted", "pending", "blocked"]).default("trusted").notNull(),
+  blockedBy: mysqlEnum("blockedBy", ["customer", "admin"]),
+  blockedReason: varchar("blockedReason", { length: 255 }),
+  blockedAt: timestamp("blockedAt"),
+  restoredAt: timestamp("restoredAt"),
+  loginCount: int("loginCount").default(0).notNull(),
+  firstSeenAt: timestamp("firstSeenAt").defaultNow().notNull(),
+  lastSeenAt: timestamp("lastSeenAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  userDeviceUnique: uniqueIndex("trusted_devices_user_key_uq").on(table.userId, table.deviceKey),
+  userStatusIdx: index("trusted_devices_user_status_idx").on(table.userId, table.status),
+  statusIdx: index("trusted_devices_status_idx").on(table.status, table.lastSeenAt),
+}));
+
+export type TrustedDevice = typeof trustedDevices.$inferSelect;
+
+/**
+ * Immutable audit trail of device and access events. Powers the customer
+ * security timeline and the admin device oversight queue.
+ */
+export const deviceAccessEvents = mysqlTable("device_access_events", {
+  id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  deviceKey: varchar("deviceKey", { length: 96 }),
+  deviceName: varchar("deviceName", { length: 120 }),
+  action: varchar("action", { length: 40 }).notNull(),
+  actorRole: varchar("actorRole", { length: 16 }).notNull().default("customer"),
+  actorId: int("actorId"),
+  detail: varchar("detail", { length: 500 }),
+  ipAddress: varchar("ipAddress", { length: 128 }),
+  userAgent: text("userAgent"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  userCreatedIdx: index("device_access_events_user_created_idx").on(table.userId, table.createdAt),
+  deviceIdx: index("device_access_events_device_idx").on(table.deviceKey),
+}));
+
+export type DeviceAccessEvent = typeof deviceAccessEvents.$inferSelect;

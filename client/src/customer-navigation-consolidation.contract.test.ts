@@ -16,7 +16,7 @@ const drawerTargets = new Set(
 // dashboard quick actions remain as shortcuts, not as the only path).
 const requiredDestinations = [
   "dashboard", "wallet", "opportunities", "yield", "activity", "crypto-mining", "support",
-  "advanced", "intelligence", "account",
+  "advanced", "intelligence", "account", "trusted-devices",
   "whitepaper", "token-launch", "tokenomics", "roadmap", "investment-research",
   "knowledge-base", "documentation", "faqs", "trading-guides",
   "risk-disclosure", "legal-documents", "news-updates",

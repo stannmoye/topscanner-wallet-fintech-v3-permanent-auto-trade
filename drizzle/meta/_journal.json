@@ -610,6 +610,13 @@
       "when": 1794484800004,
       "tag": "0119_customer_personal_details",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1794484800005,
+      "tag": "0120_trusted_devices",
+      "breakpoints": true
     }
   ]
 }

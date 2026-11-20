@@ -29,6 +29,7 @@ import { isValidSupportAttachmentStorageKey } from "./_core/attachmentPolicy";
 import { invalidateUserSessions } from "./authSessions";
 import { getLocalSessionFromRequest, createLocalSession, passwordHash, verifyPassword } from "./_core/localAuth";
 import * as privacyService from "./privacy";
+import { adminRestoreDevice, blockDevice, getDeviceOversightSummary, listBlockedDevicesForAdmin, listDeviceEvents, listDevicesForAdmin, listTrustedDevices, renameDevice } from "./trusted-devices";
 import { localIdentityService } from "./_core/localIdentityService";
 import { createHeartbeatJob, deleteHeartbeatJob, listHeartbeatJobs, updateHeartbeatJob } from "./_core/heartbeat";
 import { getWorkerHealthSummary, requeueDeadQualificationJob } from "./_core/workerHealth";
@@ -295,7 +296,8 @@ export const appRouter = router({
       }
       const { authVersion } = await changeCustomerPassword(ctx.user.id, passwordHash(input.newPassword));
       // Keep the device that performed the change signed in; every other session is now invalid.
-      ctx.res.cookie(COOKIE_NAME, createLocalSession(ctx.user.id, authVersion), { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
+      const currentDevice = getLocalSessionFromRequest(ctx.req)?.deviceKey;
+      ctx.res.cookie(COOKIE_NAME, createLocalSession(ctx.user.id, authVersion, currentDevice), { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
       return { success: true as const };
     }),
     authenticatorStatus: protectedProcedure.query(({ ctx }) => getCustomerAuthenticatorStatus(ctx.user.id)),
@@ -346,6 +348,62 @@ export const appRouter = router({
         console.error("[Notifications] Session revocation notice failed after security change:", error instanceof Error ? error.name : "UnknownError");
       }
       return { success: true };
+    }),
+    trustedDevices: protectedProcedure.query(({ ctx }) => listTrustedDevices(ctx.user.id, getLocalSessionFromRequest(ctx.req)?.deviceKey)),
+    renameTrustedDevice: protectedProcedure.input(z.object({ id: z.number().int().positive(), deviceName: z.string().trim().min(1).max(120) })).mutation(async ({ ctx, input }) => {
+      await renameDevice(ctx.user.id, input.id, input.deviceName, "customer").then(
+        () => undefined,
+        (error) => { throw new TRPCError({ code: "NOT_FOUND", message: error instanceof Error ? error.message : "Device not found" }); },
+      );
+      return { success: true as const };
+    }),
+    blockTrustedDevice: protectedProcedure.input(z.object({ id: z.number().int().positive(), reason: z.string().trim().min(3).max(255) })).mutation(async ({ ctx, input }) => {
+      const target = await blockDevice(ctx.user.id, input.id, {
+        reason: input.reason,
+        actorRole: "customer",
+        actorId: ctx.user.id,
+        ipAddress: ctx.req.ip || ctx.req.socket.remoteAddress,
+        userAgent: ctx.req.headers["user-agent"],
+      }).then(
+        (value) => value,
+        (error) => { throw new TRPCError({ code: "NOT_FOUND", message: error instanceof Error ? error.message : "Device not found" }); },
+      );
+      // The security action is authoritative; the notification is best-effort.
+      try {
+        await createNotification(ctx.user.id, "Security: device blocked",
+          `${target.deviceName} was blocked and signed out. It can no longer access the portal until an administrator restores it.`, {
+            eventKey: `device-blocked:${input.id}:${Date.now()}`,
+            category: "security",
+            priority: "high",
+            href: "/customer",
+          });
+      } catch (error) {
+        console.error("[Notifications] Device block notice failed after security change:", error instanceof Error ? error.name : "UnknownError");
+      }
+      return { success: true as const };
+    }),
+    deviceAccessEvents: protectedProcedure.query(({ ctx }) => listDeviceEvents(ctx.user.id, 40)),
+    requestDeviceUnblock: protectedProcedure.input(z.object({ deviceId: z.number().int().positive(), reason: z.string().trim().min(10).max(1000) })).mutation(async ({ ctx, input }) => {
+      const { devices } = await listTrustedDevices(ctx.user.id);
+      const device = devices.find((item) => Number(item.id) === input.deviceId);
+      if (!device) throw new TRPCError({ code: "NOT_FOUND", message: "Device not found" });
+      return createTicket(ctx.user.id, {
+        subject: `Restore access for blocked device: ${device.deviceName}`.slice(0, 200),
+        body: [
+          "An administrator is requested to review and restore a blocked device.",
+          "",
+          `Device name: ${device.deviceName}`,
+          `Device ID: ${device.deviceIdShort}`,
+          `Type: ${device.deviceType} · ${device.platform} · ${device.browser}`,
+          `Last seen IP: ${device.lastIpAddress ?? "unknown"}`,
+          `Blocked reason on file: ${device.blockedReason ?? "reported by the customer as unrecognised"}`,
+          "",
+          "Customer explanation:",
+          input.reason,
+        ].join("\n"),
+        priority: "high",
+        category: "security",
+      });
     }),
     requestRiskReport: protectedProcedure.input(z.object({ title: z.string().min(3).max(200), requestedFor: z.string().max(200).optional() })).mutation(({ ctx, input }) => createRiskReport(ctx.user.id, input.title, input.requestedFor)),
     riskReports: protectedProcedure.query(({ ctx }) => listRiskReports(ctx.user.id)),
@@ -431,6 +489,10 @@ export const appRouter = router({
 
   adminOperations: router({
     workerHealth: adminProcedure.query(() => getWorkerHealthSummary()),
+    deviceOversightSummary: adminProcedure.query(() => getDeviceOversightSummary()),
+    blockedDevices: adminProcedure.query(() => listBlockedDevicesForAdmin()),
+    devices: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional()).query(({ input }) => listDevicesForAdmin(input?.limit)),
+    restoreDevice: adminProcedure.input(z.object({ id: z.number().int().positive(), note: z.string().trim().max(500).optional() })).mutation(({ ctx, input }) => adminRestoreDevice(ctx.user.id, input.id, input.note)),
     systemDiagnostics: adminProcedure.query(() => getSystemDiagnosticsReport()),
     requeueDeadQualificationJob: adminProcedure.input(z.object({
       jobId: z.number().int().positive(),

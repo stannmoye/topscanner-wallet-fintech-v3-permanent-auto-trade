@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import {
   Activity, ArrowDownUp, BarChart3, BookMarked, BookOpen, Building2, CircleHelp, Coins, FileText,
   Globe2, Headphones, Home, Landmark, Layers3, Library, LockKeyhole, Map, Menu, Newspaper, Scale,
-  Search, ShieldAlert, ShieldCheck, Sparkles, TrendingUp, WalletCards, X, Zap, type LucideIcon,
+  Search, ShieldAlert, ShieldCheck, Smartphone, Sparkles, TrendingUp, WalletCards, X, Zap, type LucideIcon,
 } from "lucide-react";
 
 type CustomerSlideMenuProps = { section: string; onNavigate: (section: string) => void };
@@ -36,6 +36,7 @@ const destinationGroups: CustomerDestinationGroup[] = [
       { label: "Power tools", detail: "Risk reports, sessions and support tools", target: "advanced", icon: Sparkles },
       { label: "Portfolio intelligence", detail: "Allocation health and signal quality", target: "intelligence", icon: BarChart3 },
       { label: "Account Settings", detail: "Profile, security and preferences", target: "account", icon: LockKeyhole },
+      { label: "Trusted Devices", detail: "Review devices with account access", target: "trusted-devices", icon: Smartphone },
     ],
   },
   {
@@ -111,6 +112,7 @@ const primaryLabels: Record<string, string> = {
   withdraw: "Withdraw funds",
   activity: "Activity", support: "Support", account: "Account Settings", security: "Security",
   kyc: "Identity verification", notifications: "Notifications", console: "Customer console",
+  "trusted-devices": "Trusted Devices",
   "crypto-mining": "Crypto Mining", "token-launch": "Token Launch", "treasury-bond": "Treasury Bond", "cooperate-dept": "Cooperate Dept",
   "litigation-funds": "Litigation Funds", "ip-royalties": "IP Royalties", "music-royalties": "Music Royalties", "agro-investment": "Agro Investment",
   "carbon-credit": "Carbon Credit", "green-energy": "Green Energy",

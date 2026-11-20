@@ -96,6 +96,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "risk-watchlist", target: "riskWatchlist", label: "Risk Watchlist", detail: "Risk tiers, alerts and account state", icon: ShieldAlert },
     { id: "alert-governance", target: "riskWatchlist", label: "Alert Governance", detail: "Review and govern risk signals", icon: Bell },
     { id: "session-device-oversight", target: "riskWatchlist", label: "Session & Device Oversight", detail: "Review and revoke customer sessions", icon: ShieldAlert },
+    { id: "device-oversight", target: "deviceOversight", label: "Device Oversight", detail: "All registered devices and the devices each customer has blocked", icon: ShieldAlert },
     { id: "kyc-audit-trail", target: "kycCenter", label: "KYC Audit Trail", detail: "Signed KYC chain and minimized events", icon: FileText },
   ]},
   { id: "communications", label: "Communications", detail: "Email operations and support work", items: [

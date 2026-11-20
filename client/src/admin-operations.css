@@ -1029,3 +1029,19 @@
 :root[data-arb-theme] .delivery-diagnostic-metric strong, :root[data-arb-theme] .delivery-diagnostic-detail-head h3, :root[data-arb-theme] .delivery-diagnostic-customer-head h3 { color: var(--arb-color-text); }
 @media(max-width:860px) { .delivery-diagnostic-filter-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .delivery-diagnostic-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @media(max-width:640px) { .delivery-diagnostic-heading, .delivery-diagnostic-worker-card { flex-direction: column; align-items: flex-start; } .delivery-diagnostic-actions { justify-content: flex-start; } .delivery-diagnostic-filter-grid { grid-template-columns: minmax(0,1fr); } .delivery-diagnostic-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .delivery-diagnostic-pagination { align-items: flex-start; flex-direction: column; } .delivery-diagnostic-pagination > div { width: 100%; } .delivery-diagnostic-pagination .admin-ops-button { flex: 1; } .delivery-diagnostic-customer-results button { align-items: flex-start; flex-direction: column; } }
+
+/* Device oversight (admin portal) */
+.device-oversight-table td strong{display:block;color:#e1eceb;font-weight:650}
+.device-oversight-table td small{display:block;margin-top:3px;color:#718993;font-size:9px}
+.device-oversight-group{margin-bottom:16px;padding:14px;border:1px solid rgba(132,164,177,.13);border-radius:14px;background:rgba(255,255,255,.015)}
+.device-oversight-group:last-child{margin-bottom:0}
+.device-oversight-group-head{display:flex;align-items:center;gap:11px;margin-bottom:11px}
+.device-oversight-avatar{display:grid;width:34px;height:34px;place-items:center;border:1px solid rgba(124,231,194,.2);border-radius:50%;color:#7ce7c2;background:rgba(124,231,194,.07)}
+.device-oversight-group-head strong{display:block;color:#e7f1f0;font-size:12px}
+.device-oversight-group-head small{display:block;margin-top:3px;color:#7d95a0;font-size:9px}
+.device-oversight-search{display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:0 11px;border:1px solid rgba(132,164,177,.18);border-radius:10px;color:#7ce7c2;background:rgba(255,255,255,.02)}
+.device-oversight-search input{min-width:210px;border:0;background:transparent;color:#dcebea;font-size:10px;outline:none}
+.device-oversight-restore{display:grid;gap:7px}
+.device-oversight-restore input{min-width:180px;padding:7px 9px;border:1px solid rgba(132,164,177,.2);border-radius:9px;color:#dcebea;background:rgba(255,255,255,.03);font-size:10px}
+.device-oversight-restore-actions{display:flex;gap:7px}
+@media(max-width:680px){.device-oversight-search{width:100%}.device-oversight-search input{min-width:0;width:100%}.device-oversight-group{padding:11px}}
