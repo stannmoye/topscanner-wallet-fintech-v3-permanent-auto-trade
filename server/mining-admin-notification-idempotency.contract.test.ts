@@ -12,6 +12,7 @@ describe("mining-admin notification idempotency", () => {
       ["Mining adjustment approved", "mining-adjustment-approved:${input.requestId}"],
       ["Mining transaction reversed", "mining-reversal:${input.transactionId}"],
       ["Mining entitlement ${pastTense}", "mining-entitlement-${action}"],
+      ["Bulk simulated CKI ${direction} posted", "mining-bulk-${direction}:${operationId}:${userId}"],
     ] as const;
 
     for (const [title, eventKey] of expectedCalls) {
@@ -26,7 +27,7 @@ describe("mining-admin notification idempotency", () => {
 
   it("does not retain a bare createMiningNotification call in mining-admin.ts", () => {
     const calls = source.match(/createMiningNotification\([^;]+\);/gs) ?? [];
-    expect(calls.length).toBe(6);
+    expect(calls.length).toBe(7);
     for (const call of calls) expect(call).toContain("`mining-");
   });
 });

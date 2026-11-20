@@ -450,6 +450,34 @@ try {
     await connection.rollback();
     throw error;
   }
+  const brandingMigrationKey = "0123_mining_token_branding_bulk";
+  const brandingSchema = await readFile(resolve("drizzle", "0123_mining_token_branding_bulk.sql"), "utf8");
+  await executeCompatibleMigrationSql(connection, brandingSchema);
+  await connection.beginTransaction();
+  try {
+    const [markers] = await connection.query("SELECT migrationKey FROM mining_schema_migrations WHERE migrationKey=? FOR UPDATE", [brandingMigrationKey]);
+    if (markers.length) {
+      await connection.commit();
+      console.log("Mining coin branding, live rate and bulk-operation migration already applied.");
+    } else {
+      const [admins] = await connection.query("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1");
+      const adminId = admins[0] ? Number(admins[0].id) : null;
+      await connection.query("UPDATE mining_economics_versions SET tokenRateSource='fixed' WHERE tokenRateSource IS NULL OR tokenRateSource NOT IN ('fixed','live')");
+      const metadata = { tokenBrandingEditable: true, liveRateSource: true, bulkOperations: ["credit","debit"], internalAssetCode: "CKI" };
+      await connection.execute("INSERT INTO mining_schema_migrations (migrationKey,detailsJson) VALUES (?,?)", [brandingMigrationKey, JSON.stringify(metadata)]);
+      await connection.execute(
+        `INSERT INTO v5_audit_events (actorUserId,action,entityType,entityId,reason,reference,metadataJson)
+         VALUES (?,?,?,?,?,?,?)`,
+        [adminId,"mining.token.branding_enabled","mining_economics_version",brandingMigrationKey,
+          "Enable administrator-editable coin name, icon and live rate source, plus audited bulk CKI credit/debit operations. The internal ledger asset code stays CKI.",brandingMigrationKey,JSON.stringify(metadata)],
+      );
+      await connection.commit();
+      console.log(JSON.stringify({ migration: brandingMigrationKey, ...metadata }));
+    }
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  }
   const verified = await assertWorkerSchemaContracts(connection);
   console.log(`[mining-migrate] PASS: verified ${verified.checkedTables} worker-critical table contracts after mining migrations.`);
 } finally {

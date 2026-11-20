@@ -42,8 +42,13 @@ try {
   await addColumn("mining_economics_versions", "boostActivationBonusCki", "DECIMAL(36,18) NOT NULL DEFAULT 0");
   await addColumn("mining_economics_versions", "globalHashPowerThs", "DECIMAL(30,12) NOT NULL DEFAULT 0");
   await addColumn("mining_economics_versions", "miningSpeedMultiplier", "DECIMAL(18,8) NOT NULL DEFAULT 1");
+  await addColumn("mining_economics_versions", "tokenIconUrl", "VARCHAR(1024) NULL");
+  await addColumn("mining_economics_versions", "tokenRateSource", "VARCHAR(16) NOT NULL DEFAULT 'fixed'");
+  await addColumn("mining_economics_versions", "tokenExternalSymbol", "VARCHAR(64) NULL");
+  await addColumn("mining_economics_versions", "tokenRateProvider", "VARCHAR(64) NULL");
   await db.query(`UPDATE mining_economics_versions SET globalHashPowerThs=67 WHERE globalHashPowerThs=0`);
   await db.query(`UPDATE mining_economics_versions SET miningSpeedMultiplier=1 WHERE miningSpeedMultiplier IS NULL OR miningSpeedMultiplier<=0`);
+  await db.query(`UPDATE mining_economics_versions SET tokenRateSource='fixed' WHERE tokenRateSource IS NULL OR tokenRateSource NOT IN ('fixed','live')`);
 
   await addColumn("mining_packages", "displayOrder", "INT NOT NULL DEFAULT 0");
   await addColumn("mining_package_versions", "displayName", "VARCHAR(120) NULL");
@@ -142,6 +147,39 @@ try {
     INDEX idx_pending_boost_day_status (rewardDay,status,userId)
   ) ENGINE=InnoDB`);
   await db.query(`ALTER TABLE mining_pending_boost_rewards MODIFY COLUMN rewardEventId INT NULL`);
+
+  await db.query(`CREATE TABLE IF NOT EXISTS mining_bulk_operations (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    adminId INT NOT NULL,
+    direction VARCHAR(8) NOT NULL,
+    assetCode VARCHAR(12) NOT NULL,
+    amount DECIMAL(36,18) NOT NULL,
+    reason VARCHAR(500) NOT NULL,
+    idempotencyKey VARCHAR(200) NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+    totalTargets INT NOT NULL DEFAULT 0,
+    postedCount INT NOT NULL DEFAULT 0,
+    skippedCount INT NOT NULL DEFAULT 0,
+    failedCount INT NOT NULL DEFAULT 0,
+    summaryJson LONGTEXT NULL,
+    createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    completedAt DATETIME(3) NULL,
+    UNIQUE KEY uq_mining_bulk_operation_key (idempotencyKey),
+    INDEX idx_mining_bulk_operations_created (createdAt)
+  ) ENGINE=InnoDB`);
+
+  await db.query(`CREATE TABLE IF NOT EXISTS mining_bulk_operation_items (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    operationId INT NOT NULL,
+    userId INT NOT NULL,
+    status VARCHAR(24) NOT NULL,
+    ledgerTransactionId INT NULL,
+    referenceCode VARCHAR(120) NULL,
+    detail VARCHAR(500) NULL,
+    createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    INDEX idx_mining_bulk_operation_items_op (operationId, status),
+    INDEX idx_mining_bulk_operation_items_user (userId, createdAt)
+  ) ENGINE=InnoDB`);
 
   await db.query(`UPDATE mining_package_versions SET displayName=(SELECT name FROM mining_packages p WHERE p.id=mining_package_versions.packageId) WHERE displayName IS NULL`);
   await db.query(`UPDATE mining_customer_packages cp JOIN mining_packages p ON p.id=cp.packageId JOIN mining_package_versions v ON v.id=cp.packageVersionId SET cp.packageNameSnapshot=COALESCE(v.displayName,p.name) WHERE cp.packageNameSnapshot IS NULL`);

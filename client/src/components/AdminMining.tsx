@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Decimal from "decimal.js";
 import { trpc } from "@/lib/trpc";
 import "../factory-cockpit.css";
-import { Activity, AlertTriangle, ArrowRight, BadgeCheck, BookOpenCheck, Check, CircleDollarSign, Clock3, Cpu, Database, FileClock, Gauge, LockKeyhole, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, BadgeCheck, BookOpenCheck, Check, CircleDollarSign, Clock3, Coins, Cpu, Database, FileClock, Gauge, LockKeyhole, Palette, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
 import { MiningCoreCanvas } from "./MiningCoreCanvas";
 
 const blankPackage:any = {code:"",name:"",displayOrder:"",durationMonths:"",expectedDailyRewardCki:"",priceAmount:"",priceAsset:"",baseThs:"",boostBonusThs:"",boostDurationSeconds:null,maxPerCustomer:0,stackingPolicy:"",termsText:"",simulationAcknowledgementRequired:true};
@@ -12,7 +12,7 @@ const toDateTimeLocal=(value?:string|null)=>{if(!value)return "";const date=new 
 const nfmt=(value:unknown,max=8)=>Number.isFinite(Number(value))?Number(value||0).toLocaleString(undefined,{maximumFractionDigits:max}):"—";
 
 export function AdminMining({focus}:{focus?:string}){
-  const MINING_FOCUS_TABS:[string,string][]=[["overview","Overview"],["packages","Packages"],["controls","Speed & Economics"],["customers","Customer Mining"],["audit","Audit Trail"]];
+  const MINING_FOCUS_TABS:[string,string][]=[["overview","Overview"],["packages","Packages"],["controls","Speed & Economics"],["coin-branding","Coin & Branding"],["customers","Customer Mining"],["bulk-operations","Bulk CKI Operations"],["audit","Audit Trail"]];
   const activeFocus=focus||"overview";
   const jumpToFocus=(target:string)=>{document.getElementById(`mining-focus-${target}`)?.scrollIntoView({behavior:"smooth",block:"start"});};
   useEffect(()=>{if(focus)document.getElementById(`mining-focus-${focus}`)?.scrollIntoView({behavior:"smooth",block:"start"});},[focus]);
@@ -40,6 +40,8 @@ export function AdminMining({focus}:{focus?:string}){
   const [cloneForm,setCloneForm]=useState<any>(null);
   const [entitlementReason,setEntitlementReason]=useState("Operations entitlement control from the admin control room.");
   const [extendDays,setExtendDays]=useState(30);
+  const [bulk,setBulk]=useState<any>({direction:"credit",amount:"",userIds:"",reason:""});
+  const [bulkResult,setBulkResult]=useState<any>(null);
 
   useEffect(()=>{if(economics.data?.current)setSettings({...economics.data.current,effectiveAt:""});},[economics.data?.current?.version]);
   const customerRows=trpc.adminOperations.miningCustomers.useQuery({query:customerSearch,limit:50},{refetchInterval:30000});
@@ -61,9 +63,13 @@ export function AdminMining({focus}:{focus?:string}){
   const reverse=trpc.adminOperations.reverseMiningTransaction.useMutation({onSuccess:r=>{report(`Reversal ${r.reference} recorded for transaction ${r.reversesTransactionId}.`);setReverseId("");setReverseReason("");void dashboard.refetch();void customerDetail.refetch();},onError:e=>fail(e.message)});
   const reconcile=trpc.adminOperations.reconcileMiningLedger.useMutation({onSuccess:r=>{setReconcileResult(r);report(r.repaired?`Journal reconciliation checked ${r.checked} wallet(s) and rebuilt ${r.repaired} snapshot(s).`:`Journal check completed: ${r.discrepancies} discrepancy(ies), ${r.skipped} wallet(s) skipped.`);void dashboard.refetch();void customerDetail.refetch();},onError:e=>fail(e.message)});
 
+  const bulkHistory=trpc.adminOperations.miningBulkOperations.useQuery({limit:20},{refetchInterval:30000});
+  const runBulk=trpc.adminOperations.runBulkMiningCkiOperation.useMutation({onSuccess:r=>{setBulkResult(r);setBulk((x:any)=>({...x,amount:""}));report(`Bulk ${r.direction} finished: ${r.posted} posted, ${r.skipped} skipped, ${r.failed} failed of ${r.totalTargets} customer(s).`);void bulkHistory.refetch();void dashboard.refetch();},onError:e=>fail(e.message)});
+
   const rows=packages.data||[];
   const tokenName=settings.tokenName||dashboard.data?.economics?.tokenName||"";
   const tokenSymbol=settings.tokenSymbol||dashboard.data?.economics?.tokenSymbol||"";
+  const tokenIconUrl=settings.tokenIconUrl||dashboard.data?.economics?.tokenIconUrl||"";
   const ownMining=personalMining.data;
   const ownActivePackage=ownMining?.packages?.find(pkg=>pkg.status==="active");
   const ownHashPower=Number(ownMining?.activeThs||0);
@@ -123,8 +129,7 @@ export function AdminMining({focus}:{focus?:string}){
         <label className="am-toggle"><input type="checkbox" checked={!!settings.globalEnabled} onChange={e=>updateSettings("globalEnabled",e.target.checked)}/><span>Enable automatic CKI reward processing for eligible package contracts</span></label>
         <label className="am-toggle"><input type="checkbox" checked={!!settings.packagePurchasesEnabled} onChange={e=>updateSettings("packagePurchasesEnabled",e.target.checked)}/><span>Enable package purchases (separate from reward posting)</span></label>
         <label className="am-toggle"><input type="checkbox" checked={!!settings.boostsEnabled} onChange={e=>updateSettings("boostsEnabled",e.target.checked)}/><span>Allow future boost activations</span></label>
-        <label>Token name<input value={settings.tokenName??""} readOnly aria-readonly="true"/></label>
-        <label>Token symbol<input value={settings.tokenSymbol??""} readOnly aria-readonly="true"/></label>
+        <label>Coin name &amp; symbol<input value={`${tokenName||"CoinKi"} (${tokenSymbol||"CKI"})`} readOnly aria-readonly="true"/><small>Rename the coin, set its icon and choose the rate source under Coin &amp; Branding. That is display-only and never changes the internal CKI ledger.</small></label>
         <label>Internal USD per {tokenSymbol}<input inputMode="decimal" value={settings.usdPerToken??""} onChange={e=>updateSettings("usdPerToken",e.target.value)}/><small>Current database-backed internal reference: 1 {tokenSymbol||"token"} = ${settings.usdPerToken||"—"} USD. Not a market price.</small></label>
         <label>Default contract duration (months)<input type="number" min="1" max="120" value={settings.defaultContractDurationMonths??""} onChange={e=>updateSettings("defaultContractDurationMonths",e.target.value?Number(e.target.value):"")}/></label>
         <label>Reward calculation method<select value={settings.calculationModel??"package_daily"} onChange={e=>updateSettings("calculationModel",e.target.value)}><option value="package_daily">Method A · fixed daily CKI per package</option><option value="hashrate_daily">Method B · package TH/s × CKI per TH/s/day</option></select><small>The selected model applies to future purchases only. Existing contracts keep their saved rate and method.</small></label>
@@ -154,6 +159,19 @@ export function AdminMining({focus}:{focus?:string}){
       <details className="am-history"><summary><FileClock size={14}/> Recent economics versions</summary><div className="am-version-list">{(economics.data?.versions||[]).map((v:any)=><div key={v.version}><strong>v{v.version}</strong><span>{v.globalEnabled?"enabled":"paused"} · {v.calculationModel} · {v.defaultContractDurationMonths} months · baseline {v.difficultyBaselineThs} TH/s · 1 {v.tokenSymbol} = ${v.usdPerToken} USD</span><small>{dt(v.effectiveAt)} · {v.reason}</small></div>)}</div></details>
     </section>
 
+    <section id="mining-focus-coin-branding" className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">DISPLAY-ONLY COIN BRANDING &amp; RATE SOURCE</span><h2>Coin &amp; branding</h2><p>Rename the coin, set its icon and choose how its USD rate is sourced. None of this changes the internal CKI ledger, wallets or reward maths.</p></div><Palette size={18}/></div>
+      <div className="am-branding-preview"><div className="am-coin-mark">{tokenIconUrl?<img src={tokenIconUrl} alt={`${tokenName||"coin"} icon`}/>:<span>{(tokenSymbol||"CKI").slice(0,1)}</span>}</div><div><strong>{tokenName||"CoinKi"} <small>{tokenSymbol||"CKI"}</small></strong><span>{settings.tokenRateSource==="live"?`Live rate source · ${settings.tokenRateProvider||"coingecko"}:${settings.tokenExternalSymbol||"unset"}`:`Internal reference · 1 ${tokenSymbol||"CKI"} = $${settings.usdPerToken||"—"} USD`}</span></div></div>
+      <div className="am-form-grid">
+        <label>Coin name<input value={settings.tokenName??""} onChange={e=>updateSettings("tokenName",e.target.value)} maxLength={60}/></label>
+        <label>Coin symbol<input value={settings.tokenSymbol??""} onChange={e=>updateSettings("tokenSymbol",e.target.value.toUpperCase())} maxLength={12}/></label>
+        <label>Coin icon / logo URL<input value={settings.tokenIconUrl??""} onChange={e=>updateSettings("tokenIconUrl",e.target.value)} placeholder="https://… or data:image/…" maxLength={1000}/><small>An https image URL or inline data:image value, shown in the customer portal. Blank uses the default mark.</small></label>
+        <label>Rate source<select value={settings.tokenRateSource??"fixed"} onChange={e=>updateSettings("tokenRateSource",e.target.value)}><option value="fixed">Fixed administrator-configured reference per dollar</option><option value="live">Live market rate (instant, updated on every compare/swap)</option></select><small>Live mode resolves the rate on demand from the trusted provider; a stale or missing price pauses conversion instead of using a fallback.</small></label>
+        <label>Live external asset id<input value={settings.tokenExternalSymbol??""} onChange={e=>updateSettings("tokenExternalSymbol",e.target.value)} maxLength={64} disabled={(settings.tokenRateSource??"fixed")!=="live"} placeholder="e.g. bitcoin"/><small>Required when live pricing is selected.</small></label>
+        <label>Live provider label<input value={settings.tokenRateProvider??""} onChange={e=>updateSettings("tokenRateProvider",e.target.value)} maxLength={64} disabled={(settings.tokenRateSource??"fixed")!=="live"} placeholder="coingecko"/></label>
+      </div>
+      <div className="am-save-row"><label>Reason for version change<input value={settingsReason} onChange={e=>setSettingsReason(e.target.value)} maxLength={2000}/></label><button className="am-button primary" disabled={saveEconomics.isPending||economics.isLoading||economics.isError} onClick={saveEconomicsVersion}><SlidersHorizontal size={15}/>{saveEconomics.isPending?"Saving…":"Save coin & rate branding"}</button></div>
+    </section>
+
     <section id="mining-focus-packages" className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">VERSIONED PRODUCT CATALOGUE</span><h2>Mining packages</h2><p>Draft edits never replace a live version until an administrator explicitly publishes.</p></div><button className="am-button secondary" onClick={()=>setPackageForm(newPackageForm())}><Plus size={14}/> New package</button></div>
       <div className="am-package-form"><div className="am-form-grid">
         <label>Package code<input value={packageForm.code??""} disabled={Boolean(packageForm.packageId)} onChange={e=>setPackage("code",e.target.value.toUpperCase())}/></label><label>Customer-facing name<input value={packageForm.name??""} onChange={e=>setPackage("name",e.target.value)}/></label>
@@ -172,6 +190,18 @@ export function AdminMining({focus}:{focus?:string}){
     <section id="mining-focus-customers" className="am-two-col">
       <article className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">CUSTOMER OPERATIONS</span><h2>Find a Mining customer</h2></div></div><div className="am-search"><Search size={15}/><input value={searchText} onChange={e=>setSearchText(e.target.value)} placeholder="Name, email, or customer ID"/><button className="am-button secondary compact" onClick={()=>setCustomerSearch(searchText)}>Search</button></div><div className="am-customer-list">{visibleCustomers.map((row:any)=><button className={`am-customer-row ${selectedUserId===row.userId?"selected":""}`} key={row.userId} onClick={()=>setSelectedUserId(row.userId)}><span className="am-customer-avatar">{(row.name||row.email||"C").slice(0,1).toUpperCase()}</span><span><strong>{row.name||"Customer"}</strong><small>{row.email} · ID {row.userId}</small></span><span className={`am-state ${row.accountStatus==="active"?"on":"off"}`}>{row.accountStatus}</span></button>)}{!visibleCustomers.length&&<div className="am-empty">No customer results. Search by email, name or ID.</div>}</div></article>
       <article className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">CONTROLLED LEDGER ACTION</span><h2>Balance adjustment</h2></div><LockKeyhole size={17}/></div><p>Reason required. Adjustments above the configured USD threshold—or without a validated quote—wait for a different administrator.</p><div className="am-form-grid compact-grid"><label>Customer user ID<input inputMode="numeric" value={adjustment.userId} onChange={e=>setAdjustment({...adjustment,userId:e.target.value})}/></label><label>Direction<select value={adjustment.direction} onChange={e=>setAdjustment({...adjustment,direction:e.target.value})}><option value="credit">Credit</option><option value="debit">Debit</option></select></label><label>Denomination<select value={adjustment.assetCode} onChange={e=>setAdjustment({...adjustment,assetCode:e.target.value})}>{["CKI","USD","EUR","GBP","BTC","ETH","USDT"].map(x=><option key={x}>{x}</option>)}</select></label><label>Amount<input value={adjustment.amount} onChange={e=>setAdjustment({...adjustment,amount:e.target.value})}/></label><label className="am-wide">Reason<textarea rows={2} value={adjustment.reason} onChange={e=>setAdjustment({...adjustment,reason:e.target.value})}/></label></div><button className="am-button primary" disabled={createAdjustment.isPending} onClick={()=>createAdjustment.mutate({...adjustment,userId:Number(adjustment.userId),idempotencyKey:freshKey()})}>{createAdjustment.isPending?"Posting request…":"Submit audited adjustment"}<CircleDollarSign size={15}/></button></article>
+    </section>
+
+    <section id="mining-focus-bulk-operations" className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">BULK CKI LEDGER OPERATIONS</span><h2>Credit or debit every customer's CKI</h2><p>One audited batch writes a ledger transaction and a notification per customer, skips any account that lacks the balance, and reports the outcome. A batch cannot exceed the dual-approval threshold.</p></div><Coins size={18}/></div>
+      <div className="am-form-grid compact-grid">
+        <label>Direction<select value={bulk.direction} onChange={e=>setBulk({...bulk,direction:e.target.value})}><option value="credit">Credit all customers</option><option value="debit">Debit all customers</option></select></label>
+        <label>Amount per customer ({tokenSymbol||"CKI"})<input inputMode="decimal" value={bulk.amount} onChange={e=>setBulk({...bulk,amount:e.target.value})}/></label>
+        <label>Limit to customer IDs (optional)<input value={bulk.userIds} onChange={e=>setBulk({...bulk,userIds:e.target.value})} placeholder="Comma-separated; blank = every open customer"/></label>
+        <label className="am-wide">Reason<textarea rows={2} value={bulk.reason} onChange={e=>setBulk({...bulk,reason:e.target.value})}/></label>
+      </div>
+      <div className="am-save-row"><span className="am-bulk-note">A blank ID list applies the batch to every open customer account.</span><button className="am-button primary" disabled={runBulk.isPending} onClick={()=>runBulk.mutate({direction:bulk.direction,amount:bulk.amount,reason:bulk.reason,idempotencyKey:freshKey(),userIds:(bulk.userIds||"").split(",").map((v:string)=>Number(v.trim())).filter((v:number)=>Number.isSafeInteger(v)&&v>0).slice(0,20000)})}>{runBulk.isPending?"Running batch…":`Run bulk ${bulk.direction}`}<Coins size={15}/></button></div>
+      {bulkResult&&<div className="am-bulk-result"><strong>Bulk {bulkResult.direction} · {bulkResult.posted} posted · {bulkResult.skipped} skipped · {bulkResult.failed} failed of {bulkResult.totalTargets}</strong><div className="am-bulk-items">{bulkResult.items.slice(0,200).map((item:any)=><span key={item.userId} className={item.status}>User {item.userId}: {item.status}{item.reference?` · ${item.reference}`:""}{item.detail?` · ${item.detail}`:""}</span>)}</div></div>}
+      <details className="am-history"><summary><FileClock size={14}/> Recent bulk operations</summary><div className="am-version-list">{(bulkHistory.data||[]).map((op:any)=><div key={op.operationId}><strong>{String(op.direction).toUpperCase()} {nfmt(op.amount,8)} {op.asset}</strong><span>{op.posted} posted · {op.skipped} skipped · {op.failed} failed of {op.totalTargets} · {op.status}</span><small>{dt(op.createdAt)} · {op.adminName||`admin ${op.adminId}`} · {op.reason}</small></div>)}{!bulkHistory.data?.length&&<div className="am-empty">No bulk operations have been run yet.</div>}</div></details>
     </section>
 
     <section className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">DUAL-CONTROL QUEUE</span><h2>Adjustment approvals</h2><p>The original requester cannot approve their own high-value adjustment.</p></div><button className="am-icon-button" onClick={()=>approvals.refetch()} aria-label="Refresh approval queue"><RefreshCw size={15}/></button></div>

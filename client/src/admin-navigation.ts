@@ -81,10 +81,19 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
       { label: "Earning Method & Rate", detail: "Fixed daily CKI per package or package TH/s × CKI per TH/s per day" },
       { label: "Boosts, Swaps & Fees", detail: "Boost cycles and bonuses, swap limits and fee basis points" },
     ]},
+    { id: "mining-coin-branding", target: "mining", focus: "coin-branding", label: "Coin & Branding", detail: "Rename the coin, upload its icon and choose the fixed or live rate per dollar", icon: Palette, children: [
+      { label: "Coin Name & Symbol", detail: "Display-only rename; the internal ledger denomination stays CKI" },
+      { label: "Coin Icon / Logo", detail: "https image URL or inline data:image used across the customer portal" },
+      { label: "Rate per Dollar", detail: "Administrator-configured internal reference, or an instantly updated live market rate" },
+    ]},
     { id: "mining-customers", target: "mining", focus: "customers", label: "Customer Mining", detail: "Find customers, control live entitlements and adjust balances", icon: Users, children: [
       { label: "Customer Detail & Entitlements", detail: "Pause, resume, extend or stop one customer's mining" },
       { label: "Balance Adjustment", detail: "Audited CKI or wallet credit/debit" },
       { label: "Adjustment Approvals", detail: "Dual-control queue for high-value changes" },
+    ]},
+    { id: "mining-bulk-ops", target: "mining", focus: "bulk-operations", label: "Bulk CKI Operations", detail: "Credit or debit every customer's CKI in one audited, reported batch", icon: Coins, children: [
+      { label: "Credit All / Debit All", detail: "One amount applied to every open customer with a per-customer report" },
+      { label: "Bulk Operation History", detail: "Durable header and itemised outcome for each batch" },
     ]},
     { id: "mining-audit", target: "mining", focus: "audit", label: "Mining Audit Trail", detail: "Recent administrative mining actions, actors and reasons", icon: FileClock, children: [
       { label: "Recent Actions", detail: "Who changed what, when and with what recorded reason" },

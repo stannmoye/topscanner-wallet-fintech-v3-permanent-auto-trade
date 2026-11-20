@@ -25,6 +25,7 @@ const durationText = (seconds: number) => {
 };
 const palette = ["#12a8ff", "#f59a38", "#b4d7ff", "#f4c525", "#825fff", "#20c8d9", "#18d69a", "#ffbf36"];
 const currencyIcons: Record<string, string> = { BTC: "₿", USD: "$", EUR: "€", GBP: "£", ETH: "◆", USDT: "₮" };
+const CoinMark = ({ iconUrl, fallback = "₵" }: { iconUrl?: string | null; fallback?: string }) => iconUrl ? <img className="cm-coin-img" src={iconUrl} alt="" /> : <>{fallback}</>;
 
 export function CustomerMining({ push }: { push: (message: string) => void }) {
   const dashboard = trpc.customer.mining.dashboard.useQuery(undefined, { refetchInterval: 5000 });
@@ -103,6 +104,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
   const data = dashboard.data;
   const tokenName = data?.tokenName ?? "";
   const tokenSymbol = data?.tokenSymbol ?? "";
+  const tokenIconUrl = data?.tokenIconUrl ?? "";
   const minedTodayDisplay = data ? `+${fmt(data.todayTokens, 6)} ${tokenSymbol || "CKI"}` : dashboard.isLoading ? "Loading…" : "0 CKI";
   const packageRows = packages.data || [];
   const boost = boostStatus.data;
@@ -192,21 +194,21 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
 
   return <div className="cm-dashboard-frame arb-page">
     <header className="cm-topbar">
-      <a className="cm-brand" href="#mining-dashboard" onClick={e=>e.preventDefault()} aria-label="CoinKi mining dashboard home">
-        <span className="cm-brand-mark">₵</span><span><strong>CoinKi</strong><small>Mine Today, Build Tomorrow</small></span>
+      <a className="cm-brand" href="#mining-dashboard" onClick={e=>e.preventDefault()} aria-label={`${tokenName||"CoinKi"} mining dashboard home`}>
+        <span className="cm-brand-mark"><CoinMark iconUrl={tokenIconUrl}/></span><span><strong>{tokenName||"CoinKi"}</strong><small>Mine Today, Build Tomorrow</small></span>
       </a>
       <div className="cm-header-summaries" aria-label="Mining wallet summary">
         <div className="cm-header-summary">
-          <span>CKI BALANCE</span>
-          <strong>{fmt(availableCki, 6)} CKI</strong>
+          <span>{tokenSymbol||"CKI"} BALANCE</span>
+          <strong>{fmt(availableCki, 6)} {tokenSymbol||"CKI"}</strong>
         </div>
         <div className="cm-header-summary">
           <span>MINED TODAY</span>
           <strong className="cm-mined-today-value" aria-live="polite">{minedTodayDisplay}</strong>
         </div>
         <div className="cm-header-summary">
-          <span>CKI RATE TO DOLLAR</span>
-          <strong>1 CKI → ≈${configuredUsdReference}</strong>
+          <span>{tokenSymbol||"CKI"} RATE TO DOLLAR</span>
+          <strong>1 {tokenSymbol||"CKI"} → ≈${configuredUsdReference}{data?.tokenRateLive&&<small className="cm-live-rate"> · live</small>}</strong>
         </div>
       </div>
       <div className="cm-top-actions"><div className="cm-asset-strip" aria-label="Available wallet assets">{(mainWallet.data?.currencies || []).map((currency: any) => <span className="cm-asset-chip" key={currency.code} title={currency.name}><b>{currency.code}</b><small>{currency.symbol || ""}{fmt(mainWalletAvailable(currency.code), Number(currency.scale ?? 0))}</small></span>)}</div></div>
@@ -245,11 +247,11 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
               <div className="cm-progress-head"><span className="cm-eyebrow">HASH-POWER ENGINE</span><strong className="cm-status-time">{hasActiveHashPowerPackage?"ACTIVE":"IDLE"}</strong><small>{hasActiveHashPowerPackage?"Customer package is active":"No active package"}</small></div>
               <div className="cm-divider"/>
               <div className="cm-progress-metrics">
-                <div className="cm-progress-metric"><span className="cm-eyebrow">CKI REWARDS CREDITED TODAY</span><strong className="cm-token-amount">{fmt(data?.todayTokens,4)} <small>{tokenSymbol}</small></strong></div>
+                <div className="cm-progress-metric"><span className="cm-eyebrow">{tokenSymbol||"CKI"} REWARDS CREDITED TODAY</span><strong className="cm-token-amount">{fmt(data?.todayTokens,4)} <small>{tokenSymbol}</small></strong></div>
                 <div className="cm-progress-metric"><span className="cm-eyebrow">REWARD PROCESSING</span><strong className="cm-daily-amount">{data?.rewardPostingEnabled ? "Enabled" : "Paused"}</strong><small className="cm-simulation-note">{data?.rewardPostingEnabled ? "Configured CKI rates accrue by eligible time." : "Reward processing is paused by operations."}</small></div>
               </div>
-              <div className="cm-coin-display"><span className="cm-coin-glow"/><b>₵</b><small>{tokenSymbol}</small></div>
-              <div className="cm-mining-vault" aria-hidden="true"><span className="cm-vault-frame"/><span className="cm-vault-beam"/><span className="cm-vault-spark spark-a"/><span className="cm-vault-spark spark-b"/><span className="cm-vault-spark spark-c"/><div className="cm-vault-coin">₵</div><span className="cm-vault-platform"/><span className="cm-vault-orbit"/></div>
+              <div className="cm-coin-display"><span className="cm-coin-glow"/><b><CoinMark iconUrl={tokenIconUrl}/></b><small>{tokenSymbol}</small></div>
+              <div className="cm-mining-vault" aria-hidden="true"><span className="cm-vault-frame"/><span className="cm-vault-beam"/><span className="cm-vault-spark spark-a"/><span className="cm-vault-spark spark-b"/><span className="cm-vault-spark spark-c"/><div className="cm-vault-coin"><CoinMark iconUrl={tokenIconUrl}/></div><span className="cm-vault-platform"/><span className="cm-vault-orbit"/></div>
             </div>
           </article>
           <article className={`cm-glass cm-boost-card is-${boostPhase}`}>
@@ -273,7 +275,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
       />
 
       <section className="cm-wallet-hash-grid" aria-label="Mining wallet and hash rate">
-        <article className="cm-glass cm-wallet-card"><div className="cm-wallet-total"><div className="cm-card-title"><span className="cm-icon-cyan"><WalletCards size={19}/></span><b>{tokenSymbol} WALLET BALANCE</b></div><div className="cm-wallet-value"><span className="cm-wallet-coin">₵</span><div><small>Total {tokenSymbol}</small><strong>{fmt(data?.balances?.CKI ?? data?.tokenBalance,6)} <small>{tokenSymbol}</small></strong><span className="cm-positive">Historical Mining ledger total</span></div></div></div><div className="cm-wallet-currencies"><div className="cm-currency-list">{TARGET_ASSETS.map(asset=><button type="button" key={asset} className={`cm-currency ${swapTarget===asset?"selected":""}`} onClick={()=>selectSwapTarget(asset)} aria-pressed={swapTarget===asset}><i className={`currency-${asset.toLowerCase()}`}>{currencyIcons[asset]}</i><small>{asset}</small></button>)}</div><small className="cm-swap-note">Selected main-wallet balance: {fmt(mainWalletAvailable(swapTarget),mainWalletScale(swapTarget))} {swapTarget||"—"}</small><button type="button" className="cm-glow-button cm-swap-all" disabled={!canSwapAll || swapQuoteMutation.isPending || swapMutation.isPending} onClick={startFullBalanceSwap}><ArrowDownUp size={15}/>{swapMutation.isPending?"Posting conversion…":`Swap All to ${swapTarget}`}</button>{!canSwapAll&&<small className="cm-swap-note">A positive available CKI balance and a selected main-wallet currency are required.</small>}</div></article>
+        <article className="cm-glass cm-wallet-card"><div className="cm-wallet-total"><div className="cm-card-title"><span className="cm-icon-cyan"><WalletCards size={19}/></span><b>{tokenSymbol} WALLET BALANCE</b></div><div className="cm-wallet-value"><span className="cm-wallet-coin"><CoinMark iconUrl={tokenIconUrl}/></span><div><small>Total {tokenSymbol}</small><strong>{fmt(data?.balances?.CKI ?? data?.tokenBalance,6)} <small>{tokenSymbol}</small></strong><span className="cm-positive">Historical Mining ledger total</span></div></div></div><div className="cm-wallet-currencies"><div className="cm-currency-list">{TARGET_ASSETS.map(asset=><button type="button" key={asset} className={`cm-currency ${swapTarget===asset?"selected":""}`} onClick={()=>selectSwapTarget(asset)} aria-pressed={swapTarget===asset}><i className={`currency-${asset.toLowerCase()}`}>{currencyIcons[asset]}</i><small>{asset}</small></button>)}</div><small className="cm-swap-note">Selected main-wallet balance: {fmt(mainWalletAvailable(swapTarget),mainWalletScale(swapTarget))} {swapTarget||"—"}</small><button type="button" className="cm-glow-button cm-swap-all" disabled={!canSwapAll || swapQuoteMutation.isPending || swapMutation.isPending} onClick={startFullBalanceSwap}><ArrowDownUp size={15}/>{swapMutation.isPending?"Posting conversion…":`Swap All to ${swapTarget}`}</button>{!canSwapAll&&<small className="cm-swap-note">A positive available CKI balance and a selected main-wallet currency are required.</small>}</div></article>
         <article className="cm-glass cm-hash-card"><div className="cm-card-title"><span className="cm-icon-cyan"><Zap size={19}/></span><b>CURRENT HASH RATE</b></div><div className="cm-hash-content"><div><strong>{fmt(data?.activeThs,3)} <small>TH/s</small></strong><span className="cm-positive">Base {fmt(data?.baseThs,3)} · Boost {fmt(data?.boostThs,3)} TH/s</span></div><div className="cm-hash-details"><small>Total Power</small><b>{fmt(data?.activeThs,3)} TH/s</b><small>Package</small><b>{activePackageNames}</b></div><svg className="cm-sparkline" viewBox="0 0 170 70" preserveAspectRatio="none" aria-label="Illustrative hash rate trace"><defs><linearGradient id="cm-hash-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#10d9ff" stopOpacity=".35"/><stop offset="1" stopColor="#10d9ff" stopOpacity="0"/></linearGradient></defs><path d="M0 54 C12 47 12 24 25 32 S42 54 52 39 S66 11 78 28 S94 49 105 35 S124 52 135 25 S153 32 170 5 L170 70 L0 70Z" fill="url(#cm-hash-fill)"/><path d="M0 54 C12 47 12 24 25 32 S42 54 52 39 S66 11 78 28 S94 49 105 35 S124 52 135 25 S153 32 170 5" fill="none" stroke="#18dfff" strokeWidth="2"/></svg></div></article>
       </section>
 
@@ -293,7 +295,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
             const statusLabel=activeSame?"ACTIVE":item.alreadyPurchased?"PURCHASED":canPurchase?"AVAILABLE":item.status!=="published"?"PAUSED":"PURCHASES PAUSED";
             const buttonLabel=item.alreadyPurchased?"Already purchased":purchaseInProgress?"Purchasing…":canPurchase?intent:item.status!=="published"?"Paused":"Purchases paused";
             return <article className={`cm-package-card ${activeSame?"is-current":""}`} key={item.versionId} style={{"--package-accent":color} as React.CSSProperties}>
-              <div className="cm-package-art"><div className="cm-cube"><i/><i/><b>₵</b></div><span className="cm-package-glow"/></div>
+              <div className="cm-package-art"><div className="cm-cube"><i/><i/><b><CoinMark iconUrl={tokenIconUrl}/></b></div><span className="cm-package-glow"/></div>
               <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div>
               <div className="cm-package-price"><strong>{fmt(item.priceAmount,2)}</strong><small>{item.priceAsset}</small></div>
               <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"not set"):`${item.durationMonths} months`}</span><span>{item.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)} CKI/day${Number(item.miningSpeedMultiplier||1)!==1?` · ${fmt(item.miningSpeedMultiplier,4)}× speed`:""}`}</span><span className="cm-package-projection">{item.projectedTermTokens?`Projected term ≈ ${fmt(item.projectedTermTokens,4)} ${tokenSymbol||"CKI"}${item.projectedTermUsd?` · ≈ $${fmt(item.projectedTermUsd,2)}`:""}`:"Term projection unavailable until a duration is set"}</span>{item.remainingPurchases!=null&&<span className="cm-package-limit">Purchases remaining: {item.remainingPurchases}{Number(item.maxPerCustomer)>0?` of ${item.maxPerCustomer}`:""}</span>}</div>

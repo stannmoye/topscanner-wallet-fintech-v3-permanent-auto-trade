@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import Decimal from "decimal.js";
 import mysql, { type PoolConnection } from "mysql2/promise";
 import { isQuoteFresh, isRateWithinDeviation } from "./mining-rules";
+import { fetchCurrencyUsdRate } from "./marketProviders";
 import { mysqlConnectionOptions } from "./_core/mysql";
 
 export class MiningError extends Error {
@@ -16,6 +17,8 @@ export type MiningConfig = {
   fiatMaxAgeSeconds: number; cryptoMaxAgeSeconds: number; maxRateDeviationBps: number;
   dailyRewardCapTokens: string; dualApprovalThresholdUsd: string; globalHashPowerThs: string;
   miningSpeedMultiplier: string;
+  /** Display-only coin branding. The internal ledger asset code is always CKI. */
+  tokenIconUrl: string; tokenRateSource: "fixed" | "live"; tokenExternalSymbol: string; tokenRateProvider: string;
 };
 
 export type AssetRate = { asset: string; usdPerUnit: Decimal; scale: number; provider: string; observedAt: Date };
@@ -114,6 +117,10 @@ export async function loadMiningConfig(conn: Db, at: Date = new Date()): Promise
     cryptoMaxAgeSeconds: Number(row.cryptoMaxAgeSeconds), maxRateDeviationBps: Number(row.maxRateDeviationBps),
     dailyRewardCapTokens: String(row.dailyRewardCapTokens), dualApprovalThresholdUsd: String(row.dualApprovalThresholdUsd), globalHashPowerThs: String(row.globalHashPowerThs ?? "0"),
     miningSpeedMultiplier: String(row.miningSpeedMultiplier ?? "1"),
+    tokenIconUrl: row.tokenIconUrl ? String(row.tokenIconUrl) : "",
+    tokenRateSource: String(row.tokenRateSource) === "live" ? "live" : "fixed",
+    tokenExternalSymbol: row.tokenExternalSymbol ? String(row.tokenExternalSymbol) : "",
+    tokenRateProvider: row.tokenRateProvider ? String(row.tokenRateProvider) : "",
   };
 }
 
@@ -172,11 +179,46 @@ export async function finishMiningIdempotency(conn: Db, key: string, result: unk
   }
 }
 
+/**
+ * Live, instant market rate for the platform coin.
+ *
+ * When the administrator switches the coin to a live source, the coin/USD rate
+ * is resolved on demand from the trusted provider adapter (the same CoinGecko /
+ * fiat pipeline used for the other wallets) keyed by the administrator-set
+ * external asset id. A short single-flight cache keeps rapid comparisons and
+ * swaps on one fresh tick without hammering the provider, and the value is
+ * never persisted as an economics snapshot so an admin edit takes effect
+ * immediately. If no fresh live price is available the conversion fails closed
+ * rather than substituting a stale or manually entered value.
+ */
+const LIVE_TOKEN_RATE_TTL_MS = 20_000;
+const liveTokenRateCache = new Map<string, { rate: AssetRate; expiresAt: number }>();
+
+export function invalidateMiningTokenRateCache() {
+  liveTokenRateCache.clear();
+}
+
+export async function resolveLiveMiningTokenRate(config: MiningConfig, now = new Date()): Promise<AssetRate> {
+  const externalCode = String(config.tokenExternalSymbol || "").trim();
+  if (!externalCode) throw new MiningError("Live coin pricing is enabled but no external asset id is configured; set one or switch the coin back to the fixed reference");
+  const cacheKey = `${config.tokenSymbol}:${externalCode}`;
+  const cached = liveTokenRateCache.get(cacheKey);
+  if (cached && cached.expiresAt > now.getTime()) return cached.rate;
+  const fetched = await fetchCurrencyUsdRate({ code: config.tokenSymbol, assetType: "token", externalCode });
+  const usdPerUnit = decimal(fetched.rate);
+  if (!usdPerUnit.gt(0)) throw new MiningError("The live coin price feed returned an invalid price");
+  const providerLabel = `${config.tokenRateProvider || "coingecko"}:${externalCode} (live)`;
+  const rate: AssetRate = { asset: MINING_TOKEN_ASSET, usdPerUnit, scale: assetScale(MINING_TOKEN_ASSET), provider: providerLabel, observedAt: new Date(fetched.sourceDate || fetched.fetchedAt) };
+  liveTokenRateCache.set(cacheKey, { rate, expiresAt: now.getTime() + LIVE_TOKEN_RATE_TTL_MS });
+  return rate;
+}
+
 export async function getMiningAssetRate(conn: Db, assetInput: string, config: MiningConfig, now = new Date()): Promise<AssetRate> {
   const asset = assertMiningAsset(assetInput);
   const scale = assetScale(asset);
   if (asset === "USD") return { asset, usdPerUnit: new Decimal(1), scale, provider: "USD reference unit", observedAt: now };
   if (asset === MINING_TOKEN_ASSET) {
+    if (config.tokenRateSource === "live") return resolveLiveMiningTokenRate(config, now);
     const tokenUnitsPerUsd = decimal(config.tokenUnitsPerUsd);
     if (!tokenUnitsPerUsd.gt(0)) throw new MiningError("The internal CoinKi/CKI conversion rate is not configured");
     return { asset, usdPerUnit: new Decimal(1).div(tokenUnitsPerUsd), scale, provider: "Admin-configured internal CoinKi reference (not a market price)", observedAt: now };

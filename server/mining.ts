@@ -4,7 +4,7 @@ import { createNotification } from "./db";
 import { calculateMiningConversion, calculateMiningDifficultyIndex, calculatePackageDailyRate, calculatePackageDailyReward, canStartMiningAccrual, getBoostCooldownWindow } from "./mining-rules";
 import {
   Db, MiningError, addUtcMonths, amountString, assertMiningAsset, assetScale, beginMiningIdempotency, createMiningLedgerTransaction,
-  createMiningNotification, decimal, ensureMiningCheckpoint, finishMiningIdempotency, inMiningTransaction,
+  createMiningNotification, decimal, ensureMiningCheckpoint, finishMiningIdempotency, getMiningAssetRate, inMiningTransaction,
   loadMiningConfig, postMiningLedgerEntries, quoteRatesDetails, requestKey, requireActiveMiningAccount,
   withMiningConnection,
 } from "./mining-store";
@@ -571,15 +571,20 @@ export async function getCustomerMiningDashboard(userId: number) {
     const status = accountStatus !== "active" ? "Account restricted" : engineRunning
       ? !config.globalEnabled ? "Mining active — reward processing paused by operations" : estimatedDailyTokens ? "Mining active — reward processing enabled" : "Mining active — reward configuration pending"
       : "No active hash-power package";
+    let usdPerTokenReference = decimal(1).div(config.tokenUnitsPerUsd);
+    let tokenRateLive = false;
+    if (config.tokenRateSource === "live") {
+      try { usdPerTokenReference = (await getMiningAssetRate(conn, "CKI", config, now)).usdPerUnit; tokenRateLive = true; } catch { tokenRateLive = false; }
+    }
     return {
       serverTime: now.toISOString(), miningStatus: status, simulationOnly: true, networkTelemetry, payoutStatus: "Disabled — simulated balances are not withdrawable",
       engineRunning, rewardPostingEnabled: config.globalEnabled,
       engineActivity: { intervalCount: Number(activityRows[0]?.intervalCount || 0), eligibleSeconds: String(activityRows[0]?.eligibleSeconds || "0"), lastRecordedAt: activityRows[0]?.lastRecordedAt ? new Date(activityRows[0].lastRecordedAt).toISOString() : null },
       baseThs: baseThs.toString(), boostThs: boostThs.toString(), activeThs: baseThs.plus(boostThs).toString(),
       calculationModel: config.calculationModel,
-      tokenName: config.tokenName, tokenSymbol: config.tokenSymbol, globalHashPowerThs: config.globalHashPowerThs,
+      tokenName: config.tokenName, tokenSymbol: config.tokenSymbol, tokenIconUrl: config.tokenIconUrl, tokenRateSource: config.tokenRateSource, tokenRateLive, globalHashPowerThs: config.globalHashPowerThs,
       miningSpeedMultiplier: config.miningSpeedMultiplier,
-      usdPerToken: decimal(1).div(config.tokenUnitsPerUsd).toSignificantDigits(18).toString(),
+      usdPerToken: usdPerTokenReference.toSignificantDigits(18).toString(),
       tokenBalance: balances.CKI, balances, todayTokens: String(earnedRows[0]?.todayTokens || "0"),
       minSwapTokens: config.minSwapTokens, maxSwapTokens: config.maxSwapTokens,
       pendingTokens: pendingTokens.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale), nextRewardAt: nextRewardAt.toISOString(),
