@@ -77,12 +77,23 @@ export function AdminMining({view}:{view?:string}){
   const bulkHistory=trpc.adminOperations.miningBulkOperations.useQuery({limit:20},{refetchInterval:30000});
   const runBulk=trpc.adminOperations.runBulkMiningCkiOperation.useMutation({onSuccess:r=>{setBulkResult(r);setBulk((x:any)=>({...x,amount:""}));report(`Bulk ${r.direction} finished: ${r.posted} posted, ${r.skipped} skipped, ${r.failed} failed of ${r.totalTargets} customer(s).`);void bulkHistory.refetch();void dashboard.refetch();},onError:e=>fail(e.message)});
 
+  const pageQueries:any[]={
+    miningOverview:[dashboard,personalMining,feeds],
+    miningPackages:[packages,economics],
+    miningControls:[economics],
+    miningCoinBranding:[economics],
+    miningCustomers:[customerRows,approvals,...(selectedUserId>0?[customerDetail]:[])],
+    miningBulkOperations:[bulkHistory],
+    miningAudit:[dashboard],
+  }[activeView]||[];
+  const pageQueryErrors=pageQueries.filter(query=>query.isError).map(query=>String(query.error?.message||"Unknown Mining query error"));
+
   const rows=packages.data||[];
   const tokenName=settings.tokenName||dashboard.data?.economics?.tokenName||"";
   const tokenSymbol=settings.tokenSymbol||dashboard.data?.economics?.tokenSymbol||"";
   const tokenIconUrl=settings.tokenIconUrl||dashboard.data?.economics?.tokenIconUrl||"";
   const ownMining=personalMining.data;
-  const ownActivePackage=ownMining?.packages?.find(pkg=>pkg.status==="active");
+  const ownActivePackage=ownMining?.packages?.find(pkg=>pkg.status==="active"||pkg.status==="replaced");
   const ownHashPower=Number(ownMining?.activeThs||0);
   const ownProcessing=Boolean(ownActivePackage&&ownHashPower>0);
   const ownRewardPulse=Number(ownMining?.todayTokens||0);
@@ -97,6 +108,7 @@ export function AdminMining({view}:{view?:string}){
   return <div className="admin-mining arb-page">
     <header className="am-hero"><div><div className="am-kicker"><Cpu size={15}/> OPERATIONS CONTROL · CKI REWARDS</div><h1>{page.title}</h1><p>{page.subtitle} All Mining balances use the existing high-precision journal.</p></div><button type="button" className="am-button secondary" onClick={refreshAll}><RefreshCw size={15}/> Refresh control room</button></header>
     {message&&<div className="am-message" role="status"><Check size={15}/><span>{message}</span><button onClick={()=>setMessage("")} aria-label="Dismiss">×</button></div>}{error&&<div className="am-error" role="alert"><AlertTriangle size={15}/>{error}<button onClick={()=>setError("")} aria-label="Dismiss">×</button></div>}
+    {pageQueryErrors.map((queryError:string,index:number)=><div className="am-error" role="alert" key={`${activeView}-${index}`}><AlertTriangle size={15}/><span>Mining data unavailable: {queryError}</span></div>)}
 
     {activeView==="miningOverview"&&<>
     <div className="am-warning"><AlertTriangle size={18}/><span><strong>CKI package rewards are internal, administrator-configured estimates.</strong> They are prorated by eligible contract time and posted to the CKI ledger only when reward processing is enabled. They are not verified pool output, withdrawable funds, or a cash payout.</span></div>
@@ -195,7 +207,7 @@ export function AdminMining({view}:{view?:string}){
     <section className="am-panel"><div className="am-panel-heading"><div><span className="am-kicker">VERSIONED PRODUCT CATALOGUE</span><h2>Mining packages</h2><p>Draft edits never replace a live version until an administrator explicitly publishes.</p></div><button className="am-button secondary" onClick={()=>setPackageForm(newPackageForm())}><Plus size={14}/> New package</button></div>
       <div className="am-package-form"><div className="am-form-grid">
         <label>Package code<input value={packageForm.code??""} disabled={Boolean(packageForm.packageId)} onChange={e=>setPackage("code",e.target.value.toUpperCase())}/></label><label>Customer-facing name<input value={packageForm.name??""} onChange={e=>setPackage("name",e.target.value)}/></label>
-        <label>Price amount<input value={packageForm.priceAmount??""} onChange={e=>setPackage("priceAmount",e.target.value)}/></label><label>Price denomination<select value={packageForm.priceAsset??""} onChange={e=>setPackage("priceAsset",e.target.value)}><option value="">Choose denomination</option>{["CKI","USD","EUR","GBP","BTC","ETH","USDT"].map(x=><option key={x}>{x}</option>)}</select></label>
+        <label>Price amount<input value={packageForm.priceAmount??""} onChange={e=>setPackage("priceAmount",e.target.value)}/></label><label>Price denomination<select value={packageForm.priceAsset??""} onChange={e=>setPackage("priceAsset",e.target.value)}><option value="">Choose denomination</option>{["USD","EUR","GBP","BTC","ETH","USDT"].map(x=><option key={x}>{x}</option>)}</select><small>Package charges are collected only from an enabled main-wallet currency; CKI is not a main-wallet payment asset.</small></label>
         <label>Base hash power · TH/s<input value={packageForm.baseThs??""} onChange={e=>setPackage("baseThs",e.target.value)}/></label><label>Boost bonus · TH/s<input value={packageForm.boostBonusThs??""} onChange={e=>setPackage("boostBonusThs",e.target.value)}/></label>
         <label>Contract duration · months<input type="number" min="1" max="120" value={packageForm.durationMonths??""} onChange={e=>setPackage("durationMonths",e.target.value?Number(e.target.value):"")}/></label><label>Display order<input type="number" min="1" value={packageForm.displayOrder??""} onChange={e=>setPackage("displayOrder",e.target.value?Number(e.target.value):"")}/></label>
         <label>Fixed package reward · {tokenSymbol}/day<input inputMode="decimal" value={packageForm.expectedDailyRewardCki??""} disabled={settings.calculationModel==="hashrate_daily"} onChange={e=>setPackage("expectedDailyRewardCki",e.target.value)}/><small>{settings.calculationModel==="hashrate_daily"?"Not used while Method B is selected. Method B derives this package's daily amount from base TH/s × CKI/TH/s/day.":"Method A uses this exact daily package amount; hash boosts do not multiply it."} In both methods, the selected daily amount is snapshotted at purchase, and publishing affects future purchases only.</small></label>

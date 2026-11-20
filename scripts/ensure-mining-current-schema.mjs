@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
 import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
+import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-schema.mjs";
 
 const raw = process.env.DATABASE_URL;
 if (!raw) throw new Error("DATABASE_URL is required");
@@ -46,7 +47,6 @@ try {
   await addColumn("mining_economics_versions", "tokenRateSource", "VARCHAR(16) NOT NULL DEFAULT 'fixed'");
   await addColumn("mining_economics_versions", "tokenExternalSymbol", "VARCHAR(64) NULL");
   await addColumn("mining_economics_versions", "tokenRateProvider", "VARCHAR(64) NULL");
-  await db.query(`UPDATE mining_economics_versions SET globalHashPowerThs=67 WHERE globalHashPowerThs=0`);
   await db.query(`UPDATE mining_economics_versions SET miningSpeedMultiplier=1 WHERE miningSpeedMultiplier IS NULL OR miningSpeedMultiplier<=0`);
   await db.query(`UPDATE mining_economics_versions SET tokenRateSource='fixed' WHERE tokenRateSource IS NULL OR tokenRateSource NOT IN ('fixed','live')`);
 
@@ -65,6 +65,7 @@ try {
   await addColumn("mining_customer_packages", "adminPausedBy", "INT NULL");
   await addColumn("mining_customer_packages", "adminStoppedAt", "DATETIME(3) NULL");
   await addColumn("mining_customer_packages", "adminExtendedSeconds", "BIGINT NOT NULL DEFAULT 0");
+  const customerPackageSchema = await ensureMiningCustomerPackageSchema(db, { required: true });
   await addColumn("mining_boost_activations", "customerPackageId", "INT NULL");
 
   const [engineIndex] = await db.query(
@@ -191,6 +192,9 @@ try {
   await db.query(`UPDATE mining_customer_packages cp JOIN mining_packages p ON p.id=cp.packageId JOIN mining_package_versions v ON v.id=p.currentVersionId SET cp.expectedDailyRewardCkiSnapshot=v.expectedDailyRewardCki, cp.calculationModelSnapshot='package_daily' WHERE cp.expectedDailyRewardCkiSnapshot IS NULL AND v.expectedDailyRewardCki IS NOT NULL`);
 
   const verified = await assertWorkerSchemaContracts(db, ["mining_pending_boost_rewards"]);
+  console.log(JSON.stringify({
+    miningCustomerPackageAcquisitionType: customerPackageSchema.repaired ? "repaired-and-verified" : "verified",
+  }));
   console.log(JSON.stringify({
     status: "ok",
     message: "Current mining schema is ready",

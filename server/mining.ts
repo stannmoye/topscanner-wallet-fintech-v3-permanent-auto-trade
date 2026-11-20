@@ -233,7 +233,12 @@ export async function listCustomerMiningPackages(userId: number) {
       const purchasedCount = Number(row.purchasedCount || 0);
       const alreadyPurchased = purchasedCount > 0;
       const limitReached = maxPerCustomer > 0 && purchasedCount >= maxPerCustomer;
-      const purchaseAvailable = row.packageStatus === "published" && config.packagePurchasesEnabled && !limitReached;
+      const priceAsset = String(row.priceAsset || "").toUpperCase();
+      const priceAssetSupported = MAIN_WALLET_ASSETS.has(priceAsset);
+      const effectiveAt = row.effectiveAt ? new Date(row.effectiveAt).getTime() : Number.NaN;
+      const effective = Number.isFinite(effectiveAt) && effectiveAt <= now.getTime();
+      const purchaseAvailable = row.packageStatus === "published" && row.versionStatus === "published" &&
+        effective && priceAssetSupported && config.packagePurchasesEnabled && !limitReached;
       const durationMonths = row.durationMonths === null ? null : Number(row.durationMonths);
       const termSeconds = durationMonths !== null ? (addUtcMonths(now, durationMonths).getTime() - now.getTime()) / 1000 : (row.expirySeconds ? Number(row.expirySeconds) : null);
       const projectedTermTokens = termSeconds ? estimate.times(termSeconds).div(86_400) : null;
@@ -244,7 +249,7 @@ export async function listCustomerMiningPackages(userId: number) {
         tokenName: config.tokenName, tokenSymbol: config.tokenSymbol, globalHashPowerThs: config.globalHashPowerThs,
         miningSpeedMultiplier: config.miningSpeedMultiplier,
         usdPerToken: decimal(1).div(config.tokenUnitsPerUsd).toSignificantDigits(18).toString(),
-        versionId: Number(row.versionId), version: Number(row.version), priceAmount: String(row.priceAmount), priceAsset: assertMiningAsset(String(row.priceAsset)),
+        versionId: Number(row.versionId), version: Number(row.version), priceAmount: String(row.priceAmount), priceAsset: assertMiningAsset(priceAsset),
         baseThs: String(row.baseThs), boostBonusThs: String(row.boostBonusThs),
         expectedDailyRewardCki: baseDaily.toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed(18),
         effectiveDailyRewardCki: estimate.toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed(18),
@@ -260,7 +265,12 @@ export async function listCustomerMiningPackages(userId: number) {
         projectedTermTokens: projectedTermTokens ? projectedTermTokens.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale) : null,
         projectedTermUsd: projectedTermUsd ? projectedTermUsd.toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2) : null,
         miningEnabled: config.globalEnabled, purchaseAvailable,
-        purchaseUnavailableReason: purchaseAvailable ? null : limitReached ? "This package has reached its per-customer purchase limit" : !config.packagePurchasesEnabled ? "Package purchases are paused by operations" : "This package is not currently published",
+        purchaseUnavailableReason: purchaseAvailable ? null
+          : limitReached ? "This package has reached its per-customer purchase limit"
+          : !effective ? "This package version is not effective yet"
+          : !priceAssetSupported ? "This package price cannot be charged from an enabled main-wallet currency"
+          : !config.packagePurchasesEnabled ? "Package purchases are paused by operations"
+          : "This package is not currently published",
       };
     });
   });
@@ -358,8 +368,12 @@ export async function confirmCustomerMiningPurchase(userId: number, input: { quo
     // check above, so repeat purchases of the same package remain additive whenever the
     // administrator allows more than one purchase.
     await conn.execute(`INSERT IGNORE INTO mining_package_purchase_claims (userId,packageId,firstQuoteId,claimedAt) VALUES (?,?,?,?)`, [userId, Number(quote.packageId), input.quoteId, now]);
-    // Every successful purchase is additive. Existing customer entitlements remain active
-    // and their package-specific snapshots continue to accrue independently.
+    if (String(quote.stackingPolicy) === "replace") {
+      await conn.execute(`UPDATE mining_customer_packages SET status='replaced',endedAt=?
+        WHERE userId=? AND status='active' AND startsAt<=?
+          AND (expiresAt IS NULL OR expiresAt>?) AND (endedAt IS NULL OR endedAt>?)`,
+      [now, userId, now, now, now]);
+    }
     const canonicalReference = `mining-purchase:${input.quoteId}`;
     const canonicalDebit = await debitMainWallet(conn, userId, paymentAsset, quotedTotal, canonicalReference, "mining_package_debit");
     const ledgerKey = key;

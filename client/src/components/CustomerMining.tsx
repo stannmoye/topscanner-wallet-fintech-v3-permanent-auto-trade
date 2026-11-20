@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 
 const TARGET_ASSETS = ["USD", "EUR", "GBP", "BTC", "ETH", "USDT"];
+const assetScaleFor = (asset: string, currencies?: any[]) =>
+  Number(currencies?.find((currency: any) => currency.code === asset)?.scale ?? (["BTC", "ETH"].includes(asset) ? 8 : 2));
 const requestId = () => globalThis.crypto?.randomUUID?.() || `mining-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "—";
 const fmt = (value: unknown, max = 8) => {
@@ -164,7 +166,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
   const globalHashPowerDisplay = dashboard.isLoading || dashboard.isError ? "—" : fmt(data?.globalHashPowerThs, 3);
   const miningSpeedDisplay = dashboard.isLoading || dashboard.isError ? "—" : `${fmt(data?.miningSpeedMultiplier, 4)}×`;
   const currentHashRateDisplay = dashboard.isLoading || dashboard.isError ? "—" : fmt(activeHashPower, 3);
-  const hasActiveHashPowerPackage = active.some((item: any) => item.status === "active");
+  const hasActiveHashPowerPackage = active.some((item: any) => item.status === "active" || item.status === "replaced");
   const activeBoostCapacity = active.reduce((sum: number, item: any) => sum + (Number.isFinite(Number(item.boostBonusThs)) ? Number(item.boostBonusThs) : 0), 0);
   const activePackageNames = active.length ? active.slice(0, 3).map((item: any) => item.packageName).join(" · ") + (active.length > 3 ? ` · +${active.length - 3} more` : "") : "No active package entitlement";
   const engineIsRunning = hasActiveHashPowerPackage;
@@ -217,6 +219,11 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
     <main className="cm-dashboard-main" id="mining-dashboard">
       {message && <div className="cm-message" role="status"><Info size={15}/><span>{message}</span><button type="button" onClick={()=>setMessage("")} aria-label="Dismiss">×</button></div>}
       {dashboard.error && <div className="cm-error" role="alert">Mining service unavailable: {dashboard.error.message}</div>}
+      {packages.isError && <div className="cm-error" role="alert">Mining packages unavailable: {packages.error.message}</div>}
+      {boostStatus.isError && <div className="cm-error" role="alert">Mining boost status unavailable: {boostStatus.error.message}</div>}
+      {history.isError && <div className="cm-error" role="alert">Mining activity unavailable: {history.error.message}</div>}
+      {mainWallet.isError && <div className="cm-error" role="alert">Main-wallet balances unavailable: {mainWallet.error.message}</div>}
+      {walletPreferences.isError && <div className="cm-error" role="alert">Wallet preferences unavailable: {walletPreferences.error.message}</div>}
 
       <section className="cm-top-grid" aria-label="Mining engine status and controls">
         <article className="cm-factory scene-playing">
@@ -280,11 +287,11 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
       </section>
 
       <section className="cm-glass cm-packages-panel">
-        <div className="cm-packages-header"><div><h2>Mining Packages</h2><p>Choose from packages currently published by operations</p><p className="cm-purchase-disclosure">Clicking Buy immediately purchases the displayed package and charges the package’s configured price currency using a fresh exchange quote. By clicking Buy, you accept the package terms shown on each card. Package capacity activates immediately and is added to your existing TH/s; configured CKI rewards accrue automatically while reward processing is enabled.</p></div><div className="cm-package-tabs" role="tablist" aria-label="Filter packages">{[["all","All Packages"],["mine","My Packages"],["upgrade","Upgrade"],["downgrade","Downgrade"]].map(([id,label])=><button type="button" role="tab" aria-selected={packageTab===id} className={packageTab===id?"selected":""} key={id} onClick={()=>setPackageTab(id)}>{label}</button>)}</div><button className="cm-refresh-button" type="button" onClick={()=>{void packages.refetch();void dashboard.refetch()}} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
+        <div className="cm-packages-header"><div><h2>Mining Packages</h2><p>Choose from packages currently published by operations</p><p className="cm-purchase-disclosure">Clicking Buy immediately purchases the displayed package and charges the package’s configured price currency using a fresh exchange quote. By clicking Buy, you accept the package terms shown on each card. Capacity activates immediately according to that package’s stacking policy (add or replace); configured CKI rewards accrue automatically while reward processing is enabled.</p></div><div className="cm-package-tabs" role="tablist" aria-label="Filter packages">{[["all","All Packages"],["mine","My Packages"],["upgrade","Upgrade"],["downgrade","Downgrade"]].map(([id,label])=><button type="button" role="tab" aria-selected={packageTab===id} className={packageTab===id?"selected":""} key={id} onClick={()=>setPackageTab(id)}>{label}</button>)}</div><button className="cm-refresh-button" type="button" onClick={()=>{void packages.refetch();void dashboard.refetch()}} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
         {active.length>0&&<div className="cm-active-note"><Cpu size={14}/><b>YOUR ACTIVE CAPACITY</b><span>{activePackageNames} · {fmt(activeBase,3)} TH/s</span></div>}
         <div className="cm-package-carousel">
           {packages.isLoading&&<div className="cm-empty">Loading published packages…</div>}
-          {!packages.isLoading&&!filteredPackages.length&&<div className="cm-empty">{packageRows.length?"No packages match this filter.":"No mining packages are currently published. Package terms and prices will appear here after operations publishes them."}</div>}
+          {!packages.isLoading&&!packages.isError&&!filteredPackages.length&&<div className="cm-empty">{packageRows.length?"No packages match this filter.":"No mining packages are currently published. Package terms and prices will appear here after operations publishes them."}</div>}
           {filteredPackages.map((item:any,index:number)=>{
             const activeSame=active.some((current:any)=>current.code===item.code);
             const intent=Number(item.baseThs)>activeBase?"Add hash power":"Buy package";
@@ -297,7 +304,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
             return <article className={`cm-package-card ${activeSame?"is-current":""}`} key={item.versionId} style={{"--package-accent":color} as React.CSSProperties}>
               <div className="cm-package-art"><div className="cm-cube"><i/><i/><b><CoinMark iconUrl={tokenIconUrl}/></b></div><span className="cm-package-glow"/></div>
               <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div>
-              <div className="cm-package-price"><strong>{fmt(item.priceAmount,2)}</strong><small>{item.priceAsset}</small></div>
+              <div className="cm-package-price"><strong>{fmt(item.priceAmount,assetScaleFor(item.priceAsset,mainWallet.data?.currencies))}</strong><small>{item.priceAsset}</small></div>
               <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"not set"):`${item.durationMonths} months`}</span><span>{item.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)} CKI/day${Number(item.miningSpeedMultiplier||1)!==1?` · ${fmt(item.miningSpeedMultiplier,4)}× speed`:""}`}</span><span className="cm-package-projection">{item.projectedTermTokens?`Projected term ≈ ${fmt(item.projectedTermTokens,4)} ${tokenSymbol||"CKI"}${item.projectedTermUsd?` · ≈ $${fmt(item.projectedTermUsd,2)}`:""}`:"Term projection unavailable until a duration is set"}</span>{item.remainingPurchases!=null&&<span className="cm-package-limit">Purchases remaining: {item.remainingPurchases}{Number(item.maxPerCustomer)>0?` of ${item.maxPerCustomer}`:""}</span>}</div>
               {item.termsText&&<details className="cm-package-terms"><summary>Review package terms</summary><p>{item.termsText}</p></details>}
               <button type="button" className="cm-package-buy" disabled={!canPurchase||purchaseMutation.isPending} title={canPurchase?"Click to purchase now; the package's configured currency wallet will be charged immediately.":(unavailableReason||"Unavailable")} aria-label={`Buy ${item.name} now; the package's configured currency wallet will be charged immediately`} onClick={()=>{if(!canPurchase||purchaseMutation.isPending)return;setMessage("");purchaseMutation.mutate({packageVersionId:item.versionId,idempotencyKey:requestId()})}}>{buttonLabel}<ArrowRight size={13}/></button>
@@ -319,7 +326,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
           </div>
           <button className="cm-refresh-button" type="button" onClick={() => history.refetch()} aria-label="Refresh activity"><RefreshCw size={15}/></button>
         </div>
-        {history.isLoading ? <div className="cm-empty">Loading ledger history…</div> : !recent.length ? <div className="cm-empty">No Mining transactions have been recorded yet.</div> : <>
+        {history.isLoading ? <div className="cm-empty">Loading ledger history…</div> : history.isError ? <div className="cm-empty">Activity could not be loaded. Use Refresh activity to retry.</div> : !recent.length ? <div className="cm-empty">No Mining transactions have been recorded yet.</div> : <>
           <div className="cm-table-wrap">
             <table className="cm-table">
               <thead><tr><th>Event</th><th>Reference</th><th>Status</th><th>When</th></tr></thead>

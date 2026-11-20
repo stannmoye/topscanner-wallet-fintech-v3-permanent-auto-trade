@@ -7,6 +7,7 @@ import { executeCompatibleMigrationSql, splitStatements } from "./mysql-compatib
 import { classifyMainMigrationPreflight, loadExpectedMainMigrationHistory, validateMainMigrationHistory } from "../installer/main-migration-preflight.mjs";
 import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
 import { inspectMainMigrationSchema } from "./main-migration-schema-diagnostic.mjs";
+import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-schema.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databaseUrl = process.env.DATABASE_URL;
@@ -504,6 +505,14 @@ async function main() {
     currentStatement = { index: null, label: "opportunity delivery diagnostics schema repair" };
     const deliveryDiagnosticsSql = await readFile(resolve(root, "drizzle", "0052_delivery_diagnostics.sql"), "utf8");
     await executeCompatibleMigrationSql(connection, deliveryDiagnosticsSql);
+
+    currentMigration = "mining-customer-package-schema-reconciliation";
+    currentStatement = { index: null, label: "Mining customer package acquisition type verification and additive repair" };
+    const miningCustomerPackageSchema = await ensureMiningCustomerPackageSchema(connection);
+    if (miningCustomerPackageSchema.present) {
+      console.log("[main-migrate] Verified mining_customer_packages.acquisitionType" +
+        (miningCustomerPackageSchema.repaired ? " after additive repair." : "."));
+    }
 
     currentMigration = "post-migration-schema-verification";
     currentStatement = { index: null, label: "worker schema contract verification" };

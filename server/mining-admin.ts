@@ -8,6 +8,7 @@ import {
 import { refreshMarketData } from "./marketSync";
 
 const DISCLOSURE_TERMS = (text: string) => /simulat|simulation/i.test(text) && /(not withdrawable|non[- ]withdrawable|no cash payout|not a cash payout|no real payout)/i.test(text);
+const MINING_PACKAGE_PRICE_ASSETS = new Set(["USD", "EUR", "GBP", "BTC", "ETH", "USDT"]);
 const byDate = (value: unknown) => value ? new Date(value as string | Date).toISOString() : null;
 const stringDecimal = (value: unknown) => decimal(value).toString();
 
@@ -46,7 +47,10 @@ function validatePackageInput(input: any) {
   const displayOrder = Number(input.displayOrder);
   const durationMonths = Number(input.durationMonths);
   const expectedDailyRewardCki = input.expectedDailyRewardCki === null || input.expectedDailyRewardCki === undefined || input.expectedDailyRewardCki === "" ? null : decimal(input.expectedDailyRewardCki);
-  const priceAsset = assertMiningAsset(input.priceAsset);
+  const priceAsset = String(input.priceAsset || "").trim().toUpperCase();
+  if (!MINING_PACKAGE_PRICE_ASSETS.has(priceAsset)) {
+    throw new MiningError("Package prices must use an enabled main-wallet currency (USD, EUR, GBP, BTC, ETH, or USDT)");
+  }
   const price = exactAmount(String(input.priceAmount), priceAsset, "Package price");
   const baseThs = decimal(input.baseThs);
   const boostBonusThs = decimal(String(input.boostBonusThs));

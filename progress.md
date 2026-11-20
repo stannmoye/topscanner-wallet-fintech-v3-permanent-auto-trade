@@ -1,3 +1,15 @@
+## 2026-11-21 — Mining schema/runtime error audit
+
+Branch `main`, starting from `a1038c8f19342cb8ec6a17c163eb6c5e73b904d0` (same SHA as `origin/main` at audit start). Owner supplied a customer-portal screenshot showing `Unknown column 'cp.acquisitionType' in 'SELECT'` and asked for an end-to-end Mining audit and fixes.
+
+- Confirmed the screenshot failure is schema drift, not an idle engine or missing package purchase: `server/mining.ts` selects `mining_customer_packages.acquisitionType`, and admin grants insert it; portal migration `0038_mining_admin_package_grants.sql` defines it, but a stale/baseline migration record can leave the physical column absent.
+- Added `scripts/mining-customer-package-schema.mjs`, a repeatable additive repair and verifier for the exact `ENUM('purchase','admin_grant') NOT NULL DEFAULT 'purchase'` contract. Wired it into `scripts/guarded-main-migrate.mjs`, `scripts/apply-portal-migrations.mjs`, and `scripts/ensure-mining-current-schema.mjs`; migration paths now verify physical schema instead of trusting tracker state.
+- Removed the Mining schema helper's repeated `globalHashPowerThs=0` → `67` update, which could overwrite an intentional administrator value on each run. Current Mining host-upgrade docs now include `pnpm db:mining-schema`.
+- Customer Mining surfaces package, boost, ledger, wallet and preference query errors rather than presenting them as normal empty results. Empty/no-purchase states remain valid idle states.
+- Package catalogue availability now excludes future-effective versions and unsupported main-wallet charge assets; Admin package editing rejects CKI as a payment denomination because package checkout debits only enabled main-wallet currencies. Customer prices use currency precision.
+- Implemented the configured `replace` stacking policy by ending currently active entitlements at the purchase timestamp before inserting the new entitlement; replaced-but-not-ended legacy entitlements remain reflected consistently in customer/admin engine state.
+- Tests: `pnpm check`, `pnpm test` (198 files / 1,575 passed; 7 files / 36 skipped), `pnpm build`, and the focused schema test (5 passed) all passed. `git diff --check` passed. The optional installer/migration test config has 7 failures across 32 files / 184 tests; the identified failures include stale journal-tail assertions expecting migration `0111` while current `drizzle/meta/_journal.json` ends at `0121`. No live `DATABASE_URL` is available in this workspace, so the customer database was not inspected or migrated.
+
 ## 2026-11-21 — Admin Crypto Mining: one dedicated page per sub-menu
 
 Branch `main`. Owner request: the admin Crypto Mining sub-menus were all rendered on a single
