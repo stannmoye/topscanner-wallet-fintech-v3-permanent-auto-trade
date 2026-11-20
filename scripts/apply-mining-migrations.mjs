@@ -478,6 +478,47 @@ try {
     await connection.rollback();
     throw error;
   }
+  const packageThemesMigrationKey = "0124_mining_package_visual_themes";
+  const packageThemesSchema = await readFile(resolve("drizzle", "0124_mining_package_visual_themes.sql"), "utf8");
+  await executeCompatibleMigrationSql(connection, packageThemesSchema);
+  await connection.beginTransaction();
+  try {
+    const [markers] = await connection.query("SELECT migrationKey FROM mining_schema_migrations WHERE migrationKey=? FOR UPDATE", [packageThemesMigrationKey]);
+    if (markers.length) {
+      await connection.commit();
+      console.log("Mining package visual themes migration already applied.");
+    } else {
+      const [admins] = await connection.query("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1");
+      const adminId = admins[0] ? Number(admins[0].id) : null;
+      const catalogExamples = [
+        { code: "CKI_GENESIS", themeKey: "aurora" },
+        { code: "CKI_VELOCITY", themeKey: "ember" },
+        { code: "CKI_QUANTUM", themeKey: "glacier" },
+        { code: "CKI_TITAN", themeKey: "solar" },
+        { code: "CKI_INFINITY", themeKey: "nebula" },
+      ];
+      for (const example of catalogExamples) {
+        await connection.execute(
+          `UPDATE mining_package_versions v JOIN mining_packages p ON p.id=v.packageId
+           SET v.themeKey=? WHERE p.code=? AND v.id=p.currentVersionId AND v.themeKey='aurora'`,
+          [example.themeKey, example.code],
+        );
+      }
+      const metadata = { packageVersionThemeKey: true, presets: ["aurora", "ember", "glacier", "solar", "nebula"], legacyDefault: "aurora", catalogExamples };
+      await connection.execute("INSERT INTO mining_schema_migrations (migrationKey,detailsJson) VALUES (?,?)", [packageThemesMigrationKey, JSON.stringify(metadata)]);
+      await connection.execute(
+        `INSERT INTO v5_audit_events (actorUserId,action,entityType,entityId,reason,reference,metadataJson)
+         VALUES (?,?,?,?,?,?,?)`,
+        [adminId,"mining.package.themes.enabled","mining_package_version",packageThemesMigrationKey,
+          "Add versioned, administrator-selectable customer card themes for Mining packages.",packageThemesMigrationKey,JSON.stringify(metadata)],
+      );
+      await connection.commit();
+      console.log(JSON.stringify({ migration: packageThemesMigrationKey, ...metadata }));
+    }
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  }
   const verified = await assertWorkerSchemaContracts(connection);
   console.log(`[mining-migrate] PASS: verified ${verified.checkedTables} worker-critical table contracts after mining migrations.`);
 } finally {

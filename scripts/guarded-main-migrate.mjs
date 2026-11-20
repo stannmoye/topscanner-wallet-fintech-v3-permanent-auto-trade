@@ -8,6 +8,7 @@ import { classifyMainMigrationPreflight, loadExpectedMainMigrationHistory, valid
 import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
 import { inspectMainMigrationSchema } from "./main-migration-schema-diagnostic.mjs";
 import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-schema.mjs";
+import { ensureMiningPackageThemeSchema } from "./mining-package-theme-schema.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databaseUrl = process.env.DATABASE_URL;
@@ -512,6 +513,11 @@ async function main() {
     if (miningCustomerPackageSchema.present) {
       console.log("[main-migrate] Verified mining_customer_packages.acquisitionType" +
         (miningCustomerPackageSchema.repaired ? " after additive repair." : "."));
+    }
+    const miningPackageThemeSchema = await ensureMiningPackageThemeSchema(connection);
+    if (miningPackageThemeSchema.present) {
+      console.log("[main-migrate] Verified mining_package_versions.themeKey" +
+        (miningPackageThemeSchema.repaired ? " after additive repair." : "."));
     }
 
     currentMigration = "post-migration-schema-verification";

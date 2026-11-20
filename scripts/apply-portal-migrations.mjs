@@ -7,6 +7,7 @@ import { classifyPortalMigrationRecord } from "./portal-migration-tracker.mjs";
 import { executeCompatibleMigrationSql } from "./mysql-compatible-migration-sql.mjs";
 import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
 import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-schema.mjs";
+import { ensureMiningPackageThemeSchema } from "./mining-package-theme-schema.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databaseUrl = process.env.DATABASE_URL;
@@ -246,6 +247,8 @@ try {
   }
   const miningCustomerPackageSchema = await ensureMiningCustomerPackageSchema(connection, { required: true });
   console.log(`[portal-migrate] ${miningCustomerPackageSchema.repaired ? "Repaired and verified" : "Verified"} mining_customer_packages.acquisitionType.`);
+  const miningPackageThemeSchema = await ensureMiningPackageThemeSchema(connection, { required: true });
+  console.log(`[portal-migrate] ${miningPackageThemeSchema.repaired ? "Repaired and verified" : "Verified"} mining_package_versions.themeKey.`);
   const verified = await assertWorkerSchemaContracts(connection);
   console.log(`[portal-migrate] PASS: verified ${verified.checkedTables} worker-critical table contracts after portal migrations.`);
 } catch (error) {

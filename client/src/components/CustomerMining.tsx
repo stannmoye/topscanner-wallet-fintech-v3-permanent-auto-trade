@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import "../factory-cockpit.css";
 import { MiningCoreCanvas } from "./MiningCoreCanvas";
 import { MiningOperationsFlow } from "./MiningOperationsFlow";
+import { getMiningPackageTheme } from "@shared/mining-package-themes";
 import {
   Activity, ArrowDownUp, ArrowRight,
   ChevronDown, ChevronLeft, ChevronRight, Clock3, Cpu, Info,
@@ -25,7 +26,6 @@ const durationText = (seconds: number) => {
   const s = safe % 60;
   return [h, m, s].map(value => String(value).padStart(2, "0")).join(":");
 };
-const palette = ["#12a8ff", "#f59a38", "#b4d7ff", "#f4c525", "#825fff", "#20c8d9", "#18d69a", "#ffbf36"];
 const currencyIcons: Record<string, string> = { BTC: "₿", USD: "$", EUR: "€", GBP: "£", ETH: "◆", USDT: "₮" };
 const CoinMark = ({ iconUrl, fallback = "₵" }: { iconUrl?: string | null; fallback?: string }) => iconUrl ? <img className="cm-coin-img" src={iconUrl} alt="" /> : <>{fallback}</>;
 
@@ -292,18 +292,18 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
         <div className="cm-package-carousel">
           {packages.isLoading&&<div className="cm-empty">Loading published packages…</div>}
           {!packages.isLoading&&!packages.isError&&!filteredPackages.length&&<div className="cm-empty">{packageRows.length?"No packages match this filter.":"No mining packages are currently published. Package terms and prices will appear here after operations publishes them."}</div>}
-          {filteredPackages.map((item:any,index:number)=>{
+          {filteredPackages.map((item:any)=>{
             const activeSame=active.some((current:any)=>current.code===item.code);
             const intent=Number(item.baseThs)>activeBase?"Add hash power":"Buy package";
-            const color=palette[index%palette.length];
+            const theme=getMiningPackageTheme(item.themeKey);
             const canPurchase=item.purchaseAvailable===true;
             const purchaseInProgress=purchaseMutation.isPending&&purchaseMutation.variables?.packageVersionId===item.versionId;
             const unavailableReason=String(item.purchaseUnavailableReason||"");
             const statusLabel=activeSame?"ACTIVE":item.alreadyPurchased?"PURCHASED":canPurchase?"AVAILABLE":item.status!=="published"?"PAUSED":"PURCHASES PAUSED";
             const buttonLabel=item.alreadyPurchased?"Already purchased":purchaseInProgress?"Purchasing…":canPurchase?intent:item.status!=="published"?"Paused":"Purchases paused";
-            return <article className={`cm-package-card ${activeSame?"is-current":""}`} key={item.versionId} style={{"--package-accent":color} as React.CSSProperties}>
+            return <article className={`cm-package-card theme-${theme.key} ${activeSame?"is-current":""}`} key={item.versionId} style={{"--package-accent":theme.accent,"--package-glow":theme.glow,"--package-surface-start":theme.surfaceStart,"--package-surface-end":theme.surfaceEnd,"--package-button-start":theme.buttonStart,"--package-button-end":theme.buttonEnd} as React.CSSProperties}>
               <div className="cm-package-art"><div className="cm-cube"><i/><i/><b><CoinMark iconUrl={tokenIconUrl}/></b></div><span className="cm-package-glow"/></div>
-              <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div>
+              <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div><small className="cm-package-theme-name">{theme.label} theme</small>
               <div className="cm-package-price"><strong>{fmt(item.priceAmount,assetScaleFor(item.priceAsset,mainWallet.data?.currencies))}</strong><small>{item.priceAsset}</small></div>
               <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"not set"):`${item.durationMonths} months`}</span><span>{item.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)} CKI/day${Number(item.miningSpeedMultiplier||1)!==1?` · ${fmt(item.miningSpeedMultiplier,4)}× speed`:""}`}</span><span className="cm-package-projection">{item.projectedTermTokens?`Projected term ≈ ${fmt(item.projectedTermTokens,4)} ${tokenSymbol||"CKI"}${item.projectedTermUsd?` · ≈ $${fmt(item.projectedTermUsd,2)}`:""}`:"Term projection unavailable until a duration is set"}</span>{item.remainingPurchases!=null&&<span className="cm-package-limit">Purchases remaining: {item.remainingPurchases}{Number(item.maxPerCustomer)>0?` of ${item.maxPerCustomer}`:""}</span>}</div>
               {item.termsText&&<details className="cm-package-terms"><summary>Review package terms</summary><p>{item.termsText}</p></details>}

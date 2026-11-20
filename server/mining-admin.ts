@@ -6,6 +6,7 @@ import {
   addUtcMonths, requestKey, requireActiveMiningAccount, writeMiningAudit, withMiningConnection,
 } from "./mining-store";
 import { refreshMarketData } from "./marketSync";
+import { DEFAULT_MINING_PACKAGE_THEME, getMiningPackageTheme, isMiningPackageThemeKey } from "../shared/mining-package-themes";
 
 const DISCLOSURE_TERMS = (text: string) => /simulat|simulation/i.test(text) && /(not withdrawable|non[- ]withdrawable|no cash payout|not a cash payout|no real payout)/i.test(text);
 const MINING_PACKAGE_PRICE_ASSETS = new Set(["USD", "EUR", "GBP", "BTC", "ETH", "USDT"]);
@@ -57,6 +58,7 @@ function validatePackageInput(input: any) {
   const maxPerCustomer = Number(input.maxPerCustomer);
   const boostDurationSeconds = input.boostDurationSeconds === null || input.boostDurationSeconds === undefined || input.boostDurationSeconds === "" ? null : Number(input.boostDurationSeconds);
   const stackingPolicy = input.stackingPolicy;
+  const themeKey = input.themeKey ?? DEFAULT_MINING_PACKAGE_THEME;
   const termsText = String(input.termsText || "").trim();
   if (!/^[A-Z0-9][A-Z0-9_-]{1,47}$/.test(code)) throw new MiningError("Package code must be 2–48 uppercase letters, numbers, underscores, or hyphens");
   if (name.length < 2 || name.length > 120) throw new MiningError("Package name must be 2–120 characters");
@@ -68,14 +70,15 @@ function validatePackageInput(input: any) {
   if (!Number.isInteger(maxPerCustomer) || maxPerCustomer < 0 || maxPerCustomer > 100_000) throw new MiningError("Maximum purchases per customer must be between 0 and 100,000 (0 means unlimited)");
   if (boostDurationSeconds !== null && (!Number.isInteger(boostDurationSeconds) || boostDurationSeconds < 10 || boostDurationSeconds > 31_536_000)) throw new MiningError("Boost duration must be between 10 seconds and one year");
   if (!["stack","replace"].includes(stackingPolicy)) throw new MiningError("Choose whether package purchases stack or replace active packages");
+  if (!isMiningPackageThemeKey(themeKey)) throw new MiningError("Choose one of the available Mining package themes");
   if (!DISCLOSURE_TERMS(termsText) || termsText.length < 80 || termsText.length > 12_000) throw new MiningError("Package terms must clearly state that this is simulated and that there is no withdrawal or cash payout; use 80–12,000 characters");
-  return { code,name,displayOrder,durationMonths,expectedDailyRewardCki:expectedDailyRewardCki?.toString()??null,priceAsset,priceAmount:price.toString(),baseThs:baseThs.toString(),boostBonusThs:boostBonusThs.toString(),maxPerCustomer,expirySeconds:null,boostDurationSeconds,stackingPolicy,termsText,simulationAcknowledgementRequired:input.simulationAcknowledgementRequired !== false };
+  return { code,name,displayOrder,durationMonths,expectedDailyRewardCki:expectedDailyRewardCki?.toString()??null,priceAsset,priceAmount:price.toString(),baseThs:baseThs.toString(),boostBonusThs:boostBonusThs.toString(),maxPerCustomer,expirySeconds:null,boostDurationSeconds,stackingPolicy,themeKey,termsText,simulationAcknowledgementRequired:input.simulationAcknowledgementRequired !== false };
 }
 
 async function packageList(conn: Db) {
   const config = await loadMiningConfig(conn);
   const [rows] = await conn.query<any[]>(`SELECT p.id packageId,p.code,p.name,p.displayOrder,p.status packageStatus,p.currentVersionId,p.createdBy,p.createdAt,p.updatedAt,
-      v.id versionId,v.version,v.displayName,v.versionStatus,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.durationMonths,v.expectedDailyRewardCki,v.termsText,v.effectiveAt,v.createdAt versionCreatedAt,v.createdBy versionCreatedBy,
+      v.id versionId,v.version,v.displayName,v.versionStatus,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.durationMonths,v.expectedDailyRewardCki,v.themeKey,v.termsText,v.effectiveAt,v.createdAt versionCreatedAt,v.createdBy versionCreatedBy,
       (SELECT COUNT(*) FROM mining_customer_packages cp WHERE cp.packageId=p.id) purchaseCount,
       (SELECT COUNT(DISTINCT cp.userId) FROM mining_customer_packages cp WHERE cp.packageId=p.id AND cp.status='active' AND cp.startsAt<=UTC_TIMESTAMP(3) AND (cp.expiresAt IS NULL OR cp.expiresAt>UTC_TIMESTAMP(3)) AND (cp.endedAt IS NULL OR cp.endedAt>UTC_TIMESTAMP(3))) activeHolders,
       (SELECT COALESCE(SUM(cp.baseThsSnapshot+cp.boostBonusThsSnapshot),0) FROM mining_customer_packages cp WHERE cp.packageId=p.id AND cp.status='active' AND cp.startsAt<=UTC_TIMESTAMP(3) AND (cp.expiresAt IS NULL OR cp.expiresAt>UTC_TIMESTAMP(3)) AND (cp.endedAt IS NULL OR cp.endedAt>UTC_TIMESTAMP(3))) activeAllocatedThs
@@ -93,7 +96,7 @@ async function packageList(conn: Db) {
     expectedDailyRewardCki:row.expectedDailyRewardCki===null?null:String(row.expectedDailyRewardCki),baseDailyRewardCki:baseDaily?.toString()??null,effectiveDailyRewardCki:daily?.toString()??null,estimatedDailyTokens:daily?.toString()??null,
     estimatedHourlyTokens:daily?.div(24).toString()??null,estimatedDailyUsd:daily?.div(config.tokenUnitsPerUsd).toDecimalPlaces(2,Decimal.ROUND_DOWN).toFixed(2)??null,
     calculationModel:config.calculationModel,ckiPerThsPerDay:config.ckiPerThsPerDay,miningSpeedMultiplier:config.miningSpeedMultiplier,availableForPurchase:row.packageStatus==="published"&&row.versionStatus==="published"&&Number(row.versionId)===Number(row.currentVersionId)&&config.packagePurchasesEnabled,lastConfigurationUpdatedAt:byDate(row.versionCreatedAt),lastConfigurationUpdatedBy:row.versionCreatedBy?Number(row.versionCreatedBy):null,
-    termsText:row.termsText||null,effectiveAt:byDate(row.effectiveAt),createdAt:byDate(row.createdAt),updatedAt:byDate(row.updatedAt),
+    themeKey:getMiningPackageTheme(row.themeKey).key,termsText:row.termsText||null,effectiveAt:byDate(row.effectiveAt),createdAt:byDate(row.createdAt),updatedAt:byDate(row.updatedAt),
   };});
 }
 
@@ -120,15 +123,15 @@ export async function saveMiningPackageDraft(adminId: number, rawInput: any) {
       if (requestedVersionId && (!current || current.versionStatus !== "draft")) throw new MiningError("Only an existing draft version can be edited");
       if (current?.versionStatus === "draft") {
         savedVersionId=Number(current.id);
-        await conn.execute(`UPDATE mining_package_versions SET displayName=?,durationMonths=?,expectedDailyRewardCki=?,priceAmount=?,priceAsset=?,baseThs=?,boostBonusThs=?,boostDurationSeconds=?,maxPerCustomer=?,stackingPolicy=?,expirySeconds=?,termsText=?,simulationAcknowledgementRequired=?,createdBy=? WHERE id=?`,[
-          input.name,input.durationMonths,input.expectedDailyRewardCki,input.priceAmount,input.priceAsset,input.baseThs,input.boostBonusThs,input.boostDurationSeconds,input.maxPerCustomer,input.stackingPolicy,input.expirySeconds,input.termsText,input.simulationAcknowledgementRequired?1:0,adminId,savedVersionId,
+        await conn.execute(`UPDATE mining_package_versions SET displayName=?,durationMonths=?,expectedDailyRewardCki=?,priceAmount=?,priceAsset=?,baseThs=?,boostBonusThs=?,boostDurationSeconds=?,maxPerCustomer=?,stackingPolicy=?,expirySeconds=?,themeKey=?,termsText=?,simulationAcknowledgementRequired=?,createdBy=? WHERE id=?`,[
+          input.name,input.durationMonths,input.expectedDailyRewardCki,input.priceAmount,input.priceAsset,input.baseThs,input.boostBonusThs,input.boostDurationSeconds,input.maxPerCustomer,input.stackingPolicy,input.expirySeconds,input.themeKey,input.termsText,input.simulationAcknowledgementRequired?1:0,adminId,savedVersionId,
         ]);
       } else {
         const [versionRows] = await conn.query<any[]>(`SELECT COALESCE(MAX(version),0) maxVersion FROM mining_package_versions WHERE packageId=?`,[packageId]);
         const version = Number(versionRows[0]?.maxVersion||0)+1;
         const [inserted] = await conn.execute<any>(`INSERT INTO mining_package_versions
-          (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,expirySeconds,durationMonths,expectedDailyRewardCki,termsText,simulationAcknowledgementRequired,createdBy)
-          VALUES (?,? ,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)`,[packageId,version,input.name,input.priceAmount,input.priceAsset,input.baseThs,input.boostBonusThs,input.boostDurationSeconds,input.maxPerCustomer,input.stackingPolicy,input.expirySeconds,input.durationMonths,input.expectedDailyRewardCki,input.termsText,input.simulationAcknowledgementRequired?1:0,adminId]);
+          (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,expirySeconds,durationMonths,expectedDailyRewardCki,themeKey,termsText,simulationAcknowledgementRequired,createdBy)
+          VALUES (?,? ,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[packageId,version,input.name,input.priceAmount,input.priceAsset,input.baseThs,input.boostBonusThs,input.boostDurationSeconds,input.maxPerCustomer,input.stackingPolicy,input.expirySeconds,input.durationMonths,input.expectedDailyRewardCki,input.themeKey,input.termsText,input.simulationAcknowledgementRequired?1:0,adminId]);
         savedVersionId=Number(inserted.insertId);
         if(packages[0].status==='draft')await conn.execute(`UPDATE mining_packages SET currentVersionId=?,updatedAt=UTC_TIMESTAMP(3) WHERE id=?`,[savedVersionId,packageId]);
       }
@@ -138,12 +141,12 @@ export async function saveMiningPackageDraft(adminId: number, rawInput: any) {
       const [created] = await conn.execute<any>(`INSERT INTO mining_packages (code,name,displayOrder,status,createdBy) VALUES (?,?,?,'draft',?)`,[input.code,input.name,input.displayOrder,adminId]);
       packageId = Number(created.insertId);
       const [version] = await conn.execute<any>(`INSERT INTO mining_package_versions
-        (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,expirySeconds,durationMonths,expectedDailyRewardCki,termsText,simulationAcknowledgementRequired,createdBy)
-        VALUES (?,1,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)`,[packageId,input.name,input.priceAmount,input.priceAsset,input.baseThs,input.boostBonusThs,input.boostDurationSeconds,input.maxPerCustomer,input.stackingPolicy,input.expirySeconds,input.durationMonths,input.expectedDailyRewardCki,input.termsText,input.simulationAcknowledgementRequired?1:0,adminId]);
+        (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,expirySeconds,durationMonths,expectedDailyRewardCki,themeKey,termsText,simulationAcknowledgementRequired,createdBy)
+        VALUES (?,1,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[packageId,input.name,input.priceAmount,input.priceAsset,input.baseThs,input.boostBonusThs,input.boostDurationSeconds,input.maxPerCustomer,input.stackingPolicy,input.expirySeconds,input.durationMonths,input.expectedDailyRewardCki,input.themeKey,input.termsText,input.simulationAcknowledgementRequired?1:0,adminId]);
       savedVersionId=Number(version.insertId);
       await conn.execute(`UPDATE mining_packages SET currentVersionId=? WHERE id=?`,[savedVersionId,packageId]);
     }
-    await writeMiningAudit(conn,{actorUserId:adminId,action:"mining.package.draft.saved",entityType:"mining_package",entityId:String(packageId),reason,metadata:{code:input.code,name:input.name,displayOrder:input.displayOrder,durationMonths:input.durationMonths,expectedDailyRewardCki:input.expectedDailyRewardCki,priceAsset:input.priceAsset,priceAmount:input.priceAmount,baseThs:input.baseThs}});
+    await writeMiningAudit(conn,{actorUserId:adminId,action:"mining.package.draft.saved",entityType:"mining_package",entityId:String(packageId),reason,metadata:{code:input.code,name:input.name,displayOrder:input.displayOrder,durationMonths:input.durationMonths,expectedDailyRewardCki:input.expectedDailyRewardCki,priceAsset:input.priceAsset,priceAmount:input.priceAmount,baseThs:input.baseThs,themeKey:input.themeKey}});
     return {packageId,versionId:savedVersionId,status:"draft_saved",message:"Draft saved. Publishing creates the package version customers can purchase."};
   }));
 }
@@ -202,8 +205,8 @@ export async function cloneMiningPackage(adminId:number,input:{packageId:number;
     const [created]=await conn.execute<any>(`INSERT INTO mining_packages (code,name,displayOrder,status,createdBy) VALUES (?,?,?,'draft',?)`,[code,name,displayOrder,adminId]);
     const packageId=Number(created.insertId);
     const [version]=await conn.execute<any>(`INSERT INTO mining_package_versions
-      (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,expirySeconds,durationMonths,expectedDailyRewardCki,termsText,simulationAcknowledgementRequired,createdBy)
-      VALUES (?,1,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)`,[packageId,name,String(source.priceAmount),String(source.priceAsset),String(source.baseThs),String(source.boostBonusThs),source.boostDurationSeconds===null?null:Number(source.boostDurationSeconds),Number(source.maxPerCustomer),String(source.stackingPolicy),source.expirySeconds===null?null:Number(source.expirySeconds),Number(source.durationMonths),source.expectedDailyRewardCki===null?null:String(source.expectedDailyRewardCki),String(source.termsText),Number(source.simulationAcknowledgementRequired)?1:0,adminId]);
+      (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,expirySeconds,durationMonths,expectedDailyRewardCki,themeKey,termsText,simulationAcknowledgementRequired,createdBy)
+      VALUES (?,1,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[packageId,name,String(source.priceAmount),String(source.priceAsset),String(source.baseThs),String(source.boostBonusThs),source.boostDurationSeconds===null?null:Number(source.boostDurationSeconds),Number(source.maxPerCustomer),String(source.stackingPolicy),source.expirySeconds===null?null:Number(source.expirySeconds),Number(source.durationMonths),source.expectedDailyRewardCki===null?null:String(source.expectedDailyRewardCki),getMiningPackageTheme(source.themeKey).key,String(source.termsText),Number(source.simulationAcknowledgementRequired)?1:0,adminId]);
     const versionId=Number(version.insertId);
     await conn.execute(`UPDATE mining_packages SET currentVersionId=? WHERE id=?`,[versionId,packageId]);
     await writeMiningAudit(conn,{actorUserId:adminId,action:"mining.package.cloned",entityType:"mining_package",entityId:String(packageId),reason,metadata:{sourcePackageId:input.packageId,sourceCode:source.code,code,name,displayOrder,versionId}});

@@ -8,6 +8,7 @@ import {
   loadMiningConfig, postMiningLedgerEntries, quoteRatesDetails, requestKey, requireActiveMiningAccount,
   withMiningConnection,
 } from "./mining-store";
+import { getMiningPackageTheme } from "../shared/mining-package-themes";
 
 const tokenScale = 8;
 const nowSql = () => new Date();
@@ -220,7 +221,7 @@ export async function listCustomerMiningPackages(userId: number) {
   return withMiningConnection(async conn => {
     const now = new Date();
     const [rows] = await conn.query<any[]>(`SELECT p.id packageId,p.code,p.name,p.displayOrder,p.status packageStatus,p.currentVersionId,
-        v.id versionId,v.version,v.displayName,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.expectedDailyRewardCki,
+        v.id versionId,v.version,v.displayName,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.expectedDailyRewardCki,v.themeKey,
         v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.durationMonths,v.termsText,v.simulationAcknowledgementRequired,v.effectiveAt,
         (SELECT COUNT(*) FROM mining_customer_packages cp WHERE cp.userId=? AND cp.packageId=p.id AND cp.status<>'cancelled') purchasedCount
       FROM mining_packages p JOIN mining_package_versions v ON v.id=p.currentVersionId
@@ -259,6 +260,7 @@ export async function listCustomerMiningPackages(userId: number) {
         ckiPerThsPerDay: config.ckiPerThsPerDay,
         boostDurationSeconds: Number(row.boostDurationSeconds || config.boostDurationSeconds),
         stackingPolicy: row.stackingPolicy, expirySeconds: row.expirySeconds === null ? null : Number(row.expirySeconds), durationMonths,
+        themeKey: getMiningPackageTheme(row.themeKey).key,
         termsText: row.termsText, simulationAcknowledgementRequired: Boolean(row.simulationAcknowledgementRequired),
         estimatedDailyTokens: estimate.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale),
         termDays: termSeconds ? (termSeconds / 86_400).toFixed(2) : null,

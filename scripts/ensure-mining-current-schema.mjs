@@ -1,6 +1,7 @@
 import mysql from "mysql2/promise";
 import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
 import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-schema.mjs";
+import { ensureMiningPackageThemeSchema } from "./mining-package-theme-schema.mjs";
 
 const raw = process.env.DATABASE_URL;
 if (!raw) throw new Error("DATABASE_URL is required");
@@ -54,6 +55,7 @@ try {
   await addColumn("mining_package_versions", "displayName", "VARCHAR(120) NULL");
   await addColumn("mining_package_versions", "durationMonths", "INT NULL");
   await addColumn("mining_package_versions", "expectedDailyRewardCki", "DECIMAL(36,18) NULL");
+  const packageThemeSchema = await ensureMiningPackageThemeSchema(db, { required: true });
 
   await addColumn("mining_customer_packages", "packageNameSnapshot", "VARCHAR(120) NULL");
   await addColumn("mining_customer_packages", "durationMonthsSnapshot", "INT NULL");
@@ -194,6 +196,7 @@ try {
   const verified = await assertWorkerSchemaContracts(db, ["mining_pending_boost_rewards"]);
   console.log(JSON.stringify({
     miningCustomerPackageAcquisitionType: customerPackageSchema.repaired ? "repaired-and-verified" : "verified",
+    miningPackageThemeKey: packageThemeSchema.repaired ? "repaired-and-verified" : "verified",
   }));
   console.log(JSON.stringify({
     status: "ok",

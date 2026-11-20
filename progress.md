@@ -1,3 +1,26 @@
+## 2026-11-21 — Five Mining package color themes
+
+Owner request: add selectable package colors during Mining package creation, with five prebuilt
+examples, so package cards are visually distinct in the customer catalogue.
+
+- `shared/mining-package-themes.ts`: added five whitelisted presets (Aurora, Ember, Glacier,
+  Solar and Nebula), each with accent, surface, glow and button colors; unknown/legacy values
+  resolve safely to Aurora.
+- `client/src/components/AdminMining.tsx`: added a five-option visual picker with mini-card
+  previews; selections are retained when editing drafts, creating new versions and cloning.
+- `client/src/components/CustomerMining.tsx` and `client/src/mining-portal.css`: customer package
+  cards now use the selected version's palette for the card, art, glow and purchase button.
+- `server/mining-admin.ts`, `server/mining.ts`, and `server/routers.ts`: validate and persist the
+  theme per package version, return it in both package catalogs, and preserve it when cloning.
+- `drizzle/0124_mining_package_visual_themes.sql`: adds a backward-compatible Aurora default.
+  The Mining migration runner and shared schema repair are idempotent; main, portal and current
+  Mining schema paths verify/repair the theme column. Its one-time catalog initialization assigns
+  the five existing sample packages Aurora, Ember, Glacier, Solar and Nebula, without replacing
+  any non-default theme.
+- Verification: `pnpm check`, `pnpm test` (199 files / 1,580 tests passed; 7 skipped),
+  `pnpm build`, the theme contract tests (5 passed), the isolated schema-repair tests (4 passed),
+  Node migration-script syntax checks, and `git diff --check` passed.
+
 ## 2026-11-21 — Mining schema/runtime error audit
 
 Branch `main`, starting from `a1038c8f19342cb8ec6a17c163eb6c5e73b904d0` (same SHA as `origin/main` at audit start). Owner supplied a customer-portal screenshot showing `Unknown column 'cp.acquisitionType' in 'SELECT'` and asked for an end-to-end Mining audit and fixes.

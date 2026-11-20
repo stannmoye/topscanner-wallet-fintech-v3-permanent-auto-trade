@@ -223,6 +223,32 @@
 
 .cm-dashboard-frame .cm-swap-note{display:block;color:#91abc4;font-size:7px;line-height:1.3;text-align:center}
 
+/* Versioned Mining package themes: customer cards and admin preset previews. */
+.cm-dashboard-frame .cm-package-card{border-color:color-mix(in srgb,var(--package-accent,#52f2e4) 60%,#183957);background:radial-gradient(ellipse at 50% 18%,var(--package-glow,rgba(40,220,220,.24)),transparent 52%),linear-gradient(155deg,var(--package-surface-start,#103b4b),var(--package-surface-end,#071b2c))}
+.cm-dashboard-frame .cm-package-card.is-current{border-color:var(--package-accent,#52f2e4);box-shadow:0 0 14px var(--package-glow,rgba(40,220,220,.28))}
+.cm-dashboard-frame .cm-package-card .cm-cube{border-color:var(--package-accent,#52f2e4);box-shadow:0 0 15px var(--package-glow,rgba(40,220,220,.28)),inset 0 0 12px color-mix(in srgb,var(--package-accent,#52f2e4) 20%,transparent)}
+.cm-dashboard-frame .cm-package-card .cm-cube i,.cm-dashboard-frame .cm-package-card .cm-package-glow{border-color:var(--package-accent,#52f2e4)}
+.cm-dashboard-frame .cm-package-card .cm-package-glow{box-shadow:0 0 12px var(--package-accent,#52f2e4)}
+.cm-dashboard-frame .cm-package-theme-name{margin-top:3px;color:var(--package-accent,#52f2e4);font-size:6px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.cm-dashboard-frame .cm-package-card .cm-package-buy:not(:disabled){border-color:color-mix(in srgb,var(--package-accent,#52f2e4) 70%,white);background:linear-gradient(105deg,var(--package-button-start,#087d88),var(--package-button-end,#19b9a8));box-shadow:0 0 12px var(--package-glow,rgba(40,220,220,.22))}
+.admin-mining .am-theme-picker{grid-column:1/-1;display:flex;flex-direction:column;gap:9px;padding:12px;border:1px solid #dce8e2;border-radius:12px;background:#f8fbf9}
+.admin-mining .am-theme-picker-heading{display:flex;flex-direction:column;gap:3px}
+.admin-mining .am-theme-picker-heading strong{color:#18362d;font-size:12px}
+.admin-mining .am-theme-picker-heading small{color:#688076;font-size:10px}
+.admin-mining .am-theme-options{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.admin-mining .am-theme-option{display:flex;flex-direction:column;gap:7px;min-width:0;padding:7px;border:1px solid #d7e4dd;border-radius:10px;background:#fff;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.admin-mining .am-theme-option:hover{transform:translateY(-1px)}
+.admin-mining .am-theme-option.selected{border-color:var(--theme-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--theme-accent) 25%,transparent)}
+.admin-mining .am-theme-preview{position:relative;display:block;height:50px;overflow:hidden;border:1px solid color-mix(in srgb,var(--theme-accent) 60%,transparent);border-radius:7px;background:radial-gradient(ellipse at 50% 25%,color-mix(in srgb,var(--theme-accent) 35%,transparent),transparent 60%),linear-gradient(145deg,var(--theme-surface-start),var(--theme-surface-end))}
+.admin-mining .am-theme-preview i{position:absolute;top:10px;left:calc(50% - 10px);width:20px;height:20px;border:2px solid var(--theme-accent);border-radius:5px;transform:rotate(12deg);box-shadow:0 0 10px color-mix(in srgb,var(--theme-accent) 60%,transparent)}
+.admin-mining .am-theme-preview i:nth-child(2){transform:rotate(57deg)}
+.admin-mining .am-theme-preview b{position:absolute;right:8px;bottom:7px;left:8px;height:4px;border-radius:4px;background:var(--theme-accent);opacity:.85}
+.admin-mining .am-theme-option-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.admin-mining .am-theme-option-copy strong{color:#18362d;font-size:11px}
+.admin-mining .am-theme-option-copy small{overflow:hidden;color:#73877f;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.admin-mining .am-theme-check{color:var(--theme-accent);font-size:8px;font-weight:800;text-transform:uppercase}
+@media(max-width:760px){.admin-mining .am-theme-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 
 /* End-to-end dummy-data mining flow; live balances remain read-only and ledger-backed. */
 .cm-flow-panel{position:relative;overflow:hidden;margin:14px 0 16px;padding:18px 20px;border:1px solid rgba(51,164,205,.42);border-radius:15px;background:radial-gradient(ellipse at 8% 0,rgba(0,198,255,.13),transparent 32%),linear-gradient(135deg,#061421,#081b2b 55%,#091827);color:#e8f7ff;box-shadow:0 15px 36px rgba(0,9,20,.26),inset 0 1px 0 rgba(185,236,255,.05)}
