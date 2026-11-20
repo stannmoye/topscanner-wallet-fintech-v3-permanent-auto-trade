@@ -40,10 +40,11 @@ describe("worker schema contracts", () => {
 
   it("bridges and verifies the Mining customer-package base table before workers start", async () => {
     const root = new URL("../", import.meta.url);
-    const [runtimeSchema, miningMigration, startupWrapper] = await Promise.all([
+    const [runtimeSchema, miningMigration, startupWrapper, miningRepair] = await Promise.all([
       readFile(new URL("scripts/ensure-worker-runtime-schema.mjs", root), "utf8"),
       readFile(new URL("drizzle/0036_crypto_mining_portal.sql", root), "utf8"),
       readFile(new URL("scripts/start-with-diagnostics.mjs", root), "utf8"),
+      readFile(new URL("scripts/ensure-mining-current-schema.mjs", root), "utf8"),
     ]);
     expect(runtimeSchema).toContain('drizzle/0036_crypto_mining_portal.sql');
     expect(runtimeSchema).toContain("await executeCompatibleMigrationSql(db, miningPortalMigration)");
@@ -52,8 +53,15 @@ describe("worker schema contracts", () => {
     expect(runtimeSchema.indexOf("await executeCompatibleMigrationSql(db, miningPortalMigration)"))
       .toBeLessThan(runtimeSchema.lastIndexOf("await assertWorkerSchemaContracts(db)"));
     expect(startupWrapper).toContain('runPhase("worker-runtime-schema-repair", ["scripts/ensure-worker-runtime-schema.mjs"])');
+    expect(startupWrapper).toContain('runPhase("mining-current-schema-repair", ["scripts/ensure-mining-current-schema.mjs"])');
+    expect(startupWrapper.indexOf('runPhase("worker-runtime-schema-repair"'))
+      .toBeLessThan(startupWrapper.indexOf('runPhase("mining-current-schema-repair"'));
+    expect(startupWrapper.indexOf('runPhase("mining-current-schema-repair"'))
+      .toBeLessThan(startupWrapper.indexOf('runPhase("worker-runtime-schema-preflight"'));
     expect(startupWrapper.indexOf('runPhase("worker-runtime-schema-repair"'))
       .toBeLessThan(startupWrapper.indexOf('runPhase("worker-runtime-schema-preflight"'));
+    expect(miningRepair).toContain('"displayOrder", "INT NOT NULL DEFAULT 0"');
+    expect(miningRepair).toContain('"expectedDailyRewardCkiSnapshot", "DECIMAL(36,18) NULL"');
   });
 
   it("creates and validates the durable Trading tier queue in the runtime schema bridge", async () => {
@@ -245,11 +253,11 @@ describe("worker schema contracts", () => {
     expect(workerBridgeIndex).toBeGreaterThanOrEqual(0);
     expect(boostRewardsIndex).toBeGreaterThan(workerBridgeIndex);
     expect(boostRewards.when).toBeGreaterThan(journal.entries[workerBridgeIndex].when);
-    expect(last.tag).toBe("0111_automatic_market_result_settlement");
-    expect(journal.entries.at(-2).tag).toBe("0110_opportunity_delivery_diagnostic_history");
-    expect(journal.entries.at(-3).tag).toBe("0109_customer_company_country_restrictions");
-    expect(journal.entries.at(-4).tag).toBe("0107_accurate_opportunity_delivery_monitoring");
-    expect(journal.entries.at(-5).tag).toBe("0106_package_popup_defaults");
+    expect(last.tag).toBe("0121_device_details");
+    expect(journal.entries.at(-2).tag).toBe("0120_trusted_devices");
+    expect(journal.entries.at(-3).tag).toBe("0119_customer_personal_details");
+    expect(journal.entries.at(-4).tag).toBe("0116_immediate_trade_settlement");
+    expect(journal.entries.at(-5).tag).toBe("0115_trade_public_id_registry");
     const firstTradingMigration = journal.entries.findIndex((entry) => entry.tag === "0072_wallet_ledger_reconciliation_indexes");
     const masterIndex = journal.entries.findIndex((entry) => entry.tag === "0100_global_trade_master_controls");
     const feeIndex = journal.entries.findIndex((entry) => entry.tag === "0101_package_fee_policy_versions");

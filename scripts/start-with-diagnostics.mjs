@@ -125,6 +125,9 @@ async function main() {
   // Apply the idempotent additive worker-schema bridge before checking contracts.
   // Verification alone cannot repair a Blitz database missing a worker-owned table.
   await runPhase("worker-runtime-schema-repair", ["scripts/ensure-worker-runtime-schema.mjs"]);
+  // Mining customer/admin routes use additive schema fields outside the Drizzle
+  // chain, so reconcile them before exposing the application server.
+  await runPhase("mining-current-schema-repair", ["scripts/ensure-mining-current-schema.mjs"]);
   await runPhase("worker-runtime-schema-preflight", ["scripts/ensure-worker-runtime-schema.mjs", "--verify-only"]);
   await runPhase("application-server", ["--trace-uncaught", "--unhandled-rejections=strict", "dist/index.js"], {}, true);
 

@@ -26,7 +26,7 @@
   },
   "runtime": {
     "port_environment_variable": "PORT",
-    "start_command": "sh -c 'pnpm db:migrate && node dist/index.js'",
+    "start_command": "node scripts/start-with-diagnostics.mjs",
     "database": "MySQL 8-compatible or MariaDB",
     "required_secrets": [
       "DATABASE_URL",

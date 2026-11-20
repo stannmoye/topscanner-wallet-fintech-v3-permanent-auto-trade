@@ -4,11 +4,27 @@ import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-sch
 
 function fakeDb({ tableExists = true, column = null } = {}) {
   let currentColumn = column;
-  const query = vi.fn(async (sql) => {
+  const lifecycleColumns = {
+    ledgerTransactionId: {
+      dataType: "int",
+      columnType: "int",
+      isNullable: "YES",
+      columnDefault: null,
+    },
+    status: {
+      dataType: "enum",
+      columnType: "enum('active','replaced','expired','cancelled','ended')",
+      isNullable: "NO",
+      columnDefault: "active",
+    },
+  };
+  const query = vi.fn(async (sql, params) => {
     if (sql.includes("information_schema.tables")) {
       return [tableExists ? [{ tableName: "mining_customer_packages" }] : []];
     }
     if (sql.includes("information_schema.columns")) {
+      const columnName = params?.at(-1);
+      if (columnName in lifecycleColumns) return [[{ ...lifecycleColumns[columnName] }]];
       return [currentColumn ? [currentColumn] : []];
     }
     if (sql.startsWith("ALTER TABLE mining_customer_packages")) {
@@ -17,6 +33,16 @@ function fakeDb({ tableExists = true, column = null } = {}) {
         isNullable: "NO",
         columnDefault: "purchase",
       };
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("MODIFY COLUMN ledgerTransactionId")) {
+      lifecycleColumns.ledgerTransactionId.isNullable = "YES";
+      return [{ affectedRows: 0 }];
+    }
+    if (sql.includes("MODIFY COLUMN status")) {
+      lifecycleColumns.status.columnType = "enum('active','replaced','expired','cancelled','ended')";
+      lifecycleColumns.status.isNullable = "NO";
+      lifecycleColumns.status.columnDefault = "active";
       return [{ affectedRows: 0 }];
     }
     throw new Error(`Unexpected SQL: ${sql}`);

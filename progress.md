@@ -1,3 +1,27 @@
+## 2026-11-21 — Mining runtime schema drift and startup repair
+
+Owner supplied admin Mining screenshots showing `Unknown column p.displayOrder` and
+`Unknown column cp.expectedDailyRewardCkiSnapshot`, and requested a broader error check.
+
+- Root cause found in deployment configuration: `railway.json` launched `dist/index.js`
+  directly, bypassing the repository's guarded migration and startup repair path.
+- `railway.json` and `BUILD_SOURCE.json` now use `scripts/start-with-diagnostics.mjs`.
+  The wrapper runs the Mining current-schema reconciliation after the base Mining tables
+  are bridged and before worker preflight or application routes start.
+- The existing reconciliation repairs the reported package display order and reward
+  snapshot columns plus related Mining economics, package, entitlement and worker schema.
+- `scripts/mining-customer-package-schema.mjs` now also verifies nullable grant ledger
+  links and adds the admin `ended` entitlement status without dropping unknown enum values.
+- Migration recovery diagnostics now list the complete tracked Mining marker set through
+  `0124_mining_package_visual_themes`.
+- Verification: `pnpm check`, `pnpm test` (199 files / 1,580 tests passed; 7 skipped),
+  `pnpm build`, and focused Mining/startup tests (29 + 3 passed) succeeded. The separate
+  installer suite has 5 unrelated existing test failures: missing `.env.example`, stale
+  journal-tail assertions, and an outdated opportunity-lifecycle source assertion. No live
+  deployment database credentials are available here, so the hosted schema was not directly
+  inspected or changed; the repair applies on the next deployment using the configured
+  startup wrapper.
+
 ## 2026-11-21 — Five Mining package color themes
 
 Owner request: add selectable package colors during Mining package creation, with five prebuilt

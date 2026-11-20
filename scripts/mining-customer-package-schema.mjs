@@ -1,5 +1,6 @@
-const EXPECTED_ACQUISITION_TYPE = "enum('purchase','admin_grant')";
+import { ensureMiningCustomerPackageLifecycleSchema } from "./mining-customer-package-lifecycle-schema.mjs";
 
+const EXPECTED_ACQUISITION_TYPE = "enum('purchase','admin_grant')";
 const normalize = value => String(value ?? "").toLowerCase().replace(/\s+/g, "");
 
 /**
@@ -55,5 +56,6 @@ export async function ensureMiningCustomerPackageSchema(db, { required = false }
   if (failures.length) {
     throw new Error("Mining schema verification failed for mining_customer_packages.acquisitionType: " + failures.join("; "));
   }
-  return { present: true, repaired };
+  const lifecycleSchema = await ensureMiningCustomerPackageLifecycleSchema(db);
+  return { present: true, repaired: repaired || lifecycleSchema.repaired };
 }

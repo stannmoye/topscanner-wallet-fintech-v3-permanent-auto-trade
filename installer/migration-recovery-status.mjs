@@ -132,6 +132,7 @@ try {
 }
 
 const miningMarkers = [
+  "0037_coinki_token_configuration",
   "0039_mining_database_driven_packages",
   "0040_mining_package_daily_rewards",
   "0041_mining_purchase_claims_and_boost_cooldown",
@@ -139,6 +140,10 @@ const miningMarkers = [
   "0043_mining_engine_activity",
   "0044_mining_initial_cki_package_rewards",
   "0045_mining_reward_calculation_methods",
+  "0046_mining_reward_processing_enabled",
+  "0122_mining_catalog_engine_controls",
+  "0123_mining_token_branding_bulk",
+  "0124_mining_package_visual_themes",
 ];
 
 async function tableExists(tableName) {

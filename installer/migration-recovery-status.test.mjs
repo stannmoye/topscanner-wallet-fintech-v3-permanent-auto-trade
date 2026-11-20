@@ -46,6 +46,14 @@ describe("migration recovery diagnostic connection safety", () => {
     const runnerKeys = [...runnerSource.matchAll(/(?:const|let) \w*[Mm]igration[Kk]ey\s*=\s*"([^"]+)"/g)].map((match) => match[1]);
     expect(runnerKeys.length).toBeGreaterThan(0);
     expect(markers).toEqual(expect.arrayContaining(runnerKeys));
+    expect(markers).toEqual(expect.arrayContaining([
+      "0037_coinki_token_configuration",
+      "0044_mining_initial_cki_package_rewards",
+      "0046_mining_reward_processing_enabled",
+      "0122_mining_catalog_engine_controls",
+      "0123_mining_token_branding_bulk",
+      "0124_mining_package_visual_themes",
+    ]));
   });
 
   it("handles malformed URL component encoding without exposing the configured URL", async () => {
