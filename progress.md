@@ -1,3 +1,26 @@
+## 2026-11-21 — Admin Crypto Mining: one dedicated page per sub-menu
+
+Branch `main`. Owner request: the admin Crypto Mining sub-menus were all rendered on a single
+page that just shifted up/down when a sub-menu was clicked; each sub-menu must have its own
+dedicated page.
+
+- `client/src/admin-navigation.ts`: the `mining` group's seven items each moved from a shared
+  `target: "mining"` + distinct `focus` to a unique `target` (`miningOverview`, `miningPackages`,
+  `miningControls`, `miningCoinBranding`, `miningCustomers`, `miningBulkOperations`, `miningAudit`).
+  Ids, labels, details, icons, and submenu children are unchanged; no other navigation group was
+  touched.
+- `client/src/components/AdminMining.tsx`: replaced the single stacked console with a `view`-driven
+  dedicated-page component (`MINING_PAGES` metadata per target). Removed the `am-focus-nav`
+  click-to-scroll tab bar, `jumpToFocus`, and the `scrollIntoView` effect, so only the selected
+  page renders: Overview (engine, KPIs, price feeds, reconciliation), Packages, Speed & Economics,
+  Coin & Branding, Customer Mining (customer find + entitlements, balance adjustment, approvals,
+  customer detail), Bulk CKI Operations, and Audit Trail. Shared queries/mutations and the
+  success/error banner are preserved; each page renders its own title/subtitle header.
+- `client/src/App.tsx`: the now-orphaned `section==="mining"` branch is replaced with an explicit
+  check for the seven new targets rendering `<AdminMining view={section}/>`.
+- Verified: `pnpm check` (`tsc --noEmit`), `pnpm test` (198 files / 1,575 tests passed, 7 files /
+  36 skipped), and `pnpm build` (AdminMining chunk emitted).
+
 ## 2026-11-20 — Password centre (Account Preferences → Password)
 
 Branch `main`. Owner request: build a full, advanced password page where customers can change

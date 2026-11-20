@@ -67,35 +67,35 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "currencies-assets", target: "currencies", label: "Currencies & Assets", detail: "Currency registry and valuation rates", icon: Coins },
   ]},
   { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
-    { id: "mining-overview", target: "mining", focus: "overview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [
+    { id: "mining-overview", target: "miningOverview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [
       { label: "Engine Status", detail: "Administrator hashpower preview and reward-processing state" },
       { label: "Price Feeds & Readiness", detail: "Trusted provider snapshots and the internal conversion reference" },
       { label: "Reconciliation", detail: "Journal integrity checks and eligible snapshot rebuilds" },
     ]},
-    { id: "mining-packages", target: "mining", focus: "packages", label: "Mining Packages", detail: "Create, version, publish, pause and clone customer packages", icon: PackageCheck, children: [
+    { id: "mining-packages", target: "miningPackages", label: "Mining Packages", detail: "Create, version, publish, pause and clone customer packages", icon: PackageCheck, children: [
       { label: "Package Catalogue", detail: "Draft and published versions with price, TH/s, term and availability" },
       { label: "Create, Version or Clone", detail: "New package, new version, or clone an existing package as a draft" },
     ]},
-    { id: "mining-controls", target: "mining", focus: "controls", label: "Speed & Economics", detail: "Mining speed multiplier, earning method, boosts, swaps and fees", icon: SlidersHorizontal, children: [
+    { id: "mining-controls", target: "miningControls", label: "Speed & Economics", detail: "Mining speed multiplier, earning method, boosts, swaps and fees", icon: SlidersHorizontal, children: [
       { label: "Mining Speed Multiplier", detail: "One control scaling the animated fan/turbine speed and CKI mined per eligible second" },
       { label: "Earning Method & Rate", detail: "Fixed daily CKI per package or package TH/s × CKI per TH/s per day" },
       { label: "Boosts, Swaps & Fees", detail: "Boost cycles and bonuses, swap limits and fee basis points" },
     ]},
-    { id: "mining-coin-branding", target: "mining", focus: "coin-branding", label: "Coin & Branding", detail: "Rename the coin, upload its icon and choose the fixed or live rate per dollar", icon: Palette, children: [
+    { id: "mining-coin-branding", target: "miningCoinBranding", label: "Coin & Branding", detail: "Rename the coin, upload its icon and choose the fixed or live rate per dollar", icon: Palette, children: [
       { label: "Coin Name & Symbol", detail: "Display-only rename; the internal ledger denomination stays CKI" },
       { label: "Coin Icon / Logo", detail: "https image URL or inline data:image used across the customer portal" },
       { label: "Rate per Dollar", detail: "Administrator-configured internal reference, or an instantly updated live market rate" },
     ]},
-    { id: "mining-customers", target: "mining", focus: "customers", label: "Customer Mining", detail: "Find customers, control live entitlements and adjust balances", icon: Users, children: [
+    { id: "mining-customers", target: "miningCustomers", label: "Customer Mining", detail: "Find customers, control live entitlements and adjust balances", icon: Users, children: [
       { label: "Customer Detail & Entitlements", detail: "Pause, resume, extend or stop one customer's mining" },
       { label: "Balance Adjustment", detail: "Audited CKI or wallet credit/debit" },
       { label: "Adjustment Approvals", detail: "Dual-control queue for high-value changes" },
     ]},
-    { id: "mining-bulk-ops", target: "mining", focus: "bulk-operations", label: "Bulk CKI Operations", detail: "Credit or debit every customer's CKI in one audited, reported batch", icon: Coins, children: [
+    { id: "mining-bulk-ops", target: "miningBulkOperations", label: "Bulk CKI Operations", detail: "Credit or debit every customer's CKI in one audited, reported batch", icon: Coins, children: [
       { label: "Credit All / Debit All", detail: "One amount applied to every open customer with a per-customer report" },
       { label: "Bulk Operation History", detail: "Durable header and itemised outcome for each batch" },
     ]},
-    { id: "mining-audit", target: "mining", focus: "audit", label: "Mining Audit Trail", detail: "Recent administrative mining actions, actors and reasons", icon: FileClock, children: [
+    { id: "mining-audit", target: "miningAudit", label: "Mining Audit Trail", detail: "Recent administrative mining actions, actors and reasons", icon: FileClock, children: [
       { label: "Recent Actions", detail: "Who changed what, when and with what recorded reason" },
     ]},
   ]},
