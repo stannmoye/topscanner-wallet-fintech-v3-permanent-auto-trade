@@ -426,3 +426,10 @@
 .cm-dashboard-frame .cm-header-summary:nth-child(3)>strong{color:#c8b1ff;text-shadow:0 0 12px rgba(181,140,255,.2)}
 
 .cm-dashboard-frame .cm-mined-today-value{display:block!important;min-width:0;color:#8ac8ff!important;font-variant-numeric:tabular-nums;white-space:nowrap!important;opacity:1!important;visibility:visible!important}
+
+/* Admin mining in-page subsection strip (mirrors the dedicated Crypto Mining rail submenus). */
+.admin-mining .am-focus-nav{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 4px;padding:8px;border:1px solid var(--mining-line,#dce9e4);border-radius:13px;background:var(--mining-soft,#f4f8f6)}
+.admin-mining .am-focus-nav button{flex:1 1 auto;min-width:118px;padding:9px 13px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--mining-muted,#657873);font:inherit;font-size:12px;font-weight:700;letter-spacing:.01em;cursor:pointer;transition:background .18s ease,color .18s ease,border-color .18s ease}
+.admin-mining .am-focus-nav button:hover{background:#fff;color:#2F8F73;border-color:#cbe6dc}
+.admin-mining .am-focus-nav button.active{background:#2F8F73;color:#fff;box-shadow:0 6px 16px rgba(47,143,115,.24)}
+.admin-mining .am-focus-nav button:focus-visible{outline:2px solid #2F8F73;outline-offset:2px}

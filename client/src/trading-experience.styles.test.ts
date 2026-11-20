@@ -33,7 +33,7 @@ describe("Trade experience visual system", () => {
   it("gives every administrator menu a distinct parent accent and keeps expanded submenus fully sized", () => {
     expect(appSource).toContain("admin-nav-group--${group.id}");
     const menuIds = [
-      "overview", "customers", "finance", "trade-settings", "verification-risk", "communications",
+      "overview", "customers", "finance", "mining", "trade-settings", "verification-risk", "communications",
       "platform-configuration", "integrations", "governance-reports",
     ];
     for (const id of menuIds) {

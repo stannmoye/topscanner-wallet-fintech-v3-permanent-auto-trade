@@ -6,7 +6,9 @@ import {
   CircleDollarSign,
   Clock3,
   Coins,
+  Cpu,
   FileCheck2,
+  FileClock,
   FileText,
   Gauge,
   Globe2,
@@ -63,7 +65,30 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "credit-adjustment", target: "credit", label: "Credit Adjustment", detail: "Auditable wallet credit action", icon: CircleDollarSign },
     { id: "debit-adjustment", target: "debit", label: "Debit Adjustment", detail: "Validated wallet debit action", icon: ReceiptText },
     { id: "currencies-assets", target: "currencies", label: "Currencies & Assets", detail: "Currency registry and valuation rates", icon: Coins },
-    { id: "mining-operations", target: "mining", label: "Mining", detail: "Simulated mining packages, rewards, conversions and ledger controls", icon: Coins },
+  ]},
+  { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
+    { id: "mining-overview", target: "mining", focus: "overview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [
+      { label: "Engine Status", detail: "Administrator hashpower preview and reward-processing state" },
+      { label: "Price Feeds & Readiness", detail: "Trusted provider snapshots and the internal conversion reference" },
+      { label: "Reconciliation", detail: "Journal integrity checks and eligible snapshot rebuilds" },
+    ]},
+    { id: "mining-packages", target: "mining", focus: "packages", label: "Mining Packages", detail: "Create, version, publish, pause and clone customer packages", icon: PackageCheck, children: [
+      { label: "Package Catalogue", detail: "Draft and published versions with price, TH/s, term and availability" },
+      { label: "Create, Version or Clone", detail: "New package, new version, or clone an existing package as a draft" },
+    ]},
+    { id: "mining-controls", target: "mining", focus: "controls", label: "Speed & Economics", detail: "Mining speed multiplier, earning method, boosts, swaps and fees", icon: SlidersHorizontal, children: [
+      { label: "Mining Speed Multiplier", detail: "One control scaling the animated fan/turbine speed and CKI mined per eligible second" },
+      { label: "Earning Method & Rate", detail: "Fixed daily CKI per package or package TH/s × CKI per TH/s per day" },
+      { label: "Boosts, Swaps & Fees", detail: "Boost cycles and bonuses, swap limits and fee basis points" },
+    ]},
+    { id: "mining-customers", target: "mining", focus: "customers", label: "Customer Mining", detail: "Find customers, control live entitlements and adjust balances", icon: Users, children: [
+      { label: "Customer Detail & Entitlements", detail: "Pause, resume, extend or stop one customer's mining" },
+      { label: "Balance Adjustment", detail: "Audited CKI or wallet credit/debit" },
+      { label: "Adjustment Approvals", detail: "Dual-control queue for high-value changes" },
+    ]},
+    { id: "mining-audit", target: "mining", focus: "audit", label: "Mining Audit Trail", detail: "Recent administrative mining actions, actors and reasons", icon: FileClock, children: [
+      { label: "Recent Actions", detail: "Who changed what, when and with what recorded reason" },
+    ]},
   ]},
   { id: "trade-settings", label: "Trade Settings", detail: "One place for tier rules, opportunity delivery, trade records and system health", items: [
     { id: "trade-settings-overview", target: "tradeSystemOverview", label: "Trading Overview", detail: "View current delivery, open work and system status", icon: Gauge },
