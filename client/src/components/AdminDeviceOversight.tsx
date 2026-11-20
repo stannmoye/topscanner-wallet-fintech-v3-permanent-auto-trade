@@ -10,6 +10,14 @@ type BlockedDevice = {
   deviceType: string;
   platform: string | null;
   browser: string | null;
+  osName: string | null;
+  osVersion: string | null;
+  model: string | null;
+  vendor: string | null;
+  architecture: string | null;
+  screen: string | null;
+  gpuRenderer: string | null;
+  hardwareId: string | null;
   lastIpAddress: string | null;
   countryCode: string | null;
   status: string;
@@ -37,6 +45,19 @@ function formatWhen(value: Date | string | null | undefined) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+function describeOs(device: Pick<BlockedDevice, "osName" | "osVersion" | "platform">) {
+  const name = device.osName || device.platform || "Unknown OS";
+  return device.osVersion ? `${name} ${device.osVersion}` : name;
+}
+
+function describeHardware(device: Pick<BlockedDevice, "vendor" | "model">) {
+  return [device.vendor, device.model].filter(Boolean).join(" ").trim();
+}
+
+function describeScreen(device: Pick<BlockedDevice, "screen" | "gpuRenderer">) {
+  return [device.screen, device.gpuRenderer].filter(Boolean).join(" · ");
 }
 
 export function AdminDeviceOversight() {
@@ -72,7 +93,7 @@ export function AdminDeviceOversight() {
     const term = search.trim().toLowerCase();
     if (!term) return allDevices;
     return allDevices.filter((device) =>
-      [device.deviceName, device.customerName, device.customerEmail, device.platform, device.browser, device.lastIpAddress, device.deviceKey]
+      [device.deviceName, device.customerName, device.customerEmail, device.platform, device.browser, device.osName, device.osVersion, device.model, device.vendor, device.hardwareId, device.lastIpAddress, device.deviceKey]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term)),
     );
@@ -116,8 +137,8 @@ export function AdminDeviceOversight() {
                     {group.devices.map((device) => (
                       <tr key={device.id}>
                         <td><strong>{device.deviceName}</strong><small>Last seen {formatWhen(device.lastSeenAt)} · {device.loginCount} sign-in{device.loginCount === 1 ? "" : "s"}</small></td>
-                        <td><span className="admin-ops-status neutral"><Smartphone size={12} /> {device.deviceType}</span><small>{device.browser || "Browser"}{device.platform ? ` · ${device.platform}` : ""}</small></td>
-                        <td><small>ID {shortKey(device.deviceKey)}</small><small>{device.lastIpAddress || "Unknown IP"}{device.countryCode ? ` · ${device.countryCode}` : ""}</small></td>
+                        <td><span className="admin-ops-status neutral"><Smartphone size={12} /> {device.deviceType}</span><small>{describeOs(device)}{device.browser ? ` · ${device.browser}` : ""}</small>{describeHardware(device) && <small>{describeHardware(device)}</small>}{describeScreen(device) && <small>{describeScreen(device)}</small>}</td>
+                        <td><small>HW {device.hardwareId || shortKey(device.deviceKey)}</small><small>{device.lastIpAddress || "Unknown IP"}{device.countryCode ? ` · ${device.countryCode}` : ""}</small></td>
                         <td><small>{formatWhen(device.blockedAt)}</small><small>{device.blockedBy ? `by ${device.blockedBy}` : "unknown source"}</small></td>
                         <td><small>{device.blockedReason || EVENT_HINT[device.blockedBy ?? ""] || "—"}</small></td>
                         <td className="admin-ops-col-action">
@@ -158,8 +179,8 @@ export function AdminDeviceOversight() {
                 <tr key={device.id}>
                   <td><strong>{device.customerName || `Account ${device.userId}`}</strong><small>{device.customerEmail || ""}</small></td>
                   <td><strong>{device.deviceName}</strong><small>{device.loginCount} sign-in{device.loginCount === 1 ? "" : "s"}</small></td>
-                  <td><span className="admin-ops-status neutral"><Activity size={12} /> {device.deviceType}</span><small>{device.browser || "Browser"}{device.platform ? ` · ${device.platform}` : ""}</small></td>
-                  <td><small>ID {shortKey(device.deviceKey)}</small><small>{device.lastIpAddress || "Unknown IP"}{device.countryCode ? ` · ${device.countryCode}` : ""}</small></td>
+                  <td><span className="admin-ops-status neutral"><Activity size={12} /> {device.deviceType}</span><small>{describeOs(device)}{device.browser ? ` · ${device.browser}` : ""}</small>{describeHardware(device) && <small>{describeHardware(device)}</small>}{describeScreen(device) && <small>{describeScreen(device)}</small>}</td>
+                  <td><small>HW {device.hardwareId || shortKey(device.deviceKey)}</small><small>{device.lastIpAddress || "Unknown IP"}{device.countryCode ? ` · ${device.countryCode}` : ""}</small></td>
                   <td><span className={`admin-ops-status ${device.status === "blocked" ? "high" : device.status === "pending" ? "watch" : "good"}`}>{device.status}</span></td>
                   <td><small>{formatWhen(device.lastSeenAt)}</small></td>
                 </tr>
@@ -172,7 +193,7 @@ export function AdminDeviceOversight() {
 
       <div className="admin-ops-note">
         <ShieldCheck size={16} />
-        <span><strong>Restore is deliberate.</strong> Restoring a device re-enables sign-in for that exact device ID only. Every block and restore is written to the device audit trail — sessions rejected while a device is blocked cannot be resumed.</span>
+        <span><strong>Restore is deliberate.</strong> Restoring a device re-enables sign-in for that exact device ID only. Blocking is keyed to the per-device HW ID — never the IP address — so other devices sharing the same IP are unaffected. Every block and restore is written to the device audit trail — sessions rejected while a device is blocked cannot be resumed. Browsers cannot expose a hardware MAC address, so a device fingerprint is the strongest identifier available.</span>
       </div>
     </div>
   );

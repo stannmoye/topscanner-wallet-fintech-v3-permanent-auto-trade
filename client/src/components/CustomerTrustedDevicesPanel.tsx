@@ -23,6 +23,14 @@ type DeviceRow = {
   deviceType: string;
   platform: string | null;
   browser: string | null;
+  osName: string | null;
+  osVersion: string | null;
+  model: string | null;
+  vendor: string | null;
+  architecture: string | null;
+  screen: string | null;
+  gpuRenderer: string | null;
+  hardwareId: string | null;
   deviceIdShort: string;
   status: "trusted" | "pending" | "blocked";
   isCurrent: boolean;
@@ -57,6 +65,15 @@ function formatWhen(value: Date | string | null | undefined) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+function describeOs(device: DeviceRow) {
+  const name = device.osName || device.platform || "Unknown OS";
+  return device.osVersion ? `${name} ${device.osVersion}` : name;
+}
+
+function describeHardware(device: DeviceRow) {
+  return [device.vendor, device.model].filter(Boolean).join(" ").trim();
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -176,9 +193,9 @@ export function CustomerTrustedDevicesPanel({ push }: { push?: (message: string)
           </button>
         </div>
         <p className="settings-copy">
-          Every browser and device that has signed in to your workspace is listed with the exact name, type and a
-          device ID derived from that device. Block a device you do not recognise to sign it out immediately and stop it
-          from signing in again.
+          Every browser and device that has signed in to your workspace is listed with its own name, operating system,
+          model, screen and GPU, its IP address, and a per-device HW ID. Blocking is tied to that device identity — not
+          to the IP address — so blocking one device never affects other devices that share the same IP.
         </p>
 
         {devicesQuery.isLoading && <div className="empty-state">Loading trusted devices…</div>}
@@ -212,8 +229,11 @@ export function CustomerTrustedDevicesPanel({ push }: { push?: (message: string)
                     </div>
                     <div className="trusted-device-meta">
                       <span><Smartphone size={12} /> {device.deviceType}</span>
-                      <span>{device.browser || "Browser"}{device.platform ? ` · ${device.platform}` : ""}</span>
-                      <span><Fingerprint size={12} /> {device.deviceIdShort}</span>
+                      <span><Monitor size={12} /> {describeOs(device)}</span>
+                      {describeHardware(device) && <span><Laptop size={12} /> {describeHardware(device)}</span>}
+                      <span>{device.browser || "Browser"}{device.architecture ? ` · ${device.architecture}` : ""}</span>
+                      {device.screen && <span>Screen {device.screen}{device.gpuRenderer ? ` · ${device.gpuRenderer}` : ""}</span>}
+                      <span><Fingerprint size={12} /> HW {device.hardwareId || device.deviceIdShort}</span>
                       <span><MapPin size={12} /> {device.lastIpAddress || "Unknown IP"}{device.countryCode ? ` · ${device.countryCode}` : ""}</span>
                       <span><Clock size={12} /> Last seen {formatWhen(device.lastSeenAt)}</span>
                       <span>First seen {formatWhen(device.firstSeenAt)}</span>
@@ -261,8 +281,10 @@ export function CustomerTrustedDevicesPanel({ push }: { push?: (message: string)
                       {device.blockedBy && <span className="trusted-device-badge neutral">by {device.blockedBy}</span>}
                     </div>
                     <div className="trusted-device-meta">
-                      <span><Fingerprint size={12} /> {device.deviceIdShort}</span>
-                      <span>{device.browser || "Browser"}{device.platform ? ` · ${device.platform}` : ""}</span>
+                      <span><Monitor size={12} /> {describeOs(device)}</span>
+                      {describeHardware(device) && <span>{describeHardware(device)}</span>}
+                      <span>{device.browser || "Browser"}</span>
+                      <span><Fingerprint size={12} /> HW {device.hardwareId || device.deviceIdShort}</span>
                       <span><MapPin size={12} /> {device.lastIpAddress || "Unknown IP"}</span>
                       <span>Blocked {formatWhen(device.blockedAt)}</span>
                       {device.blockedReason && <span>Reason: {device.blockedReason}</span>}
@@ -320,7 +342,7 @@ export function CustomerTrustedDevicesPanel({ push }: { push?: (message: string)
       {message && <p className="payout-feedback" role="status">{message}</p>}
       <div className="test-notice">
         <ShieldAlert size={14} />
-        <span>Device identifiers are derived from browser signals — browsers never expose a hardware MAC address. Blocking a device signs out its sessions instantly and refuses future sign-ins until an administrator restores it.</span>
+        <span>Each device is identified by a per-device key derived from its browser signals and shown here as a HW ID — browsers never expose a hardware MAC address, so no web page can read one. Blocking targets that device key only and signs its sessions out instantly, so other devices on the same IP keep working; sign-in stays refused until an administrator restores it.</span>
       </div>
     </div>
   );

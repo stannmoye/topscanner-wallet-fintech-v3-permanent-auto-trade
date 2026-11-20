@@ -1430,6 +1430,23 @@ export const trustedDevices = mysqlTable("trusted_devices", {
   deviceType: varchar("deviceType", { length: 32 }).notNull().default("unknown"),
   platform: varchar("platform", { length: 64 }),
   browser: varchar("browser", { length: 64 }),
+  /** Operating system name and version (e.g. "Android" / "14"). */
+  osName: varchar("osName", { length: 48 }),
+  osVersion: varchar("osVersion", { length: 32 }),
+  /** Concrete device model and vendor where the browser exposes it (e.g. "SM-G991B" / "Samsung"). */
+  model: varchar("model", { length: 64 }),
+  vendor: varchar("vendor", { length: 48 }),
+  architecture: varchar("architecture", { length: 24 }),
+  /** Screen size as WIDTHxHEIGHT. */
+  screen: varchar("screen", { length: 24 }),
+  /** GPU renderer string (via WebGL) — a strong per-machine signal. */
+  gpuRenderer: varchar("gpuRenderer", { length: 160 }),
+  cpuCores: int("cpuCores"),
+  deviceMemoryGb: int("deviceMemoryGb"),
+  /** Persisted random client id kept in the browser (private/storage-blocked contexts leave it null). */
+  clientId: varchar("clientId", { length: 64 }),
+  /** Stable, device-level display ID (HWID analogue) derived from the fingerprint, not the account. */
+  hardwareId: varchar("hardwareId", { length: 32 }),
   userAgent: text("userAgent"),
   firstIpAddress: varchar("firstIpAddress", { length: 128 }),
   lastIpAddress: varchar("lastIpAddress", { length: 128 }),

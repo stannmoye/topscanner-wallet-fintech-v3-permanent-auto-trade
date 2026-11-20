@@ -12,6 +12,16 @@ export type DeviceInput = {
   deviceType?: string;
   platform?: string;
   browser?: string;
+  osName?: string;
+  osVersion?: string;
+  model?: string;
+  vendor?: string;
+  architecture?: string;
+  screen?: string;
+  gpu?: string;
+  cpuCores?: number;
+  deviceMemoryGb?: number;
+  clientId?: string;
 };
 
 export type DeviceContext = {
@@ -23,15 +33,45 @@ export type DeviceContext = {
   userAgent?: string;
   ipAddress?: string;
   countryCode?: string;
+  osName?: string;
+  osVersion?: string;
+  model?: string;
+  vendor?: string;
+  architecture?: string;
+  screen?: string;
+  gpuRenderer?: string;
+  cpuCores?: number;
+  deviceMemoryGb?: number;
+  clientId?: string;
+  /** Stable, device-level display ID derived from the fingerprint (a HWID analogue). */
+  hardwareId: string;
 };
 
 const DEVICE_KEY_SOURCE_MIN = 8;
 
-/** The pseudo device ID never embeds a hardware address: browsers do not expose MACs. */
-export function deriveDeviceKey(userId: number, rawFingerprint: string | undefined, userAgent: string | undefined): string {
+function fingerprintSource(rawFingerprint: string | undefined, userAgent: string | undefined): string {
   const fingerprint = typeof rawFingerprint === "string" ? rawFingerprint.trim() : "";
-  const source = fingerprint.length >= DEVICE_KEY_SOURCE_MIN ? fingerprint : `user-agent:${userAgent || "unknown"}`;
-  return crypto.createHash("sha256").update(`${userId}:${source}`).digest("hex");
+  return fingerprint.length >= DEVICE_KEY_SOURCE_MIN ? fingerprint : `user-agent:${userAgent || "unknown"}`;
+}
+
+/**
+ * The per-account device key. Blocking is always keyed on this value, never on
+ * the IP address, so two devices on the same network stay independent. A browser
+ * cannot expose a hardware MAC address, so this is a pseudonymous fingerprint.
+ */
+export function deriveDeviceKey(userId: number, rawFingerprint: string | undefined, userAgent: string | undefined): string {
+  return crypto.createHash("sha256").update(`${userId}:${fingerprintSource(rawFingerprint, userAgent)}`).digest("hex");
+}
+
+/**
+ * A stable, device-level display ID — the closest available analogue to a
+ * hardware ID (HWID). It is derived from the browser fingerprint only (not the
+ * account), formatted as grouped hex for easy comparison, and is what the
+ * customer/admin portals show as "HW ID".
+ */
+export function deriveHardwareId(rawFingerprint: string | undefined, userAgent: string | undefined): string {
+  const digest = crypto.createHash("sha256").update(fingerprintSource(rawFingerprint, userAgent)).digest("hex").slice(0, 24).toUpperCase();
+  return digest.match(/.{1,4}/g)?.join("-") ?? digest;
 }
 
 /** Best-effort user-agent interpretation. The client may override the name entirely. */
@@ -67,10 +107,17 @@ function clampText(value: unknown, max: number): string | undefined {
   return trimmed ? trimmed.slice(0, max) : undefined;
 }
 
+function clampCount(value: unknown, max: number): number | undefined {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return Math.min(Math.round(numeric), max);
+}
+
 /**
  * Build the canonical device identity for a request. The client fingerprint is
  * preferred; it is combined with the account so two customers on the same
- * physical device never share a registry row.
+ * physical device never share a registry row. The IP address is stored for the
+ * record but is never used to identify a device: blocking is keyed on deviceKey.
  */
 export function buildDeviceContext(
   userId: number,
@@ -80,19 +127,38 @@ export function buildDeviceContext(
   const userAgent = clampText(request.userAgent, 1000);
   const described = describeUserAgent(userAgent);
   const deviceKey = deriveDeviceKey(userId, device?.deviceKey, userAgent);
-  const providedName = clampText(device?.deviceName, 120);
-  const providedType = clampText(device?.deviceType, 32);
-  const providedPlatform = clampText(device?.platform, 64);
-  const providedBrowser = clampText(device?.browser, 64);
+  const given = device ?? {};
+  const providedName = clampText(given.deviceName, 120);
+  const providedType = clampText(given.deviceType, 32);
+  const providedPlatform = clampText(given.platform, 64);
+  const providedBrowser = clampText(given.browser, 64);
+  const model = clampText(given.model, 64);
+  const vendor = clampText(given.vendor, 48);
+  const platform = providedPlatform || described.platform;
+  // Prefer a concrete model ("Samsung SM-G991B", "Apple iPhone") so the customer
+  // can recognise the exact phone or laptop; fall back to browser-on-platform.
+  const modelName = [vendor, model].filter(Boolean).join(" ").trim();
+  const inferredName = modelName || `${providedBrowser || described.browser} on ${platform}`;
   return {
     deviceKey,
-    deviceName: providedName || `${providedBrowser || described.browser} on ${providedPlatform || described.platform}`,
+    deviceName: providedName || inferredName,
     deviceType: providedType || described.deviceType,
-    platform: providedPlatform || described.platform,
+    platform,
     browser: providedBrowser || described.browser,
     userAgent,
     ipAddress: clampText(request.ipAddress, 128),
     countryCode: clampText(request.countryCode, 8),
+    osName: clampText(given.osName, 48) || described.platform,
+    osVersion: clampText(given.osVersion, 32),
+    model,
+    vendor,
+    architecture: clampText(given.architecture, 24),
+    screen: clampText(given.screen, 24),
+    gpuRenderer: clampText(given.gpu, 160),
+    cpuCores: clampCount(given.cpuCores, 1024),
+    deviceMemoryGb: clampCount(given.deviceMemoryGb, 4096),
+    clientId: clampText(given.clientId, 64),
+    hardwareId: deriveHardwareId(given.deviceKey, userAgent),
   };
 }
 
@@ -139,6 +205,17 @@ export async function recordDeviceLogin(
         deviceType: context.deviceType,
         platform: context.platform,
         browser: context.browser,
+        osName: context.osName ?? existing.osName,
+        osVersion: context.osVersion ?? existing.osVersion,
+        model: context.model ?? existing.model,
+        vendor: context.vendor ?? existing.vendor,
+        architecture: context.architecture ?? existing.architecture,
+        screen: context.screen ?? existing.screen,
+        gpuRenderer: context.gpuRenderer ?? existing.gpuRenderer,
+        cpuCores: context.cpuCores ?? existing.cpuCores,
+        deviceMemoryGb: context.deviceMemoryGb ?? existing.deviceMemoryGb,
+        clientId: context.clientId ?? existing.clientId,
+        hardwareId: context.hardwareId,
         ...(existing.deviceName === "Unknown device" ? { deviceName: context.deviceName } : {}),
         ...(context.countryCode ? { countryCode: context.countryCode } : {}),
         loginCount: sql`${trustedDevices.loginCount} + 1`,
@@ -154,6 +231,17 @@ export async function recordDeviceLogin(
     platform: context.platform,
     browser: context.browser,
     userAgent: context.userAgent,
+    osName: context.osName,
+    osVersion: context.osVersion,
+    model: context.model,
+    vendor: context.vendor,
+    architecture: context.architecture,
+    screen: context.screen,
+    gpuRenderer: context.gpuRenderer,
+    cpuCores: context.cpuCores,
+    deviceMemoryGb: context.deviceMemoryGb,
+    clientId: context.clientId,
+    hardwareId: context.hardwareId,
     firstIpAddress: context.ipAddress,
     lastIpAddress: context.ipAddress,
     countryCode: context.countryCode,
@@ -334,6 +422,14 @@ export async function listBlockedDevicesForAdmin() {
       deviceType: trustedDevices.deviceType,
       platform: trustedDevices.platform,
       browser: trustedDevices.browser,
+      osName: trustedDevices.osName,
+      osVersion: trustedDevices.osVersion,
+      model: trustedDevices.model,
+      vendor: trustedDevices.vendor,
+      architecture: trustedDevices.architecture,
+      screen: trustedDevices.screen,
+      gpuRenderer: trustedDevices.gpuRenderer,
+      hardwareId: trustedDevices.hardwareId,
       lastIpAddress: trustedDevices.lastIpAddress,
       countryCode: trustedDevices.countryCode,
       status: trustedDevices.status,
@@ -365,6 +461,14 @@ export async function listDevicesForAdmin(limit = 200) {
       deviceType: trustedDevices.deviceType,
       platform: trustedDevices.platform,
       browser: trustedDevices.browser,
+      osName: trustedDevices.osName,
+      osVersion: trustedDevices.osVersion,
+      model: trustedDevices.model,
+      vendor: trustedDevices.vendor,
+      architecture: trustedDevices.architecture,
+      screen: trustedDevices.screen,
+      gpuRenderer: trustedDevices.gpuRenderer,
+      hardwareId: trustedDevices.hardwareId,
       lastIpAddress: trustedDevices.lastIpAddress,
       status: trustedDevices.status,
       blockedBy: trustedDevices.blockedBy,

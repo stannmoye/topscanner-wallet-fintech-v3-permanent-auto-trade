@@ -617,6 +617,13 @@
       "when": 1794484800005,
       "tag": "0120_trusted_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1794484800006,
+      "tag": "0121_device_details",
+      "breakpoints": true
     }
   ]
 }

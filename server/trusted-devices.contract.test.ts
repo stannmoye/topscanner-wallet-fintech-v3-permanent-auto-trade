@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildDeviceContext, deriveDeviceKey, describeUserAgent } from "./trusted-devices";
+import { buildDeviceContext, deriveDeviceKey, deriveHardwareId, describeUserAgent } from "./trusted-devices";
 import { createLocalSession, verifyLocalSession } from "./_core/localAuth";
 
 // The Trusted Devices menu lets a customer see every device that signed in,
@@ -22,6 +22,7 @@ const loginRoutes = read("./_core/index.ts");
 const context = read("./_core/context.ts");
 const schema = read("../drizzle/schema.ts");
 const migration = read("../drizzle/0120_trusted_devices.sql");
+const deviceDetailsMigration = read("../drizzle/0121_device_details.sql");
 const app = read("../client/src/App.tsx");
 const slideMenu = read("../client/src/components/CustomerSlideMenu.tsx");
 const adminNav = read("../client/src/admin-navigation.ts");
@@ -58,6 +59,53 @@ describe("trusted devices — device identity", () => {
     const inferred = buildDeviceContext(3, undefined, { userAgent: "Mozilla/5.0 (Linux; Android 14) Mobile" });
     expect(inferred.deviceName.length).toBeGreaterThan(0);
     expect(inferred.deviceType).toBe("mobile");
+  });
+});
+
+describe("trusted devices — device detail enrichment", () => {
+  it("derives a stable, device-level HW ID that differs per device but not per account", () => {
+    const a = deriveHardwareId("fingerprint-abcdefgh", "Mozilla/5.0");
+    const b = deriveHardwareId("fingerprint-abcdefgh", "Mozilla/5.0");
+    const otherDevice = deriveHardwareId("a-different-fingerprint", "Mozilla/5.0");
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[A-F0-9]{4}(-[A-F0-9]{4})+$/);
+    expect(a).not.toBe(otherDevice);
+  });
+
+  it("records OS, model, GPU, screen and HW ID while keeping the IP off the blocking key", () => {
+    const built = buildDeviceContext(5, {
+      deviceKey: "fingerprint-device-one",
+      osName: "Android",
+      osVersion: "14",
+      model: "SM-G991B",
+      vendor: "Samsung",
+      architecture: "arm 64",
+      screen: "1080x2340",
+      gpu: "Mali-G78",
+      cpuCores: 8,
+      deviceMemoryGb: 8,
+      clientId: "client-12345678",
+    }, { userAgent: "Mozilla/5.0 (Linux; Android 14) Mobile", ipAddress: "198.51.100.9" });
+    expect(built.osName).toBe("Android");
+    expect(built.osVersion).toBe("14");
+    expect(built.model).toBe("SM-G991B");
+    expect(built.vendor).toBe("Samsung");
+    expect(built.gpuRenderer).toBe("Mali-G78");
+    expect(built.screen).toBe("1080x2340");
+    expect(built.cpuCores).toBe(8);
+    expect(built.hardwareId).toMatch(/^[A-F0-9]{4}(-[A-F0-9]{4})+$/);
+    expect(built.deviceName).toBe("Samsung SM-G991B");
+    // Two devices sharing one IP resolve to different keys, so blocking one is safe.
+    const other = buildDeviceContext(5, { deviceKey: "fingerprint-device-two" }, { userAgent: "Mozilla/5.0 (Linux; Android 14) Mobile", ipAddress: "198.51.100.9" });
+    expect(other.deviceKey).not.toBe(built.deviceKey);
+    expect(other.ipAddress).toBe(built.ipAddress);
+  });
+
+  it("backfills the detail columns with an idempotent additive migration", () => {
+    for (const column of ["osName", "osVersion", "model", "vendor", "architecture", "screen", "gpuRenderer", "cpuCores", "deviceMemoryGb", "clientId", "hardwareId"]) {
+      expect(deviceDetailsMigration).toContain("ADD COLUMN IF NOT EXISTS `" + column + "`");
+      expect(schema).toContain('"' + column + '"');
+    }
   });
 });
 
