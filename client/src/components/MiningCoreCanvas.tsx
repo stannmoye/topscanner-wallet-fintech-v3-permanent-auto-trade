@@ -7,6 +7,7 @@ type MiningCoreCanvasProps = {
   boosted: boolean;
   hashPowerThs: number;
   rewardPulseKey: number;
+  speedMultiplier?: number;
 };
 
 type MovingToken = { x0: number; y0: number; x1: number; y1: number; t: number; dur: number; lift: number; sway: number };
@@ -502,7 +503,7 @@ export function MiningCoreCanvas(props: MiningCoreCanvasProps) {
       const shouldAnimate = animate && state.running && state.playing && !reduceMotion;
       if (shouldAnimate) {
         const dt = lastFrame ? Math.min(100, now - lastFrame) : 16;
-        motionSnapshot = motionModel.advance(dt, state.boosted, state.hashPowerThs);
+        motionSnapshot = motionModel.advance(dt, state.boosted, state.hashPowerThs, Number(state.speedMultiplier ?? 1));
         tokens.forEach(token => { token.t += dt; });
         tokens = tokens.filter(token => token.t < token.dur);
       }

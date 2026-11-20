@@ -41,7 +41,9 @@ try {
   await addColumn("mining_economics_versions", "boostRewardCkiPerDay", "DECIMAL(36,18) NOT NULL DEFAULT 0");
   await addColumn("mining_economics_versions", "boostActivationBonusCki", "DECIMAL(36,18) NOT NULL DEFAULT 0");
   await addColumn("mining_economics_versions", "globalHashPowerThs", "DECIMAL(30,12) NOT NULL DEFAULT 0");
+  await addColumn("mining_economics_versions", "miningSpeedMultiplier", "DECIMAL(18,8) NOT NULL DEFAULT 1");
   await db.query(`UPDATE mining_economics_versions SET globalHashPowerThs=67 WHERE globalHashPowerThs=0`);
+  await db.query(`UPDATE mining_economics_versions SET miningSpeedMultiplier=1 WHERE miningSpeedMultiplier IS NULL OR miningSpeedMultiplier<=0`);
 
   await addColumn("mining_packages", "displayOrder", "INT NOT NULL DEFAULT 0");
   await addColumn("mining_package_versions", "displayName", "VARCHAR(120) NULL");
@@ -53,7 +55,20 @@ try {
   await addColumn("mining_customer_packages", "expectedDailyRewardCkiSnapshot", "DECIMAL(36,18) NULL");
   await addColumn("mining_customer_packages", "calculationModelSnapshot", "VARCHAR(32) NOT NULL DEFAULT 'legacy_boost_daily'");
   await addColumn("mining_customer_packages", "ckiPerThsPerDaySnapshot", "DECIMAL(36,18) NULL");
+  await addColumn("mining_customer_packages", "adminPaused", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumn("mining_customer_packages", "adminPausedAt", "DATETIME(3) NULL");
+  await addColumn("mining_customer_packages", "adminPausedBy", "INT NULL");
+  await addColumn("mining_customer_packages", "adminStoppedAt", "DATETIME(3) NULL");
+  await addColumn("mining_customer_packages", "adminExtendedSeconds", "BIGINT NOT NULL DEFAULT 0");
   await addColumn("mining_boost_activations", "customerPackageId", "INT NULL");
+
+  const [engineIndex] = await db.query(
+    "SELECT 1 FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='mining_customer_packages' AND index_name='idx_mining_customer_packages_engine' LIMIT 1",
+  );
+  if (!engineIndex.length) {
+    await db.query("CREATE INDEX idx_mining_customer_packages_engine ON mining_customer_packages (userId,status,adminPaused,expiresAt)");
+    console.log("Added index mining_customer_packages.idx_mining_customer_packages_engine");
+  }
 
   await addColumn("mining_reward_events", "expectedDailyRewardCki", "DECIMAL(36,18) NULL");
   await addColumn("mining_reward_events", "rewardAmountUsd", "DECIMAL(36,18) NOT NULL DEFAULT 0");

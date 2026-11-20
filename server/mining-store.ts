@@ -15,6 +15,7 @@ export type MiningConfig = {
   boostCycleSeconds: number; boostDurationSeconds: number; boostRewardCkiPerDay: string; boostActivationBonusCki: string; quoteTtlSeconds: number;
   fiatMaxAgeSeconds: number; cryptoMaxAgeSeconds: number; maxRateDeviationBps: number;
   dailyRewardCapTokens: string; dualApprovalThresholdUsd: string; globalHashPowerThs: string;
+  miningSpeedMultiplier: string;
 };
 
 export type AssetRate = { asset: string; usdPerUnit: Decimal; scale: number; provider: string; observedAt: Date };
@@ -112,6 +113,7 @@ export async function loadMiningConfig(conn: Db, at: Date = new Date()): Promise
     quoteTtlSeconds: Number(row.quoteTtlSeconds), fiatMaxAgeSeconds: Number(row.fiatMaxAgeSeconds),
     cryptoMaxAgeSeconds: Number(row.cryptoMaxAgeSeconds), maxRateDeviationBps: Number(row.maxRateDeviationBps),
     dailyRewardCapTokens: String(row.dailyRewardCapTokens), dualApprovalThresholdUsd: String(row.dualApprovalThresholdUsd), globalHashPowerThs: String(row.globalHashPowerThs ?? "0"),
+    miningSpeedMultiplier: String(row.miningSpeedMultiplier ?? "1"),
   };
 }
 

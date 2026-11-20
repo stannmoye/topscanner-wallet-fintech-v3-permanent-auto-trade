@@ -354,6 +354,102 @@ try {
     await connection.rollback();
     throw error;
   }
+  const catalogueMigrationKey = "0122_mining_catalog_engine_controls";
+  const catalogueSchema = await readFile(resolve("drizzle", "0122_mining_catalog_engine_controls.sql"), "utf8");
+  await executeCompatibleMigrationSql(connection, catalogueSchema);
+  // Canonical shipped catalogue. Prices, TH/s, daily CKI estimates and display
+  // order are administrator-editable defaults; this step only guarantees they
+  // exist and are self-consistent once, after which the admin portal owns them.
+  const canonicalPackages = [
+    { code: "CKI_GENESIS", name: "CKI Genesis", price: "100.00", ths: "1", daily: "0.100000000000000000", order: 1 },
+    { code: "CKI_VELOCITY", name: "CKI Velocity", price: "300.00", ths: "3", daily: "0.300000000000000000", order: 2 },
+    { code: "CKI_QUANTUM", name: "CKI Quantum", price: "600.00", ths: "7", daily: "0.700000000000000000", order: 3 },
+    { code: "CKI_TITAN", name: "CKI Titan", price: "1200.00", ths: "16", daily: "1.600000000000000000", order: 4 },
+    { code: "CKI_INFINITY", name: "CKI Infinity", price: "2500.00", ths: "40", daily: "4.000000000000000000", order: 5 },
+    { code: "CKI_PULSE", name: "CKI Pulse", price: "3500.00", ths: "60", daily: "6.000000000000000000", order: 6 },
+    { code: "CKI_VECTOR", name: "CKI Vector", price: "5000.00", ths: "90", daily: "9.500000000000000000", order: 7 },
+    { code: "CKI_ORBIT", name: "CKI Orbit", price: "7000.00", ths: "125", daily: "13.500000000000000000", order: 8 },
+    { code: "CKI_NEXUS", name: "CKI Nexus", price: "9500.00", ths: "175", daily: "18.500000000000000000", order: 9 },
+    { code: "CKI_APEX", name: "CKI Apex", price: "13000.00", ths: "240", daily: "25.000000000000000000", order: 10 },
+    { code: "CKI_SOVEREIGN", name: "CKI Sovereign", price: "17000.00", ths: "320", daily: "33.500000000000000000", order: 11 },
+    { code: "CKI_HORIZON", name: "CKI Horizon", price: "24000.00", ths: "450", daily: "45.500000000000000000", order: 12 },
+  ];
+  const catalogueTerms = "This package provides a simulated package-based Mining entitlement only. Its configured expected CoinKi (CKI) reward is an estimate prorated by eligible contract time and scaled by the administrator-configured mining speed; it is not physical mining, verified pool output, or a guaranteed return. Simulated CKI is not withdrawable and there is no cash payout. No live mining hardware, external pool, investment return, custody, or market valuation is promised.";
+  await connection.beginTransaction();
+  try {
+    const [markers] = await connection.query("SELECT migrationKey FROM mining_schema_migrations WHERE migrationKey=? FOR UPDATE", [catalogueMigrationKey]);
+    if (markers.length) {
+      await connection.commit();
+      console.log("Mining catalogue and engine-control migration already applied.");
+    } else {
+      const [admins] = await connection.query("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1");
+      const adminId = admins[0] ? Number(admins[0].id) : null;
+      const effectiveAt = new Date();
+      const reason = "Restore the canonical 12-package Mining catalogue with administrator-editable defaults, and enable the global mining speed multiplier and per-customer entitlement controls.";
+      const reconciled = [];
+      for (const item of canonicalPackages) {
+        const [packageRows] = await connection.query("SELECT id,status,currentVersionId FROM mining_packages WHERE code=? LIMIT 1 FOR UPDATE", [item.code]);
+        const pkg = packageRows[0];
+        if (!pkg) {
+          const [packageInsert] = await connection.execute(
+            "INSERT INTO mining_packages (code,name,displayOrder,status,createdBy) VALUES (?,?,?,'draft',?)",
+            [item.code, item.name, item.order, adminId],
+          );
+          const packageId = Number(packageInsert.insertId);
+          const [versionInsert] = await connection.execute(
+            `INSERT INTO mining_package_versions
+              (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,
+               expirySeconds,durationMonths,expectedDailyRewardCki,termsText,simulationAcknowledgementRequired,effectiveAt,createdBy)
+             VALUES (?,1,?,'published',?,'USD',?,'0',NULL,0,'stack',NULL,24,?,?,1,?,?)`,
+            [packageId, item.name, item.price, item.ths, item.daily, catalogueTerms, effectiveAt, adminId],
+          );
+          const versionId = Number(versionInsert.insertId);
+          await connection.execute("UPDATE mining_packages SET status='published',currentVersionId=?,updatedAt=? WHERE id=?", [versionId, effectiveAt, packageId]);
+          reconciled.push({ code: item.code, action: "created", packageId, versionId });
+          continue;
+        }
+        const [currentRows] = await connection.query("SELECT * FROM mining_package_versions WHERE id=? LIMIT 1", [pkg.currentVersionId]);
+        const current = currentRows[0];
+        const matchesCanonical = current
+          && String(current.versionStatus) === "published"
+          && String(pkg.status) === "published"
+          && current.expectedDailyRewardCki !== null
+          && Number(current.expectedDailyRewardCki) === Number(item.daily)
+          && Number(current.maxPerCustomer) === 0
+          && String(current.stackingPolicy) === "stack";
+        if (matchesCanonical) {
+          reconciled.push({ code: item.code, action: "preserved" });
+          continue;
+        }
+        const [versionRows] = await connection.query("SELECT COALESCE(MAX(version),0) maxVersion FROM mining_package_versions WHERE packageId=?", [Number(pkg.id)]);
+        const version = Number(versionRows[0]?.maxVersion || 0) + 1;
+        const [versionInsert] = await connection.execute(
+          `INSERT INTO mining_package_versions
+            (packageId,version,displayName,versionStatus,priceAmount,priceAsset,baseThs,boostBonusThs,boostDurationSeconds,maxPerCustomer,stackingPolicy,
+             expirySeconds,durationMonths,expectedDailyRewardCki,termsText,simulationAcknowledgementRequired,effectiveAt,createdBy)
+           VALUES (?,?,?,'published',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [Number(pkg.id), version, item.name, item.price, "USD", item.ths, String(current?.boostBonusThs ?? "0"), current?.boostDurationSeconds ?? null,
+            0, "stack", current?.expirySeconds ?? null, 24, item.daily, catalogueTerms,
+            Number(current?.simulationAcknowledgementRequired ?? 1), effectiveAt, adminId],
+        );
+        const versionId = Number(versionInsert.insertId);
+        await connection.execute("UPDATE mining_packages SET name=?,displayOrder=?,status='published',currentVersionId=?,updatedAt=? WHERE id=?", [item.name, item.order, versionId, effectiveAt, Number(pkg.id)]);
+        reconciled.push({ code: item.code, action: "reward_configuration_restored", packageId: Number(pkg.id), versionId });
+      }
+      const metadata = { catalogueSize: canonicalPackages.length, miningSpeedMultiplier: 1, adminEntitlementControls: ["pause","resume","stop","extend"], packages: reconciled };
+      await connection.execute("INSERT INTO mining_schema_migrations (migrationKey,detailsJson) VALUES (?,?)", [catalogueMigrationKey, JSON.stringify(metadata)]);
+      await connection.execute(
+        `INSERT INTO v5_audit_events (actorUserId,action,entityType,entityId,reason,reference,metadataJson)
+         VALUES (?,?,?,?,?,?,?)`,
+        [adminId,"mining.catalog.reconciled","mining_package_catalog",catalogueMigrationKey,reason,catalogueMigrationKey,JSON.stringify(metadata)],
+      );
+      await connection.commit();
+      console.log(JSON.stringify({ migration: catalogueMigrationKey, ...metadata }));
+    }
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  }
   const verified = await assertWorkerSchemaContracts(connection);
   console.log(`[mining-migrate] PASS: verified ${verified.checkedTables} worker-critical table contracts after mining migrations.`);
 } finally {

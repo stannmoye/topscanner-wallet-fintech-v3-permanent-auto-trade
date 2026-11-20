@@ -148,6 +148,7 @@ export class MiningMotionModel {
   private windBudget = .6;
   private boosted = false;
   private capacity = 1;
+  private speedMultiplier = 1;
 
   constructor(seed: number) {
     this.rng = new RandomStream(seed);
@@ -182,10 +183,19 @@ export class MiningMotionModel {
 
   randomBetween(min: number, max: number) { return this.rng.between(min, max); }
 
-  advance(deltaMs: number, boosted: boolean, hashPowerThs: number): MiningMotionSnapshot {
+  /** Bounded visual factor for the admin mining-speed multiplier. Fan/turbine rotation is
+   *  monotonic in the multiplier but softly compressed and clamped so extreme admin values
+   *  still render a stable scene. Multiplier 1 → 1×, 4 → 2×, 16 → 3×, 0.25 → 0.5×. */
+  private speedFactor() {
+    const safe = Number.isFinite(this.speedMultiplier) ? Math.max(0.0001, this.speedMultiplier) : 1;
+    return clamp(Math.sqrt(safe), .35, 3);
+  }
+
+  advance(deltaMs: number, boosted: boolean, hashPowerThs: number, speedMultiplier = 1): MiningMotionSnapshot {
     // Cap catch-up after tab suspension; pausing the canvas never causes a simulation jump.
     this.accumulator += clamp(Number.isFinite(deltaMs) ? deltaMs : 0, 0, 250);
     this.boosted = boosted;
+    this.speedMultiplier = Number.isFinite(speedMultiplier) ? speedMultiplier : 1;
     const safeHash = Number.isFinite(hashPowerThs) ? Math.max(0, hashPowerThs) : 0;
     this.capacity = clamp(.38 + .62 * (1 - Math.exp(-safeHash * 1.15)), .38, 1);
     while (this.accumulator >= FIXED_STEP_MS) {
@@ -433,17 +443,20 @@ export class MiningMotionModel {
   }
 
   private updateFans(dt: number) {
+    // The admin mining-speed multiplier scales the whole fan/turbine rotation curve (target and
+    // floor/ceiling together) so the visual readout stays monotonic with the configured speed.
+    const factor = this.speedFactor();
     this.fanRpm.forEach((rpm, index) => {
       const node = this.nodes[index % NODE_COUNT];
       const airflowBias = index % 2 ? .94 : 1.06;
-      const target = (520 + node.heat * 1_950 + node.power * 1_200 + Math.abs(node.noise) * 130) * airflowBias;
-      const nextRpm = clamp(this.ou(rpm, target, dt, .55 + (index % 3) * .22, 210), 380, 3_850);
+      const target = (520 + node.heat * 1_950 + node.power * 1_200 + Math.abs(node.noise) * 130) * airflowBias * factor;
+      const nextRpm = clamp(this.ou(rpm, target, dt, .55 + (index % 3) * .22, 210 * factor), 380 * factor, 3_850 * factor);
       this.fanRpm[index] = nextRpm;
       const direction = index % 2 ? -1 : 1;
       this.fanAngles[index] = (this.fanAngles[index] + direction * nextRpm / 60 * Math.PI * 2 * dt) % (Math.PI * 2);
     });
-    const turbineTarget = 14 + this.wind * 68 + this.rng.normal() * 4 + (this.globalChaos - .5) * 10;
-    this.turbineRpm = clamp(this.ou(this.turbineRpm, turbineTarget, dt, 1.6, 2.8), 8, 94);
+    const turbineTarget = (14 + this.wind * 68 + this.rng.normal() * 4 + (this.globalChaos - .5) * 10) * factor;
+    this.turbineRpm = clamp(this.ou(this.turbineRpm, turbineTarget, dt, 1.6, 2.8 * factor), 8 * factor, 94 * factor);
     this.turbineAngle = (this.turbineAngle + this.turbineRpm / 60 * Math.PI * 2 * dt) % (Math.PI * 2);
   }
 

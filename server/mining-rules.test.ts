@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import Decimal from "decimal.js";
-import { calculateMiningConversion, calculateMiningDifficultyIndex, calculateMiningReward, calculatePackageDailyRate, calculatePackageDailyReward, canStartMiningAccrual, getBoostCooldownWindow, isQuoteFresh, isRateWithinDeviation, overlapSeconds } from "./mining-rules";
+import { calculateMiningConversion, calculateMiningDifficultyIndex, calculateMiningReward, calculatePackageDailyRate, calculatePackageDailyReward, canStartMiningAccrual, getBoostCooldownWindow, isQuoteFresh, isRateWithinDeviation, normalizeMiningSpeedMultiplier, overlapSeconds } from "./mining-rules";
 
 describe("mining reward rules", () => {
   it("uses the configured tokens per TH/s-hour formula with decimal precision", () => {
@@ -99,6 +99,52 @@ describe("package daily reward model", () => {
   it("rejects negative daily estimates and boosts without purchased base capacity", () => {
     expect(() => calculatePackageDailyReward([{ expectedDailyRewardCki: "-1", baseThs: "1", boostThs: "0", eligibleSeconds: 60 }])).toThrow(/non-negative/);
     expect(() => calculatePackageDailyReward([{ expectedDailyRewardCki: "1", baseThs: "0", boostThs: "1", eligibleSeconds: 60 }])).toThrow(/positive base/);
+  });
+});
+
+describe("administrator global mining speed multiplier", () => {
+  it("defaults to one and validates the supported range", () => {
+    expect(normalizeMiningSpeedMultiplier(null).toString()).toBe("1");
+    expect(normalizeMiningSpeedMultiplier(undefined).toString()).toBe("1");
+    expect(normalizeMiningSpeedMultiplier("").toString()).toBe("1");
+    expect(normalizeMiningSpeedMultiplier("2.5").toString()).toBe("2.5");
+    expect(normalizeMiningSpeedMultiplier("0.01").toString()).toBe("0.01");
+    expect(normalizeMiningSpeedMultiplier("1000").toString()).toBe("1000");
+    expect(() => normalizeMiningSpeedMultiplier("0.009")).toThrow(/between/);
+    expect(() => normalizeMiningSpeedMultiplier("1000.01")).toThrow(/between/);
+    expect(() => normalizeMiningSpeedMultiplier("0")).toThrow(/between/);
+  });
+
+  it("scales the fixed package-daily rate without touching the stored snapshot", () => {
+    expect(calculatePackageDailyRate({ calculationModel: "package_daily", expectedDailyRewardCki: "0.7", baseThs: "7", ckiPerThsPerDay: "0.5", speedMultiplier: "2" }))
+      .toBe("1.400000000000000000");
+    expect(calculatePackageDailyRate({ calculationModel: "package_daily", expectedDailyRewardCki: "0.7", baseThs: "7", ckiPerThsPerDay: "0.5" }))
+      .toBe(calculatePackageDailyRate({ calculationModel: "package_daily", expectedDailyRewardCki: "0.7", baseThs: "7", ckiPerThsPerDay: "0.5", speedMultiplier: "1" }));
+  });
+
+  it("scales the TH/s-derived rate by the same multiplier", () => {
+    expect(calculatePackageDailyRate({ calculationModel: "hashrate_daily", expectedDailyRewardCki: null, baseThs: "7", ckiPerThsPerDay: "0.5", speedMultiplier: "0.5" }))
+      .toBe("1.750000000000000000");
+    expect(calculatePackageDailyRate({ calculationModel: "hashrate_daily", expectedDailyRewardCki: null, baseThs: "7", ckiPerThsPerDay: "0.5", speedMultiplier: "3" }))
+      .toBe("10.500000000000000000");
+  });
+
+  it("scales the accrued package reward linearly for a full eligible day", () => {
+    expect(calculatePackageDailyReward([{ expectedDailyRewardCki: "2", baseThs: "1", boostThs: "0", eligibleSeconds: 86_400, speedMultiplier: "1" }]))
+      .toBe("2.000000000000000000");
+    expect(calculatePackageDailyReward([{ expectedDailyRewardCki: "2", baseThs: "1", boostThs: "0", eligibleSeconds: 86_400, speedMultiplier: "2" }]))
+      .toBe("4.000000000000000000");
+  });
+
+  it("applies the speed multiplier to both the base and the boost daily reward", () => {
+    expect(calculatePackageDailyReward([{ expectedDailyRewardCki: "0", baseThs: "1", boostThs: "0", eligibleSeconds: 86_400, boostRewardCkiPerDay: "24", speedMultiplier: "2" }]))
+      .toBe("48.000000000000000000");
+  });
+
+  it("changes reward only when the multiplier changes and never mutates the snapshot", () => {
+    const base = { expectedDailyRewardCki: "3.5", baseThs: "5", boostThs: "0", eligibleSeconds: 43_200 };
+    expect(calculatePackageDailyReward([{ ...base, speedMultiplier: "4" }]))
+      .toBe(new Decimal(calculatePackageDailyReward([{ ...base, speedMultiplier: "2" }])).times(2).toFixed(18));
   });
 });
 

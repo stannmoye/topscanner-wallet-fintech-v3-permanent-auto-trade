@@ -97,4 +97,35 @@ describe("mining visual motion model", () => {
     expect(sawFullReset).toBe(true);
     expect(sawCompletion).toBe(true);
   });
+
+  it("scales animated fan and turbine speed with the administrator multiplier", () => {
+    const slow = new MiningMotionModel(0xC0FFEE);
+    const fast = new MiningMotionModel(0xC0FFEE);
+    let slowFan = 0, fastFan = 0, slowTurbine = 0, fastTurbine = 0;
+    for (let i = 0; i < 600; i++) {
+      const a = slow.advance(50, false, 1.25, 1);
+      const b = fast.advance(50, false, 1.25, 4);
+      slowFan += a.power.fanRpm.reduce((sum, value) => sum + value, 0);
+      fastFan += b.power.fanRpm.reduce((sum, value) => sum + value, 0);
+      slowTurbine += a.power.turbineRpm;
+      fastTurbine += b.power.turbineRpm;
+    }
+    expect(fastFan).toBeGreaterThan(slowFan);
+    expect(fastTurbine).toBeGreaterThan(slowTurbine);
+  });
+
+  it("bounds extreme administrator multipliers to a stable visual factor", () => {
+    const highExtreme = new MiningMotionModel(0xBEEF);
+    const highClamped = new MiningMotionModel(0xBEEF);
+    const lowExtreme = new MiningMotionModel(0xBEEF);
+    const lowClamped = new MiningMotionModel(0xBEEF);
+    for (let i = 0; i < 120; i++) {
+      highExtreme.advance(50, false, 1.25, 1_000_000);
+      highClamped.advance(50, false, 1.25, 100);
+      lowExtreme.advance(50, false, 1.25, 0.000001);
+      lowClamped.advance(50, false, 1.25, 0.0001);
+    }
+    expect(highExtreme.snapshot()).toEqual(highClamped.snapshot());
+    expect(lowExtreme.snapshot()).toEqual(lowClamped.snapshot());
+  });
 });

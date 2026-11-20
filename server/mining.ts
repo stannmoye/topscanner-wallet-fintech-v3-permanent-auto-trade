@@ -127,6 +127,7 @@ async function getMiningNetworkTelemetry(conn: Db, at: Date, baselineThs: string
         LEFT JOIN customer_controls cc ON cc.userId=cp.userId
         WHERE cp.status IN ('active','replaced') AND cp.startsAt<=?
           AND (cp.expiresAt IS NULL OR cp.expiresAt>?) AND (cp.endedAt IS NULL OR cp.endedAt>?)
+          AND cp.adminPaused=0
           AND COALESCE(cc.accountStatus,'active')='active'
         GROUP BY cp.userId
       ) packageTotals
@@ -217,37 +218,49 @@ function pricePayment(packagePrice: string, targetUsdRate: Decimal, sourceUsdRat
 
 export async function listCustomerMiningPackages(userId: number) {
   return withMiningConnection(async conn => {
+    const now = new Date();
     const [rows] = await conn.query<any[]>(`SELECT p.id packageId,p.code,p.name,p.displayOrder,p.status packageStatus,p.currentVersionId,
         v.id versionId,v.version,v.displayName,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.expectedDailyRewardCki,
         v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.durationMonths,v.termsText,v.simulationAcknowledgementRequired,v.effectiveAt,
-        CASE WHEN c.userId IS NULL THEN 0 ELSE 1 END alreadyPurchased
+        (SELECT COUNT(*) FROM mining_customer_packages cp WHERE cp.userId=? AND cp.packageId=p.id AND cp.status<>'cancelled') purchasedCount
       FROM mining_packages p JOIN mining_package_versions v ON v.id=p.currentVersionId
-      LEFT JOIN mining_package_purchase_claims c ON c.userId=? AND c.packageId=p.id
       WHERE p.status IN ('published','paused') AND v.versionStatus='published' ORDER BY p.displayOrder,p.id`, [userId]);
     const config = await loadMiningConfig(conn);
     return rows.map(row => {
-      const effectiveDaily = calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:row.expectedDailyRewardCki,baseThs:String(row.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay});
-      const estimate = decimal(effectiveDaily);
-      const alreadyPurchased = Boolean(row.alreadyPurchased);
-      const purchaseAvailable = row.packageStatus === "published" && config.packagePurchasesEnabled && !alreadyPurchased;
+      const baseDaily = decimal(calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:row.expectedDailyRewardCki,baseThs:String(row.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay}));
+      const estimate = decimal(calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:row.expectedDailyRewardCki,baseThs:String(row.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay,speedMultiplier:config.miningSpeedMultiplier}));
+      const maxPerCustomer = row.maxPerCustomer === null || row.maxPerCustomer === undefined ? 0 : Number(row.maxPerCustomer);
+      const purchasedCount = Number(row.purchasedCount || 0);
+      const alreadyPurchased = purchasedCount > 0;
+      const limitReached = maxPerCustomer > 0 && purchasedCount >= maxPerCustomer;
+      const purchaseAvailable = row.packageStatus === "published" && config.packagePurchasesEnabled && !limitReached;
+      const durationMonths = row.durationMonths === null ? null : Number(row.durationMonths);
+      const termSeconds = durationMonths !== null ? (addUtcMonths(now, durationMonths).getTime() - now.getTime()) / 1000 : (row.expirySeconds ? Number(row.expirySeconds) : null);
+      const projectedTermTokens = termSeconds ? estimate.times(termSeconds).div(86_400) : null;
+      const projectedTermUsd = projectedTermTokens ? projectedTermTokens.div(config.tokenUnitsPerUsd) : null;
       return {
         packageId: Number(row.packageId), code: row.code, name: row.displayName || row.name, displayOrder:Number(row.displayOrder), status: row.packageStatus,
-        alreadyPurchased,
+        alreadyPurchased, purchasedCount, maxPerCustomer, remainingPurchases: maxPerCustomer > 0 ? Math.max(0, maxPerCustomer - purchasedCount) : null,
         tokenName: config.tokenName, tokenSymbol: config.tokenSymbol, globalHashPowerThs: config.globalHashPowerThs,
+        miningSpeedMultiplier: config.miningSpeedMultiplier,
         usdPerToken: decimal(1).div(config.tokenUnitsPerUsd).toSignificantDigits(18).toString(),
         versionId: Number(row.versionId), version: Number(row.version), priceAmount: String(row.priceAmount), priceAsset: assertMiningAsset(String(row.priceAsset)),
         baseThs: String(row.baseThs), boostBonusThs: String(row.boostBonusThs),
-        expectedDailyRewardCki: estimate.toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed(18),
+        expectedDailyRewardCki: baseDaily.toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed(18),
+        effectiveDailyRewardCki: estimate.toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed(18),
         estimatedHourlyTokens: estimate.div(24).toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale),
         estimatedDailyUsd: estimate.div(config.tokenUnitsPerUsd).toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2),
         calculationModel: config.calculationModel,
         ckiPerThsPerDay: config.ckiPerThsPerDay,
         boostDurationSeconds: Number(row.boostDurationSeconds || config.boostDurationSeconds),
-        maxPerCustomer: 1, stackingPolicy: row.stackingPolicy, expirySeconds: row.expirySeconds === null ? null : Number(row.expirySeconds), durationMonths:row.durationMonths===null?null:Number(row.durationMonths),
+        stackingPolicy: row.stackingPolicy, expirySeconds: row.expirySeconds === null ? null : Number(row.expirySeconds), durationMonths,
         termsText: row.termsText, simulationAcknowledgementRequired: Boolean(row.simulationAcknowledgementRequired),
         estimatedDailyTokens: estimate.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale),
+        termDays: termSeconds ? (termSeconds / 86_400).toFixed(2) : null,
+        projectedTermTokens: projectedTermTokens ? projectedTermTokens.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale) : null,
+        projectedTermUsd: projectedTermUsd ? projectedTermUsd.toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2) : null,
         miningEnabled: config.globalEnabled, purchaseAvailable,
-        purchaseUnavailableReason: purchaseAvailable ? null : alreadyPurchased ? "This package is limited to one lifetime purchase per customer" : !config.packagePurchasesEnabled ? "Package purchases are paused by operations" : "This package is not currently published",
+        purchaseUnavailableReason: purchaseAvailable ? null : limitReached ? "This package has reached its per-customer purchase limit" : !config.packagePurchasesEnabled ? "Package purchases are paused by operations" : "This package is not currently published",
       };
     });
   });
@@ -258,9 +271,12 @@ export async function createCustomerMiningPurchaseQuote(userId: number, input: {
     await requireActiveMiningAccount(conn, userId);
     const config = await loadMiningConfig(conn);
     if (!config.packagePurchasesEnabled) throw new MiningError("Package purchases are paused by operations");
-    const [claimRows] = await conn.query<any[]>("SELECT packageId FROM mining_package_purchase_claims WHERE userId=? AND packageId=(SELECT packageId FROM mining_package_versions WHERE id=?) LIMIT 1", [userId, input.packageVersionId]);
-    if (claimRows.length) throw new MiningError("You can purchase each Mining package only once");
     const product = await getPublishedPackage(conn, input.packageVersionId);
+    const maxPerCustomer = product.maxPerCustomer === null || product.maxPerCustomer === undefined ? 0 : Number(product.maxPerCustomer);
+    if (maxPerCustomer > 0) {
+      const [countRows] = await conn.query<any[]>(`SELECT COUNT(*) total FROM mining_customer_packages WHERE userId=? AND packageId=? AND status<>'cancelled'`, [userId, Number(product.packageId)]);
+      if (Number(countRows[0]?.total || 0) >= maxPerCustomer) throw new MiningError("This package has reached its per-customer purchase limit");
+    }
     const paymentAsset = assertMainWalletAsset(String(product.priceAsset));
     const expectedDailyRewardCki = calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:product.expectedDailyRewardCki,baseThs:String(product.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay});
     const priceAsset = assertMainWalletAsset(String(product.priceAsset));
@@ -337,12 +353,11 @@ export async function confirmCustomerMiningPurchase(userId: number, input: { quo
       if (Number(countRows[0]?.total || 0) >= Number(quote.maxPerCustomer)) throw new MiningError("This package has reached its per-customer purchase limit");
     }
     const now = new Date();
-    try {
-      await conn.execute(`INSERT INTO mining_package_purchase_claims (userId,packageId,firstQuoteId,claimedAt) VALUES (?,?,?,?)`, [userId, Number(quote.packageId), input.quoteId, now]);
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && String((error as any).code) === "ER_DUP_ENTRY") throw new MiningError("You can purchase each Mining package only once");
-      throw error;
-    }
+    // The purchase-claim row is retained only as a historical first-purchase marker.
+    // Per-customer purchase limits are enforced by the configured maxPerCustomer count
+    // check above, so repeat purchases of the same package remain additive whenever the
+    // administrator allows more than one purchase.
+    await conn.execute(`INSERT IGNORE INTO mining_package_purchase_claims (userId,packageId,firstQuoteId,claimedAt) VALUES (?,?,?,?)`, [userId, Number(quote.packageId), input.quoteId, now]);
     // Every successful purchase is additive. Existing customer entitlements remain active
     // and their package-specific snapshots continue to accrue independently.
     const canonicalReference = `mining-purchase:${input.quoteId}`;
@@ -417,12 +432,13 @@ export async function purchaseCustomerMiningPackage(userId: number, input: { pac
   }
 }
 
-async function activePackageRows(conn: Db, userId: number, at: Date) {
+async function activePackageRows(conn: Db, userId: number, at: Date, options: { includePaused?: boolean } = {}) {
   const [rows] = await conn.query<any[]>(`SELECT cp.id purchaseId,cp.packageId,cp.packageVersionId,cp.acquisitionType,cp.startsAt,cp.expiresAt,cp.endedAt,cp.status,
-      cp.baseThsSnapshot,cp.boostBonusThsSnapshot,cp.expectedDailyRewardCkiSnapshot,cp.calculationModelSnapshot,cp.ckiPerThsPerDaySnapshot,COALESCE(cp.packageNameSnapshot,v.displayName,p.name) packageName,cp.durationMonthsSnapshot,p.code packageCode,v.version packageVersion,v.boostDurationSeconds
+      cp.baseThsSnapshot,cp.boostBonusThsSnapshot,cp.expectedDailyRewardCkiSnapshot,cp.calculationModelSnapshot,cp.ckiPerThsPerDaySnapshot,COALESCE(cp.packageNameSnapshot,v.displayName,p.name) packageName,cp.durationMonthsSnapshot,p.code packageCode,v.version packageVersion,v.boostDurationSeconds,
+      cp.adminPaused,cp.adminStoppedAt,cp.adminExtendedSeconds
     FROM mining_customer_packages cp JOIN mining_packages p ON p.id=cp.packageId JOIN mining_package_versions v ON v.id=cp.packageVersionId
     WHERE cp.userId=? AND cp.status IN ('active','replaced') AND cp.startsAt<=?
-      AND (cp.expiresAt IS NULL OR cp.expiresAt>?) AND (cp.endedAt IS NULL OR cp.endedAt>?) ORDER BY cp.startsAt,cp.id`, [userId, at, at, at]);
+      AND (cp.expiresAt IS NULL OR cp.expiresAt>?) AND (cp.endedAt IS NULL OR cp.endedAt>?)${options.includePaused ? "" : " AND cp.adminPaused=0"} ORDER BY cp.startsAt,cp.id`, [userId, at, at, at]);
   return rows;
 }
 
@@ -495,7 +511,11 @@ export async function getCustomerMiningDashboard(userId: number) {
   return withMiningConnection(async conn => {
     const now = new Date();
     const config = await loadMiningConfig(conn, now);
-    const packages = await activePackageRows(conn, userId, now);
+    // Paused entitlements are shown to the customer but excluded from live hash power
+    // and reward accrual until an administrator resumes them.
+    const allPackages = await activePackageRows(conn, userId, now, { includePaused: true });
+    const packages = allPackages.filter(row => !Number(row.adminPaused));
+    const speedMultiplier = decimal(config.miningSpeedMultiplier);
     const networkTelemetry = await getMiningNetworkTelemetry(conn, now, config.difficultyBaselineThs);
     const baseThs = packages.reduce((sum, row) => sum.plus(decimal(row.baseThsSnapshot)), new Decimal(0));
     const [boostRows] = await conn.query<any[]>(`SELECT bonusThs,startedAt,endsAt,customerPackageId FROM mining_boost_activations WHERE userId=? AND status='active' AND startedAt<=? AND endsAt>? ORDER BY startedAt DESC LIMIT 1`, [userId, now, now]);
@@ -520,8 +540,8 @@ export async function getCustomerMiningDashboard(userId: number) {
         const ownsActiveBoost = Boolean(activeBoost) && Number(activeBoost.customerPackageId) === Number(row.purchaseId);
         const boostedSeconds = ownsActiveBoost ? boostIntervalSeconds : 0;
         return [
-          { expectedDailyRewardCki: row.expectedDailyRewardCkiSnapshot, baseThs: String(row.baseThsSnapshot), boostThs: "0", eligibleSeconds: intervalSeconds - boostedSeconds },
-          { expectedDailyRewardCki: row.expectedDailyRewardCkiSnapshot, baseThs: String(row.baseThsSnapshot), boostThs: ownsActiveBoost ? String(activeBoost.bonusThs) : "0", eligibleSeconds: boostedSeconds, boostRewardCkiPerDay: ownsActiveBoost ? decimal(config.boostRewardCkiPerDay).plus(decimal(config.boostActivationBonusCki).times(86400).div(config.boostDurationSeconds)).toString() : "0" },
+          { expectedDailyRewardCki: row.expectedDailyRewardCkiSnapshot, baseThs: String(row.baseThsSnapshot), boostThs: "0", eligibleSeconds: intervalSeconds - boostedSeconds, speedMultiplier: config.miningSpeedMultiplier },
+          { expectedDailyRewardCki: row.expectedDailyRewardCkiSnapshot, baseThs: String(row.baseThsSnapshot), boostThs: ownsActiveBoost ? String(activeBoost.bonusThs) : "0", eligibleSeconds: boostedSeconds, boostRewardCkiPerDay: ownsActiveBoost ? decimal(config.boostRewardCkiPerDay).plus(decimal(config.boostActivationBonusCki).times(86400).div(config.boostDurationSeconds)).toString() : "0", speedMultiplier: config.miningSpeedMultiplier },
         ];
       });
       pendingTokens = decimal(calculatePackageDailyReward(segments));
@@ -540,7 +560,7 @@ export async function getCustomerMiningDashboard(userId: number) {
     const [pendingRows] = await conn.query<any[]>(`SELECT COUNT(*) total FROM mining_conversion_jobs WHERE userId=? AND status IN ('queued','waiting','retrying')`, [userId]);
     const [activityRows] = await conn.query<any[]>(`SELECT COUNT(*) intervalCount,COALESCE(SUM(eligibleSeconds),0) eligibleSeconds,MAX(intervalEnd) lastRecordedAt
       FROM mining_engine_activity WHERE userId=? AND intervalStart>=UTC_DATE()`, [userId]);
-    let packageDailyReward = packages.reduce((sum,row) => row.expectedDailyRewardCkiSnapshot === null ? sum : sum.plus(decimal(row.expectedDailyRewardCkiSnapshot)), new Decimal(0));
+    let packageDailyReward = packages.reduce((sum,row) => row.expectedDailyRewardCkiSnapshot === null ? sum : sum.plus(decimal(row.expectedDailyRewardCkiSnapshot)), new Decimal(0)).times(speedMultiplier);
     if (decimal(config.dailyRewardCapTokens).gt(0)) packageDailyReward = Decimal.min(packageDailyReward, decimal(config.dailyRewardCapTokens));
     const estimatedDailyTokens = config.globalEnabled && accountStatus === "active" && packageDailyReward.gt(0) ? packageDailyReward : null;
     const pref = preferenceRows[0] ? {
@@ -558,6 +578,7 @@ export async function getCustomerMiningDashboard(userId: number) {
       baseThs: baseThs.toString(), boostThs: boostThs.toString(), activeThs: baseThs.plus(boostThs).toString(),
       calculationModel: config.calculationModel,
       tokenName: config.tokenName, tokenSymbol: config.tokenSymbol, globalHashPowerThs: config.globalHashPowerThs,
+      miningSpeedMultiplier: config.miningSpeedMultiplier,
       usdPerToken: decimal(1).div(config.tokenUnitsPerUsd).toSignificantDigits(18).toString(),
       tokenBalance: balances.CKI, balances, todayTokens: String(earnedRows[0]?.todayTokens || "0"),
       minSwapTokens: config.minSwapTokens, maxSwapTokens: config.maxSwapTokens,
@@ -568,7 +589,28 @@ export async function getCustomerMiningDashboard(userId: number) {
       economicsVersion: config.version, tokenUnitsPerUsd: config.tokenUnitsPerUsd,
       tokenConversionReference: `1 ${config.tokenSymbol} = $${decimal(1).div(config.tokenUnitsPerUsd).toSignificantDigits(12).toString()} USD (admin-configured internal reference; not a market price or redemption promise)`,
       boost: { active: Boolean(activeBoost), startedAt: activeBoost ? new Date(activeBoost.startedAt).toISOString() : null, endsAt: activeBoost ? new Date(activeBoost.endsAt).toISOString() : null, bonusThs: boostThs.toString() },
-      packages: packages.map(row => ({ purchaseId: Number(row.purchaseId), packageName: row.packageName, code: row.packageCode, packageVersion: Number(row.packageVersion), durationMonths:row.durationMonthsSnapshot===null?null:Number(row.durationMonthsSnapshot), acquisitionType: String(row.acquisitionType || "purchase"), baseThs: String(row.baseThsSnapshot), expectedDailyRewardCki: row.expectedDailyRewardCkiSnapshot===null?null:String(row.expectedDailyRewardCkiSnapshot), boostBonusThs: String(row.boostBonusThsSnapshot), startsAt: new Date(row.startsAt).toISOString(), expiresAt: row.expiresAt ? new Date(row.expiresAt).toISOString() : null, status: row.status })),
+      packages: allPackages.map(row => {
+        const paused = Number(row.adminPaused) > 0;
+        const snapshotDaily = row.expectedDailyRewardCkiSnapshot === null ? null : decimal(String(row.expectedDailyRewardCkiSnapshot));
+        const effectiveDaily = snapshotDaily === null ? null : snapshotDaily.times(speedMultiplier);
+        const startsAt = new Date(row.startsAt);
+        const expiresAt = row.expiresAt ? new Date(row.expiresAt) : null;
+        const totalTermSeconds = expiresAt ? Math.max(0, (expiresAt.getTime() - startsAt.getTime()) / 1000) : null;
+        const remainingSeconds = expiresAt ? Math.max(0, (expiresAt.getTime() - now.getTime()) / 1000) : null;
+        const projectedTermTokens = effectiveDaily && totalTermSeconds !== null ? effectiveDaily.times(totalTermSeconds).div(86_400) : null;
+        const projectedRemainingTokens = effectiveDaily && remainingSeconds !== null ? effectiveDaily.times(remainingSeconds).div(86_400) : null;
+        return {
+          purchaseId: Number(row.purchaseId), packageName: row.packageName, code: row.packageCode, packageVersion: Number(row.packageVersion),
+          durationMonths: row.durationMonthsSnapshot === null ? null : Number(row.durationMonthsSnapshot), acquisitionType: String(row.acquisitionType || "purchase"),
+          baseThs: String(row.baseThsSnapshot), boostBonusThs: String(row.boostBonusThsSnapshot),
+          expectedDailyRewardCki: row.expectedDailyRewardCkiSnapshot === null ? null : String(row.expectedDailyRewardCkiSnapshot),
+          effectiveDailyRewardCki: effectiveDaily ? effectiveDaily.toDecimalPlaces(18, Decimal.ROUND_DOWN).toFixed(18) : null,
+          projectedTermTokens: projectedTermTokens ? projectedTermTokens.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale) : null,
+          projectedRemainingTokens: projectedRemainingTokens ? projectedRemainingTokens.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale) : null,
+          paused, adminExtendedSeconds: Number(row.adminExtendedSeconds || 0),
+          startsAt: startsAt.toISOString(), expiresAt: expiresAt ? expiresAt.toISOString() : null, status: row.status,
+        };
+      }),
       conversionPreference: pref, pendingConversionJobs: Number(pendingRows[0]?.total || 0), lastConversion: latestConversionRows[0] ? { id: Number(latestConversionRows[0].id), destinationAsset: latestConversionRows[0].destinationAsset, destinationAmount: latestConversionRows[0].destinationAmount, fee: latestConversionRows[0].fee, provider: latestConversionRows[0].provider, marketObservedAt: new Date(latestConversionRows[0].marketObservedAt).toISOString(), createdAt: new Date(latestConversionRows[0].createdAt).toISOString() } : null,
       recentEvents: latestEventRows.map(row => ({ type: row.transactionType, reference: row.referenceCode, createdAt: new Date(row.createdAt).toISOString() })),
     };
@@ -731,7 +773,7 @@ async function calculateInterval(conn: Db, userId: number, start: Date, end: Dat
   const [packages] = await conn.query<any[]>(`SELECT cp.id,cp.packageId,cp.packageVersionId,cp.packageNameSnapshot,cp.durationMonthsSnapshot,cp.priceAmount,cp.priceAsset,
       cp.expectedDailyRewardCkiSnapshot,cp.calculationModelSnapshot,cp.ckiPerThsPerDaySnapshot,cp.startsAt,cp.expiresAt,cp.endedAt,cp.status,cp.baseThsSnapshot,cp.boostBonusThsSnapshot,p.code,v.version
     FROM mining_customer_packages cp JOIN mining_packages p ON p.id=cp.packageId JOIN mining_package_versions v ON v.id=cp.packageVersionId
-    WHERE cp.userId=? AND cp.status IN ('active','replaced') AND cp.startsAt<? AND (cp.expiresAt IS NULL OR cp.expiresAt>?) AND (cp.endedAt IS NULL OR cp.endedAt>?)`, [userId, end, start, start]);
+    WHERE cp.userId=? AND cp.status IN ('active','replaced') AND cp.startsAt<? AND (cp.expiresAt IS NULL OR cp.expiresAt>?) AND (cp.endedAt IS NULL OR cp.endedAt>?) AND cp.adminPaused=0`, [userId, end, start, start]);
   const [boosts] = await conn.query<any[]>(`SELECT id,startedAt,endsAt,bonusThs,packageVersionId,customerPackageId,status FROM mining_boost_activations WHERE userId=? AND status='active' AND startedAt<? AND endsAt>?`, [userId, end, start]);
   const [configRows] = await conn.query<any[]>(`SELECT effectiveAt FROM mining_economics_versions WHERE effectiveAt>? AND effectiveAt<? ORDER BY effectiveAt`, [start, end]);
   const boundaries = [start.getTime(), end.getTime()];
@@ -775,10 +817,10 @@ async function calculateInterval(conn: Db, userId: number, start: Date, end: Dat
       const applyBoostMultiplier=calculationModelSnapshot==="legacy_boost_daily";
       const ownsActiveBoost=Boolean(activeBoost) && Number(activeBoost.customerPackageId) === Number(row.id);
       const activeBoostRewardPerDay=ownsActiveBoost ? decimal(config.boostRewardCkiPerDay).plus(decimal(config.boostActivationBonusCki).times(86400).div(config.boostDurationSeconds)).toString() : "0";
-      const amount=decimal(calculatePackageDailyReward([{expectedDailyRewardCki:daily,baseThs:packageBase.toString(),boostThs:packageBoost.toString(),eligibleSeconds:seconds,applyBoostMultiplier,boostRewardCkiPerDay:activeBoostRewardPerDay}]));
-      const baseOnlyAmount=decimal(calculatePackageDailyReward([{expectedDailyRewardCki:daily,baseThs:packageBase.toString(),boostThs:"0",eligibleSeconds:seconds,applyBoostMultiplier:false,boostRewardCkiPerDay:"0"}]));
+      const amount=decimal(calculatePackageDailyReward([{expectedDailyRewardCki:daily,baseThs:packageBase.toString(),boostThs:packageBoost.toString(),eligibleSeconds:seconds,applyBoostMultiplier,boostRewardCkiPerDay:activeBoostRewardPerDay,speedMultiplier:config.miningSpeedMultiplier}]));
+      const baseOnlyAmount=decimal(calculatePackageDailyReward([{expectedDailyRewardCki:daily,baseThs:packageBase.toString(),boostThs:"0",eligibleSeconds:seconds,applyBoostMultiplier:false,boostRewardCkiPerDay:"0",speedMultiplier:config.miningSpeedMultiplier}]));
       const boostAmount=Decimal.max(amount.minus(baseOnlyAmount),new Decimal(0));
-      const effectiveDaily=(daily===null?new Decimal(0):decimal(daily).times(applyBoostMultiplier?packageBase.plus(packageBoost).div(packageBase):1)).plus(ownsActiveBoost?decimal(activeBoostRewardPerDay):0);
+      const effectiveDaily=(daily===null?new Decimal(0):decimal(daily).times(applyBoostMultiplier?packageBase.plus(packageBoost).div(packageBase):1)).plus(ownsActiveBoost?decimal(activeBoostRewardPerDay):0).times(decimal(config.miningSpeedMultiplier));
       return {purchaseId:Number(row.id),packageId:Number(row.packageId),packageVersionId:Number(row.packageVersionId),packageVersion:Number(row.version),packageCode:String(row.code),packageName:String(row.packageNameSnapshot||row.code),priceAmount:String(row.priceAmount),priceAsset:String(row.priceAsset),durationMonthsSnapshot:row.durationMonthsSnapshot===null?null:Number(row.durationMonthsSnapshot),baseThs:packageBase.toString(),expectedDailyRewardCkiSnapshot:daily,calculationModelSnapshot,ckiPerThsPerDaySnapshot:row.ckiPerThsPerDaySnapshot===null?null:String(row.ckiPerThsPerDaySnapshot),boostThs:packageBoost.toString(),boostRewardCki:boostAmount.toString(),eligibleSeconds:seconds,estimatedRewardCki:amount.toString(),effectiveDailyRewardCki:effectiveDaily.toString()};
     });
     const segmentTokens=packageRewards.reduce((sum,row)=>sum.plus(decimal(row.estimatedRewardCki)),new Decimal(0));
@@ -1004,11 +1046,11 @@ export async function runMiningWorkerCycle() {
   return withMiningConnection(async conn => {
     const settledBoostRewards = await settleDuePendingBoostRewards(conn);
     let [users] = await conn.query<any[]>(`SELECT DISTINCT cp.userId FROM mining_customer_packages cp
-      WHERE cp.status='active' AND cp.startsAt<UTC_TIMESTAMP(3) AND (cp.expiresAt IS NULL OR cp.expiresAt>UTC_TIMESTAMP(3)) AND cp.userId>? ORDER BY cp.userId LIMIT 100`,[miningWorkerUserCursor]);
+      WHERE cp.status='active' AND cp.startsAt<UTC_TIMESTAMP(3) AND (cp.expiresAt IS NULL OR cp.expiresAt>UTC_TIMESTAMP(3)) AND cp.adminPaused=0 AND (cp.endedAt IS NULL OR cp.endedAt>UTC_TIMESTAMP(3)) AND cp.userId>? ORDER BY cp.userId LIMIT 100`,[miningWorkerUserCursor]);
     if (!users.length && miningWorkerUserCursor) {
       miningWorkerUserCursor=0;
       [users] = await conn.query<any[]>(`SELECT DISTINCT cp.userId FROM mining_customer_packages cp
-        WHERE cp.status='active' AND cp.startsAt<UTC_TIMESTAMP(3) AND (cp.expiresAt IS NULL OR cp.expiresAt>UTC_TIMESTAMP(3)) ORDER BY cp.userId LIMIT 100`);
+        WHERE cp.status='active' AND cp.startsAt<UTC_TIMESTAMP(3) AND (cp.expiresAt IS NULL OR cp.expiresAt>UTC_TIMESTAMP(3)) AND cp.adminPaused=0 AND (cp.endedAt IS NULL OR cp.endedAt>UTC_TIMESTAMP(3)) ORDER BY cp.userId LIMIT 100`);
     }
     if (users.length) miningWorkerUserCursor=Number(users[users.length-1].userId);
     let intervals = 0;

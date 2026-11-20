@@ -14,6 +14,8 @@ export type MiningPackageRewardSegment = {
   eligibleSeconds: number;
   applyBoostMultiplier?: boolean;
   boostRewardCkiPerDay?: string | number | null;
+  /** Administrator-configured global mining speed. Scales produced CKI only; defaults to 1 (no scaling). */
+  speedMultiplier?: string | number;
 };
 
 export type MiningCalculationModel = "package_daily" | "hashrate_daily";
@@ -28,6 +30,23 @@ export type MiningConversion = {
 const TOKEN_SCALE = 8;
 const PACKAGE_REWARD_SCALE = 18;
 const MiningDecimal = Decimal.clone({ precision: 60, rounding: Decimal.ROUND_DOWN });
+
+export const MINING_SPEED_MIN = new MiningDecimal("0.01");
+export const MINING_SPEED_MAX = new MiningDecimal("1000");
+
+/**
+ * Validate and normalise the administrator-configured global mining speed multiplier.
+ * The multiplier scales produced CKI (and animated fan/turbine speed) without changing
+ * any package's stored rate snapshot, so admin edits stay mathematically consistent.
+ */
+export function normalizeMiningSpeedMultiplier(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return new MiningDecimal(1);
+  const speed = new MiningDecimal(String(value));
+  if (!speed.isFinite() || speed.lt(MINING_SPEED_MIN) || speed.gt(MINING_SPEED_MAX)) {
+    throw new Error(`Mining speed must be between ${MINING_SPEED_MIN.toString()} and ${MINING_SPEED_MAX.toString()}`);
+  }
+  return speed;
+}
 
 export function canStartMiningAccrual(input: { globalEnabled: boolean; expectedDailyRewardCki: string | number | null | undefined }) {
   if (!input.globalEnabled || input.expectedDailyRewardCki == null) return false;
@@ -49,18 +68,21 @@ export function calculatePackageDailyRate(input: {
   expectedDailyRewardCki: string | number | null | undefined;
   baseThs: string | number;
   ckiPerThsPerDay: string | number;
+  /** Optional administrator-configured global mining speed applied to the resulting daily rate. */
+  speedMultiplier?: string | number;
 }) {
+  const speed = normalizeMiningSpeedMultiplier(input.speedMultiplier);
   if (input.calculationModel === "package_daily") {
     const rate = input.expectedDailyRewardCki == null ? new MiningDecimal(0) : new MiningDecimal(input.expectedDailyRewardCki);
     if (!rate.isFinite() || rate.isNegative()) throw new Error("Expected daily package reward must be non-negative");
-    return rate.toDecimalPlaces(PACKAGE_REWARD_SCALE, MiningDecimal.ROUND_DOWN).toFixed(PACKAGE_REWARD_SCALE);
+    return rate.times(speed).toDecimalPlaces(PACKAGE_REWARD_SCALE, MiningDecimal.ROUND_DOWN).toFixed(PACKAGE_REWARD_SCALE);
   }
   if (input.calculationModel === "hashrate_daily") {
     const hashrate = new MiningDecimal(input.baseThs);
     const production = new MiningDecimal(input.ckiPerThsPerDay);
     if (!hashrate.isFinite() || !hashrate.gt(0)) throw new Error("Package hash power must be greater than zero");
     if (!production.isFinite() || !production.gt(0)) throw new Error("CKI production per TH/s per day must be greater than zero");
-    return hashrate.times(production).toDecimalPlaces(PACKAGE_REWARD_SCALE, MiningDecimal.ROUND_DOWN).toFixed(PACKAGE_REWARD_SCALE);
+    return hashrate.times(production).times(speed).toDecimalPlaces(PACKAGE_REWARD_SCALE, MiningDecimal.ROUND_DOWN).toFixed(PACKAGE_REWARD_SCALE);
   }
   throw new Error("Unsupported Mining reward calculation model");
 }
@@ -101,7 +123,12 @@ export function calculatePackageDailyReward(segments: MiningPackageRewardSegment
     const boostMultiplier = segment.applyBoostMultiplier && base.gt(0) ? base.plus(boost).div(base) : new MiningDecimal(1);
     const boostDaily = segment.boostRewardCkiPerDay != null ? new MiningDecimal(segment.boostRewardCkiPerDay) : new MiningDecimal(0);
     if (!boostDaily.isFinite() || boostDaily.isNegative()) throw new Error("Boost daily CKI reward must be non-negative");
-    return sum.plus(daily.times(seconds).div(86_400).times(boostMultiplier)).plus(boostDaily.times(seconds).div(86_400));
+    // The global mining speed scales produced CKI only. It is applied here (not baked
+    // into the package snapshot) so that admin edits automatically re-scale every
+    // accrual while preserving the contract's original configured daily rate.
+    const speed = segment.speedMultiplier == null ? new MiningDecimal(1) : new MiningDecimal(segment.speedMultiplier);
+    if (!speed.isFinite() || speed.isNegative()) throw new Error("Mining speed multiplier must be non-negative");
+    return sum.plus(daily.times(seconds).div(86_400).times(boostMultiplier).times(speed)).plus(boostDaily.times(seconds).div(86_400).times(speed));
   }, new MiningDecimal(0));
   return total.toDecimalPlaces(PACKAGE_REWARD_SCALE, MiningDecimal.ROUND_DOWN).toFixed(PACKAGE_REWARD_SCALE);
 }

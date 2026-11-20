@@ -160,6 +160,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
   const activeBase = Number(data?.baseThs || 0);
   const activeHashPower = activeBase + (Number(boost?.activeBoost?.bonusThs) || 0);
   const globalHashPowerDisplay = dashboard.isLoading || dashboard.isError ? "—" : fmt(data?.globalHashPowerThs, 3);
+  const miningSpeedDisplay = dashboard.isLoading || dashboard.isError ? "—" : `${fmt(data?.miningSpeedMultiplier, 4)}×`;
   const currentHashRateDisplay = dashboard.isLoading || dashboard.isError ? "—" : fmt(activeHashPower, 3);
   const hasActiveHashPowerPackage = active.some((item: any) => item.status === "active");
   const activeBoostCapacity = active.reduce((sum: number, item: any) => sum + (Number.isFinite(Number(item.boostBonusThs)) ? Number(item.boostBonusThs) : 0), 0);
@@ -218,7 +219,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
       <section className="cm-top-grid" aria-label="Mining engine status and controls">
         <article className="cm-factory scene-playing">
           <div className="cm-factory-scene cm-core-canvas-host" aria-hidden="true">
-            <MiningCoreCanvas running={engineIsRunning && hasActiveHashPowerPackage} playing={true} boosted={Boolean(boost?.activeBoost)} hashPowerThs={activeHashPower} rewardPulseKey={Number(data?.todayTokens || 0)}/>
+            <MiningCoreCanvas running={engineIsRunning && hasActiveHashPowerPackage} playing={true} boosted={Boolean(boost?.activeBoost)} hashPowerThs={activeHashPower} rewardPulseKey={Number(data?.todayTokens || 0)} speedMultiplier={Number(data?.miningSpeedMultiplier || 1)}/>
           </div>
           <div className="cm-factory-shade"/>
           <div className="cm-factory-label"><span><Cpu size={16}/> MINING ENGINE</span><b className={hasActiveHashPowerPackage?"online":"offline"}><i aria-hidden="true"/>{hasActiveHashPowerPackage?"MINING STATUS ACTIVE":"MINING STATUS INACTIVE"}</b></div>
@@ -229,6 +230,9 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
               </div>
               <div className="cm-engine-hash-stat" title="Global Hash Power configured by operations and shown consistently to every customer.">
                 <span>GLOBAL HASH POWER</span><strong>{globalHashPowerDisplay} <small>TH/s</small></strong>
+              </div>
+              <div className="cm-engine-hash-stat" title="Operations mining-speed multiplier. It scales the animated fan/turbine speed and the CKI mined per eligible second.">
+                <span>MINING SPEED</span><strong>{miningSpeedDisplay}</strong>
               </div>
             </div>
             <button type="button" className="cm-fullscreen-control" onClick={toggleFullscreen} aria-label="Toggle mining engine fullscreen" title="Toggle mining engine fullscreen">⛶</button>
@@ -292,7 +296,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
               <div className="cm-package-art"><div className="cm-cube"><i/><i/><b>₵</b></div><span className="cm-package-glow"/></div>
               <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div>
               <div className="cm-package-price"><strong>{fmt(item.priceAmount,2)}</strong><small>{item.priceAsset}</small></div>
-              <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?"not set":`${item.durationMonths} months`}</span><span>{item.expectedDailyRewardCki==null?"Daily CKI rate not configured":`${fmt(item.expectedDailyRewardCki,8)} CKI/day · prorated by eligible seconds`}</span></div>
+              <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"not set"):`${item.durationMonths} months`}</span><span>{item.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)} CKI/day${Number(item.miningSpeedMultiplier||1)!==1?` · ${fmt(item.miningSpeedMultiplier,4)}× speed`:""}`}</span><span className="cm-package-projection">{item.projectedTermTokens?`Projected term ≈ ${fmt(item.projectedTermTokens,4)} ${tokenSymbol||"CKI"}${item.projectedTermUsd?` · ≈ $${fmt(item.projectedTermUsd,2)}`:""}`:"Term projection unavailable until a duration is set"}</span>{item.remainingPurchases!=null&&<span className="cm-package-limit">Purchases remaining: {item.remainingPurchases}{Number(item.maxPerCustomer)>0?` of ${item.maxPerCustomer}`:""}</span>}</div>
               {item.termsText&&<details className="cm-package-terms"><summary>Review package terms</summary><p>{item.termsText}</p></details>}
               <button type="button" className="cm-package-buy" disabled={!canPurchase||purchaseMutation.isPending} title={canPurchase?"Click to purchase now; the package's configured currency wallet will be charged immediately.":(unavailableReason||"Unavailable")} aria-label={`Buy ${item.name} now; the package's configured currency wallet will be charged immediately`} onClick={()=>{if(!canPurchase||purchaseMutation.isPending)return;setMessage("");purchaseMutation.mutate({packageVersionId:item.versionId,idempotencyKey:requestId()})}}>{buttonLabel}<ArrowRight size={13}/></button>
             </article>;
