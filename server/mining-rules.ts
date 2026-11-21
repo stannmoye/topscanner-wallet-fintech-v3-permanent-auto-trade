@@ -48,8 +48,12 @@ export function normalizeMiningSpeedMultiplier(value: string | number | null | u
   return speed;
 }
 
-export function canStartMiningAccrual(input: { globalEnabled: boolean; expectedDailyRewardCki: string | number | null | undefined }) {
-  if (!input.globalEnabled || input.expectedDailyRewardCki == null) return false;
+/**
+ * Reward processing is never gated by an operations pause switch: a package
+ * starts accruing as soon as it carries a positive configured daily CKI rate.
+ */
+export function canStartMiningAccrual(input: { expectedDailyRewardCki: string | number | null | undefined }) {
+  if (input.expectedDailyRewardCki == null) return false;
   const estimate = new Decimal(input.expectedDailyRewardCki);
   return estimate.isFinite() && estimate.gt(0);
 }

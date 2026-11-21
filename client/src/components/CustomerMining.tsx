@@ -82,7 +82,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
       setBuyPackage(null); setBuyQuote(null); setBuyTerms(false);
       void dashboard.refetch(); void mainWallet.refetch(); void history.refetch(); void packages.refetch();
       push(`${result.packageName} purchased · ${result.receiptReference}`);
-      setMessage(`${result.packageName} is active from ${dateText(result.startsAt)}. ${fmt(result.paymentAmount, 8)} ${result.paymentAsset} was debited from your selected wallet. ${result.rewardPostingReady ? "Eligible CKI rewards are processed automatically." : "Reward processing is currently paused or this package has no configured daily CKI rate."}`);
+      setMessage(`${result.packageName} is active from ${dateText(result.startsAt)}. ${fmt(result.paymentAmount, 8)} ${result.paymentAsset} was debited from your selected wallet. ${result.rewardPostingReady ? "Eligible CKI rewards are processed automatically." : "This package has no configured daily CKI rate, so no rewards accrue."}`);
     },
     onError: error => setMessage(error.message),
   });
@@ -295,7 +295,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
               <div className="cm-divider"/>
               <div className="cm-progress-metrics">
                 <div className="cm-progress-metric"><span className="cm-eyebrow">{tokenSymbol||"CKI"} REWARDS CREDITED TODAY</span><strong className="cm-token-amount">{fmt(data?.todayTokens,4)} <small>{tokenSymbol}</small></strong></div>
-                <div className="cm-progress-metric"><span className="cm-eyebrow">REWARD PROCESSING</span><strong className="cm-daily-amount">{data?.rewardPostingEnabled ? "Enabled" : "Paused"}</strong><small className="cm-simulation-note">{data?.rewardPostingEnabled ? "Configured CKI rates accrue by eligible time." : "Reward processing is paused by operations."}</small></div>
+                <div className="cm-progress-metric"><span className="cm-eyebrow">REWARD PROCESSING</span><strong className="cm-daily-amount">Enabled</strong><small className="cm-simulation-note">Configured CKI rates accrue by eligible time.</small></div>
               </div>
               <div className="cm-coin-display"><span className="cm-coin-glow"/><b><CoinMark iconUrl={tokenIconUrl}/></b><small>{tokenSymbol}</small></div>
               <div className="cm-mining-vault" aria-hidden="true"><span className="cm-vault-frame"/><span className="cm-vault-beam"/><span className="cm-vault-spark spark-a"/><span className="cm-vault-spark spark-b"/><span className="cm-vault-spark spark-c"/><div className="cm-vault-coin"><CoinMark iconUrl={tokenIconUrl}/></div><span className="cm-vault-platform"/><span className="cm-vault-orbit"/></div>

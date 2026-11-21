@@ -266,7 +266,7 @@ export async function listCustomerMiningPackages(userId: number) {
         termDays: termSeconds ? (termSeconds / 86_400).toFixed(2) : null,
         projectedTermTokens: projectedTermTokens ? projectedTermTokens.toDecimalPlaces(tokenScale, Decimal.ROUND_DOWN).toFixed(tokenScale) : null,
         projectedTermUsd: projectedTermUsd ? projectedTermUsd.toDecimalPlaces(2, Decimal.ROUND_DOWN).toFixed(2) : null,
-        miningEnabled: config.globalEnabled, purchaseAvailable,
+        miningEnabled: true, purchaseAvailable,
         purchaseUnavailableReason: purchaseAvailable ? null
           : limitReached ? "This package has reached its per-customer purchase limit"
           : !effective ? "This package version is not effective yet"
@@ -402,17 +402,15 @@ export async function confirmCustomerMiningPurchase(userId: number, input: { quo
     if (!checkpoint.lastAccruedAt) await conn.execute(`UPDATE mining_checkpoints SET lastAccruedAt=? WHERE userId=?`, [alignedStart, userId]);
     await conn.execute(`UPDATE v5_fx_quotes SET status='EXECUTED' WHERE id=?`, [input.quoteId]);
     const expectedDailyRewardCki = expectedDailyRewardCkiSnapshot;
-    const rewardPostingReady = canStartMiningAccrual({ globalEnabled: config.globalEnabled, expectedDailyRewardCki });
-    const result = { purchaseId, packageId: Number(quote.packageId), packageVersionId: Number(quote.packageVersionId), packageName: packageNameSnapshot, status: "active", startsAt: now.toISOString(), entitlementStartedAt: now.toISOString(), expiresAt: expiresAt?.toISOString() || null, rewardPostingEnabled: Boolean(config.globalEnabled), rewardPostingReady, paymentAsset, paymentAmount: quotedTotal.toString(), baseThs: String(quote.baseThs), expectedDailyRewardCki, calculationModel:rewardMethodSnapshot, ckiPerThsPerDay:ckiPerThsPerDaySnapshot, boostBonusThs: String(quote.boostBonusThs), receiptReference: ledger.referenceCode, mainWalletReference: canonicalReference, disclaimer: "The package entitlement starts at purchase. Its reward method and daily CKI amount are snapshotted at purchase and accrue by eligible time when reward processing is enabled; rewards are internal estimates, not verified pool output or a cash payout." };
+    const rewardPostingReady = canStartMiningAccrual({ expectedDailyRewardCki });
+    const result = { purchaseId, packageId: Number(quote.packageId), packageVersionId: Number(quote.packageVersionId), packageName: packageNameSnapshot, status: "active", startsAt: now.toISOString(), entitlementStartedAt: now.toISOString(), expiresAt: expiresAt?.toISOString() || null, rewardPostingEnabled: true, rewardPostingReady, paymentAsset, paymentAmount: quotedTotal.toString(), baseThs: String(quote.baseThs), expectedDailyRewardCki, calculationModel:rewardMethodSnapshot, ckiPerThsPerDay:ckiPerThsPerDaySnapshot, boostBonusThs: String(quote.boostBonusThs), receiptReference: ledger.referenceCode, mainWalletReference: canonicalReference, disclaimer: "The package entitlement starts at purchase. Its reward method and daily CKI amount are snapshotted at purchase and accrue by eligible time; rewards are internal estimates, not verified pool output or a cash payout." };
     await finishMiningIdempotency(conn, key, result);
-    await createMiningNotification(conn, userId, "Mining package entitlement activated", `${quote.name} is active from purchase time. The main-wallet charge and entitlement were recorded. Configured CKI rewards accrue automatically when operations has enabled reward processing. Receipt ${ledger.referenceCode}.`, `mining-purchase:${ledger.referenceCode}`);
+    await createMiningNotification(conn, userId, "Mining package entitlement activated", `${quote.name} is active from purchase time. The main-wallet charge and entitlement were recorded. Configured CKI rewards accrue automatically. Receipt ${ledger.referenceCode}.`, `mining-purchase:${ledger.referenceCode}`);
     return result;
   }));
   let initialAccrualIntervals = 0;
-  let immediateAccrualStatus: "triggered" | "worker_retry" | "blocked_pending_verified_settlement" | "estimate_not_configured";
-  if (!purchase.rewardPostingEnabled) {
-    immediateAccrualStatus = "blocked_pending_verified_settlement";
-  } else if (!purchase.rewardPostingReady) {
+  let immediateAccrualStatus: "triggered" | "worker_retry" | "estimate_not_configured";
+  if (!purchase.rewardPostingReady) {
     immediateAccrualStatus = "estimate_not_configured";
   } else {
     try {
@@ -550,7 +548,7 @@ export async function getCustomerMiningDashboard(userId: number) {
       ? Math.max(0, Math.min(intervalSeconds, Math.floor((now.getTime() - Math.max(intervalStart.getTime(), new Date(activeBoost.startedAt).getTime())) / 1000), Math.floor((new Date(activeBoost.endsAt).getTime() - intervalStart.getTime()) / 1000)))
       : 0;
     let pendingTokens = new Decimal(0);
-    if (config.globalEnabled && accountStatus === "active" && packages.length && intervalSeconds > 0) {
+    if (accountStatus === "active" && packages.length && intervalSeconds > 0) {
       const segments = packages.flatMap(row => {
         const ownsActiveBoost = Boolean(activeBoost) && Number(activeBoost.customerPackageId) === Number(row.purchaseId);
         const boostedSeconds = ownsActiveBoost ? boostIntervalSeconds : 0;
@@ -577,14 +575,14 @@ export async function getCustomerMiningDashboard(userId: number) {
       FROM mining_engine_activity WHERE userId=? AND intervalStart>=UTC_DATE()`, [userId]);
     let packageDailyReward = packages.reduce((sum,row) => row.expectedDailyRewardCkiSnapshot === null ? sum : sum.plus(decimal(row.expectedDailyRewardCkiSnapshot)), new Decimal(0)).times(speedMultiplier);
     if (decimal(config.dailyRewardCapTokens).gt(0)) packageDailyReward = Decimal.min(packageDailyReward, decimal(config.dailyRewardCapTokens));
-    const estimatedDailyTokens = config.globalEnabled && accountStatus === "active" && packageDailyReward.gt(0) ? packageDailyReward : null;
+    const estimatedDailyTokens = accountStatus === "active" && packageDailyReward.gt(0) ? packageDailyReward : null;
     const pref = preferenceRows[0] ? {
       enabled: Boolean(preferenceRows[0].enabled), targetDenomination: String(preferenceRows[0].targetDenomination),
       minimumThreshold: String(preferenceRows[0].minimumThreshold), version: Number(preferenceRows[0].version), updatedAt: new Date(preferenceRows[0].updatedAt).toISOString(),
     } : { enabled: false, targetDenomination: "USD", minimumThreshold: config.defaultAutoConversionThreshold, version: 0, updatedAt: null };
     const engineRunning = accountStatus === "active" && packages.length > 0;
     const status = accountStatus !== "active" ? "Account restricted" : engineRunning
-      ? !config.globalEnabled ? "Mining active — reward processing paused by operations" : estimatedDailyTokens ? "Mining active — reward processing enabled" : "Mining active — reward configuration pending"
+      ? estimatedDailyTokens ? "Mining active — reward processing enabled" : "Mining active — reward configuration pending"
       : "No active hash-power package";
     let usdPerTokenReference = decimal(1).div(config.tokenUnitsPerUsd);
     let tokenRateLive = false;
@@ -593,7 +591,7 @@ export async function getCustomerMiningDashboard(userId: number) {
     }
     return {
       serverTime: now.toISOString(), miningStatus: status, simulationOnly: true, networkTelemetry, payoutStatus: "Disabled — simulated balances are not withdrawable",
-      engineRunning, rewardPostingEnabled: config.globalEnabled,
+      engineRunning, rewardPostingEnabled: true,
       engineActivity: { intervalCount: Number(activityRows[0]?.intervalCount || 0), eligibleSeconds: String(activityRows[0]?.eligibleSeconds || "0"), lastRecordedAt: activityRows[0]?.lastRecordedAt ? new Date(activityRows[0].lastRecordedAt).toISOString() : null },
       baseThs: baseThs.toString(), boostThs: boostThs.toString(), activeThs: baseThs.plus(boostThs).toString(),
       calculationModel: config.calculationModel,
@@ -828,7 +826,6 @@ async function calculateInterval(conn: Db, userId: number, start: Date, end: Dat
         });
       }
     }
-    if (!config.globalEnabled) continue;
     const packageRewards = activePackages.map(row=>{
       const packageBase=decimal(row.baseThsSnapshot);
       const packageBoost=activeBoost&&Number(activeBoost.customerPackageId)===Number(row.id)?decimal(activeBoost.bonusThs):new Decimal(0);
@@ -859,7 +856,7 @@ async function calculateInterval(conn: Db, userId: number, start: Date, end: Dat
   }
   let tokenAmount = rawTokenAmount;
   const config = await loadMiningConfig(conn, end);
-  if (accountActive && config.globalEnabled && decimal(config.dailyRewardCapTokens).gt(0)) {
+  if (accountActive && decimal(config.dailyRewardCapTokens).gt(0)) {
     const [dailyRows] = await conn.query<any[]>(`SELECT COALESCE(SUM(tokenAmount),0) total FROM mining_reward_events WHERE userId=? AND intervalStart>=UTC_DATE()`, [userId]);
     const remaining = decimal(config.dailyRewardCapTokens).minus(decimal(dailyRows[0]?.total || 0));
     tokenAmount = Decimal.min(tokenAmount, Decimal.max(new Decimal(0), remaining));
@@ -976,10 +973,6 @@ async function processConversionJob(conn: Db, jobId: number) {
     const userId = Number(job.userId);
     await ensureMiningCheckpoint(conn,userId);
     const config = await loadMiningConfig(conn);
-    if (!config.globalEnabled) {
-      await conn.execute(`UPDATE mining_conversion_jobs SET status='retrying',attempts=attempts+1,lastError='Mining is paused',availableAt=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND) WHERE id=?`,[jobId]);
-      await conn.commit(); return "retrying";
-    }
     const balance = await readWallet(conn,userId,"CKI");
     const available = decimal(balance.available);
     const threshold = decimal(job.minimumThreshold);

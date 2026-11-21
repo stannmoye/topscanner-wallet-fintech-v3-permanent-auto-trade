@@ -1,3 +1,38 @@
+## 2026-11-21 — Remove the global "reward processing paused" switch completely
+
+Owner reported reward processing appeared permanently paused. The cause was the
+`globalEnabled` operations switch on `mining_economics_versions` (defaults to
+off), which gated CKI accrual, immediate accrual, conversions and the "reward
+processing paused" indicators independently of any package. It has been removed
+end-to-end so reward processing can no longer be stopped by it.
+
+- `server/mining-rules.ts`: `canStartMiningAccrual` no longer takes or honours a
+  pause flag — a package accrues as soon as it carries a positive configured
+  daily CKI rate. `server/mining-rules.test.ts` updated accordingly.
+- `server/mining.ts`: dropped every `config.globalEnabled` gate — customer
+  package `miningEnabled`, purchase `rewardPostingReady`/`rewardPostingEnabled`,
+  the reward-segment loop and daily-cap guard, the `processConversionJob`
+  "Mining is paused" retry, and the customer dashboard `rewardPostingEnabled`
+  (now constant `true`) and status string. `rewardPostingReady` now derives only
+  from `canStartMiningAccrual`.
+- `server/mining-admin.ts`: removed the publish/reactivate "pause simulated
+  reward processing" guards, the sandbox-grant "simulation must be enabled"
+  guard, and `globalEnabled` from `getMiningAdminEconomics`
+  (SELECT/`clean`/`current`), `getMiningAdminDashboard`, and the
+  `saveMiningEconomics` values. The INSERT keeps the dormant NOT NULL column but
+  always writes `1`; no code reads it.
+- `server/routers.ts`: removed `globalEnabled` from the `saveMiningEconomics`
+  input schema. `server/mining-store.ts`: removed `globalEnabled` from the
+  `MiningConfig` type and `loadMiningConfig`.
+- UI: `client/src/components/CustomerMining.tsx` and
+  `client/src/components/AdminMining.tsx` no longer show any pause state
+  ("REWARD PROCESSING: Enabled" is now a static readout; the admin toggle and
+  "enabled/paused" version-history/status text are gone).
+- Untouched (different features): per-customer entitlement pause
+  (`mining_customer_packages.adminPaused`) and `boostsEnabled`.
+- Verification: `pnpm check`, `pnpm test` (199 files / 1,580 passed, 36 skipped)
+  and `pnpm build` all pass.
+
 ## 2026-11-21 — Live fixes: customer Mining "paused" and admin Visitor Analytics
 
 Two live-site defects were reproduced on `https://stan.prod.page` and fixed.

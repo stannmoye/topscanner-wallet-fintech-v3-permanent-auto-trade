@@ -11,7 +11,7 @@ const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
 vi.mock("./marketProviders", () => ({ fetchCurrencyUsdRate: fetchMock }));
 
 const baseConfig = (overrides: Partial<MiningConfig> = {}): MiningConfig => ({
-  id: 1, version: 1, effectiveAt: new Date(), globalEnabled: true, packagePurchasesEnabled: true, boostsEnabled: true,
+  id: 1, version: 1, effectiveAt: new Date(), packagePurchasesEnabled: true, boostsEnabled: true,
   tokenName: "CoinKi", tokenSymbol: "CKI", tokenUnitsPerUsd: "4", rewardTokensPerThsHour: "1", defaultContractDurationMonths: 12,
   calculationModel: "package_daily", difficultyBaselineThs: "1", ckiPerThsPerDay: "1", swapFeeBps: 0, purchaseFeeBps: 0,
   minSwapTokens: "0", maxSwapTokens: "1000000", defaultAutoConversionThreshold: "0",

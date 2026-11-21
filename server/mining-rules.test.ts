@@ -149,14 +149,14 @@ describe("administrator global mining speed multiplier", () => {
 });
 
 describe("immediate mining accrual gate", () => {
-  it("does not run while verified reward posting is disabled", () => {
-    expect(canStartMiningAccrual({ globalEnabled: false, expectedDailyRewardCki: "1.25" })).toBe(false);
+  it("starts accrual without any operations pause switch", () => {
+    expect(canStartMiningAccrual({ expectedDailyRewardCki: "1.25" })).toBe(true);
   });
 
   it("requires a positive configured daily estimate before immediate accrual", () => {
-    expect(canStartMiningAccrual({ globalEnabled: true, expectedDailyRewardCki: null })).toBe(false);
-    expect(canStartMiningAccrual({ globalEnabled: true, expectedDailyRewardCki: "0" })).toBe(false);
-    expect(canStartMiningAccrual({ globalEnabled: true, expectedDailyRewardCki: "0.0001" })).toBe(true);
+    expect(canStartMiningAccrual({ expectedDailyRewardCki: null })).toBe(false);
+    expect(canStartMiningAccrual({ expectedDailyRewardCki: "0" })).toBe(false);
+    expect(canStartMiningAccrual({ expectedDailyRewardCki: "0.0001" })).toBe(true);
   });
 });
 
