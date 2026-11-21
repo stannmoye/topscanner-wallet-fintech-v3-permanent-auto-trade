@@ -8,6 +8,12 @@ import {
 import {
   getLitigationFundsCatalogue,
   stageLabel,
+  buildLitigationAnalytics,
+  LITIGATION_CASE_CLASSES,
+  caseClassLabel,
+  valueBandLabel,
+  partyKindLabel,
+  isInsolvency,
   type LitigationBundle,
   type LitigationCase,
   type LitigationMilestone,
@@ -133,10 +139,11 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
   });
   const utils = trpc.useUtils();
 
-  const [tab, setTab] = useState<"cases" | "bundles" | "portfolio" | "timeline">("cases");
+  const [tab, setTab] = useState<"cases" | "bundles" | "portfolio" | "timeline" | "analytics">("cases");
   const [query, setQuery] = useState("");
   const [country, setCountry] = useState("ALL");
   const [claimType, setClaimType] = useState("ALL");
+  const [caseClass, setCaseClass] = useState("ALL");
   const [merit, setMerit] = useState("ALL");
   const [stage, setStage] = useState("ALL");
   const [status, setStatus] = useState("ALL");
@@ -225,12 +232,13 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
     const rows = cases.filter((item) => {
       if (country !== "ALL" && item.countryCode !== country) return false;
       if (claimType !== "ALL" && item.claimType !== claimType) return false;
+      if (caseClass !== "ALL" && item.caseClass !== caseClass) return false;
       if (merit !== "ALL" && item.meritGrade !== merit) return false;
       if (stage !== "ALL" && item.stage !== stage) return false;
       if (status !== "ALL" && item.status !== status) return false;
       if (fundableOnly && !item.fundable) return false;
       if (watchlistOnly && !watchlist.includes(item.id)) return false;
-      if (normalized && !`${item.caseName} ${item.claimant} ${item.defendant} ${item.country} ${item.court} ${item.claimType} ${item.problem}`.toLowerCase().includes(normalized)) return false;
+      if (normalized && !`${item.caseName} ${item.claimant} ${item.defendant} ${item.country} ${item.court} ${item.claimType} ${item.causeOfAction ?? ""} ${item.caseNumber ?? ""} ${item.problem}`.toLowerCase().includes(normalized)) return false;
       return true;
     });
     const sorted = rows.slice();
@@ -241,23 +249,26 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
       if (sort === "damages") return (b.estimatedDamagesMinor || 0) - (a.estimatedDamagesMinor || 0);
       if (sort === "merit") return (a.meritGrade || "Z").localeCompare(b.meritGrade || "Z");
       if (sort === "country") return a.country.localeCompare(b.country) || a.caseName.localeCompare(b.caseName);
+      if (sort === "filed") return (b.filedAt || "").localeCompare(a.filedAt || "");
       return 0;
     });
     return sorted;
-  }, [cases, query, country, claimType, merit, stage, status, fundableOnly, watchlistOnly, watchlist, sort]);
+  }, [cases, query, country, claimType, caseClass, merit, stage, status, fundableOnly, watchlistOnly, watchlist, sort]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  useEffect(() => { setPage(1); }, [query, country, claimType, merit, stage, status, fundableOnly, watchlistOnly, pageSize, tab]);
+  useEffect(() => { setPage(1); }, [query, country, claimType, caseClass, merit, stage, status, fundableOnly, watchlistOnly, pageSize, tab]);
 
   const fundableCases = cases.filter((item) => item.fundable);
   const compareCases = cases.filter((item) => compareIds.includes(item.id));
-  const activeFilters = [country !== "ALL", claimType !== "ALL", merit !== "ALL", stage !== "ALL", status !== "ALL", fundableOnly, watchlistOnly].filter(Boolean).length;
+  const activeFilters = [country !== "ALL", claimType !== "ALL", caseClass !== "ALL", merit !== "ALL", stage !== "ALL", status !== "ALL", fundableOnly, watchlistOnly].filter(Boolean).length;
+  const analytics = useMemo(() => buildLitigationAnalytics(cases), [cases]);
+  const maxClassCount = Math.max(1, ...analytics.byClass.map((bucket) => bucket.count));
 
   const toggleWatch = (id: string) => setWatchlist((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   const toggleCompare = (id: string) => setCompareIds((current) => current.includes(id) ? current.filter((value) => value !== id) : current.length >= 3 ? current : [...current, id]);
-  const clearFilters = () => { setCountry("ALL"); setClaimType("ALL"); setMerit("ALL"); setStage("ALL"); setStatus("ALL"); setFundableOnly(false); setWatchlistOnly(false); setQuery(""); };
+  const clearFilters = () => { setCountry("ALL"); setClaimType("ALL"); setCaseClass("ALL"); setMerit("ALL"); setStage("ALL"); setStatus("ALL"); setFundableOnly(false); setWatchlistOnly(false); setQuery(""); };
 
   const openPurchase = (nextTarget: PurchaseTarget, suggested: number) => {
     setTarget(nextTarget);
@@ -294,12 +305,15 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
 
   const exportCatalogue = () => downloadCsv(
     `litigation-funds-${new Date().toISOString().slice(0, 10)}.csv`,
-    ["Case", "Claimant", "Defendant", "Claim type", "Jurisdiction", "Country code", "Court", "Merit", "Stage", "Status", "Estimated damages (minor)", "Capital at risk (minor)", "Expected multiple (bps)", "Expected duration (months)", "Funding target (minor)", "Committed (minor)", "Funded bps", "Remaining days", "Outcome", "Source URL", "As of"],
+    ["Case", "Claimant", "Claimant kind", "Defendant", "Defendant kind", "Case class", "Claim type", "Cause of action", "Case / docket number", "Filed date", "Jurisdiction", "Country code", "Court", "Court detail", "Claim-value band", "Merit", "Stage", "Status", "Estimated damages (minor)", "Capital at risk (minor)", "Expected multiple (bps)", "Expected duration (months)", "Funding target (minor)", "Committed (minor)", "Funded bps", "Remaining days", "Listed parties", "Outcome", "Source URL", "As of"],
     filtered.map((item) => [
-      item.caseName, item.claimant, item.defendant, item.claimType, item.jurisdiction, item.countryCode, item.court,
+      item.caseName, item.claimant, partyKindLabel(item.claimantKind), item.defendant, partyKindLabel(item.defendantKind),
+      caseClassLabel(item.caseClass), item.claimType, item.causeOfAction ?? "", item.caseNumber ?? "", item.filedAt ?? "",
+      item.jurisdiction, item.countryCode, item.court, item.courtDetail ?? "", item.claimValueBand ? valueBandLabel(item.claimValueBand) : "",
       item.meritGrade ?? "", stageLabel(item.stage), STATUS_LABELS[item.status] || item.status,
       item.estimatedDamagesMinor ?? "", item.capitalAtRiskMinor ?? "", item.expectedMultipleBps ?? "", item.expectedDurationMonths ?? "",
       item.fundingAskMinor ?? "", item.committedMinor, item.fundedBps, item.remainingDays ?? "",
+      item.listedParties.map((party) => `${party.role}:${party.listedName}${party.ticker ? ` (${party.ticker}${party.exchange ? `, ${party.exchange}` : ""})` : ""}`).join(" "),
       item.fundable ? (item.scenarios.map((scenario) => `${scenario.outcome}:${fmtPercent(scenario.probabilityBps)}`).join(" ")) : "Not modelled",
       item.sourceUrl ?? "", item.asOf,
     ]),
@@ -371,6 +385,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
       <button type="button" className={`lf-tab${tab === "bundles" ? " is-active" : ""}`} onClick={() => setTab("bundles")}>Bundles <span className="lf-tab-count">{bundles.length}</span></button>
       <button type="button" className={`lf-tab${tab === "portfolio" ? " is-active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio <span className="lf-tab-count">{positions.length}</span></button>
       <button type="button" className={`lf-tab${tab === "timeline" ? " is-active" : ""}`} onClick={() => setTab("timeline")}>Case timeline <span className="lf-tab-count">{timeline.length}</span></button>
+      <button type="button" className={`lf-tab${tab === "analytics" ? " is-active" : ""}`} onClick={() => setTab("analytics")}>Litigation analytics</button>
     </nav>
 
     {tab === "cases" && <section className="lf-section" aria-label="Case catalogue">
@@ -378,11 +393,12 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
         <div className="lf-filters">
           <div className="lf-filter"><label>Search</label><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Case, party, court or claim" /></div>
           <div className="lf-filter"><label>Country</label><select value={country} onChange={(e) => setCountry(e.target.value)}><option value="ALL">All countries</option>{countryOptions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></div>
+          <div className="lf-filter"><label>Case class</label><select value={caseClass} onChange={(e) => setCaseClass(e.target.value)}><option value="ALL">All case classes</option>{LITIGATION_CASE_CLASSES.map((value) => <option key={value} value={value}>{caseClassLabel(value)}</option>)}</select></div>
           <div className="lf-filter"><label>Claim type</label><select value={claimType} onChange={(e) => setClaimType(e.target.value)}><option value="ALL">All claim types</option>{claimTypeOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></div>
           <div className="lf-filter"><label>Merit grade</label><select value={merit} onChange={(e) => setMerit(e.target.value)}><option value="ALL">All grades</option>{MERIT_OPTIONS.map((grade) => <option key={grade} value={grade}>Grade {grade}</option>)}</select></div>
           <div className="lf-filter"><label>Stage</label><select value={stage} onChange={(e) => setStage(e.target.value)}><option value="ALL">All stages</option>{STAGE_OPTIONS.map((value) => <option key={value} value={value}>{stageLabel(value as any)}</option>)}</select></div>
           <div className="lf-filter"><label>Status</label><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="ALL">All statuses</option>{STATUS_ORDER.map((value) => <option key={value} value={value}>{STATUS_LABELS[value]}</option>)}</select></div>
-          <div className="lf-filter"><label>Sort</label><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="fundable">Open for funding first</option><option value="deadline">Closing soonest</option><option value="merit">Highest merit</option><option value="damages">Largest claim</option><option value="name">Case name A–Z</option><option value="country">Country A–Z</option></select></div>
+          <div className="lf-filter"><label>Sort</label><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="fundable">Open for funding first</option><option value="deadline">Closing soonest</option><option value="filed">Most recently filed</option><option value="merit">Highest merit</option><option value="damages">Largest claim</option><option value="name">Case name A–Z</option><option value="country">Country A–Z</option></select></div>
         </div>
         <div className="lf-toolbar-actions">
           <label className="cd-checkbox"><input type="checkbox" checked={fundableOnly} onChange={(e) => setFundableOnly(e.target.checked)} /> Open for funding</label>
@@ -406,8 +422,8 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
             <div className="lf-card-head">
               <div>
                 <div className="lf-card-title">{item.flag} {item.caseName}</div>
-                <div className="lf-card-meta"><span>{item.claimant} <em>v</em> {item.defendant}</span></div>
-                <div className="lf-card-meta"><span>{item.jurisdiction} · {item.court}</span></div>
+                <div className="lf-card-meta"><span>{item.claimant} <em className="lf-mono">{partyKindLabel(item.claimantKind)}</em> <em>v</em> {item.defendant} <em className="lf-mono">{partyKindLabel(item.defendantKind)}</em></span></div>
+                <div className="lf-card-meta"><span>{item.jurisdiction} · {item.court}{item.courtDetail ? ` · ${item.courtDetail}` : ""}</span></div>
               </div>
               <div className="lf-card-actions">
                 <button type="button" className={`lf-star${watched ? " is-on" : ""}`} onClick={() => toggleWatch(item.id)} aria-pressed={watched} title={watched ? "Remove from watchlist" : "Add to watchlist"}><Star size={15}/></button>
@@ -417,9 +433,17 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
 
             <div className="lf-badges">
               {item.meritGrade && <span className={meritClass(item.meritGrade)}>Merit {item.meritGrade}</span>}
+              <span className={`lf-badge lf-badge--class${isInsolvency(item) ? " lf-badge--insolvency" : ""}`}>{caseClassLabel(item.caseClass)}</span>
               <span className="lf-badge lf-badge--stage">{stageLabel(item.stage)}</span>
               <span className={statusClass(item.status)}>{STATUS_LABELS[item.status] || item.status}</span>
               <span className="lf-badge">{item.claimType}</span>
+              {item.claimValueBand && <span className="lf-badge">{valueBandLabel(item.claimValueBand)} claim</span>}
+            </div>
+
+            <div className="lf-card-meta">
+              {item.causeOfAction && <span><Scale size={11}/> {item.causeOfAction}</span>}
+              {item.caseNumber && <span className="lf-mono">No. {item.caseNumber}</span>}
+              {item.filedAt && <span>Filed {formatDate(item.filedAt)}</span>}
             </div>
 
             <div className="lf-card-meta">
@@ -427,6 +451,18 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
               <span>Capital at risk {item.capitalAtRiskMinor ? fmtMinor(item.capitalAtRiskMinor) : "—"}</span>
               <span>Expected {fmtMultiple(item.expectedMultipleBps)}{item.expectedDurationMonths ? ` · ${item.expectedDurationMonths}mo` : ""}</span>
             </div>
+
+            {item.listedParties.length > 0 && <div className="lf-listed-row">
+              <span className="eyebrow">Listed parties</span>
+              {item.listedParties.map((party) => <span className="lf-listed-chip" key={`${party.role}-${party.partyName}`} title={`${party.role === "CLAIMANT" ? "Claimant" : "Defendant"} · listed as ${party.listedName}`}>
+                <TrendingUp size={11}/> {party.ticker ? `${party.ticker} · ` : ""}{party.listedName}{party.exchange ? ` (${party.exchange})` : ""} <em className="lf-mono">{party.role === "CLAIMANT" ? "claimant" : "defendant"}</em>
+              </span>)}
+            </div>}
+
+            {isInsolvency(item) && <div className="lf-notice lf-insolvency-note">
+              <Layers size={14}/>
+              <div><strong>Insolvency record.</strong> This is an estate, administration or winding-up — a company that is <em>running bankrupt</em>, not a company suing or defending a claim. It is shown here clearly labelled so the two are never confused.</div>
+            </div>}
 
             {item.fundable ? <>
               <div className="lf-progress">
@@ -555,6 +591,87 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
       </div>
     </section>}
 
+    {tab === "analytics" && <section className="lf-section" aria-label="Litigation analytics">
+      <div className="lf-section-head"><div><span className="eyebrow">Litigation analytics</span><h2>What is on the desk</h2><p>Desk-level aggregates computed only from the cited records above — how many are companies litigating a claim, how many are insolvency estates, and where the activity concentrates. No figure is inferred beyond the records themselves.</p></div></div>
+      {!cases.length ? <div className="lf-empty"><CircleHelp size={16}/> No case records loaded yet — analytics appear once the cited records arrive.</div> : <div className="lf-analytics">
+        <div className="lf-analytics-card">
+          <div className="lf-analytics-split">
+            <div className="lf-analytics-stat"><b>{analytics.totalCases}</b><span>Records on the desk</span></div>
+            <div className="lf-analytics-stat"><b>{analytics.litigationCases}</b><span>Companies in court (litigation)</span></div>
+            <div className="lf-analytics-stat"><b>{analytics.insolvencyCases}</b><span>Insolvency estates</span></div>
+            <div className="lf-analytics-stat"><b>{fmtPercent(analytics.insolvencyBps)}</b><span>Insolvency share</span></div>
+            <div className="lf-analytics-stat"><b>{analytics.listedPartyCount}</b><span>Listed-company parties</span></div>
+          </div>
+          <div>
+            <span className="eyebrow">Litigation vs insolvency</span>
+            <div className="lf-bar-track" style={{ marginTop: 6 }}>
+              <div className="lf-bar-fill lf-bar-fill--insolvency" style={{ width: `${analytics.totalCases ? Math.round((analytics.insolvencyCases * 100) / analytics.totalCases) : 0}%` }} />
+            </div>
+            <small>{analytics.litigationCases} litigating · {analytics.insolvencyCases} insolvent</small>
+          </div>
+        </div>
+
+        <div className="lf-analytics-grid">
+          <div className="lf-analytics-card">
+            <h3>By case class</h3>
+            {analytics.byClass.map((bucket) => <div className="lf-bar-row" key={bucket.key}>
+              <span>{bucket.label}</span>
+              <div className="lf-bar-track"><div className={`lf-bar-fill${bucket.key === "INSOLVENCY" ? " lf-bar-fill--insolvency" : ""}`} style={{ width: `${Math.round((bucket.count * 100) / maxClassCount)}%` }} /></div>
+              <b className="lf-mono">{bucket.count}</b>
+            </div>)}
+          </div>
+
+          <div className="lf-analytics-card">
+            <h3>By jurisdiction</h3>
+            {!analytics.byJurisdiction.length && <p className="lf-card-meta">No jurisdictions published.</p>}
+            {analytics.byJurisdiction.map((bucket) => <div className="lf-bar-row" key={bucket.key}>
+              <span>{bucket.label}</span>
+              <div className="lf-bar-track"><div className="lf-bar-fill" style={{ width: `${Math.round((bucket.count * 100) / Math.max(1, analytics.byJurisdiction[0].count))}%` }} /></div>
+              <b className="lf-mono">{bucket.count}</b>
+            </div>)}
+          </div>
+
+          <div className="lf-analytics-card">
+            <h3>Claim-value bands</h3>
+            {!analytics.byValueBand.length && <p className="lf-card-meta">No published claim amounts to band.</p>}
+            {analytics.byValueBand.map((bucket) => <div className="lf-bar-row" key={bucket.key}>
+              <span>{bucket.label}</span>
+              <div className="lf-bar-track"><div className="lf-bar-fill" style={{ width: `${Math.round((bucket.count * 100) / Math.max(1, Math.max(...analytics.byValueBand.map((entry) => entry.count))))}%` }} /></div>
+              <b className="lf-mono">{bucket.count}</b>
+            </div>)}
+          </div>
+
+          <div className="lf-analytics-card">
+            <h3>Filings by month</h3>
+            {!analytics.byFilingMonth.length && <p className="lf-card-meta">No filed dates published.</p>}
+            {analytics.byFilingMonth.map((bucket) => <div className="lf-bar-row" key={bucket.key}>
+              <span className="lf-mono">{bucket.label}</span>
+              <div className="lf-bar-track"><div className="lf-bar-fill" style={{ width: `${Math.round((bucket.count * 100) / Math.max(1, analytics.byFilingMonth[0].count))}%` }} /></div>
+              <b className="lf-mono">{bucket.count}</b>
+            </div>)}
+          </div>
+        </div>
+
+        <div className="lf-analytics-card">
+          <h3>Most active companies</h3>
+          {!analytics.mostActiveCompanies.length && <p className="lf-card-meta">No company parties identified from the records.</p>}
+          {analytics.mostActiveCompanies.length > 0 && <div style={{ overflowX: "auto" }}>
+            <table className="lf-table">
+              <thead><tr><th>Company</th><th>Role</th><th>Cited records</th><th>Listing</th></tr></thead>
+              <tbody>
+                {analytics.mostActiveCompanies.map((company) => <tr key={company.name}>
+                  <td>{company.name}</td>
+                  <td>{company.role === "MIXED" ? "Claimant & defendant" : company.role === "CLAIMANT" ? "Claimant" : "Defendant"}</td>
+                  <td className="lf-mono">{company.count}</td>
+                  <td>{company.ticker ? <span className="lf-badge lf-badge--listed">{company.ticker}{company.exchange ? ` · ${company.exchange}` : ""}</span> : <span className="lf-card-meta">Not publicly listed</span>}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>}
+        </div>
+      </div>}
+    </section>}
+
     <div id="lf-education" className="lf-notice">
       <ShieldCheck size={16}/>
       <div>
@@ -569,9 +686,17 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
           <table className="lf-table">
             <thead><tr><th>Field</th>{compareCases.map((item) => <th key={item.id}>{item.flag} {item.caseName}</th>)}</tr></thead>
             <tbody>
+              <tr><td>Case class</td>{compareCases.map((item) => <td key={item.id}>{caseClassLabel(item.caseClass)}{isInsolvency(item) ? " (insolvency)" : ""}</td>)}</tr>
               <tr><td>Claim type</td>{compareCases.map((item) => <td key={item.id}>{item.claimType}</td>)}</tr>
+              <tr><td>Claimant (kind)</td>{compareCases.map((item) => <td key={item.id}>{item.claimant} · {partyKindLabel(item.claimantKind)}</td>)}</tr>
+              <tr><td>Defendant (kind)</td>{compareCases.map((item) => <td key={item.id}>{item.defendant} · {partyKindLabel(item.defendantKind)}</td>)}</tr>
+              <tr><td>Cause of action</td>{compareCases.map((item) => <td key={item.id}>{item.causeOfAction || "—"}</td>)}</tr>
+              <tr><td>Case / docket no.</td>{compareCases.map((item) => <td key={item.id} className="lf-mono">{item.caseNumber || "—"}</td>)}</tr>
+              <tr><td>Filed</td>{compareCases.map((item) => <td key={item.id}>{item.filedAt ? formatDate(item.filedAt) : "—"}</td>)}</tr>
               <tr><td>Jurisdiction</td>{compareCases.map((item) => <td key={item.id}>{item.jurisdiction}</td>)}</tr>
-              <tr><td>Court</td>{compareCases.map((item) => <td key={item.id}>{item.court}</td>)}</tr>
+              <tr><td>Court</td>{compareCases.map((item) => <td key={item.id}>{item.court}{item.courtDetail ? ` · ${item.courtDetail}` : ""}</td>)}</tr>
+              <tr><td>Claim-value band</td>{compareCases.map((item) => <td key={item.id}>{item.claimValueBand ? valueBandLabel(item.claimValueBand) : "—"}</td>)}</tr>
+              <tr><td>Listed parties</td>{compareCases.map((item) => <td key={item.id}>{item.listedParties.length ? item.listedParties.map((party) => `${party.ticker || party.listedName} (${party.role.toLowerCase()})`).join(", ") : "—"}</td>)}</tr>
               <tr><td>Merit</td>{compareCases.map((item) => <td key={item.id}>{item.meritGrade || "—"}</td>)}</tr>
               <tr><td>Stage</td>{compareCases.map((item) => <td key={item.id}>{stageLabel(item.stage)}</td>)}</tr>
               <tr><td>Status</td>{compareCases.map((item) => <td key={item.id}>{STATUS_LABELS[item.status] || item.status}</td>)}</tr>

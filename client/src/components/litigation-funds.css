@@ -232,6 +232,36 @@
 .lf-badge--risk-balanced { border-color: color-mix(in srgb, var(--lf-settle) 60%, transparent); color: var(--lf-settle); }
 .lf-badge--risk-speculative { border-color: color-mix(in srgb, var(--lf-gold) 60%, transparent); color: var(--lf-gold); }
 .lf-badge--risk-high_risk { border-color: color-mix(in srgb, var(--lf-lose) 60%, transparent); color: var(--lf-lose); }
+.lf-badge--class { border-color: color-mix(in srgb, var(--lf-settle) 55%, transparent); color: var(--lf-settle); }
+.lf-badge--insolvency { border-color: color-mix(in srgb, var(--lf-lose) 65%, transparent); color: var(--lf-lose); background: color-mix(in srgb, var(--lf-lose) 12%, transparent); }
+.lf-badge--listed { border-style: dashed; border-color: color-mix(in srgb, var(--lf-win) 60%, transparent); color: var(--lf-win); }
+.lf-insolvency-note { border-color: color-mix(in srgb, var(--lf-lose) 45%, var(--lf-line)); background: color-mix(in srgb, var(--lf-lose) 8%, transparent); font-size: 0.76rem; }
+
+/* ---- Listed-company litigant chips (company-litigant intelligence) ---- */
+.lf-listed-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.74rem; color: var(--arb-color-text-muted); }
+.lf-listed-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700; font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  border: 1px dashed color-mix(in srgb, var(--lf-win) 60%, transparent); color: var(--lf-win);
+  background: color-mix(in srgb, var(--lf-win) 8%, transparent);
+}
+
+/* --------------------------- Analytics panel --------------------------- */
+.lf-analytics { display: grid; gap: 16px; }
+.lf-analytics-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.lf-analytics-card {
+  border: 1px solid var(--lf-line); border-radius: var(--lf-radius); padding: 16px;
+  background: var(--lf-card); display: grid; gap: 10px;
+}
+.lf-analytics-card h3 { margin: 0; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arb-color-text-muted); }
+.lf-bar-row { display: grid; grid-template-columns: minmax(96px, 40%) 1fr auto; gap: 8px; align-items: center; font-size: 0.78rem; }
+.lf-bar-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--lf-line) 70%, transparent); overflow: hidden; }
+.lf-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--lf-settle), var(--lf-gold)); }
+.lf-bar-fill--insolvency { background: linear-gradient(90deg, var(--lf-lose), #f97316); }
+.lf-analytics-split { display: flex; gap: 12px; flex-wrap: wrap; }
+.lf-analytics-stat { display: grid; gap: 2px; }
+.lf-analytics-stat b { font-size: 1.5rem; }
+.lf-analytics-stat span { font-size: 0.72rem; color: var(--arb-color-text-muted); }
 
 .lf-progress { display: grid; gap: 5px; }
 .lf-progress-label { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--arb-color-text-muted); }

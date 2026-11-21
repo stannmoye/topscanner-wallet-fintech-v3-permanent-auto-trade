@@ -6,11 +6,16 @@ import {
   expectedValueMinor,
   remainingDaysFor,
   defaultMilestones,
+  classifyCaseClass,
+  classifyPartyKind,
+  claimValueBandFromMinor,
   LITIGATION_STAGES,
   LITIGATION_MERIT_GRADES,
   LITIGATION_RISK_GRADES,
   LITIGATION_DOSSIER_STATUSES,
   LITIGATION_OUTCOMES,
+  LITIGATION_CASE_CLASSES,
+  LITIGATION_VALUE_BANDS,
   type LitigationCase,
   type LitigationBundle,
   type LitigationMeritGrade,
@@ -20,6 +25,8 @@ import {
   type LitigationOutcome,
   type LitigationMilestone,
   type LitigationScenario,
+  type LitigationCaseClass,
+  type LitigationValueBand,
 } from "@shared/litigation-funds-catalogue";
 
 type Db = mysql.PoolConnection;
@@ -60,6 +67,12 @@ const CREATE_DOSSIERS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS litigation_fund_do
   fundingDeadline VARCHAR(24) NULL,
   stage VARCHAR(24) NOT NULL,
   dossierStatus VARCHAR(24) NOT NULL DEFAULT 'FUNDING',
+  caseClass VARCHAR(32) NULL,
+  causeOfAction VARCHAR(160) NULL,
+  caseNumber VARCHAR(80) NULL,
+  filedAt VARCHAR(24) NULL,
+  courtDetail VARCHAR(160) NULL,
+  claimValueBand VARCHAR(16) NULL,
   problem TEXT NOT NULL,
   highlightsJson TEXT NULL,
   scenariosJson TEXT NULL,
@@ -110,6 +123,20 @@ const CREATE_BUNDLES_TABLE_SQL = `CREATE TABLE IF NOT EXISTS litigation_fund_bun
 const DEFAULT_SOURCE = "Arbitrade litigation desk — administrator published";
 const MAX_MINOR = 100_000_000_000; // 1,000,000,000 in the settlement currency
 
+/**
+ * Case-classification columns added after the first release. `ADD COLUMN IF NOT
+ * EXISTS` is not portable across MySQL/MariaDB versions, so each statement is
+ * attempted and tolerated (the column already existing is the expected outcome).
+ */
+const ADD_DOSSIERS_COLUMNS_SQL = [
+  "ALTER TABLE litigation_fund_dossiers ADD COLUMN caseClass VARCHAR(32) NULL",
+  "ALTER TABLE litigation_fund_dossiers ADD COLUMN causeOfAction VARCHAR(160) NULL",
+  "ALTER TABLE litigation_fund_dossiers ADD COLUMN caseNumber VARCHAR(80) NULL",
+  "ALTER TABLE litigation_fund_dossiers ADD COLUMN filedAt VARCHAR(24) NULL",
+  "ALTER TABLE litigation_fund_dossiers ADD COLUMN courtDetail VARCHAR(160) NULL",
+  "ALTER TABLE litigation_fund_dossiers ADD COLUMN claimValueBand VARCHAR(16) NULL",
+];
+
 export type AdminLitigationDossierRow = {
   id: number;
   dossierId: string;
@@ -133,6 +160,13 @@ export type AdminLitigationDossierRow = {
   fundingDeadline: string | null;
   stage: LitigationStage;
   status: LitigationDossierStatus;
+  /** Administrator-set classification: what kind of dispute this is. */
+  caseClass: LitigationCaseClass;
+  causeOfAction: string | null;
+  caseNumber: string | null;
+  filedAt: string | null;
+  courtDetail: string | null;
+  claimValueBand: LitigationValueBand | null;
   problem: string;
   highlights: string[];
   scenarios: LitigationScenario[];
@@ -203,6 +237,14 @@ export type AdminLitigationDossierInput = {
   fundingDeadline?: string | null;
   stage: LitigationStage;
   status: LitigationDossierStatus;
+  /** What kind of dispute this is; drives the customer case-class filter and badge. */
+  caseClass?: LitigationCaseClass | null;
+  causeOfAction?: string | null;
+  caseNumber?: string | null;
+  filedAt?: string | null;
+  courtDetail?: string | null;
+  /** Coarse claim-value band; derived from estimated damages when omitted. */
+  claimValueBand?: LitigationValueBand | null;
   problem: string;
   highlights?: string[] | null;
   scenarios?: AdminLitigationScenarioInput[] | null;
@@ -249,6 +291,9 @@ export function ensureLitigationFundDossierSchema(): Promise<void> {
       await withConnection(async (conn) => {
         await conn.query(CREATE_DOSSIERS_TABLE_SQL);
         await conn.query(CREATE_BUNDLES_TABLE_SQL);
+        for (const statement of ADD_DOSSIERS_COLUMNS_SQL) {
+          try { await conn.query(statement); } catch { /* column already exists */ }
+        }
       });
     } catch (error) {
       schemaReady = null;
@@ -364,6 +409,23 @@ function normalizeDossierInput(input: AdminLitigationDossierInput) {
   const fundingDeadline = text(input.fundingDeadline, 24) || null;
   if (fundingDeadline && !/^\d{4}-\d{2}-\d{2}$/.test(fundingDeadline)) throw new Error("Enter the funding deadline as YYYY-MM-DD");
 
+  // Classification: an administrator may set the case class explicitly, or it is
+  // inferred best-effort from the claim wording. Insolvency is one class among
+  // many — a dossier that is a bankruptcy estate must say so.
+  const rawCaseClass = input.caseClass === null || input.caseClass === undefined || (input.caseClass as string) === "" ? null : input.caseClass;
+  if (rawCaseClass !== null && !(LITIGATION_CASE_CLASSES as readonly string[]).includes(rawCaseClass)) throw new Error("Select a valid case class");
+  const caseClass: LitigationCaseClass = rawCaseClass ?? classifyCaseClass({ claimType, caseName, detail: problem });
+
+  const causeOfAction = text(input.causeOfAction, 160) || null;
+  const caseNumber = text(input.caseNumber, 80) || null;
+  const courtDetail = text(input.courtDetail, 160) || null;
+  const filedAt = text(input.filedAt, 24) || null;
+  if (filedAt && !/^\d{4}-\d{2}-\d{2}$/.test(filedAt)) throw new Error("Enter the filing date as YYYY-MM-DD");
+
+  const rawBand = input.claimValueBand === null || input.claimValueBand === undefined || (input.claimValueBand as string) === "" ? null : input.claimValueBand;
+  if (rawBand !== null && !(LITIGATION_VALUE_BANDS as readonly string[]).includes(rawBand)) throw new Error("Select a valid claim-value band");
+  const claimValueBand: LitigationValueBand | null = rawBand ?? claimValueBandFromMinor(estimatedDamagesMinor);
+
   const highlights = (Array.isArray(input.highlights) ? input.highlights : [])
     .map((item) => text(item, 160)).filter(Boolean).slice(0, 8);
 
@@ -429,6 +491,7 @@ function normalizeDossierInput(input: AdminLitigationDossierInput) {
     expectedMultipleBps: rawMultiple, expectedDurationMonths: rawDuration,
     fundingAskMinor, fundingDeadline,
     stage: input.stage, status: input.status,
+    caseClass, causeOfAction, caseNumber, filedAt, courtDetail, claimValueBand,
     problem,
     highlights,
     scenarios,
@@ -517,6 +580,16 @@ function rowToDossier(row: any): AdminLitigationDossierRow {
     fundingDeadline: row.fundingDeadline ? String(row.fundingDeadline) : null,
     stage,
     status,
+    caseClass: (LITIGATION_CASE_CLASSES as readonly string[]).includes(String(row.caseClass))
+      ? (row.caseClass as LitigationCaseClass)
+      : classifyCaseClass({ claimType: String(row.claimType || ""), caseName: String(row.caseName || ""), detail: String(row.problem || "") }),
+    causeOfAction: row.causeOfAction ? String(row.causeOfAction) : null,
+    caseNumber: row.caseNumber ? String(row.caseNumber) : null,
+    filedAt: row.filedAt ? String(row.filedAt) : null,
+    courtDetail: row.courtDetail ? String(row.courtDetail) : null,
+    claimValueBand: (LITIGATION_VALUE_BANDS as readonly string[]).includes(String(row.claimValueBand))
+      ? (row.claimValueBand as LitigationValueBand)
+      : null,
     problem: String(row.problem || ""),
     highlights: parseStringArray(row.highlightsJson, 160),
     scenarios: parseScenarios(row.scenariosJson),
@@ -587,6 +660,15 @@ export function dossierRowToCase(row: AdminLitigationDossierRow): LitigationCase
     flag: row.flag,
     court: row.court,
     counsel: row.counsel,
+    caseClass: row.caseClass,
+    claimantKind: classifyPartyKind(row.claimant),
+    defendantKind: classifyPartyKind(row.defendant),
+    causeOfAction: row.causeOfAction,
+    caseNumber: row.caseNumber,
+    filedAt: row.filedAt,
+    courtDetail: row.courtDetail,
+    claimValueBand: row.claimValueBand ?? claimValueBandFromMinor(row.estimatedDamagesMinor),
+    listedParties: [],
     meritGrade: row.meritGrade,
     estimatedDamagesMinor: row.estimatedDamagesMinor,
     capitalAtRiskMinor: row.capitalAtRiskMinor,
@@ -698,13 +780,14 @@ export async function findEnabledAdminLitigationDossier(dossierId: string): Prom
 }
 
 const DOSSIER_INSERT_COLUMNS =
-  "dossierId,caseName,claimant,defendant,claimType,countryCode,country,jurisdiction,court,counsel,meritGrade,riskGrade,estimatedDamagesMinor,capitalAtRiskMinor,expectedMultipleBps,expectedDurationMonths,fundingAskMinor,fundingDeadline,stage,dossierStatus,problem,highlightsJson,scenariosJson,milestonesJson,bundleId,source,sourceUrl,asOf,enabled,createdByUserId,updatedByUserId";
+  "dossierId,caseName,claimant,defendant,claimType,countryCode,country,jurisdiction,court,counsel,caseClass,causeOfAction,caseNumber,filedAt,courtDetail,claimValueBand,meritGrade,riskGrade,estimatedDamagesMinor,capitalAtRiskMinor,expectedMultipleBps,expectedDurationMonths,fundingAskMinor,fundingDeadline,stage,dossierStatus,problem,highlightsJson,scenariosJson,milestonesJson,bundleId,source,sourceUrl,asOf,enabled,createdByUserId,updatedByUserId";
 
 function dossierInsertValues(normalized: ReturnType<typeof normalizeDossierInput>, actor: number) {
   const jurisdiction = normalized.country.name;
   return [
     normalized.caseName, normalized.claimant, normalized.defendant, normalized.claimType,
     normalized.country.code, normalized.country.name, jurisdiction, normalized.court, normalized.counsel,
+    normalized.caseClass, normalized.causeOfAction, normalized.caseNumber, normalized.filedAt, normalized.courtDetail, normalized.claimValueBand,
     normalized.meritGrade, normalized.riskGrade, normalized.estimatedDamagesMinor, normalized.capitalAtRiskMinor,
     normalized.expectedMultipleBps, normalized.expectedDurationMonths, normalized.fundingAskMinor, normalized.fundingDeadline,
     normalized.stage, normalized.status, normalized.problem, JSON.stringify(normalized.highlights),
@@ -721,7 +804,7 @@ export async function createAdminLitigationDossier(adminUserId: number, input: A
     const base = `admin-${slugify(normalized.caseName) || "case"}-${crypto.randomBytes(2).toString("hex")}`;
     const dossierId = await uniqueId(conn, LITIGATION_DOSSIERS_TABLE, "dossierId", base);
     await conn.execute(
-      `INSERT INTO ${LITIGATION_DOSSIERS_TABLE} (${DOSSIER_INSERT_COLUMNS}) VALUES (${Array(31).fill("?").join(",")})`,
+      `INSERT INTO ${LITIGATION_DOSSIERS_TABLE} (${DOSSIER_INSERT_COLUMNS}) VALUES (${Array(37).fill("?").join(",")})`,
       [dossierId, ...dossierInsertValues(normalized, adminUserId)],
     );
     await recordAudit(conn, adminUserId, "litigation_dossier_created", "litigation_fund_dossier", dossierId, input.reason, {
@@ -744,7 +827,8 @@ export async function updateAdminLitigationDossier(adminUserId: number, dossierI
     if (!existing.length) throw new Error("This dossier no longer exists on the desk");
     await conn.execute(
       `UPDATE ${LITIGATION_DOSSIERS_TABLE}
-        SET caseName=?,claimant=?,defendant=?,claimType=?,countryCode=?,country=?,jurisdiction=?,court=?,counsel=?,meritGrade=?,riskGrade=?,
+        SET caseName=?,claimant=?,defendant=?,claimType=?,countryCode=?,country=?,jurisdiction=?,court=?,counsel=?,
+            caseClass=?,causeOfAction=?,caseNumber=?,filedAt=?,courtDetail=?,claimValueBand=?,meritGrade=?,riskGrade=?,
             estimatedDamagesMinor=?,capitalAtRiskMinor=?,expectedMultipleBps=?,expectedDurationMonths=?,fundingAskMinor=?,fundingDeadline=?,
             stage=?,dossierStatus=?,problem=?,highlightsJson=?,scenariosJson=?,milestonesJson=?,bundleId=?,source=?,sourceUrl=?,asOf=?,
             updatedByUserId=?,updatedAt=NOW(3)
@@ -752,6 +836,7 @@ export async function updateAdminLitigationDossier(adminUserId: number, dossierI
       [
         normalized.caseName, normalized.claimant, normalized.defendant, normalized.claimType,
         normalized.country.code, normalized.country.name, normalized.country.name, normalized.court, normalized.counsel,
+        normalized.caseClass, normalized.causeOfAction, normalized.caseNumber, normalized.filedAt, normalized.courtDetail, normalized.claimValueBand,
         normalized.meritGrade, normalized.riskGrade, normalized.estimatedDamagesMinor, normalized.capitalAtRiskMinor,
         normalized.expectedMultipleBps, normalized.expectedDurationMonths, normalized.fundingAskMinor, normalized.fundingDeadline,
         normalized.stage, normalized.status, normalized.problem, JSON.stringify(normalized.highlights),

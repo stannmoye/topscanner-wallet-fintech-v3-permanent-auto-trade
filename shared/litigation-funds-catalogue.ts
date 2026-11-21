@@ -18,8 +18,17 @@
  *    estates are realised and where creditor claims are lodged.
  *  - United States / global — CourtListener (free API token): litigation and
  *    bankruptcy dockets. Activates only when a token is configured.
+ *  - United States — SEC EDGAR: the full registrant ticker/exchange index (used
+ *    to identify which litigants are publicly listed companies) plus full-text
+ *    search of 10-K / 10-Q "Item 3. Legal Proceedings" disclosures. This is the
+ *    company-in-court counterpart to the bankruptcy registers. Keyless and live.
  *  - Context — Eurostat + World Bank: macroeconomic litigation/enforcement
  *    context for the countries represented.
+ *
+ * The desk is about COMPANIES IN COURT CASES, which is a different thing from
+ * companies that are simply going bankrupt. Every record carries an explicit
+ * `caseClass`; INSOLVENCY is one class among many and is always badged as such,
+ * so a bankruptcy estate can never be mistaken for a company litigating a claim.
  *
  * Sources that could not be used are reported honestly rather than faked:
  *  - SEC litigation-releases RSS is FROZEN at 2023-07-26 (the Commission retired
@@ -79,6 +88,43 @@ export type LitigationMilestone = {
   reachedAt: string | null;
 };
 
+/**
+ * What kind of dispute a record is. This is the dimension that separates a
+ * company litigating a claim from a company that is simply going bankrupt:
+ * INSOLVENCY is one class among many, never the whole desk.
+ */
+export type LitigationCaseClass =
+  | "COMMERCIAL_CONTRACT"
+  | "SECURITIES"
+  | "ANTITRUST_COMPETITION"
+  | "IP_PATENT"
+  | "PRODUCT_LIABILITY"
+  | "FRAUD_RESTITUTION"
+  | "REGULATORY_ENFORCEMENT"
+  | "INSOLVENCY"
+  | "OTHER_CIVIL";
+
+/** Best-effort classification of one side of a case. Never asserted as certain. */
+export type LitigationPartyKind = "COMPANY" | "INDIVIDUAL" | "REGULATOR" | "ESTATE" | "UNKNOWN";
+
+/** Coarse claim-size band, only set when a public amount is stated. */
+export type LitigationValueBand = "UNDER_1M" | "1M_10M" | "10M_100M" | "OVER_100M";
+
+/** A party to the case that is publicly listed and can be tied to a ticker. */
+export type LitigationListedParty = {
+  role: "CLAIMANT" | "DEFENDANT";
+  /** Party name exactly as it appears in the source record. */
+  partyName: string;
+  /** The listed company's filed name. */
+  listedName: string;
+  /** Exchange ticker, when published. */
+  ticker: string | null;
+  /** Listing venue as published (e.g. "Nasdaq", "NYSE"), when known. */
+  exchange: string | null;
+  /** Where the listed identity is published. */
+  source: string;
+};
+
 export type LitigationCase = {
   /** Stable slug. Discovery ids are source-prefixed; admin ids start with `admin-`. */
   id: string;
@@ -93,6 +139,28 @@ export type LitigationCase = {
   flag: string;
   court: string;
   counsel: string | null;
+  /**
+   * What kind of dispute this is. Distinguishes a company litigating a claim
+   * from an estate in insolvency. Discovery records are classified
+   * best-effort from the source text; admin dossiers set it explicitly.
+   */
+  caseClass: LitigationCaseClass;
+  /** Best-effort kind of the claimant side; never asserted as certain. */
+  claimantKind: LitigationPartyKind;
+  /** Best-effort kind of the defendant side; never asserted as certain. */
+  defendantKind: LitigationPartyKind;
+  /** The legal cause of action, when the source states one. */
+  causeOfAction: string | null;
+  /** Court docket / case / neutral-citation number, when published. */
+  caseNumber: string | null;
+  /** Date the case was filed or the notice was published (YYYY-MM-DD). */
+  filedAt: string | null;
+  /** Extra court detail (division, judge, chamber), when published. */
+  courtDetail: string | null;
+  /** Coarse claim-value band, only set when a public amount is stated. */
+  claimValueBand: LitigationValueBand | null;
+  /** Parties that are publicly listed and can be tied to a ticker. */
+  listedParties: LitigationListedParty[];
   meritGrade: LitigationMeritGrade | null;
   estimatedDamagesMinor: number | null;
   capitalAtRiskMinor: number | null;
@@ -226,6 +294,7 @@ async function json(url: string, options: { headers?: Record<string, string> } =
 
 const clampText = (value: unknown, max: number) => String(value ?? "").trim().slice(0, max);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_MONTH = /^\d{4}-\d{2}$/;
 
 function isoDate(value: unknown): string | null {
   const raw = String(value ?? "").trim();
@@ -316,6 +385,288 @@ export function defaultMilestones(): LitigationMilestone[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * Case-class taxonomy, party kinds, claim-value bands and listed litigants
+ * ------------------------------------------------------------------ */
+
+/**
+ * The dimension that separates a company litigating a claim from a company
+ * that is simply going bankrupt. INSOLVENCY is one class among many; the desk
+ * is primarily about the other classes.
+ */
+export const LITIGATION_CASE_CLASSES: readonly LitigationCaseClass[] = [
+  "COMMERCIAL_CONTRACT", "SECURITIES", "ANTITRUST_COMPETITION", "IP_PATENT",
+  "PRODUCT_LIABILITY", "FRAUD_RESTITUTION", "REGULATORY_ENFORCEMENT", "INSOLVENCY", "OTHER_CIVIL",
+];
+
+export const LITIGATION_PARTY_KINDS: readonly LitigationPartyKind[] = ["COMPANY", "INDIVIDUAL", "REGULATOR", "ESTATE", "UNKNOWN"];
+
+export const LITIGATION_VALUE_BANDS: readonly LitigationValueBand[] = ["UNDER_1M", "1M_10M", "10M_100M", "OVER_100M"];
+
+const CASE_CLASS_LABELS: Record<LitigationCaseClass, string> = {
+  COMMERCIAL_CONTRACT: "Commercial contract",
+  SECURITIES: "Securities",
+  ANTITRUST_COMPETITION: "Antitrust / competition",
+  IP_PATENT: "IP / patent",
+  PRODUCT_LIABILITY: "Product liability",
+  FRAUD_RESTITUTION: "Fraud / restitution",
+  REGULATORY_ENFORCEMENT: "Regulatory enforcement",
+  INSOLVENCY: "Insolvency",
+  OTHER_CIVIL: "Other civil",
+};
+
+export function caseClassLabel(value: LitigationCaseClass): string {
+  return CASE_CLASS_LABELS[value] ?? CASE_CLASS_LABELS.OTHER_CIVIL;
+}
+
+const PARTY_KIND_LABELS: Record<LitigationPartyKind, string> = {
+  COMPANY: "Company", INDIVIDUAL: "Individual", REGULATOR: "Regulator", ESTATE: "Estate", UNKNOWN: "Unspecified",
+};
+
+export function partyKindLabel(value: LitigationPartyKind): string {
+  return PARTY_KIND_LABELS[value] ?? PARTY_KIND_LABELS.UNKNOWN;
+}
+
+const VALUE_BAND_LABELS: Record<LitigationValueBand, string> = {
+  UNDER_1M: "Under 1M", "1M_10M": "1M – 10M", "10M_100M": "10M – 100M", OVER_100M: "Over 100M",
+};
+
+export function valueBandLabel(value: LitigationValueBand): string {
+  return VALUE_BAND_LABELS[value] ?? "";
+}
+
+/** True when a record is an insolvency estate rather than a company litigating a claim. */
+export function isInsolvency(value: { caseClass: LitigationCaseClass }): boolean {
+  return value.caseClass === "INSOLVENCY";
+}
+
+// Priority-ordered: the first pattern that matches wins, so insolvency is tested
+// before the generic "creditor claim" wording and before regulatory wording.
+const CASE_CLASS_PATTERNS: [LitigationCaseClass, RegExp][] = [
+  ["INSOLVENCY", /\b(bankruptc\w*|insolvenc\w*|konkurs|administration|liquidat\w*|receivership|winding[- ]up|chapter\s?(7|11)|creditor claim|bankruptcy estate)\b/i],
+  ["SECURITIES", /\b(securit\w*|shareholder|stockholder|10b-5|insider trading|derivative action|prospectus|ipo)\b/i],
+  ["ANTITRUST_COMPETITION", /\b(antitrust|competition|cartel|monopol\w*|merger control|abuse of dominance|price[- ]fixing)\b/i],
+  ["IP_PATENT", /\b(patent|trade[- ]?mark|copyright|intellectual property|know[- ]how|design right|passing off)\b/i],
+  ["PRODUCT_LIABILITY", /\b(product liability|defective product|personal injur\w*|consumer protection|product safety|recall)\b/i],
+  ["FRAUD_RESTITUTION", /\b(fraud|misrepresent\w*|deceit|restitution|unjust enrichment|misappropriat\w*|bribery|corruption)\b/i],
+  ["REGULATORY_ENFORCEMENT", /\b(enforcement|sanction\w*|penalt\w*|consent order|cease and desist|regulat\w*|administrative proceeding)\b/i],
+  ["COMMERCIAL_CONTRACT", /\b(contract|breach|commercial|supply agreement|service agreement|debt|damages)\b/i],
+];
+
+/** Best-effort case class from the wording a source published. Never asserted as certain. */
+export function classifyCaseClass(input: { claimType?: string | null; caseName?: string | null; detail?: string | null; hint?: LitigationCaseClass | null }): LitigationCaseClass {
+  if (input.hint) return input.hint;
+  const haystack = [input.claimType, input.caseName, input.detail].filter(Boolean).join(" · ");
+  for (const [caseClass, pattern] of CASE_CLASS_PATTERNS) if (pattern.test(haystack)) return caseClass;
+  return "OTHER_CIVIL";
+}
+
+const COMPANY_SUFFIX = /\b(inc|incorporated|corp|corporation|co|company|limited|ltd|llc|plc|lp|llp|nv|sa|ag|gmbh|ab|asa|oyj|oy|spa|sarl|bv|pte|pty|kk|holdings?|group|partners|bank|insurance|capital|industries|technologies|systems|pharma\w*)\b/i;
+const REGULATOR_WORD = /\b(sec|cfc|doj|ftc|commission|commissioner|authority|regulator|department of justice|securities and exchange|competition and markets|ombudsman|fca|pra|european commission)\b/i;
+const ESTATE_WORD = /\b(estate|trustee|liquidator|administrator|receiver|creditors?|insolvency practitioner|bankruptcy)\b/i;
+const INDIVIDUAL_TITLE = /\b(mr|mrs|ms|miss|dr|prof|sir|dame|lord|lady)\.?\s/i;
+
+/** Best-effort kind of one side of a case. Never asserted as certain. */
+export function classifyPartyKind(name: string | null | undefined): LitigationPartyKind {
+  const value = String(name ?? "").trim();
+  if (!value) return "UNKNOWN";
+  if (/see (judgment|docket|register|notice|filing)|^respondent named|^litigation described|^defendant\(s\) named/i.test(value)) return "UNKNOWN";
+  if (REGULATOR_WORD.test(value)) return "REGULATOR";
+  if (ESTATE_WORD.test(value)) return "ESTATE";
+  if (COMPANY_SUFFIX.test(value)) return "COMPANY";
+  if (INDIVIDUAL_TITLE.test(value)) return "INDIVIDUAL";
+  return "UNKNOWN";
+}
+
+/** Coarse band for a known claim amount given in minor units of the settlement currency. */
+export function claimValueBandFromMinor(minor: number | null | undefined): LitigationValueBand | null {
+  if (minor === null || minor === undefined) return null;
+  const major = Number(minor) / 100;
+  if (!Number.isFinite(major) || major <= 0) return null;
+  if (major < 1_000_000) return "UNDER_1M";
+  if (major < 10_000_000) return "1M_10M";
+  if (major < 100_000_000) return "10M_100M";
+  return "OVER_100M";
+}
+
+// A currency figure must be explicitly marked, so docket numbers, form codes and
+// dates are never mistaken for a claim value.
+const MONEY_IN_TEXT = /\b(?:USD|US\$|\$|EUR|€|GBP|£|NOK|kr)\s?([\d][\d.,]*)\s?(billion|bn|million|mio|mn|m|thousand|k)?\b/i;
+
+/** Coarse band when a source text states a claim amount; null otherwise. */
+export function detectClaimValueBand(text: string): LitigationValueBand | null {
+  const match = MONEY_IN_TEXT.exec(String(text || ""));
+  if (!match) return null;
+  const magnitude = Number(match[1].replace(/[.,](?=\d{3}\b)/g, "").replace(",", "."));
+  if (!Number.isFinite(magnitude) || magnitude <= 0) return null;
+  const unit = (match[2] || "").toLowerCase();
+  const multiplier = /^(billion|bn)$/.test(unit) ? 1e9 : /^(million|mio|mn|m)$/.test(unit) ? 1e6 : /^(thousand|k)$/.test(unit) ? 1e3 : 1;
+  return claimValueBandFromMinor(Math.round(magnitude * multiplier * 100));
+}
+
+/* ------------------------------------------------------------------ *
+ * SEC EDGAR — listed-registrant index (litigant intelligence) + full-text
+ * search of 10-K / 10-Q "Item 3. Legal Proceedings" company disclosures
+ * ------------------------------------------------------------------ */
+
+const EDGAR_EXCHANGE_INDEX = "https://www.sec.gov/files/company_tickers_exchange.json";
+const EDGAR_FTS = "https://efts.sec.gov/LATEST/search-index";
+const EDGAR_INDEX_TTL_MS = 6 * 60 * 60 * 1000;
+const EDGAR_SOURCE_LABEL = "SEC EDGAR · company_tickers_exchange.json";
+
+/** A publicly listed company that can be tied to a ticker and an exchange. */
+export type LitigationListedCompany = { cik: string; listedName: string; ticker: string | null; exchange: string | null };
+
+/** Reduce a party/company name to a comparable key, dropping legal suffixes. */
+export function normalizeCompanyName(value: string): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\b(incorporated|inc|corporation|corp|company|co|limited|ltd|llc|plc|lp|llp|nv|sa|ag|gmbh|ab|asa|oyj|oy|spa|sarl|bv|pte|pty|holding|holdings|group|the|international|intl|and)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+let edgarIndexCache: { value: Map<string, LitigationListedCompany>; expiresAt: number } | null = null;
+let edgarIndexInflight: Promise<Map<string, LitigationListedCompany>> | null = null;
+
+/** Build and memoize the SEC registrant name → listing map. Degrades to empty. */
+export function getListedCompanyIndex(force = false): Promise<Map<string, LitigationListedCompany>> {
+  const now = Date.now();
+  if (!force && edgarIndexCache && edgarIndexCache.expiresAt > now) return Promise.resolve(edgarIndexCache.value);
+  if (edgarIndexInflight) return edgarIndexInflight;
+  const run = (async () => {
+    const map = new Map<string, LitigationListedCompany>();
+    try {
+      const payload = await json(EDGAR_EXCHANGE_INDEX, { headers: { "User-Agent": SEC_UA } });
+      const rows: any[] = Array.isArray(payload?.data) ? payload.data : [];
+      for (const row of rows) {
+        if (!Array.isArray(row) || row.length < 3) continue;
+        const listedName = clampText(row[1], 160);
+        const key = normalizeCompanyName(listedName);
+        if (!key || key.length < 3 || map.has(key)) continue;
+        map.set(key, { cik: String(row[0] ?? "").trim(), listedName, ticker: clampText(row[2], 16) || null, exchange: clampText(row[3], 40) || null });
+      }
+    } catch { /* index unavailable → listed-party flags are simply omitted, never guessed */ }
+    if (map.size) edgarIndexCache = { value: map, expiresAt: Date.now() + EDGAR_INDEX_TTL_MS };
+    return map;
+  })();
+  edgarIndexInflight = run;
+  void run.finally(() => { edgarIndexInflight = null; });
+  return run;
+}
+
+/** Match one party name against the SEC registrant index, or null. */
+export function matchListedParty(partyName: string, index: Map<string, LitigationListedCompany>): LitigationListedCompany | null {
+  if (!index || !index.size) return null;
+  const key = normalizeCompanyName(partyName);
+  return key.length >= 4 ? (index.get(key) ?? null) : null;
+}
+
+/** Listed-party intelligence for both sides of a case, sourced to EDGAR. */
+function listedPartiesFor(claimant: string, defendant: string, index: Map<string, LitigationListedCompany>): LitigationListedParty[] {
+  if (!index || !index.size) return [];
+  const out: LitigationListedParty[] = [];
+  const add = (role: "CLAIMANT" | "DEFENDANT", name: string) => {
+    const match = matchListedParty(name, index);
+    if (match) out.push({ role, partyName: name, listedName: match.listedName, ticker: match.ticker, exchange: match.exchange, source: EDGAR_SOURCE_LABEL });
+  };
+  add("CLAIMANT", claimant);
+  add("DEFENDANT", defendant);
+  return out;
+}
+
+const EDGAR_QUERIES: { q: string; caseClass: LitigationCaseClass; causeOfAction: string }[] = [
+  { q: '"patent infringement"', caseClass: "IP_PATENT", causeOfAction: "Patent infringement" },
+  { q: '"antitrust"', caseClass: "ANTITRUST_COMPETITION", causeOfAction: "Antitrust / competition" },
+  { q: '"securities class action"', caseClass: "SECURITIES", causeOfAction: "Securities class action" },
+  { q: '"breach of contract"', caseClass: "COMMERCIAL_CONTRACT", causeOfAction: "Breach of contract" },
+];
+
+/** Public, citable filing-index URL for an EDGAR accession. */
+function edgarFilingUrl(cik: string, accession: string): string | null {
+  const digits = String(cik || "").replace(/\D+/g, "");
+  const adsh = String(accession || "").replace(/\D+/g, "");
+  return digits && adsh ? `https://www.sec.gov/Archives/edgar/data/${digits}/${adsh}/` : null;
+}
+
+async function fetchEdgarClaims(index: Map<string, LitigationListedCompany>): Promise<LitigationCase[]> {
+  const settled = await Promise.allSettled(
+    EDGAR_QUERIES.map((query) => json(`${EDGAR_FTS}?q=${encodeURIComponent(query.q)}&forms=10-K`, { headers: { "User-Agent": SEC_UA } })),
+  );
+  const cases: LitigationCase[] = [];
+  const seen = new Set<string>();
+  settled.forEach((result, queryIndex) => {
+    if (result.status !== "fulfilled") return;
+    const query = EDGAR_QUERIES[queryIndex];
+    const hits: any[] = result.value?.hits?.hits || [];
+    for (const hit of hits) {
+      const source = hit?._source || {};
+      const adsh = clampText(source.adsh, 40);
+      const cik = Array.isArray(source.ciks) ? String(source.ciks[0] || "") : "";
+      const display = Array.isArray(source.display_names) ? String(source.display_names[0] || "") : "";
+      const company = clampText(display.replace(/\s*\(CIK[^)]*\)\s*$/i, ""), 160);
+      if (!company || !adsh || seen.has(adsh)) continue;
+      seen.add(adsh);
+      const filed = isoDate(source.file_date);
+      const form = clampText(source.form || (Array.isArray(source.root_forms) ? source.root_forms[0] : ""), 16) || "10-K";
+      const listed = matchListedParty(company, index);
+      cases.push({
+        id: `us-edgar-${adsh}`,
+        caseName: `${company} — litigation disclosure (${form})`,
+        claimant: company,
+        defendant: "Defendant(s) named in the filed disclosure",
+        claimType: `Public-company litigation disclosure (${query.causeOfAction})`,
+        jurisdiction: "United States",
+        countryCode: "US",
+        country: "United States",
+        flag: flagFor("US"),
+        court: "SEC EDGAR — corporate disclosure",
+        counsel: null,
+        caseClass: query.caseClass,
+        claimantKind: "COMPANY",
+        defendantKind: "UNKNOWN",
+        causeOfAction: query.causeOfAction,
+        caseNumber: adsh,
+        filedAt: filed,
+        courtDetail: Array.isArray(source.biz_locations) ? clampText(source.biz_locations[0], 120) || null : null,
+        claimValueBand: null,
+        listedParties: listed ? [{ role: "CLAIMANT", partyName: company, listedName: listed.listedName, ticker: listed.ticker, exchange: listed.exchange, source: EDGAR_SOURCE_LABEL }] : [],
+        meritGrade: null,
+        estimatedDamagesMinor: null,
+        capitalAtRiskMinor: null,
+        expectedMultipleBps: null,
+        expectedDurationMonths: null,
+        fundingAskMinor: null,
+        committedMinor: 0,
+        fundedBps: 0,
+        stage: "FILED",
+        status: "FUNDING",
+        problem: `${company} disclosed ${query.causeOfAction.toLowerCase()} proceedings in its ${form} filed with the SEC${filed ? ` on ${filed}` : ""}. This is a company in court — not an insolvency estate. Read the filed disclosure (accession ${adsh}) for the full facts and parties.`,
+        scenarios: [],
+        expectedValueMinor: null,
+        fundingDeadline: null,
+        remainingDays: null,
+        milestones: [],
+        bundleId: null,
+        source: `SEC EDGAR full-text search · Item 3. Legal Proceedings`,
+        sourceUrl: edgarFilingUrl(cik, adsh),
+        asOf: filed || new Date().toISOString().slice(0, 10),
+        verified: false,
+        fundable: false,
+        highlights: [
+          `Form ${form}`,
+          listed?.ticker ? `Listed ${listed.exchange ? `${listed.exchange}: ` : ""}${listed.ticker}` : "No matching listed registrant",
+          filed ? `Filed ${filed}` : "Filing date not published",
+        ],
+      });
+    }
+  });
+  if (!cases.length) throw new Error("SEC EDGAR returned no litigation disclosures");
+  return cases;
+}
+
+/* ------------------------------------------------------------------ *
  * United States — Federal Register enforcement notices (keyless, live)
  * ------------------------------------------------------------------ */
 
@@ -368,6 +719,17 @@ async function fetchFederalRegisterClaims(): Promise<LitigationCase[]> {
       flag: flagFor("US"),
       court: agencyLabel,
       counsel: null,
+      caseClass: agencyKey === "securities-and-exchange-commission" ? "SECURITIES"
+        : agencyKey === "federal-trade-commission" ? "ANTITRUST_COMPETITION"
+        : "REGULATORY_ENFORCEMENT",
+      claimantKind: "REGULATOR",
+      defendantKind: "UNKNOWN",
+      causeOfAction: claimType,
+      caseNumber: number,
+      filedAt: published,
+      courtDetail: null,
+      claimValueBand: detectClaimValueBand(String(row?.abstract || "")),
+      listedParties: [],
       meritGrade: null,
       estimatedDamagesMinor: null,
       capitalAtRiskMinor: null,
@@ -405,12 +767,12 @@ async function fetchFederalRegisterClaims(): Promise<LitigationCase[]> {
  * United Kingdom — Find Case Law (The National Archives), keyless, live
  * ------------------------------------------------------------------ */
 
-const UK_QUERIES: { q: string; claimType: string }[] = [
-  { q: "breach of contract", claimType: "Commercial contract claim" },
-  { q: "insolvency", claimType: "Insolvency / creditor claim" },
-  { q: "fraud", claimType: "Fraud / misrepresentation claim" },
-  { q: "negligence", claimType: "Negligence claim" },
-  { q: "damages", claimType: "Damages claim" },
+const UK_QUERIES: { q: string; claimType: string; caseClass: LitigationCaseClass; causeOfAction: string }[] = [
+  { q: "breach of contract", claimType: "Commercial contract claim", caseClass: "COMMERCIAL_CONTRACT", causeOfAction: "Breach of contract" },
+  { q: "insolvency", claimType: "Insolvency / creditor claim", caseClass: "INSOLVENCY", causeOfAction: "Insolvency / creditor claim" },
+  { q: "fraud", claimType: "Fraud / misrepresentation claim", caseClass: "FRAUD_RESTITUTION", causeOfAction: "Fraud / misrepresentation" },
+  { q: "negligence", claimType: "Negligence claim", caseClass: "OTHER_CIVIL", causeOfAction: "Negligence" },
+  { q: "damages", claimType: "Damages claim", caseClass: "COMMERCIAL_CONTRACT", causeOfAction: "Damages" },
 ];
 
 /** Deciding court from the neutral-citation slug, e.g. ewhc/admin → High Court. */
@@ -430,16 +792,16 @@ function ukCourtFromSlug(slug: string, fallback: string): string {
   return map[code] || fallback || "UK court or tribunal";
 }
 
-async function fetchUkCaseLawClaims(): Promise<LitigationCase[]> {
+async function fetchUkCaseLawClaims(listedIndex: Map<string, LitigationListedCompany>): Promise<LitigationCase[]> {
   const settled = await Promise.allSettled(
     UK_QUERIES.slice(0, 4).map((query) => text(`${UK_CASELAW}?query=${encodeURIComponent(query.q)}`, { accept: "application/atom+xml" })),
   );
 
   const cases: LitigationCase[] = [];
   const seen = new Set<string>();
-  settled.forEach((result, index) => {
+  settled.forEach((result, queryIndex) => {
     if (result.status !== "fulfilled") return;
-    const query = UK_QUERIES[index];
+    const query = UK_QUERIES[queryIndex];
     for (const entry of xmlBlocks(result.value, "entry")) {
       const title = clampText(xmlText(entry, "title"), 200);
       const link = xmlAttr(entry, "link", "href");
@@ -450,19 +812,31 @@ async function fetchUkCaseLawClaims(): Promise<LitigationCase[]> {
       seen.add(id);
       const published = isoDate(xmlText(entry, "published")) || isoDate(xmlText(entry, "updated"));
       const courtName = ukTextCourt(entry);
+      const court = ukCourtFromSlug(slug, courtName);
       const [plaintiff, defendant] = title.split(/\s+v\s+/i);
+      const claimant = clampText(plaintiff, 160) || "Claimant (see judgment)";
+      const defendantName = clampText(defendant, 160) || "Defendant (see judgment)";
       cases.push({
         id: `uk-cl-${id.replace(/[^A-Za-z0-9]+/g, "-")}`,
         caseName: title,
-        claimant: clampText(plaintiff, 160) || "Claimant (see judgment)",
-        defendant: clampText(defendant, 160) || "Defendant (see judgment)",
+        claimant,
+        defendant: defendantName,
         claimType: query.claimType,
         jurisdiction: "United Kingdom",
         countryCode: "GB",
         country: "United Kingdom",
         flag: flagFor("GB"),
-        court: ukCourtFromSlug(slug, courtName),
+        court,
         counsel: null,
+        caseClass: query.caseClass,
+        claimantKind: classifyPartyKind(claimant),
+        defendantKind: classifyPartyKind(defendantName),
+        causeOfAction: query.causeOfAction,
+        caseNumber: citation || null,
+        filedAt: published,
+        courtDetail: courtName || null,
+        claimValueBand: detectClaimValueBand(`${title} ${query.claimType}`),
+        listedParties: listedPartiesFor(claimant, defendantName, listedIndex),
         meritGrade: null,
         estimatedDamagesMinor: null,
         capitalAtRiskMinor: null,
@@ -473,7 +847,7 @@ async function fetchUkCaseLawClaims(): Promise<LitigationCase[]> {
         fundedBps: 0,
         stage: published ? "JUDGMENT" : "FILED",
         status: "FUNDING",
-        problem: `Published judgment “${title}” in a ${query.claimType.toLowerCase()}, decided by ${ukCourtFromSlug(slug, courtName)}${citation ? ` (${citation})` : ""}. Read the judgment for the full facts and outcome.`,
+        problem: `Published judgment “${title}” in a ${query.claimType.toLowerCase()}, decided by ${court}${citation ? ` (${citation})` : ""}. Read the judgment for the full facts and outcome.`,
         scenarios: [],
         expectedValueMinor: null,
         fundingDeadline: null,
@@ -486,7 +860,7 @@ async function fetchUkCaseLawClaims(): Promise<LitigationCase[]> {
         verified: false,
         fundable: false,
         highlights: [
-          `Court: ${ukCourtFromSlug(slug, courtName)}`,
+          `Court: ${court}`,
           citation ? `Citation ${citation}` : "Citation not published",
           published ? `Published ${published}` : "Publication date not published",
         ],
@@ -540,6 +914,15 @@ async function fetchNorwayClaims(): Promise<LitigationCase[]> {
       flag: flagFor("NO"),
       court: "Insolvency estate (Norway)",
       counsel: null,
+      caseClass: "INSOLVENCY",
+      claimantKind: "ESTATE",
+      defendantKind: "COMPANY",
+      causeOfAction: "Insolvency / creditor claim",
+      caseNumber: org,
+      filedAt: declared,
+      courtDetail: clampText(row?.forretningsadresse?.kommune, 80) || null,
+      claimValueBand: null,
+      listedParties: [],
       meritGrade: null,
       estimatedDamagesMinor: null,
       capitalAtRiskMinor: null,
@@ -550,7 +933,7 @@ async function fetchNorwayClaims(): Promise<LitigationCase[]> {
       fundedBps: 0,
       stage: "ENFORCEMENT",
       status: "FUNDING",
-      problem: `${name} is a Norwegian ${clampText(row.organisasjonsform?.beskrivelse, 80) || "registered entity"} declared bankrupt${declared ? ` on ${declared}` : ""}. The estate is being realised and creditor claims are being lodged and recovered.`,
+      problem: `${name} is a Norwegian ${clampText(row.organisasjonsform?.beskrivelse, 80) || "registered entity"} declared bankrupt${declared ? ` on ${declared}` : ""}. This is an insolvency estate — not a company litigating a claim. The estate is being realised and creditor claims are being lodged and recovered.`,
       scenarios: [],
       expectedValueMinor: null,
       fundingDeadline: null,
@@ -577,13 +960,13 @@ async function fetchNorwayClaims(): Promise<LitigationCase[]> {
  * United States / global — CourtListener dockets (free token, fail closed)
  * ------------------------------------------------------------------ */
 
-const COURT_LISTENER_QUERIES: { q: string; claimType: string }[] = [
-  { q: "breach of contract", claimType: "Commercial contract claim" },
-  { q: "class action", claimType: "Class action" },
-  { q: "securities", claimType: "Securities claim" },
+const COURT_LISTENER_QUERIES: { q: string; claimType: string; caseClass: LitigationCaseClass; causeOfAction: string }[] = [
+  { q: "breach of contract", claimType: "Commercial contract claim", caseClass: "COMMERCIAL_CONTRACT", causeOfAction: "Breach of contract" },
+  { q: "class action", claimType: "Class action", caseClass: "OTHER_CIVIL", causeOfAction: "Class action" },
+  { q: "securities", claimType: "Securities claim", caseClass: "SECURITIES", causeOfAction: "Securities litigation" },
 ];
 
-async function fetchCourtListenerClaims(): Promise<LitigationCase[]> {
+async function fetchCourtListenerClaims(listedIndex: Map<string, LitigationListedCompany>): Promise<LitigationCase[]> {
   const token = envKey("COURTLISTENER_API_TOKEN");
   if (!token) throw new Error("CourtListener token not configured (set COURTLISTENER_API_TOKEN)");
   const settled = await Promise.allSettled(
@@ -595,9 +978,9 @@ async function fetchCourtListenerClaims(): Promise<LitigationCase[]> {
   );
   const cases: LitigationCase[] = [];
   const seen = new Set<string>();
-  settled.forEach((result, index) => {
+  settled.forEach((result, queryIndex) => {
     if (result.status !== "fulfilled") return;
-    const query = COURT_LISTENER_QUERIES[index];
+    const query = COURT_LISTENER_QUERIES[queryIndex];
     const rows: any[] = result.value?.results || [];
     for (const row of rows) {
       const name = clampText(row?.caseName, 200);
@@ -606,19 +989,32 @@ async function fetchCourtListenerClaims(): Promise<LitigationCase[]> {
       seen.add(docketId);
       const filed = isoDate(row?.dateFiled);
       const docketNumber = clampText(row?.docketNumber, 60);
+      const court = clampText(row?.court, 120) || "US federal court";
       const [plaintiff, defendant] = name.split(/\s+v\.?\s+/i);
+      const claimant = clampText(plaintiff, 160) || "Plaintiff (see docket)";
+      const defendantName = clampText(defendant, 160) || "Defendant (see docket)";
+      const detail = clampText(row?.snippet || row?.suitNature || "", 300);
       cases.push({
         id: `us-cl-${docketId}`,
         caseName: name,
-        claimant: clampText(plaintiff, 160) || "Plaintiff (see docket)",
-        defendant: clampText(defendant, 160) || "Defendant (see docket)",
+        claimant,
+        defendant: defendantName,
         claimType: query.claimType,
         jurisdiction: "United States",
         countryCode: "US",
         country: "United States",
         flag: flagFor("US"),
-        court: clampText(row?.court, 120) || "US federal court",
+        court,
         counsel: clampText(row?.firm, 160) || null,
+        caseClass: classifyCaseClass({ claimType: query.claimType, caseName: name, detail, hint: query.caseClass }),
+        claimantKind: classifyPartyKind(claimant),
+        defendantKind: classifyPartyKind(defendantName),
+        causeOfAction: query.causeOfAction,
+        caseNumber: docketNumber || null,
+        filedAt: filed,
+        courtDetail: clampText(row?.suitNature, 120) || null,
+        claimValueBand: detectClaimValueBand(detail),
+        listedParties: listedPartiesFor(claimant, defendantName, listedIndex),
         meritGrade: null,
         estimatedDamagesMinor: null,
         capitalAtRiskMinor: null,
@@ -627,9 +1023,9 @@ async function fetchCourtListenerClaims(): Promise<LitigationCase[]> {
         fundingAskMinor: null,
         committedMinor: 0,
         fundedBps: 0,
-        stage: filed ? "FILED" : "FILED",
+        stage: "FILED",
         status: "FUNDING",
-        problem: `CourtListener records a ${query.claimType.toLowerCase()} docket “${name}”${filed ? ` filed ${filed}` : ""}${docketNumber ? ` (docket ${docketNumber})` : ""} in ${clampText(row?.court, 120) || "a US federal court"}. Read the docket for the full facts and parties.`,
+        problem: `CourtListener records a ${query.claimType.toLowerCase()} docket “${name}”${filed ? ` filed ${filed}` : ""}${docketNumber ? ` (docket ${docketNumber})` : ""} in ${court}. Read the docket for the full facts and parties.`,
         scenarios: [],
         expectedValueMinor: null,
         fundingDeadline: null,
@@ -642,7 +1038,7 @@ async function fetchCourtListenerClaims(): Promise<LitigationCase[]> {
         verified: false,
         fundable: false,
         highlights: [
-          clampText(row?.court, 120) || "US federal court",
+          court,
           docketNumber ? `Docket ${docketNumber}` : "Docket number not published",
           filed ? `Filed ${filed}` : "Filing date not published",
         ],
@@ -707,18 +1103,20 @@ function sourceStatus(result: PromiseSettledResult<unknown>): "ok" | "degraded" 
 }
 
 async function buildCatalogue(): Promise<LitigationFundsCatalogue> {
-  const [federalRegister, uk, norway, courtlistener, eurostat, worldBank] = await Promise.allSettled([
+  const listedIndex = await getListedCompanyIndex();
+  const [federalRegister, uk, norway, courtlistener, edgar, eurostat, worldBank] = await Promise.allSettled([
     fetchFederalRegisterClaims(),
-    fetchUkCaseLawClaims(),
+    fetchUkCaseLawClaims(listedIndex),
     fetchNorwayClaims(),
-    fetchCourtListenerClaims(),
+    fetchCourtListenerClaims(listedIndex),
+    fetchEdgarClaims(listedIndex),
     fetchEurostatContext(),
     fetchWorldBankContext(),
   ]);
 
   for (const [label, result] of [
     ["Federal Register", federalRegister], ["Find Case Law", uk], ["Brønnøysund", norway],
-    ["CourtListener", courtlistener], ["Eurostat", eurostat], ["World Bank", worldBank],
+    ["CourtListener", courtlistener], ["SEC EDGAR", edgar], ["Eurostat", eurostat], ["World Bank", worldBank],
   ] as const) {
     if (result.status === "rejected") console.warn(`[LitigationFunds] ${label} source failed: ${reasonOf(result)}`);
   }
@@ -728,6 +1126,7 @@ async function buildCatalogue(): Promise<LitigationFundsCatalogue> {
     ...(uk.status === "fulfilled" ? uk.value : []),
     ...(norway.status === "fulfilled" ? norway.value : []),
     ...(courtlistener.status === "fulfilled" ? courtlistener.value : []),
+    ...(edgar.status === "fulfilled" ? edgar.value : []),
   ];
 
   const seen = new Set<string>();
@@ -737,9 +1136,10 @@ async function buildCatalogue(): Promise<LitigationFundsCatalogue> {
   const sources: LitigationFundsSource[] = [
     { name: "Federal Register (United States enforcement notices)", url: "https://www.federalregister.gov/developers/api/v1", country: "US", role: "claims", status: sourceStatus(federalRegister), detail: federalRegister.status === "rejected" ? reasonOf(federalRegister) : "SEC, CFTC, DOJ and FTC notices" },
     { name: "Find Case Law (The National Archives, UK)", url: UK_CASELAW, country: "GB", role: "claims", status: sourceStatus(uk), detail: uk.status === "rejected" ? reasonOf(uk) : "Court and tribunal judgments" },
-    { name: "Brønnøysund Register Centre (Norway)", url: "https://data.brreg.no/enhetsregisteret/api", country: "NO", role: "claims", status: sourceStatus(norway), detail: norway.status === "rejected" ? reasonOf(norway) : "Bankruptcy estates and creditor claims" },
-    { name: "CourtListener (United States / global dockets)", url: "https://www.courtlistener.com/api/rest/v4/", country: "US", role: "dockets", status: sourceStatus(courtlistener), detail: courtlistener.status === "rejected" ? reasonOf(courtlistener) : "Litigation and bankruptcy dockets" },
-    { name: "Eurostat business bankruptcies (EU)", url: "https://ec.europa.eu/eurostat/databrowser/view/sts_cobp_q/", country: "XX", role: "context", status: sourceStatus(eurostat), detail: eurostat.status === "rejected" ? reasonOf(eurostat) : "Declared bankruptcies, latest quarter" },
+    { name: "SEC EDGAR (United States company litigation disclosures)", url: EDGAR_FTS, country: "US", role: "dockets", status: sourceStatus(edgar), detail: edgar.status === "rejected" ? reasonOf(edgar) : "10-K / 10-Q “Item 3. Legal Proceedings” disclosures by listed companies" },
+    { name: "Brønnøysund Register Centre (Norway)", url: "https://data.brreg.no/enhetsregisteret/api", country: "NO", role: "claims", status: sourceStatus(norway), detail: norway.status === "rejected" ? reasonOf(norway) : "Bankruptcy estates and creditor claims (INSOLVENCY class)" },
+    { name: "CourtListener (United States / global dockets)", url: "https://www.courtlistener.com/api/rest/v4/", country: "US", role: "dockets", status: sourceStatus(courtlistener), detail: courtlistener.status === "rejected" ? reasonOf(courtlistener) : "Litigation dockets; activates only with COURTLISTENER_API_TOKEN" },
+    { name: "Eurostat business bankruptcies (EU)", url: "https://ec.europa.eu/eurostat/databrowser/view/sts_cobp_q/", country: "XX", role: "context", status: sourceStatus(eurostat), detail: eurostat.status === "rejected" ? reasonOf(eurostat) : "Declared bankruptcies, latest quarter (context)" },
     { name: "World Bank country API (context)", url: "https://api.worldbank.org/v2/country", country: "XX", role: "context", status: sourceStatus(worldBank), detail: worldBank.status === "rejected" ? reasonOf(worldBank) : "Income level and region" },
     { name: "SEC litigation-releases RSS (skipped)", url: "https://www.sec.gov/rss/litigation/litreleases.xml", country: "US", role: "claims", status: "unavailable", detail: "Frozen at 2023-07-26; live SEC enforcement is covered by the Federal Register" },
     { name: "DOJ press releases (skipped)", url: "https://www.justice.gov/news", country: "US", role: "claims", status: "unavailable", detail: "Blocks non-browser clients (HTTP 403); skipped rather than spoofed" },
@@ -776,9 +1176,105 @@ export async function findLitigationCase(id: string): Promise<LitigationCase | n
   return catalogue.cases.find((item) => item.id === id) ?? null;
 }
 
+/* ------------------------------------------------------------------ *
+ * Litigation analytics — aggregated from the records on the desk
+ * ------------------------------------------------------------------ */
+
+export type LitigationAnalyticsBucket = { key: string; label: string; count: number };
+
+export type LitigationActiveCompany = {
+  name: string;
+  count: number;
+  role: "CLAIMANT" | "DEFENDANT" | "MIXED";
+  ticker: string | null;
+  exchange: string | null;
+};
+
+export type LitigationAnalytics = {
+  totalCases: number;
+  litigationCases: number;
+  insolvencyCases: number;
+  /** Share of the desk that is insolvency, in basis points. */
+  insolvencyBps: number;
+  byClass: LitigationAnalyticsBucket[];
+  byJurisdiction: LitigationAnalyticsBucket[];
+  byValueBand: LitigationAnalyticsBucket[];
+  byFilingMonth: LitigationAnalyticsBucket[];
+  mostActiveCompanies: LitigationActiveCompany[];
+  listedPartyCount: number;
+};
+
+type MutableCompany = { name: string; claimCount: number; defendantCount: number; ticker: string | null; exchange: string | null };
+
+/** Aggregate the records on the desk into desk-level litigation analytics. */
+export function buildLitigationAnalytics(cases: LitigationCase[]): LitigationAnalytics {
+  const classCounts = new Map<LitigationCaseClass, number>();
+  const jurisdictionCounts = new Map<string, number>();
+  const bandCounts = new Map<LitigationValueBand, number>();
+  const monthCounts = new Map<string, number>();
+  const companies = new Map<string, MutableCompany>();
+  let litigationCases = 0;
+  let listedPartyCount = 0;
+
+  const bump = <K>(map: Map<K, number>, key: K) => map.set(key, (map.get(key) ?? 0) + 1);
+  const companyKey = (name: string) => normalizeCompanyName(name) || name.trim().toLowerCase();
+
+  for (const record of cases) {
+    bump(classCounts, record.caseClass);
+    bump(jurisdictionCounts, record.jurisdiction || record.country || "Unspecified");
+    if (record.claimValueBand) bump(bandCounts, record.claimValueBand);
+    const month = (record.filedAt || record.asOf || "").slice(0, 7);
+    if (ISO_MONTH.test(month)) bump(monthCounts, month);
+    if (!isInsolvency(record)) litigationCases += 1;
+    listedPartyCount += record.listedParties.length;
+
+    for (const [role, name] of [["CLAIMANT", record.claimant], ["DEFENDANT", record.defendant]] as const) {
+      if (!name || classifyPartyKind(name) !== "COMPANY") continue;
+      const key = companyKey(name);
+      if (!key) continue;
+      const listed = record.listedParties.find((party) => party.role === role && party.partyName === name);
+      const entry = companies.get(key) ?? { name, claimCount: 0, defendantCount: 0, ticker: null, exchange: null };
+      if (role === "CLAIMANT") entry.claimCount += 1; else entry.defendantCount += 1;
+      if (listed) { entry.ticker = listed.ticker ?? entry.ticker; entry.exchange = listed.exchange ?? entry.exchange; }
+      companies.set(key, entry);
+    }
+  }
+
+  const buckets = <K>(map: Map<K, number>, label: (key: K) => string): LitigationAnalyticsBucket[] =>
+    [...map.entries()]
+      .map(([key, count]) => ({ key: String(key), label: label(key), count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+  const mostActiveCompanies = [...companies.values()]
+    .map((entry): LitigationActiveCompany => ({
+      name: entry.name,
+      count: entry.claimCount + entry.defendantCount,
+      role: entry.claimCount && entry.defendantCount ? "MIXED" : entry.defendantCount ? "DEFENDANT" : "CLAIMANT",
+      ticker: entry.ticker,
+      exchange: entry.exchange,
+    }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, 12);
+
+  return {
+    totalCases: cases.length,
+    litigationCases,
+    insolvencyCases: cases.length - litigationCases,
+    insolvencyBps: cases.length ? Math.round(((cases.length - litigationCases) * 10_000) / cases.length) : 0,
+    byClass: buckets(classCounts, (key) => caseClassLabel(key)),
+    byJurisdiction: buckets(jurisdictionCounts, (key) => key).slice(0, 12),
+    byValueBand: LITIGATION_VALUE_BANDS.filter((band) => bandCounts.has(band)).map((band) => ({ key: band, label: valueBandLabel(band), count: bandCounts.get(band) ?? 0 })),
+    byFilingMonth: buckets(monthCounts, (key) => key).sort((a, b) => b.key.localeCompare(a.key)).slice(0, 12),
+    mostActiveCompanies,
+    listedPartyCount,
+  };
+}
+
 export function __resetLitigationFundsCacheForTest() {
   cache = null;
   inflight = null;
+  edgarIndexCache = null;
+  edgarIndexInflight = null;
 }
 
 export const LITIGATION_STAGES: readonly LitigationStage[] = ["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"];

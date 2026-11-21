@@ -4,7 +4,14 @@ import {
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS, flagFor } from "@shared/country-options";
-import { type LitigationRiskGrade } from "@shared/litigation-funds-catalogue";
+import {
+  LITIGATION_CASE_CLASSES,
+  LITIGATION_VALUE_BANDS,
+  caseClassLabel,
+  valueBandLabel,
+  isInsolvency,
+  type LitigationRiskGrade,
+} from "@shared/litigation-funds-catalogue";
 import "./litigation-funds.css";
 
 const STAGE_OPTIONS = ["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"];
@@ -50,6 +57,7 @@ const percent = (bps: number | null | undefined) => (bps === null || bps === und
 
 type DossierForm = {
   caseName: string; claimant: string; defendant: string; claimType: string; countryCode: string; court: string; counsel: string;
+  caseClass: string; causeOfAction: string; caseNumber: string; filedAt: string; courtDetail: string; claimValueBand: string;
   meritGrade: string; riskGrade: string;
   estimatedDamagesUsd: string; capitalAtRiskUsd: string; expectedMultiple: string; expectedDurationMonths: string; fundingAskUsd: string;
   fundingDeadline: string; stage: string; status: string; problem: string; highlightsText: string; bundleId: string;
@@ -58,6 +66,7 @@ type DossierForm = {
 
 const emptyDossier = (): DossierForm => ({
   caseName: "", claimant: "", defendant: "", claimType: "", countryCode: "US", court: "", counsel: "",
+  caseClass: "", causeOfAction: "", caseNumber: "", filedAt: "", courtDetail: "", claimValueBand: "",
   meritGrade: "", riskGrade: "",
   estimatedDamagesUsd: "", capitalAtRiskUsd: "", expectedMultiple: "", expectedDurationMonths: "", fundingAskUsd: "",
   fundingDeadline: "", stage: "FILED", status: "FUNDING", problem: "", highlightsText: "", bundleId: "",
@@ -191,6 +200,12 @@ export function AdminLitigationFunds() {
       highlights: lines(dossier.highlightsText, 8),
     };
     if (dossier.counsel.trim()) payload.counsel = dossier.counsel.trim();
+    if (dossier.caseClass) payload.caseClass = dossier.caseClass;
+    if (dossier.claimValueBand) payload.claimValueBand = dossier.claimValueBand;
+    if (dossier.causeOfAction.trim()) payload.causeOfAction = dossier.causeOfAction.trim();
+    if (dossier.caseNumber.trim()) payload.caseNumber = dossier.caseNumber.trim();
+    if (dossier.filedAt.trim()) payload.filedAt = dossier.filedAt.trim();
+    if (dossier.courtDetail.trim()) payload.courtDetail = dossier.courtDetail.trim();
     if (dossier.fundingDeadline.trim()) payload.fundingDeadline = dossier.fundingDeadline.trim();
     if (dossier.bundleId.trim()) payload.bundleId = dossier.bundleId.trim();
     if (dossier.source.trim()) payload.source = dossier.source.trim();
@@ -232,6 +247,8 @@ export function AdminLitigationFunds() {
     setDossier({
       caseName: row.caseName || "", claimant: row.claimant || "", defendant: row.defendant || "", claimType: row.claimType || "",
       countryCode: row.countryCode || "US", court: row.court || "", counsel: row.counsel || "",
+      caseClass: row.caseClass || "", causeOfAction: row.causeOfAction || "", caseNumber: row.caseNumber || "",
+      filedAt: row.filedAt || "", courtDetail: row.courtDetail || "", claimValueBand: row.claimValueBand || "",
       meritGrade: row.meritGrade || "", riskGrade: row.riskGrade || "",
       estimatedDamagesUsd: fromMinor(row.estimatedDamagesMinor), capitalAtRiskUsd: fromMinor(row.capitalAtRiskMinor),
       expectedMultiple: row.expectedMultipleBps === null || row.expectedMultipleBps === undefined ? "" : String(Number(row.expectedMultipleBps) / 10_000),
@@ -369,6 +386,29 @@ export function AdminLitigationFunds() {
           <div className="lf-field"><label>Bundle id (optional)</label><input value={dossier.bundleId} onChange={(e) => d("bundleId", e.target.value)} placeholder="Attach to a published bundle" /></div>
         </div>
         <div className="lf-two">
+          <div className="lf-field"><label>Case class</label>
+            <select value={dossier.caseClass} onChange={(e) => d("caseClass", e.target.value)}>
+              <option value="">Auto-classify from the claim wording</option>
+              {LITIGATION_CASE_CLASSES.map((value) => <option key={value} value={value}>{caseClassLabel(value)}</option>)}
+            </select>
+            <small>Separates a company litigating a claim from an insolvency estate. Insolvency is one class among many.</small>
+          </div>
+          <div className="lf-field"><label>Claim-value band</label>
+            <select value={dossier.claimValueBand} onChange={(e) => d("claimValueBand", e.target.value)}>
+              <option value="">Derive from estimated damages</option>
+              {LITIGATION_VALUE_BANDS.map((value) => <option key={value} value={value}>{valueBandLabel(value)}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="lf-two">
+          <div className="lf-field"><label>Cause of action (optional)</label><input value={dossier.causeOfAction} onChange={(e) => d("causeOfAction", e.target.value)} placeholder="e.g. Patent infringement" /></div>
+          <div className="lf-field"><label>Case / docket number (optional)</label><input value={dossier.caseNumber} onChange={(e) => d("caseNumber", e.target.value)} placeholder="e.g. [2025] EWHC 123 (Comm)" /></div>
+        </div>
+        <div className="lf-two">
+          <div className="lf-field"><label>Filing date (optional)</label><input type="date" value={dossier.filedAt} onChange={(e) => d("filedAt", e.target.value)} /></div>
+          <div className="lf-field"><label>Court detail (optional)</label><input value={dossier.courtDetail} onChange={(e) => d("courtDetail", e.target.value)} placeholder="Division, judge or chamber" /></div>
+        </div>
+        <div className="lf-two">
           <div className="lf-field"><label>Merit grade</label><select value={dossier.meritGrade} onChange={(e) => d("meritGrade", e.target.value)}>{MERIT_OPTIONS.map((grade) => <option key={grade || "none"} value={grade}>{grade ? `Grade ${grade}` : "Not graded"}</option>)}</select></div>
           <div className="lf-field"><label>Risk grade</label><select value={dossier.riskGrade} onChange={(e) => d("riskGrade", e.target.value)}><option value="">Not graded</option>{RISK_OPTIONS.map((grade) => <option key={grade} value={grade}>{grade.replace("_", " ")}</option>)}</select></div>
         </div>
@@ -456,6 +496,7 @@ export function AdminLitigationFunds() {
                 <div className="lf-card-meta"><span>{row.claimant} v {row.defendant}</span><span>{row.jurisdiction} · {row.court}</span></div>
               </div>
               <div className="lf-badges">
+                {row.caseClass && <span className={`lf-badge lf-badge--class${isInsolvency(row) ? " lf-badge--insolvency" : ""}`}>{caseClassLabel(row.caseClass)}</span>}
                 {row.meritGrade && <span className={`lf-badge lf-badge--merit-${String(row.meritGrade).toLowerCase()}`}>Merit {row.meritGrade}</span>}
                 <span className={`lf-badge lf-badge--status-${String(row.status).toLowerCase()}`}>{row.status}</span>
                 <span className="lf-badge lf-badge--stage">{STAGE_LABELS[row.stage] || row.stage}</span>
@@ -465,6 +506,11 @@ export function AdminLitigationFunds() {
             <div className="lf-card-meta">
               <span>Target {money(row.fundingAskMinor)} · committed {money(row.committedMinor)}</span>
               <span>Expected {multiple(row.expectedMultipleBps)}{row.expectedDurationMonths ? ` · ${row.expectedDurationMonths}mo` : ""}</span>
+              {row.claimValueBand && <span>Claim {valueBandLabel(row.claimValueBand)}</span>}
+              {row.causeOfAction && <span>{row.causeOfAction}</span>}
+              {row.caseNumber && <span className="lf-mono">{row.caseNumber}</span>}
+              {row.filedAt && <span>Filed {row.filedAt}</span>}
+              {row.courtDetail && <span>{row.courtDetail}</span>}
               <span>{row.scenarios.length ? `${row.scenarios.length} scenarios` : "Not modelled"}</span>
               <span>{reached} of {(row.milestones || []).length} milestones reached</span>
               {row.outcome && <span className="lf-badge">Outcome {row.outcome}</span>}

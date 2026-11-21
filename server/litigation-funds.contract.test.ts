@@ -145,6 +145,50 @@ describe("Litigation Funds case-linked capital desk", () => {
     expect(customerUi).toContain('className="lf-milestones"');
   });
 
+  it("separates a company litigating a claim from a company going bankrupt, with advanced case intelligence", () => {
+    // Case-class taxonomy: INSOLVENCY is one class among many, never the whole desk.
+    expect(catalogue).toContain("export type LitigationCaseClass");
+    expect(catalogue).toContain("export const LITIGATION_CASE_CLASSES");
+    expect(catalogue).toContain("export function caseClassLabel(");
+    expect(catalogue).toContain("export function isInsolvency(");
+    expect(catalogue).toContain("export function classifyCaseClass(");
+    expect(catalogue).toContain("export function classifyPartyKind(");
+    expect(catalogue).toContain("export function detectClaimValueBand(");
+    expect(catalogue).toContain('"INSOLVENCY"');
+    // Company-litigant intelligence: listed parties are tied to a ticker via SEC EDGAR.
+    expect(catalogue).toContain("async function fetchEdgarClaims(");
+    expect(catalogue).toContain("https://www.sec.gov/files/company_tickers_exchange.json");
+    expect(catalogue).toContain("https://efts.sec.gov/LATEST/search-index");
+    expect(catalogue).toContain("function listedPartiesFor(");
+    // The desk-level analytics are computed only from the cited records.
+    expect(catalogue).toContain("export function buildLitigationAnalytics(");
+    expect(catalogue).toContain("mostActiveCompanies");
+    expect(catalogue).toContain("insolvencyBps");
+
+    // Dossiers store the new case metadata additively, tolerating the ALTER on first run.
+    expect(serverDossiers).toContain("const ADD_DOSSIERS_COLUMNS_SQL");
+    expect(serverDossiers).toContain("ALTER TABLE litigation_fund_dossiers ADD COLUMN caseClass VARCHAR(32) NULL");
+    expect(serverDossiers).toContain("ADD COLUMN claimValueBand VARCHAR(16) NULL");
+
+    // The admin router validates the case class explicitly.
+    expect(serverRouters).toContain("caseClass: z.enum([");
+
+    // The admin console exposes the taxonomy and the insolvency distinction.
+    expect(adminUi).toContain("LITIGATION_CASE_CLASSES");
+    expect(adminUi).toContain("caseClassLabel");
+    expect(adminUi).toContain("isInsolvency");
+
+    // The customer desk filters and badges by case class, surfaces listed litigants and the analytics panel.
+    expect(customerUi).toContain("LITIGATION_CASE_CLASSES");
+    expect(customerUi).toContain("caseClassLabel");
+    expect(customerUi).toContain("lf-badge--class");
+    expect(customerUi).toContain("lf-badge--insolvency");
+    expect(customerUi).toContain("lf-listed-chip");
+    expect(customerUi).toContain("isInsolvency");
+    expect(customerUi).toContain("buildLitigationAnalytics");
+    expect(customerUi).toContain("Litigation analytics");
+  });
+
   it("derives the country flag from the selected country and never asks the admin to type it", () => {
     expect(adminUi).toContain("COUNTRY_OPTIONS.map");
     expect(adminUi).toContain("{flagFor(country.code)} {country.name} ({country.code})");
