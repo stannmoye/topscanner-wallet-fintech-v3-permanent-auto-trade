@@ -1,3 +1,33 @@
+## 2026-11-22 — Treasury Bond: buy from any/combined wallet, like Cooperate Dept
+
+Same capability the Cooperate Dept desk just gained, applied to the Treasury Bond desk.
+
+- **Fund from any wallet or every wallet combined** (`server/treasuryBonds.ts`,
+  `server/routers.ts`): a purchase no longer assumes the USD settlement wallet.
+  The desk reuses the platform's cross-wallet FX engine (`planCrossWalletFunding`,
+  `calculateCombinedAvailableTargetMinor`, `getFreshTradingFxRate`,
+  `getWalletFundingPriorityForFunding`). A customer can pay from the USD
+  settlement wallet, **any single funded wallet** (converted at the live rate), or
+  **all wallets combined** (`TREASURY_BOND_COMBINED_SOURCE`) in administrator
+  funding-priority order. Every source wallet is read and locked `FOR UPDATE`,
+  debited per-wallet (`treasury_bond_fx_debit` / `_fx_credit` ledger entries +
+  `fx_rate_snapshots`), then settled in USD and locked (`treasury_bond_purchase`).
+  Positions persist `fundingSource` + `fundingPlanJson`. A missing FX quote or a
+  shortfall fails closed (nothing is debited partially). New
+  `treasuryBonds.fundingQuote` query previews the exact per-wallet debits and the
+  combined affordability without touching any balance.
+- **Customer desk** (`client/src/components/CustomerTreasuryBond.tsx`): the
+  purchase modal now has a "Pay with" selector (All wallets combined · each funded
+  wallet · USD balance only) with a debounced live funding quote showing per-wallet
+  debits, the USD each converts to and the rate/provider, or the exact shortfall.
+  Wallet balances render in their own currency scale (`moneyMinor`). The education,
+  disclaimer, footnote and utility copy now describe single/combined funding.
+- **Styling:** `tb-funding`, `tb-funding-option(.is-on)`, `tb-quote(.is-ok/.is-short)`
+  added to `client/src/components/treasury-bond.css`.
+- Verification: `pnpm check` clean; `pnpm test` (201 files / 1,599 passed / 36
+  skipped) passes, including the expanded
+  `server/treasury-instruments.contract.test.ts` cross-wallet funding test.
+
 ## 2026-11-22 — Cooperate Dept phase 2: buy from any/combined wallet, pagination, filters + 5 more features
 
 Follow-up to the Cooperate Dept desk. Four owner asks, all delivered.

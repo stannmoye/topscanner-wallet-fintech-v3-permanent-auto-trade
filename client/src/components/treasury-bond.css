@@ -1532,6 +1532,122 @@
 }
 
 /* ------------------------------------------------------------------ *
+ * Purchase funding source + live quote
+ * ------------------------------------------------------------------ */
+.tb-funding {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.tb-funding-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--arb-color-text-muted);
+}
+
+.tb-funding-options {
+  display: grid;
+  gap: 8px;
+}
+
+.tb-funding-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid var(--tb-line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--tb-card);
+  color: var(--arb-color-text-soft);
+}
+
+.tb-funding-option > span {
+  display: grid;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tb-funding-option strong {
+  font-size: 0.86rem;
+  color: var(--arb-color-text);
+}
+
+.tb-funding-option small {
+  font-size: 0.72rem;
+  color: var(--arb-color-text-muted);
+}
+
+.tb-funding-option b {
+  font-size: 0.84rem;
+  color: var(--arb-color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-funding-option.is-on {
+  border-color: color-mix(in srgb, var(--tb-gold) 55%, var(--tb-line));
+  background: var(--tb-gold-soft);
+  color: var(--arb-color-text);
+}
+
+.tb-quote {
+  margin-top: 2px;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  border: 1px dashed var(--tb-line);
+  background: var(--tb-card-raised);
+  color: var(--arb-color-text-soft);
+}
+
+.tb-quote strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--arb-color-text);
+}
+
+.tb-quote ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.tb-quote em {
+  font-style: normal;
+  color: var(--arb-color-text-muted);
+  font-size: 0.72rem;
+}
+
+.tb-quote.is-ok {
+  border-style: solid;
+  border-color: color-mix(in srgb, #34d399 45%, var(--tb-line));
+  background: color-mix(in srgb, #34d399 8%, transparent);
+}
+
+.tb-quote.is-short {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--arb-color-danger, #f87171) 45%, var(--tb-line));
+  background: color-mix(in srgb, var(--arb-color-danger, #f87171) 10%, transparent);
+  color: var(--arb-color-text);
+}
+
+.tb-quote.is-short strong {
+  color: var(--arb-color-danger, #f87171);
+}
+
+/* ------------------------------------------------------------------ *
  * Responsive
  * ------------------------------------------------------------------ */
 @media (max-width: 1024px) {

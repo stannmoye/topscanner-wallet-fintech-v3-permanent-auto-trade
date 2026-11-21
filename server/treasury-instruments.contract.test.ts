@@ -9,6 +9,7 @@ const catalogue = readFileSync(new URL("../shared/treasury-bond-catalogue.ts", i
 const serverStore = readFileSync(new URL("./treasuryBondInstruments.ts", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./treasuryBonds.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+const customerUi = readFileSync(new URL("../client/src/components/CustomerTreasuryBond.tsx", import.meta.url), "utf8");
 
 describe("Administrator treasury-instrument publishing", () => {
   it("exposes one Finance destination that opens the dedicated publishing console", () => {
@@ -90,5 +91,39 @@ describe("Administrator treasury-instrument publishing", () => {
     expect(serverRouters).toContain("deleteTreasuryInstrument: adminProcedure.input(z.object({ instrumentId");
     expect(serverRouters).toContain("couponRatePct: z.number().min(0).max(100)");
     expect(serverRouters).toContain("minInvestmentMinor: z.number().int().min(100).max(100_000_000)");
+  });
+
+  it("funds a purchase from any single wallet or the combined balance of every wallet", () => {
+    // The desk reuses the shared cross-wallet FX engine so nothing is hard-coded.
+    expect(serverDesk).toContain('from "./modules/trading-wallet-fx"');
+    expect(serverDesk).toContain("planCrossWalletFunding");
+    expect(serverDesk).toContain("calculateCombinedAvailableTargetMinor");
+    expect(serverDesk).toContain("getFreshTradingFxRate");
+    expect(serverDesk).toContain("getWalletFundingPriorityForFunding");
+    expect(serverDesk).toContain('export const TREASURY_BOND_COMBINED_SOURCE = "COMBINED"');
+    expect(serverDesk).toContain("function planPurchaseFunding(");
+    expect(serverDesk).toContain("export async function quoteTreasuryBondPurchase(");
+    // Every wallet is read and locked for a purchase; the plan is persisted per position.
+    expect(serverDesk).toContain("async function readWalletRows(");
+    expect(serverDesk).toContain("FROM customer_balances b");
+    expect(serverDesk).toContain("FOR UPDATE");
+    expect(serverDesk).toContain("fundingSource VARCHAR(24) NULL");
+    expect(serverDesk).toContain("fundingPlanJson TEXT NULL");
+    expect(serverDesk).toContain("treasury_bond_fx_debit");
+    expect(serverDesk).toContain("treasury_bond_fx_credit");
+    // Missing FX fails closed rather than silently skipping a wallet.
+    expect(serverDesk).toContain("Insufficient combined spendable wallet balance at current exchange rates");
+
+    // The router exposes the preview quote and accepts the funding source.
+    expect(serverRouters).toContain('import { getTreasuryBondDashboard, purchaseTreasuryBond, quoteTreasuryBondPurchase } from "./treasuryBonds";');
+    expect(serverRouters).toContain("quoteTreasuryBondPurchase(ctx.user.id, input)");
+    expect(serverRouters).toContain("fundingSource: z.string().trim().min(2).max(24).optional(),");
+
+    // The desk lets the customer choose the wallet(s) and shows the live quote.
+    expect(customerUi).toContain("utils.customer.treasuryBonds.fundingQuote.fetch");
+    expect(customerUi).toContain("tb-funding-options");
+    expect(customerUi).toContain("All wallets combined");
+    expect(customerUi).toContain("function moneyMinor(");
+    expect(customerUi).toContain("amountMinor: Math.round(amount), fundingSource, idempotencyKey: crypto.randomUUID()");
   });
 });

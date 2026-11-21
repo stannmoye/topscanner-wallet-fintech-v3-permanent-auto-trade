@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
 import { visibilityAwareRefetchInterval } from "@/visibility-aware-polling";
 import {
@@ -42,6 +42,18 @@ function fmtMinor(minor: number, currency = "USD") {
     return new Intl.NumberFormat(undefined, { style: "currency", currency: code, maximumFractionDigits: 2 }).format(value);
   } catch {
     return `${code} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+}
+
+/** Format a minor-unit amount using the wallet's own currency scale (not always 2). */
+function moneyMinor(minor: number, currency = "USD", scale = 2) {
+  const code = String(currency || "USD").toUpperCase();
+  const digits = Math.min(Math.max(0, Math.round(Number.isFinite(scale) ? scale : 2)), 8);
+  const value = Number(minor || 0) / Math.pow(10, digits);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: code, maximumFractionDigits: digits }).format(value);
+  } catch {
+    return `${code} ${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
   }
 }
 
@@ -151,7 +163,7 @@ function EducationSection() {
     {
       id: "use",
       q: "How do I purchase on this desk?",
-      a: <><p>Choose any instrument, open it, enter the amount you want to invest (at least the published minimum), review the interest to earn and the value at maturity, then confirm. The purchase debits your USD wallet through the platform’s internal ledger, locks the principal, and records a durable position with the published rate, source and observation date captured at the moment of purchase.</p></>,
+      a: <><p>Choose any instrument, open it, enter the amount you want to invest (at least the published minimum), choose how to pay, review the interest to earn and the value at maturity, then confirm. You can pay from any single wallet you hold, or from all of your wallets combined — non-USD funds are converted at the live exchange rate at the moment of purchase. The purchase debits the wallet(s) you chose through the platform’s internal ledger, settles in USD, locks the principal, and records a durable position with the published rate, source and observation date captured at the moment of purchase.</p></>,
     },
   ];
   return <section className="tb-education" aria-label="Treasury bond education">
@@ -186,6 +198,18 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
   const [showCompare, setShowCompare] = useState(false);
   const [selected, setSelected] = useState<TreasuryInstrument | null>(null);
   const [amount, setAmount] = useState(0);
+  const [fundingSource, setFundingSource] = useState("COMBINED");
+  const [quote, setQuote] = useState<null | {
+    sufficient: boolean;
+    combinedAvailableMinor: number | null;
+    usdAvailableMinor: number;
+    convertedUsdMinor: number;
+    shortfallMinor: number;
+    message: string | null;
+    debits: { currency: string; amountMinor: number; convertedUsdMinor: number; rate: string; rateProvider: string }[];
+  }>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const quoteSeq = useRef(0);
   const [message, setMessage] = useState("");
   const [trendId, setTrendId] = useState<string>("");
 
@@ -193,10 +217,12 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
     onSuccess: (result: any) => {
       setSelected(null);
       setAmount(0);
+      setQuote(null);
       void utils.customer.treasuryBonds.market.invalidate();
       void utils.customer.balances.invalidate();
       void utils.customer.treasuryBonds.market.refetch();
-      push(`+ Treasury bond purchased · ${result.instrumentName} principal reserved through the wallet ledger`);
+      const via = result?.fundingSource && result.fundingSource !== "USD" ? ` · funded via ${result.fundingSource === "COMBINED" ? "combined wallets" : result.fundingSource}` : "";
+      push(`+ Treasury bond purchased · ${result.instrumentName} principal reserved through the wallet ledger${via}`);
     },
     onError: (error) => setMessage(error.message),
   });
@@ -239,6 +265,17 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
   const available = Number(market.data?.availableMinor || 0);
   const summary = market.data?.summary || { investedMinor: 0, expectedProfitMinor: 0, activePositions: 0, completedPositions: 0, countries: 0, averageRatePct: 0 };
   const storeWarning = String((market.data as any)?.storeWarning || "");
+
+  // Every enabled wallet the customer can spend from; a purchase may draw on any
+  // one of them or on all of them combined (converted at the live rate at purchase).
+  const wallets = useMemo(() => ((market.data?.wallets || market.data?.balances || []) as any[]).map((w) => ({
+    currency: String(w.currency || "").toUpperCase(),
+    name: String(w.currencyName || w.currency || ""),
+    symbol: String(w.symbol || ""),
+    scale: Number(w.scale ?? 2),
+    availableMinor: Number(w.availableMinor || 0),
+  })).filter((w) => w.currency), [market.data]);
+  const fundedWallets = useMemo(() => wallets.filter((w) => w.availableMinor > 0), [wallets]);
 
   const regions = useMemo(() => {
     const map = new Map<string, string>();
@@ -294,16 +331,44 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
   const openPurchase = (instrument: TreasuryInstrument) => {
     setSelected(instrument);
     setMessage("");
+    setFundingSource("COMBINED");
+    setQuote(null);
     setAmount(Math.max(instrument.minInvestmentMinor, Math.min(available, instrument.minInvestmentMinor * 2)));
   };
 
   const projectedProfit = selected ? Math.floor((Math.max(0, amount) * selected.couponRatePct * selected.tenorYears) / 100) : 0;
 
+  // Debounced live funding quote: exactly how the purchase would be funded from
+  // the chosen wallet(s) or the combined balance, at current exchange rates.
+  useEffect(() => {
+    if (!selected) { setQuote(null); return; }
+    const amountMinor = Math.max(0, Math.round(amount));
+    if (amountMinor <= 0) { setQuote(null); return; }
+    const seq = ++quoteSeq.current;
+    setQuoteLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await utils.customer.treasuryBonds.fundingQuote.fetch({ amountMinor, fundingSource });
+        if (quoteSeq.current === seq) setQuote(result as any);
+      } catch {
+        if (quoteSeq.current === seq) setQuote(null);
+      } finally {
+        if (quoteSeq.current === seq) setQuoteLoading(false);
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [selected, amount, fundingSource, utils]);
+
   const submitPurchase = () => {
     if (!selected) return;
     if (amount < selected.minInvestmentMinor) { setMessage(`Minimum purchase is ${fmtMinor(selected.minInvestmentMinor)}`); return; }
-    if (amount > available) { setMessage(`Insufficient available USD balance. You have ${fmtMinor(available)}.`); return; }
-    purchase.mutate({ instrumentId: selected.id, amountMinor: Math.round(amount), idempotencyKey: crypto.randomUUID() });
+    const combined = quote?.combinedAvailableMinor;
+    const sufficient = quote ? quote.sufficient : amount <= available;
+    if (!sufficient) {
+      setMessage(quote?.message || `Insufficient spendable balance across your wallets (combined ${combined != null ? fmtMinor(combined) : "—"}).`);
+      return;
+    }
+    purchase.mutate({ instrumentId: selected.id, amountMinor: Math.round(amount), fundingSource, idempotencyKey: crypto.randomUUID() });
   };
 
   const sources = usingFallback ? (fallback?.sources || []) : (market.data?.sources || []);
@@ -482,7 +547,7 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
 
     <div id="tb-education"><EducationSection /></div>
 
-    <div className="tb-disclaimer"><ShieldCheck size={15}/><span>Rates, prices and yields shown are published reference figures from official public data sources (U.S. Treasury Fiscal Data, the ECB Data Portal, Eurostat and the OECD) and are not offers to sell securities. Purchases on this desk are recorded as internal-ledger positions in your USD wallet. Projections use simple interest and are illustrations, not guarantees. “Risk-free” describes credit quality relative to other issuers and does not remove inflation, interest-rate, liquidity or currency risk.</span></div>
+    <div className="tb-disclaimer"><ShieldCheck size={15}/><span>Rates, prices and yields shown are published reference figures from official public data sources (U.S. Treasury Fiscal Data, the ECB Data Portal, Eurostat and the OECD) and are not offers to sell securities. Purchases on this desk are recorded as internal-ledger positions settled in USD and funded from the wallet(s) you choose (a single wallet or all of your wallets combined, converted at the live rate). Projections use simple interest and are illustrations, not guarantees. “Risk-free” describes credit quality relative to other issuers and does not remove inflation, interest-rate, liquidity or currency risk.</span></div>
 
     {showCompare && compareRows.length >= 2 && <div className="modal-backdrop" onMouseDown={() => setShowCompare(false)}>
       <div className="op-modal tb-compare-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -521,7 +586,38 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
           <div><span>Amount required</span><strong>{fmtMinor(selected.minInvestmentMinor)}</strong></div>
           <div><span>Payment</span><strong>{selected.couponFrequency}</strong></div>
         </div>
-        <div className="amount-field"><label>Purchase amount (USD)</label><div><span>$</span><input type="number" min={selected.minInvestmentMinor / 100} step="100" value={(amount / 100).toString()} onChange={(e) => setAmount(Math.round((Number(e.target.value) || 0) * 100))}/></div><small>Available wallet: {fmtMinor(available)} · minimum {fmtMinor(selected.minInvestmentMinor)}</small></div>
+        <div className="amount-field"><label>Purchase amount (USD)</label><div><span>$</span><input type="number" min={selected.minInvestmentMinor / 100} step="100" value={(amount / 100).toString()} onChange={(e) => setAmount(Math.round((Number(e.target.value) || 0) * 100))}/></div><small>Minimum {fmtMinor(selected.minInvestmentMinor)} · USD settlement balance {fmtMinor(available)}</small></div>
+        <div className="tb-funding">
+          <span className="tb-funding-label"><Wallet size={13}/> Pay with</span>
+          <div className="tb-funding-options">
+            <button type="button" className={`tb-funding-option${fundingSource === "COMBINED" ? " is-on" : ""}`} onClick={() => setFundingSource("COMBINED")}>
+              <span><strong>All wallets combined</strong><small>{fundedWallets.length ? fundedWallets.map((w) => w.currency).join(" + ") : "USD"}</small></span>
+              <b>{quote?.combinedAvailableMinor != null ? fmtMinor(quote.combinedAvailableMinor) : "…"}</b>
+            </button>
+            {fundedWallets.filter((w) => w.currency !== "USD").map((w) => (
+              <button key={w.currency} type="button" className={`tb-funding-option${fundingSource === w.currency ? " is-on" : ""}`} onClick={() => setFundingSource(w.currency)}>
+                <span><strong>{w.name || w.currency}</strong><small>{w.currency} wallet</small></span>
+                <b>{moneyMinor(w.availableMinor, w.currency, w.scale)}</b>
+              </button>
+            ))}
+            <button type="button" className={`tb-funding-option${fundingSource === "USD" ? " is-on" : ""}`} onClick={() => setFundingSource("USD")}>
+              <span><strong>USD balance only</strong><small>Settlement wallet</small></span>
+              <b>{fmtMinor(available)}</b>
+            </button>
+          </div>
+          {quoteLoading && <div className="tb-quote">Checking live exchange rates…</div>}
+          {!quoteLoading && quote && (quote.sufficient ? (
+            <div className="tb-quote is-ok">
+              <strong><Check size={13}/> Funded from your wallets</strong>
+              {quote.debits.length ? <ul>{quote.debits.map((d) => <li key={d.currency}>Debit {moneyMinor(d.amountMinor, d.currency, fundedWallets.find((w) => w.currency === d.currency)?.scale ?? 2)} → {fmtMinor(d.convertedUsdMinor)} <em>at {d.rate} ({d.rateProvider})</em></li>)}</ul> : <em>Paid directly from your USD settlement balance — no conversion needed.</em>}
+            </div>
+          ) : (
+            <div className="tb-quote is-short">
+              <strong><AlertTriangle size={13}/> Not enough spendable balance</strong>
+              <em>{quote.message}{quote.combinedAvailableMinor != null ? ` Combined spendable: ${fmtMinor(quote.combinedAvailableMinor)}${quote.shortfallMinor > 0 ? ` · short by ${fmtMinor(quote.shortfallMinor)}` : ""}.` : ""}</em>
+            </div>
+          ))}
+        </div>
         <div className="tb-modal-projection">
           <div><span>Principal</span><strong>{fmtMinor(Math.max(0, amount))}</strong></div>
           <div><span>Interest to earn</span><strong className="tb-positive">{fmtMinor(projectedProfit)}</strong></div>
@@ -529,11 +625,11 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
         </div>
         <ProfitCalculator ratePct={selected.couponRatePct} years={selected.tenorYears} minMinor={selected.minInvestmentMinor} currency="USD" />
         {message && <div className="auth-error"><CircleHelp size={14}/>{message}</div>}
-        <div className="modal-footnote"><ShieldCheck size={14}/> Confirmation debits your USD wallet through the existing ledger and creates a durable position. Duplicate requests are idempotent.</div>
+        <div className="modal-footnote"><ShieldCheck size={14}/> Confirmation debits the wallet(s) you chose — a single wallet or every wallet combined, converted at the live rate — through the existing ledger, settles {fmtMinor(Math.max(0, amount))} in USD, and creates a durable position. Duplicate requests are idempotent.</div>
         <div className="modal-actions"><button className="secondary-button" onClick={() => setSelected(null)}>Cancel</button><button className="primary-button" disabled={purchase.isPending} onClick={submitPurchase}>{purchase.isPending ? "Reserving principal…" : "Confirm purchase"} <Check size={14}/></button></div>
       </div>
     </div>}
 
-    <div className="tb-utility"><div className="tb-utility-item"><Wallet size={14}/> Settlement wallet: <strong>USD</strong> · available {fmtMinor(available)}</div><div className="tb-utility-item"><Coins size={14}/> {instruments.length} instruments · {positions.length} your positions</div><div className="tb-utility-item"><Percent size={14}/> Average desk rate {instruments.length ? fmtPct(averageYield, 2) : "—"}</div><div className="tb-utility-item"><Sparkles size={14}/> Purchase, watchlist, compare, calculator &amp; ladder tools included</div></div>
+    <div className="tb-utility"><div className="tb-utility-item"><Wallet size={14}/> Settlement: <strong>USD</strong> · pay from any wallet or combined · available {fmtMinor(available)}</div><div className="tb-utility-item"><Coins size={14}/> {instruments.length} instruments · {fundedWallets.length} funded wallet{fundedWallets.length === 1 ? "" : "s"} · {positions.length} your positions</div><div className="tb-utility-item"><Percent size={14}/> Average desk rate {instruments.length ? fmtPct(averageYield, 2) : "—"}</div><div className="tb-utility-item"><Sparkles size={14}/> Purchase from any/combined wallet, watchlist, compare, calculator &amp; ladder tools included</div></div>
   </div>;
 }

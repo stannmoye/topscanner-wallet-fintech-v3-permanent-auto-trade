@@ -12,7 +12,7 @@ import { communicationSettingsInput, getAdminCommunicationSettings, getCustomerC
 import { TRPCError } from "@trpc/server";
 import { ACCOUNT_CLOSURE_TICKET_SUBJECT, AccountClosureDecisionError, applyAccountClosureDecision, assignSupportTicket, createAccountClosureTicket, listSupportAssignees, addTicketAttachment, addTicketMessage, adjustCustomerBalance, createAdminTradingPackage, broadcastCustomerNotification, listAdminNotificationCampaigns, retryNotificationCampaign, withdrawNotificationCampaign, createAdminCustomer, createNotification, createRiskReport, createTicket, deleteAdminCustomer, getCustomerTicket, getSupportTicketById, getAppSetting, getTradeSettlementPolicy, TradeTimingPolicyVersionConflictError, getTradeFeePolicy, getTradeAllocationControls, setTradeAllocationControls, listAdminTradingPackages, updateAdminTradingPackage, TradingPackageTermsVersionConflictError, getCustomerTradingEligibility, previewNextCustomerCompanySpotlight, getCustomerBalanceSummary, listCustomerWalletLedger, getCustomerWalletPreferences, getCustomerPayoutEligibility, getCustomerAuthenticatorStatus, startCustomerAuthenticatorEnrollment, confirmCustomerAuthenticatorEnrollment, generateCustomerAuthenticatorRecoveryCodes, startCustomerAuthenticatorRecoveryReplacement, startCustomerAuthenticatorReplacement, confirmCustomerAuthenticatorReplacement, createCustomerPayoutRequest, listCustomerPayoutRequests, cancelCustomerPayoutRequest, listAdminPayoutRequests, resolveCustomerPayoutRequest, manuallySettleTrade, listPendingSettlements, listTradeSettlementIntegrityIssues, listWalletLedgerReconciliation, markCustomerNotificationsRead, updateCustomerWalletPreferences, getCustomerPersonalDetails, updateCustomerPersonalDetails, getTicketUploadPolicy, setTradeSettlementPolicy, getNotificationCategoryVisibility, getCustomerNotificationUnreadCount, listCustomerNotificationPage, setNotificationCategoryVisibility, getUserById, getUserForSessionRevocation, listAdminCustomers, listAdminAuditEvents, listAdminRecentLedgerActivity, listAllTickets, listBalances, listCurrencies, listCustomerOpportunities, listCustomerSessions, listCustomerTickets, listCustomerNotifications, listNotifications, listNotificationEventCursor, listOpenOffers, listOpportunityPackagePolicies, listPersistedOpportunityPackagePolicies, listRiskReports, listTicketAttachments, listTicketMessages, listTrades, provisionSignupCredit, revokeCustomerSession, reopenSupportTicket, setAppSetting, updateCompanyCatalogueAdminState, updateAdminCustomer, updateCustomerControls, updateOpportunityPackagePolicies, upsertCustomerSession, upsertCurrency, listSettlementEvidence, submitSettlementEvidence, reviewSettlementEvidence } from "./db";
 import { allocateStake, cancelStake, getStakeDashboard, projectStake } from "./stakeEarn";
-import { getTreasuryBondDashboard, purchaseTreasuryBond } from "./treasuryBonds";
+import { getTreasuryBondDashboard, purchaseTreasuryBond, quoteTreasuryBondPurchase } from "./treasuryBonds";
 import { projectTreasuryBondProfit } from "./treasuryBondProvider";
 import { createAdminTreasuryBondInstrument, deleteAdminTreasuryBondInstrument, listAdminTreasuryBondInstruments, setAdminTreasuryBondInstrumentEnabled, updateAdminTreasuryBondInstrument, TREASURY_INSTRUMENT_CATEGORIES } from "./treasuryBondInstruments";
 import { getCooperateDeptDashboard, purchaseCooperateDeptCompany, quoteCooperateDeptPurchase } from "./cooperateDept";
@@ -547,9 +547,14 @@ export const appRouter = router({
     }),
     treasuryBonds: router({
       market: protectedProcedure.query(({ ctx }) => getTreasuryBondDashboard(ctx.user.id)),
+      fundingQuote: protectedProcedure.input(z.object({
+        amountMinor: z.number().int().min(0).max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+      })).query(({ ctx, input }) => quoteTreasuryBondPurchase(ctx.user.id, input)),
       purchase: protectedProcedure.input(z.object({
         instrumentId: z.string().min(2).max(80),
         amountMinor: z.number().int().positive().max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
         idempotencyKey: z.string().min(8).max(160),
       })).mutation(async ({ ctx, input }) => {
         const result = await purchaseTreasuryBond(ctx.user.id, input);
@@ -557,11 +562,11 @@ export const appRouter = router({
           eventType: "INVESTMENT",
           status: "COMPLETED",
           title: "Treasury bond purchased",
-          message: `${result.instrumentName} was purchased and ${result.principalMinor} minor units of ${result.currency} principal were reserved through the wallet ledger.`,
+          message: `${result.instrumentName} was purchased and ${result.principalMinor} minor units of ${result.currency} principal were reserved through the wallet ledger (funding source: ${result.fundingSource}).`,
           transactionCode: `treasury-bond:${result.positionCode}`,
           amountMinor: result.principalMinor,
           asset: result.currency,
-          metadata: { positionCode: result.positionCode, instrumentId: result.instrumentId },
+          metadata: { positionCode: result.positionCode, instrumentId: result.instrumentId, fundingSource: result.fundingSource },
         });
         return result;
       }),

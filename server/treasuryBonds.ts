@@ -9,6 +9,13 @@ import {
   type TreasuryBondInstrument,
 } from "./treasuryBondProvider";
 import { findEnabledAdminTreasuryBondInstrument, listEnabledAdminTreasuryBondInstruments } from "./treasuryBondInstruments";
+import {
+  FxRateUnavailableError,
+  planCrossWalletFunding,
+  calculateCombinedAvailableTargetMinor,
+  type FxRateSnapshot,
+} from "./modules/trading-wallet-fx";
+import { getFreshTradingFxRate, getWalletFundingPriorityForFunding } from "./db";
 
 type Db = mysql.PoolConnection;
 
@@ -31,6 +38,8 @@ const CREATE_POSITIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS treasury_bond_pos
   principalMinor BIGINT NOT NULL,
   expectedProfitMinor BIGINT NOT NULL,
   currency VARCHAR(12) NOT NULL DEFAULT 'USD',
+  fundingSource VARCHAR(24) NULL,
+  fundingPlanJson TEXT NULL,
   dataSource VARCHAR(140) NULL,
   dataAsOf VARCHAR(24) NULL,
   status VARCHAR(24) NOT NULL DEFAULT 'ACTIVE',
@@ -42,8 +51,38 @@ const CREATE_POSITIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS treasury_bond_pos
   KEY treasury_bond_positions_user_idx (userId, status)
 ) ENGINE=InnoDB`;
 
+/** Columns added after the first release; `ADD COLUMN IF NOT EXISTS` is not portable, so they are attempted and tolerated. */
+const ADD_POSITIONS_COLUMNS_SQL = [
+  "ALTER TABLE treasury_bond_positions ADD COLUMN fundingSource VARCHAR(24) NULL",
+  "ALTER TABLE treasury_bond_positions ADD COLUMN fundingPlanJson TEXT NULL",
+];
+
+/** Every treasury-bond purchase settles into this currency; other wallets fund it through live FX. */
 const SETTLEMENT_CURRENCY = "USD";
+export const TREASURY_BOND_COMBINED_SOURCE = "COMBINED";
 const MAX_PURCHASE_MINOR = 100_000_000; // $1,000,000 ceiling per purchase
+
+type WalletRow = {
+  id: number;
+  currency: string;
+  scale: number;
+  assetType: "fiat" | "crypto" | "token";
+  externalCode: string | null;
+  symbol: string | null;
+  currencyName: string | null;
+  availableMinor: number;
+  lockedMinor: number;
+};
+
+type FundingDebit = { currency: string; amountMinor: number; convertedUsdMinor: number; rate: FxRateSnapshot };
+
+type PurchaseFundingPlan = {
+  requiredUsdMinor: number;
+  usdAvailableMinor: number;
+  convertedUsdMinor: number;
+  debits: FundingDebit[];
+  targetRate: FxRateSnapshot;
+};
 
 async function withConnection<T>(fn: (conn: Db) => Promise<T>) {
   const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
@@ -65,6 +104,9 @@ export function ensureTreasuryBondSchema(): Promise<void> {
       if (!process.env.DATABASE_URL) return;
       await withConnection(async (conn) => {
         await conn.query(CREATE_POSITIONS_TABLE_SQL);
+        for (const statement of ADD_POSITIONS_COLUMNS_SQL) {
+          try { await conn.query(statement); } catch { /* column already exists */ }
+        }
       });
     } catch (error) {
       // Allow a later attempt to retry if the first one raced a cold database.
@@ -89,6 +131,140 @@ function tenureDays(instrument: TreasuryBondInstrument) {
   return Math.max(1, Math.round(instrument.tenorYears * 365));
 }
 
+/** The dollar value of one unit of the settlement currency is fixed parity. */
+function usdUnitRate(scale: number): FxRateSnapshot {
+  return {
+    currency: SETTLEMENT_CURRENCY,
+    scale,
+    rateUsdPerUnit: "1",
+    provider: "platform-parity",
+    sourceDate: new Date().toISOString().slice(0, 10),
+    fetchedAt: new Date(),
+  };
+}
+
+/** Lock or read every enabled, spendable wallet for a customer. */
+async function readWalletRows(conn: Db, userId: number, forUpdate = false): Promise<WalletRow[]> {
+  const [rows] = await conn.query<any[]>(
+    `SELECT b.id, b.currency, c.scale, c.assetType, c.externalCode, c.symbol, c.name currencyName,
+            COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor
+     FROM customer_balances b
+     INNER JOIN currency_registry c ON c.code=b.currency
+     WHERE b.userId=? AND c.enabled=true
+     ORDER BY b.currency${forUpdate ? " FOR UPDATE" : ""}`,
+    [userId],
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    currency: String(row.currency).toUpperCase(),
+    scale: Number(row.scale || 0),
+    assetType: row.assetType,
+    externalCode: row.externalCode ? String(row.externalCode) : null,
+    symbol: row.symbol ? String(row.symbol) : null,
+    currencyName: row.currencyName ? String(row.currencyName) : null,
+    availableMinor: Number(row.availableMinor || 0),
+    lockedMinor: Number(row.lockedMinor || 0),
+  }));
+}
+
+/**
+ * Fetch the live USD rate for every funded, non-settlement wallet that could be
+ * used as a source. A missing quote is recorded as `null` so the funding planner
+ * fails closed on the wallet it actually needs (it never silently skips it).
+ */
+async function loadWalletRates(wallets: WalletRow[]): Promise<Map<string, FxRateSnapshot | null>> {
+  const rates = new Map<string, FxRateSnapshot | null>();
+  await Promise.all(
+    wallets
+      .filter((wallet) => wallet.currency !== SETTLEMENT_CURRENCY && wallet.availableMinor > 0)
+      .map(async (wallet) => {
+        try {
+          const rate = await getFreshTradingFxRate({
+            code: wallet.currency,
+            scale: wallet.scale,
+            assetType: wallet.assetType,
+            externalCode: wallet.externalCode,
+          });
+          rates.set(wallet.currency, rate);
+        } catch {
+          rates.set(wallet.currency, null);
+        }
+      }),
+  );
+  return rates;
+}
+
+/**
+ * Build the all-or-nothing funding plan for a purchase that settles in USD.
+ *
+ * - `COMBINED` spends the settlement wallet first and then draws on the other
+ *   wallets in administrator funding-priority order, converting through live FX.
+ * - A currency code funds the whole purchase from that one wallet (converted when
+ *   it is not the settlement currency).
+ *
+ * Any shortfall or missing rate throws; nothing is ever debited partially.
+ */
+function planPurchaseFunding(
+  wallets: WalletRow[],
+  rates: Map<string, FxRateSnapshot | null>,
+  requiredUsdMinor: number,
+  fundingSource: string,
+  priorityOrder: string[] | null,
+): PurchaseFundingPlan {
+  if (!Number.isSafeInteger(requiredUsdMinor) || requiredUsdMinor < 1) throw new Error("Enter a valid purchase amount");
+  if (requiredUsdMinor > MAX_PURCHASE_MINOR) throw new Error("This amount exceeds the per-purchase ceiling for the treasury-bond desk");
+
+  const usd = wallets.find((wallet) => wallet.currency === SETTLEMENT_CURRENCY);
+  const usdScale = usd ? usd.scale : 2;
+  const usdAvailableMinor = usd ? usd.availableMinor : 0;
+  const targetRate = usdUnitRate(usdScale);
+  const source = String(fundingSource || TREASURY_BOND_COMBINED_SOURCE).trim().toUpperCase();
+  const insufficient = new Error("Insufficient combined spendable wallet balance at current exchange rates");
+
+  if (source === SETTLEMENT_CURRENCY) {
+    if (requiredUsdMinor <= usdAvailableMinor) return { requiredUsdMinor, usdAvailableMinor, convertedUsdMinor: 0, debits: [], targetRate };
+    throw insufficient;
+  }
+
+  const fundedNonSettlement = wallets.filter((wallet) => wallet.currency !== SETTLEMENT_CURRENCY && wallet.availableMinor > 0);
+  const candidates = source === TREASURY_BOND_COMBINED_SOURCE
+    ? fundedNonSettlement
+    : fundedNonSettlement.filter((wallet) => wallet.currency === source);
+
+  if (source === TREASURY_BOND_COMBINED_SOURCE && requiredUsdMinor <= usdAvailableMinor && !candidates.length) {
+    return { requiredUsdMinor, usdAvailableMinor, convertedUsdMinor: 0, debits: [], targetRate };
+  }
+  const targetAvailableMinor = source === TREASURY_BOND_COMBINED_SOURCE ? usdAvailableMinor : 0;
+  if (requiredUsdMinor <= targetAvailableMinor) return { requiredUsdMinor, usdAvailableMinor, convertedUsdMinor: 0, debits: [], targetRate };
+  if (!candidates.length) throw insufficient;
+
+  const plan = planCrossWalletFunding({
+    requiredTargetMinor: requiredUsdMinor,
+    targetAvailableMinor,
+    targetRate,
+    sourceWallets: candidates.map((wallet) => ({
+      currency: wallet.currency,
+      scale: wallet.scale,
+      availableMinor: wallet.availableMinor,
+      rate: rates.get(wallet.currency) ?? null,
+    })),
+    priorityCurrencies: source === TREASURY_BOND_COMBINED_SOURCE ? priorityOrder : null,
+  });
+
+  return {
+    requiredUsdMinor,
+    usdAvailableMinor,
+    convertedUsdMinor: plan.targetCreditMinor,
+    debits: plan.sourceDebits.map((debit) => ({
+      currency: debit.currency,
+      amountMinor: debit.amountMinor,
+      convertedUsdMinor: debit.convertedTargetMinor,
+      rate: debit.rate,
+    })),
+    targetRate,
+  };
+}
+
 /**
  * Read one customer's stored treasury-bond positions and wallet balances.
  * Storage is strictly best-effort: a database hiccup must never hide the live
@@ -102,7 +278,7 @@ async function readTreasuryBondStore(userId: number): Promise<{ positions: any[]
       const [positions] = await conn.query<any[]>(
         `SELECT id, positionCode, instrumentId, instrumentName, issuer, country, countryCode, category,
                 couponRateBps, tenorYears, tenureDays, principalMinor, expectedProfitMinor, currency,
-                dataSource, dataAsOf, status, openedAt, maturityAt, ledgerReference
+                fundingSource, fundingPlanJson, dataSource, dataAsOf, status, openedAt, maturityAt, ledgerReference
          FROM treasury_bond_positions WHERE userId=? ORDER BY openedAt DESC`,
         [userId],
       );
@@ -184,7 +360,10 @@ export async function getTreasuryBondDashboard(userId: number) {
     instruments,
     positions,
     balances,
+    wallets: balances,
     settlementCurrency: SETTLEMENT_CURRENCY,
+    combinedSource: TREASURY_BOND_COMBINED_SOURCE,
+    /** Settlement-wallet balance only; the combined figure needs live FX and is quoted on demand. */
     availableMinor: Number(usd?.availableMinor || 0),
     summary,
     sources,
@@ -211,14 +390,90 @@ async function resolveInstrumentForPurchase(instrumentId: string): Promise<Treas
 }
 
 /**
- * Purchase a treasury bond from the customer's USD wallet. Debits the existing
- * wallet ledger, locks the principal, and records one position plus a durable
- * notice. Idempotent per request key; the instrument's published rate is
- * re-read server-side so a client cannot dictate the coupon.
+ * Preview how a purchase would be funded without touching any balance. Returns
+ * the combined spendable value and the exact per-wallet debits the purchase
+ * would draw on. Fails soft: an unknown rate or shortfall is reported as a
+ * shortfall rather than an error, so the customer sees what is missing.
+ */
+export async function quoteTreasuryBondPurchase(
+  userId: number,
+  input: { amountMinor: number; fundingSource?: string },
+) {
+  const amountMinor = Math.round(Number(input.amountMinor) || 0);
+  const wallets = await withConnection((conn) => readWalletRows(conn, userId));
+  const rates = await loadWalletRates(wallets);
+  const usd = wallets.find((wallet) => wallet.currency === SETTLEMENT_CURRENCY);
+  const targetRate = usdUnitRate(usd ? usd.scale : 2);
+
+  let combinedAvailableMinor: number | null = null;
+  try {
+    combinedAvailableMinor = calculateCombinedAvailableTargetMinor({
+      targetCurrency: SETTLEMENT_CURRENCY,
+      targetRate,
+      wallets: wallets.map((wallet) => ({
+        currency: wallet.currency,
+        scale: wallet.scale,
+        availableMinor: wallet.availableMinor,
+        rate: wallet.currency === SETTLEMENT_CURRENCY ? null : rates.get(wallet.currency) ?? null,
+      })),
+    });
+  } catch {
+    combinedAvailableMinor = null;
+  }
+
+  const priority = await getWalletFundingPriorityForFunding();
+  const order = "blocked" in priority ? null : priority.order;
+
+  try {
+    const plan = planPurchaseFunding(wallets, rates, amountMinor, String(input.fundingSource || TREASURY_BOND_COMBINED_SOURCE), order);
+    return {
+      amountMinor,
+      fundingSource: String(input.fundingSource || TREASURY_BOND_COMBINED_SOURCE).toUpperCase(),
+      sufficient: true,
+      combinedAvailableMinor,
+      settlementCurrency: SETTLEMENT_CURRENCY,
+      usdAvailableMinor: plan.usdAvailableMinor,
+      convertedUsdMinor: plan.convertedUsdMinor,
+      shortfallMinor: 0,
+      debits: plan.debits.map((debit) => ({
+        currency: debit.currency,
+        amountMinor: debit.amountMinor,
+        convertedUsdMinor: debit.convertedUsdMinor,
+        rate: debit.rate.rateUsdPerUnit,
+        rateProvider: debit.rate.provider,
+      })),
+      message: null as string | null,
+    };
+  } catch (error) {
+    const rateGap = error instanceof FxRateUnavailableError;
+    const shortfallMinor = combinedAvailableMinor !== null ? Math.max(0, amountMinor - combinedAvailableMinor) : amountMinor;
+    return {
+      amountMinor,
+      fundingSource: String(input.fundingSource || TREASURY_BOND_COMBINED_SOURCE).toUpperCase(),
+      sufficient: false,
+      combinedAvailableMinor,
+      settlementCurrency: SETTLEMENT_CURRENCY,
+      usdAvailableMinor: usd ? usd.availableMinor : 0,
+      convertedUsdMinor: 0,
+      shortfallMinor,
+      debits: [],
+      message: rateGap ? (error as Error).message : "Insufficient combined spendable wallet balance at current exchange rates",
+    };
+  }
+}
+
+/**
+ * Purchase a treasury bond with the customer's own money. The purchase settles
+ * in USD and may be funded from the settlement wallet alone, a single chosen
+ * wallet, or every wallet combined through live FX. The existing wallet ledger
+ * is debited per source wallet, the principal is locked, and one durable
+ * position plus a notice is written in a single transaction. Idempotent per
+ * request key; the instrument's published rate is re-read server-side so a
+ * client cannot dictate the coupon.
  */
 export async function purchaseTreasuryBond(
   userId: number,
-  input: { instrumentId: string; amountMinor: number; idempotencyKey: string },
+  input: { instrumentId: string; amountMinor: number; fundingSource?: string; idempotencyKey: string },
 ) {
   await ensureTreasuryBondSchema();
   const instrument = await resolveInstrumentForPurchase(String(input.instrumentId || ""));
@@ -229,10 +484,18 @@ export async function purchaseTreasuryBond(
   }
   if (input.amountMinor > MAX_PURCHASE_MINOR) throw new Error("This amount exceeds the per-purchase ceiling for the treasury-bond desk");
 
+  const fundingSource = String(input.fundingSource || TREASURY_BOND_COMBINED_SOURCE).trim().toUpperCase();
   const key = idempotencyKey(input.idempotencyKey, userId);
   const couponBps = rateBps(instrument.couponRatePct);
   const expectedProfitMinor = projectTreasuryBondProfit(input.amountMinor, instrument.couponRatePct, instrument.tenorYears);
   const days = tenureDays(instrument);
+
+  // Rates and the administrator funding order are resolved before the transaction
+  // opens: network calls must never run while wallet rows are locked.
+  const priority = await getWalletFundingPriorityForFunding();
+  if ("blocked" in priority) throw new Error(priority.blocked);
+  const preWallets = await withConnection((conn) => readWalletRows(conn, userId));
+  const rates = await loadWalletRates(preWallets);
 
   return withConnection(async (conn) => {
     await conn.beginTransaction();
@@ -243,45 +506,100 @@ export async function purchaseTreasuryBond(
       );
       if (prior.length) { await conn.commit(); return JSON.parse(prior[0].resultJson); }
 
-      const [balanceRows] = await conn.query<any[]>(
-        `SELECT * FROM customer_balances WHERE userId=? AND currency=? FOR UPDATE`,
+      // Guarantee the settlement wallet exists before it is locked.
+      await conn.execute(
+        `INSERT INTO customer_balances (userId,currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor) VALUES (?,?,0,0,0,0) ON DUPLICATE KEY UPDATE userId=userId`,
         [userId, SETTLEMENT_CURRENCY],
       );
-      const balance = balanceRows[0];
-      if (!balance || Number(balance.availableMinor) < input.amountMinor) {
-        throw new Error(`Insufficient available ${SETTLEMENT_CURRENCY} balance for this purchase`);
-      }
+      const wallets = await readWalletRows(conn, userId, true);
+      const plan = planPurchaseFunding(wallets, rates, input.amountMinor, fundingSource, priority.order);
 
       const now = new Date();
       const maturity = new Date(now.getTime() + days * 86400000);
       const positionCode = `TB-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
       const reference = `treasury-bond-purchase:${positionCode}`;
 
+      // Debit every source wallet and credit the settlement wallet through FX.
+      for (const debit of plan.debits) {
+        const row = wallets.find((wallet) => wallet.currency === debit.currency);
+        if (!row) throw new Error(`Source wallet ${debit.currency} disappeared during funding`);
+        const [update] = await conn.execute<any>(
+          `UPDATE customer_balances SET availableMinor=availableMinor-?, updatedAt=NOW() WHERE id=? AND availableMinor>=?`,
+          [debit.amountMinor, row.id, debit.amountMinor],
+        );
+        if (Number(update.affectedRows || 0) !== 1) throw new Error(`Insufficient spendable ${debit.currency} balance to fund this purchase`);
+        await conn.execute(
+          `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`,
+          [userId, debit.currency, -debit.amountMinor, "treasury_bond_fx_debit", `${reference}-fx-${debit.currency}-debit`],
+        );
+        await conn.execute(
+          `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`,
+          [userId, SETTLEMENT_CURRENCY, debit.convertedUsdMinor, "treasury_bond_fx_credit", `${reference}-fx-${debit.currency}-credit`],
+        );
+        await conn.execute(
+          `INSERT INTO fx_rate_snapshots (baseAsset,quoteAsset,rate,provider,sourceDate,rawJson) VALUES (?,?,?,?,?,?)`,
+          [
+            debit.currency, SETTLEMENT_CURRENCY, debit.rate.rateUsdPerUnit, debit.rate.provider, debit.rate.sourceDate,
+            JSON.stringify({
+              purpose: "treasury_bond_cross_wallet_conversion",
+              positionCode, targetCurrency: SETTLEMENT_CURRENCY,
+              targetCreditMinor: debit.convertedUsdMinor, sourceDebitMinor: debit.amountMinor,
+              fetchedAt: debit.rate.fetchedAt.toISOString(), scale: debit.rate.scale,
+            }),
+          ],
+        );
+      }
+
+      const usdRow = wallets.find((wallet) => wallet.currency === SETTLEMENT_CURRENCY)!;
+      const minimumFromSettlement = Math.max(0, input.amountMinor - plan.convertedUsdMinor);
+      const [settlementUpdate] = await conn.execute<any>(
+        `UPDATE customer_balances SET availableMinor=availableMinor+?-?, lockedMinor=lockedMinor+?, updatedAt=NOW() WHERE id=? AND availableMinor>=?`,
+        [plan.convertedUsdMinor, input.amountMinor, input.amountMinor, usdRow.id, minimumFromSettlement],
+      );
+      if (Number(settlementUpdate.affectedRows || 0) !== 1) throw new Error("Insufficient available settlement balance to complete this purchase");
       await conn.execute(
         `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`,
         [userId, SETTLEMENT_CURRENCY, -input.amountMinor, "treasury_bond_purchase", reference],
       );
-      await conn.execute(
-        `UPDATE customer_balances SET availableMinor=availableMinor-?, lockedMinor=lockedMinor+?, updatedAt=NOW() WHERE id=?`,
-        [input.amountMinor, input.amountMinor, balance.id],
-      );
+
+      const fundingPlanJson = JSON.stringify({
+        fundingSource,
+        settlementCurrency: SETTLEMENT_CURRENCY,
+        requiredUsdMinor: input.amountMinor,
+        settlementWalletMinor: input.amountMinor - plan.convertedUsdMinor,
+        convertedUsdMinor: plan.convertedUsdMinor,
+        sourceDebits: plan.debits.map((debit) => ({
+          currency: debit.currency,
+          amountMinor: debit.amountMinor,
+          convertedUsdMinor: debit.convertedUsdMinor,
+          rate: debit.rate.rateUsdPerUnit,
+          rateProvider: debit.rate.provider,
+          rateSourceDate: debit.rate.sourceDate,
+        })),
+        recordedAt: now.toISOString(),
+      });
+
       await conn.execute(
         `INSERT INTO treasury_bond_positions
-          (positionCode,userId,instrumentId,instrumentName,issuer,country,countryCode,category,couponRateBps,tenorYears,tenureDays,principalMinor,expectedProfitMinor,currency,dataSource,dataAsOf,status,openedAt,maturityAt,ledgerReference)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE', NOW(), ?, ?)`,
+          (positionCode,userId,instrumentId,instrumentName,issuer,country,countryCode,category,couponRateBps,tenorYears,tenureDays,principalMinor,expectedProfitMinor,currency,fundingSource,fundingPlanJson,dataSource,dataAsOf,status,openedAt,maturityAt,ledgerReference)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE', NOW(), ?, ?)`,
         [
           positionCode, userId, instrument.id, instrument.name, instrument.issuer, instrument.country,
           instrument.countryCode, instrument.category, couponBps, instrument.tenorYears, days,
-          input.amountMinor, expectedProfitMinor, SETTLEMENT_CURRENCY, instrument.source, instrument.asOf,
-          maturity, reference,
+          input.amountMinor, expectedProfitMinor, SETTLEMENT_CURRENCY, fundingSource, fundingPlanJson,
+          instrument.source, instrument.asOf, maturity, reference,
         ],
       );
+
+      const fundingLabel = plan.debits.length
+        ? `funded from ${plan.debits.map((debit) => debit.currency).join(", ")} alongside ${SETTLEMENT_CURRENCY}`
+        : `funded from your ${SETTLEMENT_CURRENCY} balance`;
       await conn.execute(
         `INSERT INTO customer_notifications (userId,title,body,eventKey,category,priority) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE eventKey=VALUES(eventKey)`,
         [
           userId,
           "Treasury bond purchase confirmed",
-          `${instrument.name} was purchased and ${input.amountMinor} minor units of ${SETTLEMENT_CURRENCY} principal were reserved through the wallet ledger. Expected profit at maturity: ${expectedProfitMinor} minor units.`,
+          `${instrument.name} was purchased and ${input.amountMinor} minor units of ${SETTLEMENT_CURRENCY} principal were reserved through the wallet ledger, ${fundingLabel}. Expected profit at maturity: ${expectedProfitMinor} minor units.`,
           `u${userId}:treasury-bond:${positionCode}`,
           "ledger_debit",
           "normal",
@@ -301,6 +619,8 @@ export async function purchaseTreasuryBond(
         principalMinor: input.amountMinor,
         expectedProfitMinor,
         currency: SETTLEMENT_CURRENCY,
+        fundingSource,
+        fundingPlan: JSON.parse(fundingPlanJson),
         status: "ACTIVE",
         maturityAt: maturity.toISOString(),
         ledgerReference: reference,
