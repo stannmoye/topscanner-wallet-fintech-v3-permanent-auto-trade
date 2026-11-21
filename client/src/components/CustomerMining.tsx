@@ -5,9 +5,9 @@ import { MiningCoreCanvas } from "./MiningCoreCanvas";
 import { MiningOperationsFlow } from "./MiningOperationsFlow";
 import { getMiningPackageTheme } from "@shared/mining-package-themes";
 import {
-  Activity, ArrowDownUp, ArrowRight,
-  ChevronDown, ChevronLeft, ChevronRight, Clock3, Cpu, Info,
-  RefreshCw, ShieldCheck, Sparkles, WalletCards, Zap,
+  Activity, ArrowDownUp, ArrowRight, BarChart3, Calculator,
+  ChevronDown, ChevronLeft, ChevronRight, Clock3, Cpu, Download, Info, Layers,
+  RefreshCw, Scale, ShieldCheck, Sparkles, Target, TrendingUp, WalletCards, Zap,
 } from "lucide-react";
 
 const TARGET_ASSETS = ["USD", "EUR", "GBP", "BTC", "ETH", "USDT"];
@@ -52,6 +52,9 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
   const [buyAsset, setBuyAsset] = useState("");
   const [buyQuote, setBuyQuote] = useState<any | null>(null);
   const [buyTerms, setBuyTerms] = useState(false);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [goalTarget, setGoalTarget] = useState("");
   const boostAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -72,6 +75,13 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
     const preferredSwap = String(walletPreferences.data?.swapCurrency || "").toUpperCase();
     if (TARGET_ASSETS.includes(preferredSwap)) setSwapTarget(preferredSwap);
   }, [walletPreferences.data?.swapCurrency]);
+
+  useEffect(() => {
+    try {
+      const storedGoal = window.localStorage.getItem("cm-mining-goal");
+      if (storedGoal) setGoalTarget(storedGoal);
+    } catch { /* storage may be unavailable in private browsing */ }
+  }, []);
 
   const quotePurchaseMutation = trpc.customer.mining.quotePurchase.useMutation({
     onSuccess: quote => { setBuyQuote(quote); setBuyAsset(String(quote.paymentAsset || "")); setMessage(""); },
@@ -200,6 +210,41 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
       if (packageSort === "name") return String(a.name ?? "").localeCompare(String(b.name ?? ""));
       return Number(a.displayOrder ?? 0) - Number(b.displayOrder ?? 0);
     });
+  const rewardAmountOf = (row: any) => Number(row?.details?.immediateTokenAmount ?? row?.details?.tokenAmount ?? 0);
+  const rewardsByDay = new Map<string, number>();
+  for (const row of recent) {
+    if (row.type !== "reward" || String(row.status).toLowerCase() !== "posted") continue;
+    const key = new Date(row.createdAt).toISOString().slice(0, 10);
+    rewardsByDay.set(key, (rewardsByDay.get(key) || 0) + rewardAmountOf(row));
+  }
+  const dayBuckets = Array.from({ length: 7 }, (_unused, index) => {
+    const day = new Date(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - (6 - index));
+    const key = day.toISOString().slice(0, 10);
+    return { key, label: day.toLocaleDateString(undefined, { weekday: "short" }), value: rewardsByDay.get(key) || 0 };
+  });
+  const dayMax = Math.max(1, ...dayBuckets.map(bucket => bucket.value));
+  const mined7d = dayBuckets.reduce((sum, bucket) => sum + bucket.value, 0);
+  const projectedRemainingTotal = active.reduce((sum: number, item: any) => sum + Number(item.projectedRemainingTokens || 0), 0);
+  const projectedTermTotal = active.reduce((sum: number, item: any) => sum + Number(item.projectedTermTokens || 0), 0);
+  const projectedDailyTotal = active.reduce((sum: number, item: any) => sum + Number(item.effectiveDailyRewardCki || 0), 0) || Number(data?.estimatedDailyTokens || 0);
+  const usdPerTokenValue = Number(data?.usdPerToken || 0);
+  const projectedRemainingUsd = projectedRemainingTotal * usdPerTokenValue;
+  const goalValue = Number(goalTarget || 0);
+  const goalProgress = goalValue > 0 ? Math.min(100, Math.max(0, Math.round((availableCki / goalValue) * 100))) : 0;
+  const goalRemaining = Math.max(0, goalValue - availableCki);
+  const goalEtaDays = goalValue > 0 && goalRemaining <= 0 ? 0 : goalValue > 0 && projectedDailyTotal > 0 ? Math.ceil(goalRemaining / projectedDailyTotal) : null;
+  const compareRows = packageRows.filter((item: any) => compareIds.includes(item.versionId));
+  const compareSameAsset = compareRows.length > 1 && compareRows.every((item: any) => item.priceAsset === compareRows[0].priceAsset);
+  const comparePricePerThs = (item: any) => {
+    const ths = Number(item.baseThs || 0) + Number(item.boostBonusThs || 0);
+    return ths > 0 ? Number(item.priceAmount || 0) / ths : null;
+  };
+  const compareBestIdx = compareSameAsset ? compareRows.reduce((best: number, item: any, index: number, list: any[]) => {
+    const value = comparePricePerThs(item); const bestValue = comparePricePerThs(list[best]);
+    return value != null && (bestValue == null || value < bestValue) ? index : best;
+  }, 0) : -1;
+  const toggleCompare = (versionId: string) => setCompareIds(prev => prev.includes(versionId) ? prev.filter(id => id !== versionId) : prev.length >= 3 ? prev : [...prev, versionId]);
+  const saveGoal = (value: string) => { setGoalTarget(value); try { window.localStorage.setItem("cm-mining-goal", value); } catch { /* storage may be unavailable */ } };
   const openBuyDialog = (item: any) => {
     setMessage("");
     setBuyPackage(item);
@@ -321,6 +366,38 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
 	        latestRewardCreatedAt={latestReward?.createdAt}
       />
 
+      <section className="cm-analytics" aria-label="Mining performance analytics and forecast">
+        <div className="cm-analytics-head">
+          <div className="cm-analytics-heading">
+            <span className="cm-eyebrow"><BarChart3 size={13}/> MINING ANALYTICS</span>
+            <h2>Performance &amp; forecast</h2>
+            <p>Simulated package-estimate performance derived from your CKI ledger. Values are configured estimates, not pool-verified output or a guaranteed return.</p>
+          </div>
+          <span className="cm-analytics-pill"><TrendingUp size={13}/>{active.length?`${active.length} active package${active.length>1?"s":""}`:"No active package"}</span>
+        </div>
+        <div className="cm-analytics-kpis">
+          <div className="cm-analytics-kpi kpi-today"><span className="cm-analytics-kpi-icon"><Zap size={15}/></span><small>MINED TODAY</small><strong>{fmt(data?.todayTokens,6)} <em>{tokenSymbol||"CKI"}</em></strong><span className="cm-analytics-kpi-note">Since 00:00 UTC</span></div>
+          <div className="cm-analytics-kpi kpi-week"><span className="cm-analytics-kpi-icon"><BarChart3 size={15}/></span><small>MINED · 7 DAYS</small><strong>{fmt(mined7d,6)} <em>{tokenSymbol||"CKI"}</em></strong><span className="cm-analytics-kpi-note">Posted ledger rewards</span></div>
+          <div className="cm-analytics-kpi kpi-daily"><span className="cm-analytics-kpi-icon"><Activity size={15}/></span><small>PROJECTED DAILY</small><strong>{projectedDailyTotal>0?fmt(projectedDailyTotal,6):"—"} <em>{tokenSymbol||"CKI"}</em></strong><span className="cm-analytics-kpi-note">{projectedDailyTotal>0?`≈ $${fmt(projectedDailyTotal*usdPerTokenValue,2)} / day`:"Configure a package rate"}</span></div>
+          <div className="cm-analytics-kpi kpi-forecast"><span className="cm-analytics-kpi-icon"><Target size={15}/></span><small>REMAINING FORECAST</small><strong>{fmt(projectedRemainingTotal,4)} <em>{tokenSymbol||"CKI"}</em></strong><span className="cm-analytics-kpi-note">{projectedRemainingTotal>0?`≈ $${fmt(projectedRemainingUsd,2)} to end of active terms`:"No active term"}</span></div>
+        </div>
+        <div className="cm-analytics-body">
+          <article className="cm-analytics-chart" aria-label="Rewards earned over the last seven days">
+            <div className="cm-analytics-chart-head"><div><h3>Rewards · last 7 days</h3>{projectedTermTotal>0&&<small className="cm-analytics-chart-term">Term projection ≈ {fmt(projectedTermTotal,4)} {tokenSymbol||"CKI"}</small>}</div><span className="cm-analytics-chart-total">{fmt(mined7d,6)} {tokenSymbol||"CKI"}</span></div>
+            <div className="cm-analytics-bars" role="img" aria-label={`Rewards over the last seven days; tallest day ${fmt(dayMax,6)} ${tokenSymbol||"CKI"}`}>
+              {dayBuckets.map(bucket => <div className="cm-analytics-bar-col" key={bucket.key} title={`${bucket.label}: ${fmt(bucket.value,6)} ${tokenSymbol||"CKI"}`}><span className="cm-analytics-bar-track"><i style={{height:`${Math.max(bucket.value>0?6:3,Math.round((bucket.value/dayMax)*100))}%`}}/></span><small>{bucket.label}</small></div>)}
+            </div>
+          </article>
+          <article className="cm-analytics-goal" aria-label="Mining reward goal tracker">
+            <div className="cm-analytics-goal-head"><h3><Target size={14}/> Reward goal</h3><small>Set a personal target</small></div>
+            <label className="cm-analytics-goal-input"><span>Target {tokenSymbol||"CKI"}</span><input value={goalTarget} inputMode="decimal" placeholder="e.g. 10000" onChange={e=>saveGoal(e.target.value)} aria-label={`Target ${tokenSymbol||"CKI"} reward goal`}/></label>
+            <div className="cm-analytics-goal-meter" role="progressbar" aria-valuenow={goalProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Progress toward reward goal"><i style={{width:`${goalProgress}%`}}/><span className="cm-analytics-goal-meter-label">{goalValue>0?`${goalProgress}%`:"—"}</span></div>
+            <div className="cm-analytics-goal-facts"><div><small>Current</small><b>{fmt(availableCki,4)} {tokenSymbol||"CKI"}</b></div><div><small>Remaining</small><b>{goalValue>0?`${fmt(goalRemaining,4)} ${tokenSymbol||"CKI"}`:"—"}</b></div><div><small>Est. days to goal</small><b>{goalEtaDays!=null?(goalEtaDays===0?"Reached":`≈ ${goalEtaDays}`):"—"}</b></div></div>
+            {goalValue>0&&goalRemaining<=0&&<span className="cm-analytics-goal-done">Goal reached — keep mining to build your balance.</span>}
+          </article>
+        </div>
+      </section>
+
       <section className="cm-wallet-hash-grid" aria-label="Mining wallet and hash rate">
         <article className="cm-glass cm-wallet-card"><div className="cm-wallet-total"><div className="cm-card-title"><span className="cm-icon-cyan"><WalletCards size={19}/></span><b>{tokenSymbol} WALLET BALANCE</b></div><div className="cm-wallet-value"><span className="cm-wallet-coin"><CoinMark iconUrl={tokenIconUrl}/></span><div><small>Total {tokenSymbol}</small><strong>{fmt(data?.balances?.CKI ?? data?.tokenBalance,6)} <small>{tokenSymbol}</small></strong><span className="cm-positive">Historical Mining ledger total</span></div></div></div><div className="cm-wallet-currencies"><div className="cm-currency-list">{TARGET_ASSETS.map(asset=><button type="button" key={asset} className={`cm-currency ${swapTarget===asset?"selected":""}`} onClick={()=>selectSwapTarget(asset)} aria-pressed={swapTarget===asset}><i className={`currency-${asset.toLowerCase()}`}>{currencyIcons[asset]}</i><small>{asset}</small></button>)}</div><small className="cm-swap-note">Selected main-wallet balance: {fmt(mainWalletAvailable(swapTarget),mainWalletScale(swapTarget))} {swapTarget||"—"}</small><button type="button" className="cm-glow-button cm-swap-all" disabled={!canSwapAll || swapQuoteMutation.isPending || swapMutation.isPending} onClick={startFullBalanceSwap}><ArrowDownUp size={15}/>{swapMutation.isPending?"Posting conversion…":`Swap All to ${swapTarget}`}</button>{!canSwapAll&&<small className="cm-swap-note">A positive available CKI balance and a selected main-wallet currency are required.</small>}</div></article>
         <article className="cm-glass cm-hash-card"><div className="cm-card-title"><span className="cm-icon-cyan"><Zap size={19}/></span><b>CURRENT HASH RATE</b></div><div className="cm-hash-content"><div><strong>{fmt(data?.activeThs,3)} <small>TH/s</small></strong><span className="cm-positive">Base {fmt(data?.baseThs,3)} · Boost {fmt(data?.boostThs,3)} TH/s</span></div><div className="cm-hash-details"><small>Total Power</small><b>{fmt(data?.activeThs,3)} TH/s</b><small>Package</small><b>{activePackageNames}</b></div><svg className="cm-sparkline" viewBox="0 0 170 70" preserveAspectRatio="none" aria-label="Illustrative hash rate trace"><defs><linearGradient id="cm-hash-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#10d9ff" stopOpacity=".35"/><stop offset="1" stopColor="#10d9ff" stopOpacity="0"/></linearGradient></defs><path d="M0 54 C12 47 12 24 25 32 S42 54 52 39 S66 11 78 28 S94 49 105 35 S124 52 135 25 S153 32 170 5 L170 70 L0 70Z" fill="url(#cm-hash-fill)"/><path d="M0 54 C12 47 12 24 25 32 S42 54 52 39 S66 11 78 28 S94 49 105 35 S124 52 135 25 S153 32 170 5" fill="none" stroke="#18dfff" strokeWidth="2"/></svg></div></article>
@@ -348,7 +425,10 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
               <div className="cm-package-price"><strong>{fmt(item.priceAmount,assetScaleFor(item.priceAsset,mainWallet.data?.currencies))}</strong><small>{item.priceAsset}</small></div>
               <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"not set"):`${item.durationMonths} months`}</span><span>{item.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)} CKI/day${Number(item.miningSpeedMultiplier||1)!==1?` · ${fmt(item.miningSpeedMultiplier,4)}× speed`:""}`}</span><span className="cm-package-projection">{item.projectedTermTokens?`Projected term ≈ ${fmt(item.projectedTermTokens,4)} ${tokenSymbol||"CKI"}${item.projectedTermUsd?` · ≈ $${fmt(item.projectedTermUsd,2)}`:""}`:"Term projection unavailable until a duration is set"}</span>{item.remainingPurchases!=null&&<span className="cm-package-limit">Purchases remaining: {item.remainingPurchases}{Number(item.maxPerCustomer)>0?` of ${item.maxPerCustomer}`:""}</span>}</div>
               {item.termsText&&<details className="cm-package-terms"><summary>Review package terms</summary><p>{item.termsText}</p></details>}
-              <button type="button" className="cm-package-buy" disabled={!canPurchase||purchaseInProgress} title={canPurchase?"Open the purchase panel to review a live quote and choose which wallet balance funds this package.":(unavailableReason||"Unavailable")} aria-label={`Buy ${item.name}; opens the purchase panel to choose a wallet and review a live quote`} onClick={()=>{if(!canPurchase||purchaseInProgress)return;openBuyDialog(item)}}>{buttonLabel}<ArrowRight size={13}/></button>
+              <div className="cm-package-actions">
+                <button type="button" className={`cm-compare-toggle${compareIds.includes(item.versionId)?" is-selected":""}`} aria-pressed={compareIds.includes(item.versionId)} onClick={()=>toggleCompare(item.versionId)} title={compareIds.includes(item.versionId)?"Remove this package from the comparison panel":"Add this package to the comparison panel (up to 3)"}><Scale size={13}/>{compareIds.includes(item.versionId)?"Added":"Compare"}</button>
+                <button type="button" className="cm-package-buy" disabled={!canPurchase||purchaseInProgress} title={canPurchase?"Open the purchase panel to review a live quote and choose which wallet balance funds this package.":(unavailableReason||"Unavailable")} aria-label={`Buy ${item.name}; opens the purchase panel to choose a wallet and review a live quote`} onClick={()=>{if(!canPurchase||purchaseInProgress)return;openBuyDialog(item)}}>{buttonLabel}<ArrowRight size={13}/></button>
+              </div>
             </article>;
           })}
         </div>
@@ -392,6 +472,15 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
 
       <footer className="cm-disclaimer"><ShieldCheck size={15}/><span>Configured package rewards are internal estimates, prorated by eligible contract time and recorded in the CKI ledger. They are not verified pool output, withdrawable funds, or a cash payout. CKI swaps credit the selected main wallet; no external transfer is initiated here.</span><b>Economics v{data?.economicsVersion||"—"}</b></footer>
     </main>
+
+    {compareIds.length>0 && <div className="cm-compare-bar" role="region" aria-label="Package comparison selection">
+      <span className="cm-compare-bar-lead"><Scale size={15}/><b>{compareIds.length}</b>selected<small>Pick 2–3 packages</small></span>
+      <div className="cm-compare-bar-chips">{compareRows.map((item:any)=><button type="button" key={item.versionId} className="cm-compare-chip" onClick={()=>toggleCompare(item.versionId)} title={`Remove ${item.name} from comparison`}>{item.name} <span aria-hidden="true">×</span></button>)}</div>
+      <div className="cm-compare-bar-actions">
+        <button type="button" className="cm-secondary-button" onClick={()=>{setCompareIds([]);setCompareOpen(false);}}>Clear</button>
+        <button type="button" className="cm-glow-button" disabled={compareIds.length<2} onClick={()=>setCompareOpen(true)} title={compareIds.length<2?"Select at least two packages to compare":undefined}><Scale size={15}/>Compare{compareIds.length>=2?` (${compareIds.length})`:""}</button>
+      </div>
+    </div>}
 
     {buyPackage && (()=>{
       const theme=getMiningPackageTheme(buyPackage.themeKey);
@@ -443,6 +532,32 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
         </div>
       </div>;
     })()}
+
+    {compareOpen && compareRows.length>=2 && <div className="cm-buy-backdrop" role="presentation" onClick={()=>setCompareOpen(false)}>
+      <div className="cm-compare-dialog" role="dialog" aria-modal="true" aria-label="Package comparison" onClick={e=>e.stopPropagation()}>
+        <header className="cm-compare-head">
+          <div><span className="cm-eyebrow"><Scale size={13}/> PACKAGE COMPARISON</span><h3>Compare {compareRows.length} packages</h3></div>
+          <button type="button" className="cm-buy-close" onClick={()=>setCompareOpen(false)} aria-label="Close comparison">×</button>
+        </header>
+        <div className="cm-compare-scroll">
+          <table className="cm-compare-table">
+            <thead><tr><th scope="col">Metric</th>{compareRows.map((item:any,index:number)=><th scope="col" key={item.versionId} className={index===compareBestIdx?"is-best":""}>{item.name}{index===compareBestIdx&&<small className="cm-compare-best">Best value</small>}</th>)}</tr></thead>
+            <tbody>
+              <tr><th scope="row">Price</th>{compareRows.map((item:any)=><td key={item.versionId}>{fmt(item.priceAmount,assetScaleFor(item.priceAsset,mainWallet.data?.currencies))} <small>{item.priceAsset}</small></td>)}</tr>
+              <tr><th scope="row">Base hash power</th>{compareRows.map((item:any)=><td key={item.versionId}>{fmt(item.baseThs,3)} TH/s</td>)}</tr>
+              <tr><th scope="row">Boost bonus</th>{compareRows.map((item:any)=><td key={item.versionId}>+{fmt(item.boostBonusThs,3)} TH/s</td>)}</tr>
+              <tr><th scope="row">Total hash power</th>{compareRows.map((item:any)=><td key={item.versionId}>{fmt(Number(item.baseThs||0)+Number(item.boostBonusThs||0),3)} TH/s</td>)}</tr>
+              <tr><th scope="row">Daily {tokenSymbol||"CKI"}</th>{compareRows.map((item:any)=><td key={item.versionId}>{item.effectiveDailyRewardCki==null?"Not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)}`}</td>)}</tr>
+              <tr><th scope="row">Term</th>{compareRows.map((item:any)=><td key={item.versionId}>{item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"Not set"):`${item.durationMonths} months`}</td>)}</tr>
+              <tr><th scope="row">Projected term {tokenSymbol||"CKI"}</th>{compareRows.map((item:any)=><td key={item.versionId}>{item.projectedTermTokens?fmt(item.projectedTermTokens,4):"—"}</td>)}</tr>
+              <tr><th scope="row">Projected term value</th>{compareRows.map((item:any)=><td key={item.versionId}>{item.projectedTermUsd?`≈ $${fmt(item.projectedTermUsd,2)}`:"—"}</td>)}</tr>
+              <tr><th scope="row">Entry cost / TH/s</th>{compareRows.map((item:any)=>{const perThs=comparePricePerThs(item);return <td key={item.versionId}>{compareSameAsset&&perThs!=null?`${fmt(perThs,assetScaleFor(item.priceAsset,mainWallet.data?.currencies))} ${item.priceAsset}`:"—"}</td>;})}</tr>
+            </tbody>
+          </table>
+        </div>
+        <footer className="cm-compare-foot"><small>Values are admin-configured package terms and simulated projections, not guaranteed returns. Inactive or paused packages cannot be purchased.</small></footer>
+      </div>
+    </div>}
 
   </div>;
 }
