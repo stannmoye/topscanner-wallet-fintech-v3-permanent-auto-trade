@@ -1,3 +1,23 @@
+## 2026-11-21 — Correct the deployment repository identity
+
+Owner asked to remove the wrong repository reference once and for all. The build
+contract and docs named `stannmoye/Arbitrade_platform`, a stale repository whose
+last push predates the current work and which does not contain the guarded
+migration fix, while the live source is
+`stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`. A connected build
+platform resolving the named repository would rebuild the stale source instead of
+`main`, so the crash-loop fix never reached the deployment.
+
+- Corrected every `Arbitrade_platform` reference to
+  `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` across 25 files
+  (406 occurrences). Deployment-critical files: `BUILD_SOURCE.json` (`repository`,
+  `source_of_truth.repository`) and `BUILD_AND_RELEASE.md` (authoritative source).
+  The remainder are documentation/history records, including archived CI run, PR,
+  and release links.
+- No code or configuration behaviour changed; the Dockerfile, `railway.json`, and
+  `start-with-diagnostics.mjs` startup path are unchanged. Verified `BUILD_SOURCE.json`
+  still parses and the required_checks contract is intact.
+
 ## 2026-11-21 — Stop the guarded-migration crash loop on additive reconciliation
 
 Owner reported a production crash loop and supplied the Railway startup log: the
@@ -197,7 +217,7 @@ useful actions than a single Edit button.
   completion summary, field tiles with icons/status, refined controls, mobile breakpoints,
   focus treatment, and reduced-motion handling.
 - Live portal was inspected at `/customer`; its current source bundle corresponds to the
-  linked repository's `main`. The repository build manifest still names `Arbitrade_platform`
+  linked repository's `main`. The repository build manifest still names `topscanner-wallet-fintech-v3-permanent-auto-trade`
   as canonical, so deployment documentation and the actual live source should be reconciled
   separately.
 - Verified: `pnpm check`, `pnpm test` (1,545 passed; 36 skipped), `pnpm build`, and
@@ -1544,7 +1564,7 @@ Fixed the three admin-monitoring 500s: settlement integrity collation drift (`Fi
 
 - Canonical base: `main` at `cefa5fcb03078c9c4d8dbfad3744c585985385fe`.
 - Work branch: `style/trade-wide-premium-redesign`; latest implementation head before this handoff update: `e936bb3688f40274fed2388e7e5f551bb9aae2c3`.
-- PR #249: https://github.com/stannmoye/Arbitrade_platform/pull/249 (open; not merged).
+- PR #249: https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/249 (open; not merged).
 - Added `client/src/trading-experience.css`, loaded from `client/src/App.tsx`, for a Trade-scoped visual redesign across customer eligibility/progress, opportunity feed and history, company catalogue references, live popup/progress banner, admin Trade submenu groups, package/policy configuration, delivery and operations pages, fee/retry/health/settlement screens, and audit history.
 - Refined containers, buttons, input controls, typography, operational cards, status pills, data tables, gradients, borders, radii and hover states using semantic theme variables. Retained the existing six distinct Trading package-card accent colours.
 - Added responsive rules, focus-visible states, disabled states, reduced-motion and forced-colour handling.
@@ -1569,7 +1589,7 @@ Fixed the three admin-monitoring 500s: settlement integrity collation drift (`Fi
 
 ## 2026-10-29 — PART 4 handoff status (latest verified source review)
 
-- Repository `stannmoye/Arbitrade_platform`; current `main`: `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`.
+- Repository `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`; current `main`: `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`.
 - Active continuation PR #243 started at `a3bcbf234d5cef903fed324b6fa04d7ac9a12ac7`, based on `main` `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`; current pushed head is `13f94c24224f0c22eb3a27c9e071e0d68777a699` on `integration/trading-parts-1-6-finalization`.
 - Repairs: forward-only migration 0094 makes absent duration bounds nullable; blank rotation filters persist as `NULL`; settlement/worker fixtures set explicit test-only capital limits and immutable popup snapshots; rollback assertions require nested SQLSTATE 45000; create/update tier dates are validated at the router boundary; installer assertions match the existing policy audit schema. Migrations are registered in Drizzle, portal, installer recovery and runtime bridge.
 - Exact-head CI on `13f94c24` passed worker MySQL/MariaDB, settlement, wallet idempotency, tier qualification, company rotation, build and application checks. The only failure was the fresh-MariaDB package test enabling a tier before saving its required delivery policy. The isolated test now seeds valid terms before activation; rerun pending.
@@ -1577,8 +1597,8 @@ Fixed the three admin-monitoring 500s: settlement integrity collation drift (`Fi
 - PR #238 remains open/draft at head `1932435c93c04b46675d86ee44eb837c1a1f112f`, based on PR #233 branch `feat/trading-package-popup-policy` at `0c7302a6fd418af95d42e426b1e715976e7e7b5e`. Do not merge #238 independently to `main`.
 - Validation-only draft PR #242 targets `main` to trigger current workflows against the Part 4 head. Do not merge #242.
 - Added forward-only migration 0089 for `trade_positions.walletFundingPlanJson` and registered it in the journal, portal runner, installer recovery and worker runtime-schema path. Corrected migration-order tests, the popup INSERT bound-value count and duplicate-delivery current read. Added a disposable MySQL 8.4/MariaDB 11.4 integration workflow that follows installer migration order and tests durable rotation.
-- Exact-head rotation database run [40929821492](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821492) passed on both DBs; final fixture uses at least 3 companies and verifies one duplicate cursor advance, four unique concurrent assignments, snapshots, fresh-process restart, rollback and cycle 2 only after exhaustion.
-- Also passed exact-head application [40929821517](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821517), Trading recovery [40929821444](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821444), settlement DB integration [40929821435](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821435), tier/worker DB integration [40929821422](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821422), installer [40929821482](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821482), and Mining regression [40929821644](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821644). The type-check/test/build job in run [40929821416](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821416) passed; its separate generic customer portal browser-recovery job was still in progress, so the full workflow is not claimed completed.
+- Exact-head rotation database run [40929821492](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821492) passed on both DBs; final fixture uses at least 3 companies and verifies one duplicate cursor advance, four unique concurrent assignments, snapshots, fresh-process restart, rollback and cycle 2 only after exhaustion.
+- Also passed exact-head application [40929821517](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821517), Trading recovery [40929821444](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821444), settlement DB integration [40929821435](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821435), tier/worker DB integration [40929821422](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821422), installer [40929821482](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821482), and Mining regression [40929821644](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821644). The type-check/test/build job in run [40929821416](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821416) passed; its separate generic customer portal browser-recovery job was still in progress, so the full workflow is not claimed completed.
 - Local `pnpm check`, `pnpm test`, and `pnpm build` were unavailable because GitHub DNS prevented local checkout. No production database/server was accessed.
 - Remaining blockers: PR #230 has a merge conflict; PR #233/#235 have conflicting 0086/0087 migration histories requiring a unified forward-only sequence. No source PR has been merged to main, so Part 4 is not integration-complete or final acceptance-complete.
 - PR #236 stays open/draft. Dedicated authenticated UI and persisted-settings acceptance on a suitable non-production server is explicitly deferred and remains unverified.
@@ -1650,7 +1670,7 @@ Fixed the three admin-monitoring 500s: settlement integrity collation drift (`Fi
 
 # Current Trading Handoff — 2026-10-29
 
-**Repository:** [stannmoye/Arbitrade_platform](https://github.com/stannmoye/Arbitrade_platform)  
+**Repository:** [stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade)  
 **Canonical branch:** `main`  
 **Baseline `main` before this increment:** `6befd5ed7036818abf05144a2b522f49e3715645` (PR #220 squash merge)  
 **Completed task:** Task 3 — durable worker health, recovery visibility and Trade Settings dashboard.  
@@ -1779,7 +1799,7 @@ This policy is final and must be followed throughout the application:
 
 ## Current verified handoff — 2026-10-28 (post-merge)
 
-- Canonical `main` is now at `d3f85084354f009c44236fb2e5c1dd0d0cf17435`; Task 2 was merged through [PR #207](https://github.com/stannmoye/Arbitrade_platform/pull/207).
+- Canonical `main` is now at `d3f85084354f009c44236fb2e5c1dd0d0cf17435`; Task 2 was merged through [PR #207](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/207).
 - Post-merge GitHub Actions on that exact main SHA passed: application type-check/tests/build, Trading tier-qualification database integration, installer validation, Mining regression checks, and the two subsequent Blitz build runs.
 - Task 2 implementation is merged: bounded round-robin scheduling (default batch 100, maximum 250), persisted/locked cursor, overlap guard, active auto-assigned entitlement filtering, indexed lookup migration `0083`, and lifecycle recovery coverage.
 - Disposable-database integration and automated checks are verified; these results do not prove the worker has been exercised on the user's own production server.
@@ -1795,7 +1815,7 @@ This policy is final and must be followed throughout the application:
 
 ## Customer Trading package journey UI refinement (2026-10-28)
 
-**Active PR:** [#208](https://github.com/stannmoye/Arbitrade_platform/pull/208) on `feature/customer-progressive-trading-tier-ui`. The branch is synchronized with current `main`; exact-head validation is pending.
+**Active PR:** [#208](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/208) on `feature/customer-progressive-trading-tier-ui`. The branch is synchronized with current `main`; exact-head validation is pending.
 
 - Removed any local-currency assumption from the customer milestone display. The qualification threshold is labelled as a USD equivalent because the authoritative ledger attribution is stored in USD minor units; explanatory copy makes clear that supported ledger-wallet credits are valued at the time an authorized administrator records a qualifying credit.
 - Refined the read-only customer journey with theme-aware responsive cards, compact typography, current-package and next-milestone metrics, an accessible progress indicator, refresh/loading/error states, and reduced-motion support. The page does not expose a full catalogue or activation controls.
@@ -1899,13 +1919,13 @@ This policy is final and must be followed throughout the application:
 
 - Code correction `6f8da2dde430b15ad060eb7883f9642e342d4609` adds migration 0089 and registers it across the Drizzle journal, portal runner, installer recovery and worker runtime-schema path. Follow-up test correction `928833c577518fad488b147f7e2cf63b73fd2edb` aligns popup contract assertions with the current `executionEligible` predicate and excludes `trade_positions` from a test that specifically asserts the legacy 0062 bridge tables. The separate migration contract asserts the 0089 column directly.
 - Validation-only draft PR #242 runs the existing `main`-targeted workflows against the exact Part 4 branch head `928833c577518fad488b147f7e2cf63b73fd2edb`; PR #238 remains stacked on #233. Exact-head run evidence:
-  - Verify application, run [40927079937](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927079937): main install/type-check/test/build job passed.
-  - Trading recovery, run [40927079945](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927079945): typecheck/tests/production-build job passed.
-  - Settlement integration, run [40927079950](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927079950): MySQL 8.4 and MariaDB 11.4 passed.
-  - Tier qualification integration, run [40927080170](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927080170): MySQL 8.4, MariaDB 11.4 and real worker assignment/reversal passed.
-  - Mining regression, run [40927079934](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927079934): passed. No Mining files were changed.
-  - Installer validation, run [40927079996](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927079996): application unit tests, installer/migration regressions, TypeScript, build/smoke, syntax, fresh MariaDB, MySQL compatibility/recovery and deployment package jobs passed.
-  - Build/test production, run [40927079932](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40927079932): its type-check/test/build job passed; the separate generic customer-portal real-browser recovery job was still running at this record time. This generic recovery job is not the dedicated Part 5 authenticated acceptance runner.
+  - Verify application, run [40927079937](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927079937): main install/type-check/test/build job passed.
+  - Trading recovery, run [40927079945](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927079945): typecheck/tests/production-build job passed.
+  - Settlement integration, run [40927079950](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927079950): MySQL 8.4 and MariaDB 11.4 passed.
+  - Tier qualification integration, run [40927080170](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927080170): MySQL 8.4, MariaDB 11.4 and real worker assignment/reversal passed.
+  - Mining regression, run [40927079934](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927079934): passed. No Mining files were changed.
+  - Installer validation, run [40927079996](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927079996): application unit tests, installer/migration regressions, TypeScript, build/smoke, syntax, fresh MariaDB, MySQL compatibility/recovery and deployment package jobs passed.
+  - Build/test production, run [40927079932](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40927079932): its type-check/test/build job passed; the separate generic customer-portal real-browser recovery job was still running at this record time. This generic recovery job is not the dedicated Part 5 authenticated acceptance runner.
 - The first workflow pass exposed stale contract tests asserting the old `popupEligible` variable in execution guards, plus the legacy worker-bridge assertion applied to the new trade snapshot contract. Those assertions were corrected; the follow-up exact-head CI above passed on the revised source-test commit.
 - Local `pnpm check`, `pnpm test` and `pnpm build` were not executed because this environment could not resolve GitHub for a repository checkout. GitHub CI executed the project’s install/check/test/build workflows. No production database or server was used.
 - Current status remains **not integration-complete and not acceptance-complete**: PR #230 reports a merge conflict; PR #233 and #235 remain open and their overlapping 0086/0087 migration histories require a forward-only reconciliation against main's historical 0086 before merge. The dedicated authenticated Part 5 UI runner and persisted-settings server acceptance remain deferred by user decision. PR #242 is validation-only, draft, and must never be merged.
@@ -1913,7 +1933,7 @@ This policy is final and must be followed throughout the application:
 
 ## 2026-10-29 — Current Part 4 database acceptance and integration handoff
 
-- Exact tested source head: `1932435c93c04b46675d86ee44eb837c1a1f112f`. Rotation DB run [40929821492](https://github.com/stannmoye/Arbitrade_platform/actions/runs/40929821492) passed MySQL 8.4 and MariaDB 11.4 with a three-company pool; duplicate idempotency, concurrent sequence ordering, restart restoration, rollback and snapshot stability passed.
+- Exact tested source head: `1932435c93c04b46675d86ee44eb837c1a1f112f`. Rotation DB run [40929821492](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/40929821492) passed MySQL 8.4 and MariaDB 11.4 with a three-company pool; duplicate idempotency, concurrent sequence ordering, restart restoration, rollback and snapshot stability passed.
 - The same head passed application, Trading recovery, settlement DB integration, tier qualification/worker integration, installer validation and Mining regression workflows. The production build/test workflow's main build/test job passed; its generic browser-recovery subjob was still running at last check.
 - Database findings fixed: missing INSERT placeholder, stale-snapshot duplicate check, incomplete portal-migration setup in the initial test workflow, and a one-company exhaustion fixture that did not prove full traversal.
 - Part 4 remains not integration-complete because PR #230 is merge-conflicted and PR #233/#235 migrations collide numerically with the main branch's older 0086 file. Preserve historical migration files and reconcile the combined forward-only sequence before merge.
@@ -1936,7 +1956,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 ## 2026-10-29 — Trading Parts 1–6 final integration candidate (supersedes earlier status notes above)
 
-- **Repository/base:** `stannmoye/Arbitrade_platform`; local branch `integration/trading-parts-1-6-finalization`, based on the freshly fetched `main` SHA `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`.
+- **Repository/base:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`; local branch `integration/trading-parts-1-6-finalization`, based on the freshly fetched `main` SHA `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`.
 - **Verified implementation commit:** `c3575344` (`Integrate and verify Trading workstreams 1-6`). The source changes are committed locally; push, final integration PR, post-push CI and merge are the next steps.
 - **Integrated work:** Parts 1–6 are combined against current `main`; branch-local migration histories are archived byte-for-byte and reconciled to a forward-only `0086`–`0093` chain, with exact-lineage preflight coverage. Wallet adjustments now use a durable globally unique request key, hash normalized operation parameters, lock/reserve inside the financial transaction, persist the original response atomically, suppress replay side effects, and retain UI retry keys for the matching payload until success. Admin Trading tier/policy changes require explicit audited reasons; missing policy defaults fail closed; assigned package IDs/status/terms/qualification snapshots are visible to administrators.
 - **Local verification on the committed source:** `pnpm install --frozen-lockfile` succeeded earlier in this run; `pnpm check` passed; `pnpm test` passed with 105 files and 829 tests passed (3 database-only files / 17 tests skipped because no disposable DB URLs are configured); installer/recovery suite passed (30 files, 170 tests); `pnpm build` passed; strict standalone `tsc` passed for `scripts/trading-wallet-adjustment-idempotency.integration.ts`; `git diff --check` passed. The new MySQL 8.4/MariaDB 11.4 wallet idempotency integration workflow and script are committed for post-push execution.
@@ -1945,7 +1965,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 ## 2026-10-29 — PR #243 exact-head CI repair (local verification complete)
 
-- Repository: `stannmoye/Arbitrade_platform`; integration branch: `integration/trading-parts-1-6-finalization`; current branch tip before this repair: `ae0de8b1436979f1da918d1e0095add474780d8f`. PR #243 targets `main`; fetched `main` remains `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`.
+- Repository: `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`; integration branch: `integration/trading-parts-1-6-finalization`; current branch tip before this repair: `ae0de8b1436979f1da918d1e0095add474780d8f`. PR #243 targets `main`; fetched `main` remains `07b17ca401d5f0582bf09fba8b6625f4a8af42e6`.
 - Investigated the first PR #243 exact-head database workflow failures. They exposed (a) test fixtures relying on now fail-closed/disabled package policies, (b) an idempotency mismatch test that did not reach the intended payload-mismatch branch, (c) a newly tightened admin date validation contract, and (d) a regression in partial policy updates that had been hidden by full-object fixtures.
 - Corrected the disposable opportunity-worker and settlement fixtures to explicitly seed and clean up enabled policy rows; made the wallet mismatch replay structurally valid; fixed admin date validation; and restored the required partial-save API semantics. Policy updates now lock the persisted row, merge omitted fields, validate the effective settings and atomically version/audit the complete batch. Optional advanced policy fields remain optional at the API boundary; required base controls remain explicit. The appearance persistence integration test again exercises partial updates and asserts omitted fields are preserved.
 - Local verification on this source: `pnpm check` passed; `pnpm test` passed (105 files / 829 tests passed, 3 files / 17 tests skipped); installer/migration suite passed (30 files / 170 tests); `pnpm build` passed; focused Trading contracts passed (6 files / 57 tests); strict standalone TypeScript checking passed for the wallet-idempotency, opportunity-worker and settlement integration scripts; `git diff --check` passed.
@@ -2127,7 +2147,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 - Source/test/progress increment will be committed and pushed to `main` now. Production still requires at least one valid admin-published open offer and a qualifying active customer; generated offers remain disabled by design.
 
 ### 2026-11-03 — Trade Settings administration recovery checkpoint
-- **Repository:** `stannmoye/Arbitrade_platform`.
+- **Repository:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`.
 - **Base:** `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
 - **Branch:** `feat/trade-settings-admin-blueprint`.
 - **Implementation commit:** `91d1174e6405fb7639d203a2e15052a2478facee` (`feat(trading): restore settings owner and timing policy checkpoint`). This checkpoint was recovered from the previous task’s saved artifacts because its feature branch/commit had not been pushed to GitHub.
@@ -2141,7 +2161,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 - **Next safe action:** complete the canonical global settings/migration design, including conservative precedence and conflict diagnostics for existing per-package flags; add disposable-database migration and API atomicity/read-back tests before continuing the remaining blueprint routes. Keep current behavior and financial lock unchanged.
 
 ### 2026-11-03 — Global Trade controls migration-fixture checkpoint
-- **Repository:** `stannmoye/Arbitrade_platform`.
+- **Repository:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`.
 - **Branch:** `feat/trade-settings-admin-blueprint`.
 - **Base branch SHA:** `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
 - **Implementation commits:** `a530bc9a9089a9f3debcd30fcea13f44c222434c` (`test(trading): verify global controls migration`) and `d39e1de7b125a5778b3e6ff128a2b9b1685b16d4` (`test(trading): cover global migration edge states`). The immediately preceding feature-branch source commit was `1e857f6029736d5a9a7b967b13506547349ad8a4`.
@@ -2156,7 +2176,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Global Trade controls API acceptance checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base branch SHA:** `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
 - **Implementation commit:** `184d2d5ee82cf1e5e974b21b1e5b28c7bfb29867` (`test(trading): verify global controls API atomicity`). This is the implementation commit for the API acceptance increment; this progress entry records the exact test results and next safe action.
 - **Checkpoint:** Added `server/trading-global-controls-api.integration.test.ts` and a database-workflow step. Four opt-in API integration cases on local disposable MariaDB 10.11 verify admin/customer read/write role boundaries; successful policy update, expected-version increment, and actor/reason/old/new audit persistence; stale-version conflict with no extra policy/audit write; and transaction rollback when a temporary test trigger rejects the audit insert. Successful-save read-back is asserted; forced read-back failure/recovery is not yet tested.
@@ -2168,7 +2188,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Global Trade controls read-back recovery checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base branch SHA:** `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
 - **Implementation commit:** `45f99effe09caba5224f7d262ecc6568a5c6dbfa` (`test(trading): cover global control readback recovery`).
 - **Checkpoint:** Extended the disposable global-controls API integration suite to create a temporary `app_settings` trigger that deliberately flips the persisted burst flag before the service's fresh read. The API reports the read-back mismatch; the test fetches the actual committed policy/version and successfully retries with that version. This demonstrates the post-commit mismatch and recovery path; it does not assert a rollback of the first committed write.
@@ -2179,7 +2199,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Global OFF and fail-closed runtime checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base branch SHA:** `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
 - **Implementation commit:** `9d6e7f119a4104e4114a0c7d6420303c3757a2c7` (`test(trading): cover global policy fail-closed delivery`).
 - **Checkpoint:** Extended `scripts/trading-popup-delivery.integration.ts`, already run by the existing MySQL 8.4/MariaDB 11.4 worker integration workflow. With a realistic qualified customer, active package, balance, and newly published opportunity, it verifies (1) informational popup delivery OFF with tier master ON, (2) tier master OFF, (3) malformed canonical settings, and (4) missing canonical settings. No blocked state creates a new popup event or quota event. Tier-off/missing/malformed states pause the qualification worker before it claims work, and `ensureAutomaticTradingTierEntitlements` refuses to reconcile entitlements. The fixture temporarily enables the baseline delivery gates and restores the original global-control row in `finally`.
@@ -2189,7 +2209,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 - **Next safe action:** Validate timing/runtime bounds and ensure per-tier editor payloads cannot reintroduce removed global fields. Continue one discrete checkpoint at a time; keep financial execution enabled through the audited internal ledger.
 
 ### 2026-11-03 — Per-tier timing bounds and payload ownership checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Checkpoint:** Completed the next discrete settings-acceptance item. The tier editor now builds patches through an explicit per-tier allowlist; global masters, lifecycle switches, and unknown fields cannot be reintroduced by the browser. The server applies the same allowlist before any policy transaction and rejects unsupported fields with a diagnostic error. Global delivery/rotation/randomization/burst and execution ownership remains separate from per-tier settings; automatic financial execution is enabled for qualifying customers through the audited internal ledger (external-market execution is not claimed).
 - **Timing/runtime validation:** Server-side automation validation now enforces documented inclusive bounds for delivery intervals, popup/completion display durations, pending/attempt/concurrency limits, retry delay, reward caps, and the 15-minute–7-day settlement-delay floor, including ordered range checks. The API schema uses the same settlement floor.
 - **Files changed:** `client/src/App.tsx`, `client/src/trading-policy-patches.ts`, `client/src/trading-policy-patches.test.ts`, `server/db.ts`, `server/modules/advanced-auto-trading.ts`, `server/routers.ts`, `server/trading-policy-validation.test.ts`, `server/trading-admin-delivery-policy.contract.test.ts`, `server/trading-admin-navigation.contract.test.ts`, and `vitest.config.ts`.
@@ -2199,7 +2219,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 - **Next safe action:** Continue to the next unique blueprint owner/settings checkpoint one at a time, likely the remaining operational owner separation and evidence/lifecycle gaps. Keep exact-head CI, browser accessibility checks, and release acceptance open until separately run and authorized.
 
 ### 2026-11-03 — Trade Settings ownership and display-policy bounds checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base branch SHA:** `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`. The feature branch source baseline was `32215a3f48b52fb901d9efc4b0760e25eb74faf9`.
 - **Implementation commit:** `38d97e2fba5deaf0a302d51ba03257143d85ae18` (`feat(trading): document settings ownership and align display bounds`). This progress entry is committed separately as a documentation checkpoint.
 - **Checkpoint:** Added a stable field-level ownership registry for Trade Settings and contract tests tying every editable tier-policy field to one navigation owner and its read/write contract. Updated the mounted Guide and static administrator handbook to reflect canonical global-control ownership and the enabled internal-ledger financial-execution state. Clarified persisted-but-not-consumed delivery settings, quota windows, display-only effects, and per-field validation/effective-time/customer impact.
@@ -2213,7 +2233,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Guide, Catalogue lifecycle and Manual Payouts ownership checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base branch SHA:** GitHub `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`; the feature branch is based on that commit and is not divergent. Feature source baseline before this increment: `21a8221405979794f210b2d3222741392b857984`.
 - **Source implementation commit:** `a581e34920ab4f2100d3a0d6dff7821cfade9f51` (`feat(trading): complete guide and admin route ownership checkpoint`).
 - **Checkpoint:** Expanded the read-only Trade Settings Guide with a tier-preparation walkthrough and field glossary projected from the ownership registry; linked every current Trade Settings owner, including the new Manual Payouts route, and did not infer missing defaults. Added a dedicated Manual Payouts owner route. Finance Wallet & Ledger remains read-only; trade settlement/reconciliation remains separate; the unsupported Capital & Wallet Funding queue is explicit unavailable/read-only. Payout/settlement/wallet backend semantics were not changed. Company Catalogue now searches exact stable Logo IDs, requires a fresh trimmed 8–500 character operator reason for each bulk action, and changes verification, enablement and archival state independently. Restore clears archive state only. The server customer display filter remains verified AND not disabled/archived and fail-closed. Added source contracts and registered the navigation test in normal Vitest discovery.
@@ -2225,7 +2245,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Database Entries scope and Guide alignment checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base:** GitHub `main` SHA `59c425414b981bc2fd8720119f2d4b650b97ab15`; current source baseline before this increment was `c1a2032af740328af00d747d094432f1c3f5b1e9`.
 - **Source implementation commit:** `a05bf64c49551c491ce67a7430ea73dd308ac09e` (`feat(admin): scope database entries by customer and UTC day`).
 - **Checkpoint:** Database Entries now requires a single selected customer and a valid UTC calendar day; the admin query uses a half-open `[00:00 UTC, next day 00:00 UTC)` interval, orders by `(createdAt, id)` descending, and uses a bounded 50-row keyset cursor. The UI labels UTC boundaries/timestamps and only enables the query when both filters are valid. Wallet activity was removed from all-customer exports. The API remains `adminProcedure`-only and the query is read-only. The Guide no longer pins a commit SHA, and the handbook submenu list is contract-checked against the source navigation; the stale System Pause & Safety destination was removed.
@@ -2236,7 +2256,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Worker Health and Trade Audit History checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base / source baseline:** GitHub `main` SHA `59c425414b981bc2fd8720119f2d4b650b97ab15`; feature source baseline before this increment: `1daa3254a1ee4034c926c543ac0505ddb42d50e8`.
 - **Source implementation commit:** `c5da0c311bba723930700c3140c87c8ccc9a6d3c` (`feat(admin): add worker health and trade audit history`).
 - **Worker Health:** Added persisted last-attempt-start visibility, bounded safe error codes, pending-queue age explicitly measured since job creation, and a derived five-minute processing-lease threshold matching the runtime reclaim rule. Missing worker/queue/lease values remain Unavailable; the queue's unpersisted lease owner is never inferred. CSV and print/PDF exports now preserve this unavailable state rather than presenting synthesized zero failures. Existing recovery mutation behavior is unchanged.
@@ -2251,7 +2271,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Overview availability, audit migration visibility, and offer-expiry checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base:** GitHub `main` SHA `59c425414b981bc2fd8720119f2d4b650b97ab15`; feature baseline before this increment: `f914b276a285d417d3632f0a0accd77f7485e0ea`.
 - **Source implementation commit:** `1ead958761e45baa758fc50bc3769d730c6fafb2` (`fix(trading): correct overview, audit, and expiry behavior`).
 - **Trading Overview:** Lifecycle summaries now explicitly distinguish an unavailable data source from a real zero. Unknown lifecycle counts render as `Unavailable`; the lifecycle availability flag does not suppress independent offer, policy, or settlement metrics. A missing database returns no generated freshness timestamp, and a successfully queried empty aggregate preserves numeric zeroes.
@@ -2265,7 +2285,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Settlement queue and administrator-guide consistency checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base:** GitHub `main` SHA `59c425414b981bc2fd8720119f2d4b650b97ab15`; feature baseline before this increment: `9ca39c3820dc67c476b1c95a95cbd46a3d26e082`.
 - **Source implementation commit:** `db3c8087112a119b994673f2c9a332608c61ba5c` (`fix(admin): clarify settlement metrics and guide defaults`).
 - **Overview:** Replaced the mixed settlement KPI with separate counts for unconfirmed `pending` results requiring administrator review and `confirmed_awaiting_credit` results waiting for scheduled wallet credit. Missing query payloads remain `Unavailable` rather than becoming zero. Existing read-only query/authorization and confirmation/credit flows are unchanged.
@@ -2278,7 +2298,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Dedicated Trading History owner checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`.
 - **Base:** GitHub `main` SHA `59c425414b981bc2fd8720119f2d4b650b97ab15`; feature baseline before this increment: `0ac331f5102cf3e464a1baf7507b786928c3b0d6`.
 - **Source implementation commit:** `5eb2185ee50fb095d73100a18dde260df7ddca0e` (`feat(admin): add read-only Trading History owner`).
 - **Trading History:** Added a separate Trade Settings navigation destination and lazy-mounted admin page. It shows persisted trade lifecycle fields, principal/currency, status, saved references, and recorded timing fields. The page has no mutation controls and remains separate from Settlement & Reconciliation and Finance → Wallet & Ledger / Database Entries.
@@ -2294,7 +2314,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Opportunity provenance, audited manual close, and Guide correction checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`. The verified source baseline was `ad01c2aa92e25039ea73ef6fb9a8f1694489bcf1`; source changes are saved in local commit `c46ebc6f366040149163e1d095dc518943711475` (`feat(admin): audit opportunity publishing and manual close`).
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`. The verified source baseline was `ad01c2aa92e25039ea73ef6fb9a8f1694489bcf1`; source changes are saved in local commit `c46ebc6f366040149163e1d095dc518943711475` (`feat(admin): audit opportunity publishing and manual close`).
 - **Opportunity publishing:** Single and CSV-batch publication now require a bounded source reference and operator review note. CSV rows are fully validated before submission; malformed rows reject the batch. Offer terms and actor-attributed source/review audit events are inserted atomically and appear in the existing read-only Trade Audit History. The platform records supplied evidence references and notes but does not independently verify the external evidence or the note substance.
 - **Manual close:** The existing Publish & Manage Opportunities owner page can close an open, unexpired offer only with an administrator-supplied reason. The `adminProcedure` mutation locks the offer, changes only `open` to `closed`, writes old/new status and reason audit metadata in the same transaction, treats verified retries idempotently, and returns success only after fresh post-commit read-back verifies the offer and audit event. Future delivery excludes the closed record; existing popup/trade snapshots and delivery history are unchanged. No schema migration was needed.
 - **Single-owner Guide/registry:** Updated the mounted Guide, static admin help, canonical Trading specification, detailed admin manual, ownership registry and contracts to reflect saved provenance and manual close without claiming platform verification. Registered close under the existing opportunity owner; no duplicate route or Guide control was added.
@@ -2306,7 +2326,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Installer migration-contract checkpoint and confirmed safety decisions
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`; validated baseline and origin head before this increment: `5b6f66eb7b4f1585d6e3727c07cfeb2e5daecf7f`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`; validated baseline and origin head before this increment: `5b6f66eb7b4f1585d6e3727c07cfeb2e5daecf7f`.
 - **Test fixes:** Updated three stale installer/migration contract assertions to include the canonical Drizzle journal tail through `0099_trading_global_timing_policy_version` and `0100_global_trade_master_controls`. Preserved exact order, contiguous journal indices, timestamp monotonicity, migration safety, worker-bridge scope, and no-financial-record-rewrite assertions. No migration SQL or worker runtime bridge was changed.
 - **Validation:** Each affected test file passed individually (4, 4, and 8 tests). Full `pnpm exec vitest run --config vitest.installer.config.ts --reporter=dot` passed: 30 files / 171 tests. `git diff --check` passed. No database was connected to; no migration was run.
 - **Confirmed product/safety decisions:** The user approved a documented migration baseline that copies the existing valid global rate (currently 1,500 bps / 15%) into a separate initial policy version for every existing package, with package-specific versions independently editable thereafter. The migration must fail closed if the legacy source value is absent/invalid; it must not rewrite historical trade, settlement, wallet, or ledger records. The user confirmed the existing administrator-confirmed posting worker may continue posting ledger credits/debits after approved result/evidence, while automatic trading/execution, automatic result determination, and automatic customer-fund allocation are enabled for qualifying customers through the audited internal ledger.
@@ -2315,7 +2335,7 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Package fee policy, delivery lifecycle, and final regression checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`. The remote feature head before this save was `3afded3cda3da09448a6c59e019c1d6ff2483696`; four implementation-stage commits are present locally above that base: package-fee versions, delivery retry lifecycle, settings UI, and policy documentation/CI.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`. The remote feature head before this save was `3afded3cda3da09448a6c59e019c1d6ff2483696`; four implementation-stage commits are present locally above that base: package-fee versions, delivery retry lifecycle, settings UI, and policy documentation/CI.
 - **Package fee policy:** Added ordered migration `0101_package_fee_policy_versions`, append-only versioned per-package fee policies with effective-time resolution, explicit optimistic updates, audit/read-back, and immutable allocation-time snapshots consumed at confirmed settlement. Existing packages receive a fail-closed baseline copied from the valid legacy global policy (the user selected Option A); new packages receive no guessed/global default and remain allocation-blocked until an administrator explicitly configures the first fee. The former global fee editor is read-only.
 - **Delivery lifecycle:** Added ordered migration `0102_opportunity_delivery_retry_lifecycle`, durable per-user/offer idempotency, package-ID pending-cap admission (`queued`, `in_progress`, `retry_wait` only), bounded lease/claim/ack/retry transitions, terminal-state protections, and stable package-ID company rotation with legacy name-key recovery. One shared administrator Retry & Carry-Forward page owns delivery attempt limits and delivery-specific intervals; no interval schedule is prefilled and temporary retries remain disabled until a valid policy is explicitly saved. The tier editor's separate trade-retry timing does not set delivery retries.
 - **Admin/documentation ownership:** Mounted the package-fee editor under tier/package administration and the shared delivery retry editor under its single Trade Settings route. Corrected the static admin guide and stale contract assumptions about delivery caps, retry ownership, retryable event states, audit source boundaries, package-fee ownership, migration ordering, and stable company rotation.
@@ -2332,12 +2352,12 @@ The documentation-only branch head `df5f98871770e48453d22fc6b4b1fa9e0d751fc1` re
 
 
 ### 2026-11-03 — Pull request opened for hosted review
-- The user approved and PR #275 was created: https://github.com/stannmoye/Arbitrade_platform/pull/275. Base is `main`; head is `feat/trade-settings-admin-blueprint` at `cca14b4ad3b53aa0f15971ddf277ee053c4ee8a3` at creation time.
+- The user approved and PR #275 was created: https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/275. Base is `main`; head is `feat/trade-settings-admin-blueprint` at `cca14b4ad3b53aa0f15971ddf277ee053c4ee8a3` at creation time.
 - PR creation does not merge, deploy, or release the branch. Hosted checks were not yet listed in the immediate PR response; verify against the latest PR head. Local validation, database-backed testing, and authenticated staging acceptance remain separate.
 
 
 ### 2026-11-03 — PR #275 CI repair checkpoint
-- **Repository / branch:** `stannmoye/Arbitrade_platform` / `feat/trade-settings-admin-blueprint`; base remains `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
+- **Repository / branch:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade` / `feat/trade-settings-admin-blueprint`; base remains `main` at `59c425414b981bc2fd8720119f2d4b650b97ab15`.
 - **Integrated fixes:** Cherry-picked the isolated migration-collation repair (`drizzle/0102_opportunity_delivery_retry_lifecycle.sql`, worker schema bridge, and lifecycle contract), administrative entry-bundle split (`client/src/App.tsx`, `client/src/main.tsx`), and Stage 2 browser acceptance alignment with the current Wallet & Ledger and Global Trade master-controls routes plus current popup status payload. Generated browser screenshots were excluded.
 - **Local validation:** `pnpm install --frozen-lockfile` passed; full application suite passed — 143 files, 1,117 tests passed, 5 files / 27 tests skipped by environment; installer/migration suite passed — 31 files, 176 tests; `pnpm check` passed; `pnpm build` and `pnpm build:static` passed; `git diff --check` passed. Static entry bundle measured 9.84 KB raw / 3.83 KB gzip, below the CI budget. No disposable MySQL/MariaDB database was available in this sandbox.
 - **Commits:** `0ece2148` migration compatibility, `9475ca9f` bundle split, `c250aaeb` browser acceptance alignment. This handoff is saved before push so the next session can resume from the exact PR head.
@@ -2392,7 +2412,7 @@ The exact candidate previously verified on PR #275 completed the full hosted mat
 
 
 ### 2026-11-03 — Settings administration continuation from PR #275
-- **Resume point verified:** The GitHub PR remains open at `stannmoye/Arbitrade_platform#275`, branch `feat/trade-settings-admin-blueprint`, head `809faf55a7252e359a1fcae6567412992816f8d5`. All 25 hosted checks on that prior head were complete and successful; those results predate the edits in this checkpoint.
+- **Resume point verified:** The GitHub PR remains open at `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade#275`, branch `feat/trade-settings-admin-blueprint`, head `809faf55a7252e359a1fcae6567412992816f8d5`. All 25 hosted checks on that prior head were complete and successful; those results predate the edits in this checkpoint.
 - **Integrated changes:** Added optimistic concurrency for package edits (client submits the captured terms version; stale updates return a conflict without replacing the unsaved draft); expanded audit-history classification for fee/retry policy actions; checked published opportunity reward, duration and native-currency capital bounds against enabled package policies and saved the result in the publication audit; made customer/admin payout histories bounded keyset-paginated; required an operator note for both payout resolutions; exposed read-only delivery-worker/runtime/backlog diagnostics with explicit bounded-sample and unavailable states; added customer/admin pagination controls, compatibility feedback when no enabled package policy can be checked, overview source-owner links/client read times, persisted lifecycle/funding terminology, and corrected the enforced pending-delivery-cap ownership metadata.
 - **Validation in this continuation:** Final `pnpm check` (`tsc --noEmit`) passed after the last client fix; final `git diff --check` passed. No full test suite, 1,035-check browser acceptance, preview, or production build was repeated. The earlier backend implementation worker reported 7 focused files / 58 tests passed (some overlap the preceding 1,122-test suite); this was not rerun during final integration. Worker-health implementation reported two targeted tests passed and 19 skipped. No local disposable database integration was run.
 - **Current safety/release state:** Changes are saved in the local PR worktree but not yet committed or pushed at the time of this note. Exact-head GitHub CI for the new code is therefore pending. No merge, deployment, release, payout, settlement, or database operation was performed; automatic financial execution is enabled for qualifying customers through the audited internal ledger (external-market execution is not claimed).

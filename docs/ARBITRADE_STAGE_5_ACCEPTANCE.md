@@ -11,14 +11,14 @@
 ## Automated evidence before consolidation
 
 The original feature branch's exact head (`20d4e3b9516051a1386316aee0c51a65e3e446f7`) passed its installer validation, mining regression, and five-theme workflows:
-- [Installer validation](https://github.com/stannmoye/Arbitrade_platform/actions/runs/39748368328)
-- [Mining regression](https://github.com/stannmoye/Arbitrade_platform/actions/runs/39748368242)
-- [Five-theme validation](https://github.com/stannmoye/Arbitrade_platform/actions/runs/39748368253)
+- [Installer validation](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39748368328)
+- [Mining regression](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39748368242)
+- [Five-theme validation](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39748368253)
 
 The portal-render-recovery branch's exact head (`ec99a433b76be2c67775fe27743eff278bcc2278`) passed its installer, mining-regression, and five-theme workflows:
-- [Installer validation](https://github.com/stannmoye/Arbitrade_platform/actions/runs/39850405791)
-- [Mining regression](https://github.com/stannmoye/Arbitrade_platform/actions/runs/39850405628)
-- [Five-theme validation](https://github.com/stannmoye/Arbitrade_platform/actions/runs/39850405626)
+- [Installer validation](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39850405791)
+- [Mining regression](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39850405628)
+- [Five-theme validation](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39850405626)
 
 These results apply to those individual branch heads. The combined candidate must pass CI on its own commit before merge.
 

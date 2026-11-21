@@ -1,5 +1,5 @@
 Browser acceptance run: 39316044807
-Run URL: https://github.com/stannmoye/Arbitrade_platform/actions/runs/39316044807
+Run URL: https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/actions/runs/39316044807
 Artifact: stage-2-browser-acceptance
 Capture date: 2026-10-19
 Viewports: desktop 1440x900; mobile 320x900

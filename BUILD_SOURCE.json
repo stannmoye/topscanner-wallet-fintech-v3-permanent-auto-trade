@@ -2,11 +2,11 @@
   "name": "Arbitrade Platform",
   "manifest_version": 2,
   "repository": {
-    "full_name": "stannmoye/Arbitrade_platform",
-    "browser_url": "https://github.com/stannmoye/Arbitrade_platform"
+    "full_name": "stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade",
+    "browser_url": "https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade"
   },
   "source_of_truth": {
-    "repository": "stannmoye/Arbitrade_platform",
+    "repository": "stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade",
     "branch": "main",
     "deployment_ref": "refs/heads/main",
     "resolution_policy": "Resolve the current main head when a build starts, then record and build that exact 40-character commit SHA. Do not use cached branch SHAs, unmerged pull-request branches, or legacy stage-only tags as the source for a new build.",

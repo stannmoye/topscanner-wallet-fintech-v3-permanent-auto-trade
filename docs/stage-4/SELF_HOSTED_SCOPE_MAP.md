@@ -1,6 +1,6 @@
 # Stage 4 scope map — self-hosted architecture
 
-**Repository:** `stannmoye/Arbitrade_platform`  
+**Repository:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`  
 **Feature branch:** `feat/stage-4-live-notifications-support`  
 **Base branch:** `integration/auth-installer-vps-safety`  
 **Purpose:** Identify Stage 4-owned changes, shared files requiring narrow edits, and protected unrelated areas. This map is a scope guide, not approval to merge or deploy.

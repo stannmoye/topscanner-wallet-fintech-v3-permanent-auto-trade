@@ -1,8 +1,8 @@
 # Arbitrade Shared Architecture
 
 **Coordination baseline:** 2026-11-04  
-**Repository:** `stannmoye/Arbitrade_platform`  
-**Generation-engine candidate:** PR [#278](https://github.com/stannmoye/Arbitrade_platform/pull/278), branch `feat/automatic-template-opportunities`; ownership confirmation with Window 3 is pending.
+**Repository:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`  
+**Generation-engine candidate:** PR [#278](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/278), branch `feat/automatic-template-opportunities`; ownership confirmation with Window 3 is pending.
 
 ## Purpose
 

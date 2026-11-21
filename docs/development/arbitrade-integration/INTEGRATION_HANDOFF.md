@@ -1,9 +1,9 @@
 # Window 7 Integration Handoff
 
 **Date:** 2026-11-04  
-**Repository:** `stannmoye/Arbitrade_platform`  
+**Repository:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`  
 **Integration branch:** `integration/window7-final`  
-**Target:** `main` through draft PR [#288](https://github.com/stannmoye/Arbitrade_platform/pull/288) only; no direct merge
+**Target:** `main` through draft PR [#288](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/288) only; no direct merge
 
 ## 1. Integration baseline
 

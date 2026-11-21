@@ -1,7 +1,7 @@
 # Stage 4 Combined Verification Batch — 2026-10-20
 
 **Branch:** `feat/stage-4-live-notifications-support`  
-**Pull request:** [#95](https://github.com/stannmoye/Arbitrade_platform/pull/95)  
+**Pull request:** [#95](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/95)  
 **Status:** Review notes and verification plan; this document does not claim these checks have run.
 
 ## Code paths reviewed

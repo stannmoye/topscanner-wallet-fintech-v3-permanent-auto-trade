@@ -2,7 +2,7 @@
 
 ## Authoritative source
 
-- Repository: [stannmoye/Arbitrade_platform](https://github.com/stannmoye/Arbitrade_platform)
+- Repository: [stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade)
 - Canonical application branch: `main` (`refs/heads/main`).
 - Machine-readable build contract: [`BUILD_SOURCE.json`](BUILD_SOURCE.json).
 - Repository map and coding-agent rules: [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md) and [`AGENTS.md`](AGENTS.md).

@@ -1,6 +1,6 @@
 # ARBITRADE Stage 1 — Autonomous Work Queue
 
-**Repository:** `stannmoye/Arbitrade_platform`  
+**Repository:** `stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade`  
 **Working branch:** `integration/auth-installer-vps-safety`  
 **Baseline:** Stage 1 of 30 — last recorded estimate **40%**; retain until acceptance evidence changes.  
 **Safety:** no production deployments, production database/VPS changes, live financial mutations, or automatic PR merges.

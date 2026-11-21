@@ -1,7 +1,7 @@
 # Stage 4 Add-on — Customer Support Inbox Experience
 
 **Status:** Approved scope proposal for implementation on `feat/stage-4-live-notifications-support`  
-**Parent work:** [PR #95 — Stage 4: live notifications, two-way support and real sound controls](https://github.com/stannmoye/Arbitrade_platform/pull/95)  
+**Parent work:** [PR #95 — Stage 4: live notifications, two-way support and real sound controls](https://github.com/stannmoye/topscanner-wallet-fintech-v3-permanent-auto-trade/pull/95)  
 **Purpose:** Upgrade the customer ticket area from a chat-like thread into a clear, email-inspired two-way support inbox. Preserve existing ticket records, message history, authentication and admin workflows.
 
 ## Product principles
