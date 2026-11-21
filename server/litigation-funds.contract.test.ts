@@ -1,0 +1,183 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const navigation = readFileSync(new URL("../client/src/admin-navigation.ts", import.meta.url), "utf8");
+const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+const slideMenu = readFileSync(new URL("../client/src/components/CustomerSlideMenu.tsx", import.meta.url), "utf8");
+const adminUi = readFileSync(new URL("../client/src/components/AdminLitigationFunds.tsx", import.meta.url), "utf8");
+const customerUi = readFileSync(new URL("../client/src/components/CustomerLitigationFunds.tsx", import.meta.url), "utf8");
+const catalogue = readFileSync(new URL("../shared/litigation-funds-catalogue.ts", import.meta.url), "utf8");
+const serverDossiers = readFileSync(new URL("./litigationFundDossiers.ts", import.meta.url), "utf8");
+const serverDesk = readFileSync(new URL("./litigationFunds.ts", import.meta.url), "utf8");
+const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+
+describe("Litigation Funds case-linked capital desk", () => {
+  it("exposes one Finance destination that opens the dedicated dossier console", () => {
+    expect(navigation).toContain('id: "litigation-funds", target: "litigationFundDossiers", label: "Litigation Funds"');
+    expect(navigation.match(/target: "litigationFundDossiers"/g)).toHaveLength(1);
+    const financeIndex = navigation.indexOf('id: "finance"');
+    const miningIndex = navigation.indexOf('id: "mining"');
+    const itemIndex = navigation.indexOf('id: "litigation-funds"');
+    expect(financeIndex).toBeGreaterThanOrEqual(0);
+    expect(itemIndex).toBeGreaterThan(financeIndex);
+    expect(itemIndex).toBeLessThan(miningIndex);
+
+    expect(app).toContain('const AdminLitigationFunds = lazy(() => import("@/components/AdminLitigationFunds")');
+    expect(app).toContain('section==="litigationFundDossiers"&&<Suspense');
+    expect(app).toContain("<AdminLitigationFunds/>");
+  });
+
+  it("replaces the generic customer placeholder with the live Litigation Funds desk", () => {
+    expect(app).toContain('const CustomerLitigationFunds = lazy(() => import("@/components/CustomerLitigationFunds")');
+    expect(app).toContain('section==="litigation-funds"&&<Suspense');
+    expect(app).toContain("<CustomerLitigationFunds push={push}/>");
+    // The generic placeholder must explicitly exclude litigation-funds now.
+    expect(app).toContain('item.id!=="litigation-funds"&&item.id!=="cooperate-dept")&&<CustomerInvestmentCategory');
+    // The customer menu reaches the desk through the shared slide menu.
+    expect(slideMenu).toContain('target: "litigation-funds"');
+
+    expect(customerUi).toContain("trpc.customer.litigationFunds.market.useQuery");
+    // Customers fund a case: the desk says "purchase", never "commit".
+    expect(customerUi).toContain("trpc.customer.litigationFunds.purchase.useMutation");
+    expect(customerUi).not.toContain("litigationFunds.commit");
+    expect(customerUi).toContain("idempotencyKey: crypto.randomUUID()");
+  });
+
+  it("gathers real, cited public legal records and skips what it cannot verify", () => {
+    expect(catalogue).toContain("async function fetchFederalRegisterClaims(");
+    expect(catalogue).toContain("async function fetchUkCaseLawClaims(");
+    expect(catalogue).toContain("async function fetchNorwayClaims(");
+    expect(catalogue).toContain("async function fetchCourtListenerClaims(");
+    expect(catalogue).toContain("async function fetchEurostatContext(");
+    expect(catalogue).toContain("async function fetchWorldBankContext(");
+    expect(catalogue).toContain("https://www.federalregister.gov/api/v1/documents.json");
+    expect(catalogue).toContain("https://caselaw.nationalarchives.gov.uk/atom.xml");
+    expect(catalogue).toContain("https://data.brreg.no/enhetsregisteret/api/enheter");
+    // Unreachable or key-gated sources are reported honestly as unavailable, never faked.
+    expect(catalogue).toContain("SEC litigation-releases RSS (skipped)");
+    expect(catalogue).toContain("Frozen at 2023-07-26");
+    expect(catalogue).toContain("DOJ press releases (skipped)");
+    expect(catalogue).toContain('status: "unavailable"');
+    // The shared provider must stay environment-neutral so it also runs as the browser fallback.
+    expect(catalogue).not.toContain("process.env");
+    expect(catalogue).not.toContain("node:");
+  });
+
+  it("never invents merit, damages or a multiple for an unreviewed discovery record", () => {
+    expect(catalogue).toContain("export function compareLitigationCases(");
+    expect(catalogue).toContain("export function expectedValueMinor(");
+    expect(catalogue).toContain("export function stageLabel(");
+    expect(catalogue).toContain("export function defaultMilestones(");
+    expect(catalogue).toContain("export async function getLitigationFundsCatalogue(");
+    expect(catalogue).toContain("export async function findLitigationCase(");
+    // Scraped claims stay unfundable with null economics until an admin publishes a dossier.
+    expect(catalogue).toContain("fundable: false");
+    expect(catalogue).toContain("meritGrade: null");
+  });
+
+  it("stores administrator dossiers and bundles additively with an audited lifecycle", () => {
+    expect(serverDossiers).toContain('export const LITIGATION_DOSSIERS_TABLE = "litigation_fund_dossiers"');
+    expect(serverDossiers).toContain('export const LITIGATION_BUNDLES_TABLE = "litigation_fund_bundles"');
+    expect(serverDossiers).toContain("CREATE TABLE IF NOT EXISTS litigation_fund_dossiers");
+    expect(serverDossiers).toContain("CREATE TABLE IF NOT EXISTS litigation_fund_bundles");
+    expect(serverDossiers).toContain("export function ensureLitigationFundDossierSchema()");
+    expect(serverDossiers).toContain('"litigation_dossier_created"');
+    expect(serverDossiers).toContain('"litigation_dossier_updated"');
+    expect(serverDossiers).toContain('"litigation_dossier_enabled"');
+    expect(serverDossiers).toContain('"litigation_dossier_disabled"');
+    expect(serverDossiers).toContain('"litigation_dossier_status_changed"');
+    expect(serverDossiers).toContain('"litigation_milestone_reached"');
+    expect(serverDossiers).toContain('"litigation_dossier_deleted"');
+    expect(serverDossiers).toContain('"litigation_bundle_created"');
+    expect(serverDossiers).toContain('"litigation_bundle_enabled"');
+    expect(serverDossiers).toContain('"litigation_bundle_deleted"');
+    expect(serverDossiers).toContain("INSERT INTO v5_audit_events");
+  });
+
+  it("records a funded position through the audited wallet ledger with idempotency", () => {
+    expect(serverDesk).toContain('export const LITIGATION_POSITIONS_TABLE = "litigation_fund_positions"');
+    expect(serverDesk).toContain("export function ensureLitigationFundsSchema()");
+    expect(serverDesk).toContain("litigation_funds_purchase");
+    expect(serverDesk).toContain("litigation_funds_payout");
+    expect(serverDesk).toContain("SELECT resultJson");
+    expect(serverDesk).toContain("FOR UPDATE");
+    expect(serverDesk).toContain("v5_idempotency_keys");
+  });
+
+  it("funds a position from any single wallet or the combined balance of every wallet", () => {
+    // The desk reuses the shared cross-wallet FX engine so nothing is hard-coded.
+    expect(serverDesk).toContain('from "./modules/trading-wallet-fx"');
+    expect(serverDesk).toContain("planCrossWalletFunding");
+    expect(serverDesk).toContain("calculateCombinedAvailableTargetMinor");
+    expect(serverDesk).toContain("getFreshTradingFxRate");
+    expect(serverDesk).toContain("getWalletFundingPriorityForFunding");
+    expect(serverDesk).toContain('export const LITIGATION_COMBINED_SOURCE = "COMBINED"');
+    expect(serverDesk).toContain("async function quoteLitigationFundPurchase(");
+    expect(serverDesk).toContain("async function readWalletRows(");
+    expect(serverDesk).toContain("FOR UPDATE");
+    expect(serverDesk).toContain("litigation_funds_fx_debit");
+    expect(serverDesk).toContain("litigation_funds_fx_credit");
+    // Missing FX fails closed rather than silently skipping a wallet.
+    expect(serverDesk).toContain("Insufficient combined spendable wallet balance at current exchange rates");
+  });
+
+  it("gives the customer desk pagination plus the country, claim-type, merit and stage filters", () => {
+    expect(customerUi).toContain("const PAGE_SIZES = [6, 12, 24]");
+    expect(customerUi).toContain("lf-pagination");
+    expect(customerUi).toContain("Previous</button>");
+    expect(customerUi).toContain("Next <ChevronRight");
+    expect(customerUi).toContain("Page {currentPage} of {pageCount}");
+    expect(customerUi).toContain("const pageRows = filtered.slice(");
+    expect(customerUi).toContain("const MERIT_OPTIONS = [");
+    expect(customerUi).toContain("const STAGE_OPTIONS = [");
+    expect(customerUi).toContain("fundableOnly");
+    expect(customerUi).toContain("watchlistOnly");
+    // Extra features: watchlist, compare, CSV export and a live funding quote.
+    expect(customerUi).toContain("WATCHLIST_KEY");
+    expect(customerUi).toContain("const toggleCompare = (id: string)");
+    expect(customerUi).toContain("function downloadCsv(");
+    expect(customerUi).toContain("utils.customer.litigationFunds.fundingQuote.fetch");
+    expect(customerUi).toContain("lf-funding-option");
+    expect(customerUi).toContain("Combined balance");
+    // The distinct case-file identity plus the modelled outcome scenarios are rendered.
+    expect(customerUi).toContain('className="lf-hero"');
+    expect(customerUi).toContain('className="lf-scenarios"');
+    expect(customerUi).toContain('className="lf-milestones"');
+  });
+
+  it("derives the country flag from the selected country and never asks the admin to type it", () => {
+    expect(adminUi).toContain("COUNTRY_OPTIONS.map");
+    expect(adminUi).toContain("{flagFor(country.code)} {country.name} ({country.code})");
+    // Scenario and milestone weights are entered as percentages and stored as integer basis points.
+    expect(adminUi).toContain("probabilityBps: toBpsFromPercent(item.probabilityPercent)");
+    expect(adminUi).toContain("releaseBps: toBpsFromPercent(item.releasePercent)");
+    // Both weighted sets must sum to exactly 100% before a dossier can be published.
+    expect(adminUi).toContain("scenarioBpsTotal !== 10_000");
+    expect(adminUi).toContain("milestoneBpsTotal !== 10_000");
+    // A modelled dossier must cite its source and carry a funding target.
+    expect(adminUi).toContain('"A modelled dossier must cite its source URL. "');
+  });
+
+  it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
+    expect(serverRouters).toContain("litigationFunds: router({");
+    expect(serverRouters).toContain("import { getLitigationFundsDashboard, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome } from \"./litigationFunds\";");
+    expect(serverRouters).toContain("market: protectedProcedure.query(({ ctx }) => getLitigationFundsDashboard(ctx.user.id))");
+    expect(serverRouters).toContain("fundingQuote: protectedProcedure.input(z.object({");
+    expect(serverRouters).toContain("purchase: protectedProcedure.input(z.object({");
+    expect(serverRouters).toContain("litigationDossiers: adminProcedure.query(() => listAdminLitigationDossiers())");
+    expect(serverRouters).toContain("createLitigationDossier: adminProcedure.input(createLitigationDossierSchema).mutation");
+    expect(serverRouters).toContain("updateLitigationDossier: adminProcedure.input(updateLitigationDossierSchema).mutation");
+    expect(serverRouters).toContain("setLitigationDossierEnabled: adminProcedure.input(z.object({ dossierId");
+    expect(serverRouters).toContain("setLitigationDossierStatus: adminProcedure.input(z.object({");
+    expect(serverRouters).toContain("reachLitigationMilestone: adminProcedure.input(z.object({");
+    expect(serverRouters).toContain("recordLitigationOutcome: adminProcedure.input(z.object({");
+    expect(serverRouters).toContain("deleteLitigationDossier: adminProcedure.input(z.object({ dossierId");
+    expect(serverRouters).toContain("litigationBundles: adminProcedure.query(() => listAdminLitigationBundles())");
+    expect(serverRouters).toContain("createLitigationBundle: adminProcedure.input(createLitigationBundleSchema).mutation");
+    expect(serverRouters).toContain("updateLitigationBundle: adminProcedure.input(updateLitigationBundleSchema).mutation");
+    expect(serverRouters).toContain("setLitigationBundleEnabled: adminProcedure.input(z.object({ bundleId");
+    expect(serverRouters).toContain("deleteLitigationBundle: adminProcedure.input(z.object({ bundleId");
+    expect(serverRouters).toContain("scenarios: z.array(litigationScenarioSchema).max(3).optional()");
+    expect(serverRouters).toContain("milestones: z.array(litigationMilestoneSchema).max(10).optional()");
+  });
+});

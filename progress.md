@@ -1,3 +1,64 @@
+## 2026-11-22 — Litigation Funds desk: cited case discovery + outcome-modelled dossiers, cross-wallet funding
+
+New customer desk under **Finance → Litigation Funds**, deliberately different from the
+other desks: it separates *real, cited public legal records* from *administrator-published
+economics*, and models each case's outcome as explicit scenarios instead of a single
+headline return.
+
+- **Two-layer data model.** (A) a DISCOVERY catalogue
+  (`shared/litigation-funds-catalogue.ts`) scrapes keyless public sources — US Federal
+  Register enforcement notices, UK Find Case Law, Norway Brønnøysund — plus Eurostat /
+  World Bank context; CourtListener is wired key-gated (`COURTLISTENER_API_TOKEN`). SEC
+  litigation-releases RSS (frozen 2023-07-26) and DOJ news (HTTP 403 to non-browser
+  clients) are reported honestly as `unavailable` and **skipped, never faked**. Every
+  scraped record is `fundable: false` with `meritGrade: null` — public sources never
+  publish merit or damages. (B) a DOSSIER layer an admin publishes from
+  `server/litigationFundDossiers.ts`, always citing the underlying public source + as-of
+  date.
+- **Outcome-scenario modelling.** Each dossier exposes Settle / Win-at-trial / Lose with
+  probability weights (basis points summing to exactly 10,000), gross recovery, expected
+  duration and the resulting funder multiple; the desk shows the probability-weighted
+  expected recovery **and** the full loss scenario, and fails closed
+  ("Not modelled — cannot invest") when no scenarios exist.
+- **Two instruments.** SINGLE-CASE SHARES and CASE BUNDLES (pro-rata share of realised
+  bundle recoveries, with an admin-configured per-case allocation weight; pooling is shown
+  explicitly, no guaranteed pooled return).
+- **Crowdfunded escrow + milestones.** Funding target, live "% funded" and remaining-days
+  countdown; escrow released against milestones Filed → Discovery → Mediation → Trial →
+  Judgment → Enforcement → Distribution; a favourable outcome repays principal + multiple,
+  a loss writes off capital (compensating entries only).
+- **Due-diligence fields.** Case name, claimant, defendant, claim type, jurisdiction +
+  flag, court, counsel, merit grade A–E, estimated damages, capital at risk, expected
+  multiple, expected duration, ask vs committed, stage, status, source URL + as-of, problem
+  summary.
+- **Cross-wallet funding reused.** `server/litigationFunds.ts` settles in USD via
+  `planCrossWalletFunding` / `calculateCombinedAvailableTargetMinor` /
+  `getFreshTradingFxRate` / `getWalletFundingPriorityForFunding`: USD wallet, any single
+  funded wallet (live FX) or **all wallets combined** (`LITIGATION_COMBINED_SOURCE`).
+  Wallets are locked `FOR UPDATE`, debited per-wallet
+  (`litigation_funds_fx_debit` / `_fx_credit` + `fx_rate_snapshots`), settled
+  (`litigation_funds_purchase`), and positions persist `fundingSource` +
+  `fundingPlanJson`. Missing FX or a shortfall fails closed. `fundingQuote` previews the
+  exact debits. Idempotency keys guard every movement.
+- **Customer desk** (`client/src/components/CustomerLitigationFunds.tsx` +
+  `litigation-funds.css`): a distinct case-file/docket identity (darker, institutional),
+  tabs Cases needing funding / Bundles / Portfolio / Case timeline, pagination, country +
+  claim-type + merit-grade + stage filters, sort, watchlist, compare (max 3), CSV export
+  and a "Pay with" selector with a debounced live funding quote.
+- **Admin console** (`client/src/components/AdminLitigationFunds.tsx`): review scraped
+  discovery records, publish/edit dossiers and bundles, set scenarios / probabilities /
+  milestones / target / merit grade, set status (FUNDING / ESCROW / ACTIVE / RESOLVED /
+  WITHDRAWN), and record an outcome → payouts or write-offs. Flag derived from the chosen
+  country; every write is audited (`litigation_dossier_*`, `litigation_milestone_reached`,
+  `litigation_bundle_*`).
+- **Wiring.** `client/src/App.tsx` lazily renders both components
+  (`section==="litigation-funds"`, `section==="litigationFundDossiers"`) and the generic
+  placeholder now excludes `litigation-funds`; the admin Finance group gained a
+  "Litigation Funds" item (`admin-navigation.ts`, `Gavel` icon) and the customer desk is
+  reachable from `CustomerSlideMenu.tsx`.
+- Verification: `pnpm check` clean; `pnpm test` (202 files / 1,609 passed / 36 skipped)
+  passes, including the new `server/litigation-funds.contract.test.ts` (10 tests).
+
 ## 2026-11-22 — Treasury Bond: buy from any/combined wallet, like Cooperate Dept
 
 Same capability the Cooperate Dept desk just gained, applied to the Treasury Bond desk.

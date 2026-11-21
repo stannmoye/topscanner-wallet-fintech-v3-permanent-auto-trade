@@ -17,6 +17,8 @@ import { projectTreasuryBondProfit } from "./treasuryBondProvider";
 import { createAdminTreasuryBondInstrument, deleteAdminTreasuryBondInstrument, listAdminTreasuryBondInstruments, setAdminTreasuryBondInstrumentEnabled, updateAdminTreasuryBondInstrument, TREASURY_INSTRUMENT_CATEGORIES } from "./treasuryBondInstruments";
 import { getCooperateDeptDashboard, purchaseCooperateDeptCompany, quoteCooperateDeptPurchase } from "./cooperateDept";
 import { createAdminCooperateDeptCompany, deleteAdminCooperateDeptCompany, listAdminCooperateDeptCompanies, setAdminCooperateDeptCompanyEnabled, updateAdminCooperateDeptCompany } from "./cooperateDeptCompanies";
+import { getLitigationFundsDashboard, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome } from "./litigationFunds";
+import { createAdminLitigationBundle, createAdminLitigationDossier, deleteAdminLitigationBundle, deleteAdminLitigationDossier, listAdminLitigationBundles, listAdminLitigationDossiers, reachAdminLitigationMilestone, setAdminLitigationBundleEnabled, setAdminLitigationDossierEnabled, setAdminLitigationDossierStatus, updateAdminLitigationBundle, updateAdminLitigationDossier } from "./litigationFundDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
 import { confirmEmailVerification, requestEmailVerification } from "./emailAuth";
@@ -161,6 +163,74 @@ const cooperateDeptCompanyFieldsSchema = {
 };
 const createCooperateDeptCompanySchema = z.object(cooperateDeptCompanyFieldsSchema);
 const updateCooperateDeptCompanySchema = z.object({ companyId: z.string().trim().min(2).max(80), ...cooperateDeptCompanyFieldsSchema });
+
+// Administrator-authored Litigation Funds dossiers and bundles. Every displayed
+// economics field is administrator-supplied and validated server-side; evidence
+// must be cited. Scenarios, when present, must be complete and sum to 100%.
+const litigationScenarioSchema = z.object({
+  outcome: z.enum(["SETTLE", "WIN", "LOSE"]),
+  label: z.string().trim().max(80).optional(),
+  probabilityBps: z.number().int().min(0).max(10000),
+  grossRecoveryMinor: z.number().int().min(0).max(100_000_000_000),
+  durationMonths: z.number().int().min(0).max(600),
+  funderMultipleBps: z.number().int().min(0).max(1_000_000),
+});
+const litigationMilestoneSchema = z.object({
+  stage: z.enum(["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"]),
+  label: z.string().trim().min(1).max(60),
+  releaseBps: z.number().int().min(0).max(10000),
+  status: z.enum(["PENDING", "REACHED"]),
+  reachedAt: z.string().trim().max(40).nullable(),
+});
+const litigationDossierFieldsSchema = {
+  caseName: z.string().trim().min(3).max(200),
+  claimant: z.string().trim().min(2).max(160),
+  defendant: z.string().trim().min(2).max(160),
+  claimType: z.string().trim().min(2).max(120),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  court: z.string().trim().min(2).max(160),
+  counsel: z.string().trim().max(160).optional(),
+  meritGrade: z.enum(["A", "B", "C", "D", "E"]).nullable().optional(),
+  riskGrade: z.enum(["PRIME", "BALANCED", "SPECULATIVE", "HIGH_RISK"]).nullable().optional(),
+  estimatedDamagesMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  capitalAtRiskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  expectedMultipleBps: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  expectedDurationMonths: z.number().int().min(0).max(600).nullable().optional(),
+  fundingAskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  fundingDeadline: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  stage: z.enum(["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"]),
+  status: z.enum(["FUNDING", "ESCROW", "ACTIVE", "RESOLVED", "WITHDRAWN"]),
+  problem: z.string().trim().min(8).max(2000),
+  highlights: z.array(z.string().trim().min(1).max(160)).max(8).optional(),
+  scenarios: z.array(litigationScenarioSchema).max(3).optional(),
+  milestones: z.array(litigationMilestoneSchema).max(10).optional(),
+  bundleId: z.string().trim().max(80).optional(),
+  source: z.string().trim().max(160).optional(),
+  sourceUrl: z.string().trim().url().max(300).optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  reason: z.string().trim().max(500).optional(),
+};
+const createLitigationDossierSchema = z.object(litigationDossierFieldsSchema);
+const updateLitigationDossierSchema = z.object({ dossierId: z.string().trim().min(2).max(80), ...litigationDossierFieldsSchema });
+const litigationBundleFieldsSchema = {
+  name: z.string().trim().min(3).max(160),
+  claimType: z.string().trim().min(2).max(120),
+  jurisdiction: z.string().trim().min(2).max(120),
+  riskGrade: z.enum(["PRIME", "BALANCED", "SPECULATIVE", "HIGH_RISK"]),
+  targetMinor: z.number().int().min(1).max(100_000_000_000),
+  unitPriceMinor: z.number().int().min(1).max(100_000_000_000),
+  unitCount: z.number().int().min(1).max(1_000_000),
+  caseIds: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
+  allocationBpsByCase: z.record(z.string(), z.number().int().min(0).max(10000)).optional(),
+  expectedMultipleBps: z.number().int().min(0).max(1_000_000),
+  expectedDurationMonths: z.number().int().min(0).max(600).nullable().optional(),
+  summary: z.string().trim().max(2000).optional(),
+  source: z.string().trim().max(160).optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  reason: z.string().trim().max(500).optional(),
+};
+const createLitigationBundleSchema = z.object(litigationBundleFieldsSchema);
+const updateLitigationBundleSchema = z.object({ bundleId: z.string().trim().min(2).max(80), ...litigationBundleFieldsSchema });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -606,6 +676,33 @@ export const appRouter = router({
         return result;
       }),
     }),
+    litigationFunds: router({
+      market: protectedProcedure.query(({ ctx }) => getLitigationFundsDashboard(ctx.user.id)),
+      fundingQuote: protectedProcedure.input(z.object({
+        amountMinor: z.number().int().min(0).max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+      })).query(({ ctx, input }) => quoteLitigationFundPurchase(ctx.user.id, input)),
+      purchase: protectedProcedure.input(z.object({
+        instrumentType: z.enum(["CASE", "BUNDLE"]),
+        instrumentId: z.string().min(2).max(80),
+        amountMinor: z.number().int().positive().max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(async ({ ctx, input }) => {
+        const result = await purchaseLitigationFund(ctx.user.id, input);
+        await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
+          eventType: "INVESTMENT",
+          status: "COMPLETED",
+          title: "Litigation Funds commitment recorded",
+          message: `${result.instrumentName} received a ${result.instrumentType === "CASE" ? "case-share" : "bundle"} commitment of ${result.amountMinor} minor units of ${result.currency}, funded from ${result.fundingSource === "COMBINED" ? "combined wallets" : result.fundingSource} through the wallet ledger.`,
+          transactionCode: `litigation-funds:${result.positionCode}`,
+          amountMinor: result.amountMinor,
+          asset: result.currency,
+          metadata: { positionCode: result.positionCode, instrumentId: result.instrumentId, instrumentType: result.instrumentType, fundingSource: result.fundingSource },
+        });
+        return result;
+      }),
+    }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
       packages: protectedProcedure.query(({ ctx }) => mining.listCustomerMiningPackages(ctx.user.id)),
@@ -992,6 +1089,37 @@ export const appRouter = router({
     }),
     setCooperateDeptCompanyEnabled: adminProcedure.input(z.object({ companyId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminCooperateDeptCompanyEnabled(ctx.user!.id, input.companyId, input.enabled)),
     deleteCooperateDeptCompany: adminProcedure.input(z.object({ companyId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminCooperateDeptCompany(ctx.user!.id, input.companyId)),
+    litigationDossiers: adminProcedure.query(() => listAdminLitigationDossiers()),
+    createLitigationDossier: adminProcedure.input(createLitigationDossierSchema).mutation(({ ctx, input }) => createAdminLitigationDossier(ctx.user!.id, input)),
+    updateLitigationDossier: adminProcedure.input(updateLitigationDossierSchema).mutation(({ ctx, input }) => {
+      const { dossierId, ...fields } = input;
+      return updateAdminLitigationDossier(ctx.user!.id, dossierId, fields);
+    }),
+    setLitigationDossierEnabled: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminLitigationDossierEnabled(ctx.user!.id, input.dossierId, input.enabled)),
+    setLitigationDossierStatus: adminProcedure.input(z.object({
+      dossierId: z.string().trim().min(2).max(80),
+      status: z.enum(["FUNDING", "ESCROW", "ACTIVE", "RESOLVED", "WITHDRAWN"]),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => setAdminLitigationDossierStatus(ctx.user!.id, input.dossierId, input.status, input.reason)),
+    reachLitigationMilestone: adminProcedure.input(z.object({
+      dossierId: z.string().trim().min(2).max(80),
+      stage: z.enum(["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"]),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => reachAdminLitigationMilestone(ctx.user!.id, input.dossierId, input.stage, input.reason)),
+    recordLitigationOutcome: adminProcedure.input(z.object({
+      dossierId: z.string().trim().min(2).max(80),
+      outcome: z.enum(["SETTLE", "WIN", "LOSE"]),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => recordLitigationOutcome(ctx.user!.id, input.dossierId, input.outcome)),
+    deleteLitigationDossier: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminLitigationDossier(ctx.user!.id, input.dossierId)),
+    litigationBundles: adminProcedure.query(() => listAdminLitigationBundles()),
+    createLitigationBundle: adminProcedure.input(createLitigationBundleSchema).mutation(({ ctx, input }) => createAdminLitigationBundle(ctx.user!.id, input)),
+    updateLitigationBundle: adminProcedure.input(updateLitigationBundleSchema).mutation(({ ctx, input }) => {
+      const { bundleId, ...fields } = input;
+      return updateAdminLitigationBundle(ctx.user!.id, bundleId, fields);
+    }),
+    setLitigationBundleEnabled: adminProcedure.input(z.object({ bundleId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminLitigationBundleEnabled(ctx.user!.id, input.bundleId, input.enabled)),
+    deleteLitigationBundle: adminProcedure.input(z.object({ bundleId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminLitigationBundle(ctx.user!.id, input.bundleId)),
     createCustomer: adminProcedure.input(z.object({ name: z.string().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200) })).mutation(({ input }) => createAdminCustomer(input)),
     updateCustomer: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), email: z.string().email() })).mutation(({ input }) => updateAdminCustomer(input)),
     deleteCustomer: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ input }) => {
