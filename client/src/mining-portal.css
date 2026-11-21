@@ -278,6 +278,28 @@
 .cm-dashboard-frame .cm-package-card.theme-solar .cm-cube{transform:rotate(-8deg)}
 .cm-dashboard-frame .cm-package-card.theme-ember .cm-cube{transform:rotate(14deg)}
 
+/* Legibility pass: keep card copy readable on every one of the eight theme gradients. */
+.cm-dashboard-frame .cm-package-card{text-shadow:0 1px 2px rgba(0,5,12,.6)}
+.cm-dashboard-frame .cm-package-card::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(180deg,transparent 30%,rgba(4,10,20,.4) 60%,rgba(3,7,15,.66))}
+.cm-dashboard-frame .cm-package-label h3{color:#f7fbff;font-size:10px;font-weight:800;text-shadow:0 1px 3px rgba(0,5,12,.8)}
+.cm-dashboard-frame .cm-package-label span{color:#8dffd6;text-shadow:0 1px 3px rgba(0,5,12,.8)}
+.cm-dashboard-frame .cm-package-theme-name{color:color-mix(in srgb,var(--package-accent,#52f2e4) 72%,white);text-shadow:0 1px 3px rgba(0,5,12,.8)}
+.cm-dashboard-frame .cm-package-price strong{color:#fff;font-size:17px;text-shadow:0 1px 4px rgba(0,5,12,.85)}
+.cm-dashboard-frame .cm-package-price small{color:#c9dcec}
+.cm-dashboard-frame .cm-package-facts{color:#dde9f5}
+.cm-dashboard-frame .cm-package-facts b{color:#fff}
+.cm-dashboard-frame .cm-package-facts small{color:#c2d5e6}
+.cm-buy-dialog{text-shadow:0 1px 2px rgba(0,5,12,.5)}
+.cm-buy-heading h3,.cm-buy-summary-price strong,.cm-buy-facts b,.cm-buy-wallet b,.cm-buy-row b{text-shadow:0 1px 3px rgba(0,5,12,.72)}
+.cm-buy-hint,.cm-buy-row span{color:#a9c2d6}
+
+/* Admin theme presets: show the theme name on the swatch, and keep the action chip high-contrast on white. */
+.admin-mining .am-theme-preview{height:56px}
+.admin-mining .am-theme-preview em{position:absolute;right:6px;bottom:13px;left:6px;color:#fff;font-size:9px;font-style:normal;font-weight:800;letter-spacing:.04em;text-align:center;text-shadow:0 1px 4px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.55)}
+.admin-mining .am-theme-option-copy strong{font-size:11px}
+.admin-mining .am-theme-check{align-self:flex-start;padding:2px 8px;border-radius:20px;background:#eef3f1;color:#46594f;font-size:8px;font-weight:800;text-transform:uppercase}
+.admin-mining .am-theme-option.selected .am-theme-check{background:var(--theme-accent);color:#08131c}
+
 /* Secure package purchase panel opened from a customer Buy action. */
 .cm-buy-backdrop{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at 50% 30%,#02121fcc,#000912e6);backdrop-filter:blur(6px)}
 .cm-buy-dialog{position:relative;display:flex;flex-direction:column;width:min(560px,100%);max-height:calc(100vh - 36px);border:1px solid color-mix(in srgb,var(--package-accent,#168bff) 62%,#1b3a55);border-radius:16px;background:radial-gradient(ellipse at 50% 0,var(--package-glow,rgba(22,139,255,.24)),transparent 55%),linear-gradient(160deg,var(--package-surface-start,#0a2036),var(--package-surface-end,#040c16));color:#eaf5ff;box-shadow:0 30px 70px #000000b3,0 0 30px var(--package-glow,rgba(22,139,255,.28));overflow:hidden}

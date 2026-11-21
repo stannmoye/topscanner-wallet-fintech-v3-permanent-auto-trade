@@ -332,6 +332,32 @@ export const opportunityPopupDaily = mysqlTable("opportunity_popup_daily", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+/**
+ * First-party website analytics events (visits, logins, signups) used by the
+ * administrator performance dashboard. Unlike the opportunity aggregate table,
+ * raw events are kept so distinct-visitor/unique-login counts and the
+ * country breakdown can be computed exactly on read. `eventDate` is the UTC day
+ * key (YYYY-MM-DD) and is indexed with `eventType` for the daily rollups.
+ */
+export const siteAnalyticsEvents = mysqlTable("site_analytics_events", {
+  id: int("id").autoincrement().primaryKey(),
+  eventType: varchar("eventType", { length: 16 }).notNull(),
+  eventDate: varchar("eventDate", { length: 10 }).notNull(),
+  visitorKey: varchar("visitorKey", { length: 64 }),
+  userId: int("userId"),
+  countryCode: varchar("countryCode", { length: 8 }),
+  source: varchar("source", { length: 24 }),
+  path: varchar("path", { length: 255 }),
+  userAgent: varchar("userAgent", { length: 255 }),
+  ipAddress: varchar("ipAddress", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  eventDateTypeIdx: index("site_analytics_event_date_type_idx").on(table.eventDate, table.eventType),
+  countryDateIdx: index("site_analytics_country_date_idx").on(table.countryCode, table.eventDate),
+  visitorDateIdx: index("site_analytics_visitor_date_idx").on(table.visitorKey, table.eventDate),
+  userTypeIdx: index("site_analytics_user_type_idx").on(table.userId, table.eventType),
+}));
+
 export const appSettings = mysqlTable("app_settings", {
   id: int("id").autoincrement().primaryKey(),
   settingKey: varchar("settingKey", { length: 120 }).notNull().unique(),

@@ -15,6 +15,7 @@
     "db:migrate": "node scripts/guarded-main-migrate.mjs",
     "db:portal-migrate": "node scripts/apply-portal-migrations.mjs",
     "db:mining-schema": "node scripts/ensure-mining-current-schema.mjs",
+    "db:analytics-schema": "node scripts/ensure-analytics-schema.mjs",
     "db:verify-worker-schema": "node scripts/verify-worker-schema.mjs",
     "db:mining-rates": "node scripts/apply-mining-initial-reward-rates.mjs",
     "db:mining-enable-rewards": "node scripts/enable-mining-reward-processing.mjs",

@@ -1,3 +1,63 @@
+## 2026-11-21 — Remove Mining package creation restrictions + improve theme legibility
+
+Owner reported a package could not be created because the requirements were too
+heavy, and asked to drop the unneeded forms and make theme text clearer.
+
+- Removed the terms/disclosure restriction completely. `validatePackageInput`
+  no longer enforces the simulated / no-payout wording or the 80–12,000-character
+  range, and `publishMiningPackage` no longer re-checks `DISCLOSURE_TERMS`. The
+  old `Package terms must clearly state…` / `Package terms need the simulation…`
+  errors are gone. (`DISCLOSURE_TERMS` is retained only for the no-charge
+  Starter Miner Sandbox grant eligibility check.)
+- Package-catalogue actions no longer require an operator reason: added
+  `optionalReason()` (audit-only, falls back to a descriptive default) for
+  `saveMiningPackageDraft`, `publishMiningPackage`, `setMiningPackageStatus` and
+  `cloneMiningPackage`. `requiredReason` still guards sensitive ledger,
+  entitlement, grant, economics and adjustment actions.
+- tRPC schemas relaxed accordingly: `termsText`, `simulationAcknowledgementRequired`
+  and `reason` are now optional (`max(20000)` / `max(2000)`) on the four
+  Mining package mutations.
+- Admin form cleanup in `AdminMining.tsx`: removed the "Package and settlement
+  terms", "Reason for package version" and clone "Clone reason" inputs. The theme
+  picker remains selectable, each swatch now shows its theme name, and the action
+  text reads `Select` / `✓ Selected`.
+- Theme legibility pass in `mining-portal.css`: card copy gets a bottom scrim
+  (`::after`), stronger colours and text-shadows so labels, price, facts and the
+  theme name stay readable on all eight gradients; the admin swatch label is drawn
+  over the gradient and the action chip uses a dark-on-accent chip so light
+  accents (e.g. Solar) no longer wash out on white.
+- Verification: `pnpm check`, `pnpm test` (1,580 passed / 36 skipped) and
+  `pnpm build` all pass; the `mining-package-themes.contract.test.ts` exact-
+  substring assertions still hold.
+
+## 2026-11-21 — Administrator visitor analytics (visits, logins, sign-ups, countries)
+
+Owner asked for a daily view of logins, sign-ups and site visits plus a country
+breakdown, presented as an advanced performance dashboard.
+
+- New additive table `site_analytics_events` (raw events, UTC `eventDate`
+  varchar(10), indexed by date+type, country+date, visitor+date, user+type).
+  Raw rows are kept so distinct-visitor and unique-login/sign-up counts are exact.
+- `server/site-analytics.ts`: `recordAnalyticsEvent` (never throws; silently
+  skips when the table is absent) and `getVisitorAnalyticsReport(days,
+  countryLimit)` producing window totals, today/yesterday, per-day rows and a
+  country breakdown ordered by visits.
+- Instrumentation in `server/_core/index.ts`: a first-party `arb_visitor` cookie
+  resolves distinct visitors; country comes from trusted edge/CDN headers with an
+  `Accept-Language` region fallback; signups recorded on customer register and
+  logins on customer/admin sign-in. New same-origin beacon `GET|POST
+  /api/analytics/visit` (rate-limited, always 204), fired once per load from
+  `client/src/main.tsx`.
+- `adminOperations.visitorAnalytics` tRPC query (1–180 day window, 1–50 country
+  limit). New `AdminVisitorAnalytics` page wired under Overview → "Visitor
+  Analytics" with today-vs-yesterday, range totals, a daily visits bar chart and
+  the country table.
+- Schema is created additively at boot via `scripts/analytics-schema.mjs` /
+  `scripts/ensure-analytics-schema.mjs`, wired into `apply-portal-migrations.mjs`,
+  `start-with-diagnostics.mjs` and `package.json` (`db:analytics-schema`).
+- Verification: `pnpm check`, `pnpm test` (1,580 passed / 36 skipped) and
+  `pnpm build` all pass.
+
 ## 2026-11-21 — Clear the pre-existing installer/scripts test failures
 
 Owner asked to clean up the outstanding test failures as long as nothing in the

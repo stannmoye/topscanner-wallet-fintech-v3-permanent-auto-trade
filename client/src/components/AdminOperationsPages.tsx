@@ -9,11 +9,14 @@ import {
   Clock3,
   Download,
   FileText,
+  Globe2,
+  LogIn,
   RefreshCw,
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
   Trash2,
+  UserPlus,
   Users,
   XCircle,
   Zap,
@@ -302,6 +305,118 @@ export function AdminTradeSettingsOverview() {
       </section>
       {(lifecycle.isError || offers.isError || policies.isError || pending.isError || allocation.isError) && <div className="admin-ops-empty error" role="status">One or more data sources could not be loaded. Unavailable metrics are not zero; refresh after verifying the database-backed service.</div>}
       <div className="admin-ops-note"><ShieldCheck size={16} /><span><strong>Data scope</strong> This view reports open opportunity records, enabled package-policy rows, the global new-allocation gate, the current settlement queue split between unconfirmed administrator reviews and confirmed trades awaiting wallet credit, and rolling 24-hour lifecycle events. It does not infer calendar-day totals, all in-flight trade states, or worker/provider health from these sources.</span></div>
+    </ToolPage>
+  );
+}
+
+const ANALYTICS_RANGE_OPTIONS = [7, 30, 90] as const;
+
+/** Friendly region name for a stored ISO country code, falling back to the code. */
+function analyticsCountryName(code: string | null): string {
+  if (!code) return "Unknown";
+  try {
+    const label = new Intl.DisplayNames(["en"], { type: "region" }).of(code);
+    if (label && label !== code) return label;
+  } catch {
+    // Engines without Intl.DisplayNames fall back to the raw ISO code below.
+  }
+  return code;
+}
+
+function analyticsTrend(current: number | undefined, previous: number | undefined): { text: string; tone: "neutral" | "good" | "watch" } {
+  if (current == null || previous == null) return { text: "vs yesterday —", tone: "neutral" };
+  const delta = current - previous;
+  if (delta === 0) return { text: "level vs yesterday", tone: "neutral" };
+  return { text: `${delta > 0 ? "+" : "−"}${Math.abs(delta).toLocaleString()} vs yesterday`, tone: delta > 0 ? "good" : "watch" };
+}
+
+export function AdminVisitorAnalytics() {
+  const [days, setDays] = useState<number>(30);
+  const query = trpc.adminOperations.visitorAnalytics.useQuery({ days }, { refetchInterval: 60_000 });
+  const report = query.data;
+  const available = report?.sourceAvailable === true;
+  const today = report?.today;
+  const yesterday = report?.yesterday;
+  const totals = report?.totals;
+  const daily = report?.daily ?? [];
+  const countries = report?.countries ?? [];
+  const maxDaily = Math.max(1, ...daily.map((row) => Math.max(row.visits, row.logins, row.signups)));
+  const totalVisitShare = Math.max(1, countries.reduce((sum, row) => sum + row.visits, 0));
+  const format = (value: number | undefined) => (query.isError || !available || value == null ? "—" : value.toLocaleString());
+  const trendPill = (current?: number, previous?: number) => {
+    const state = analyticsTrend(available ? current : undefined, available ? previous : undefined);
+    return <StatusPill tone={state.tone}>{state.text}</StatusPill>;
+  };
+
+  return (
+    <ToolPage
+      eyebrow="Performance monitoring"
+      title="Visitor analytics"
+      description="Daily visits, sign-ins, sign-ups, distinct visitors and the countries visitors arrive from — measured in UTC from first-party events."
+      icon={Activity}
+      action={<>
+        {ANALYTICS_RANGE_OPTIONS.map((option) => <button key={option} type="button" className={`admin-ops-button${option === days ? " is-active" : ""}`} aria-pressed={option === days} onClick={() => setDays(option)}>{option} days</button>)}
+        <button className="admin-ops-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching}><RefreshCw size={14} /> Refresh</button>
+      </>}
+    >
+      <div className="admin-ops-meta-line">
+        <span><CalendarClock size={14} /> {report ? `${report.range.startDate} → ${report.range.endDate} · ${report.range.days} days · UTC` : "Loading reporting window…"}</span>
+        <span>{available && report ? `Report generated ${timestamp(report.generatedAt)}` : "Awaiting analytics storage"}</span>
+      </div>
+
+      {!available && !query.isLoading && <div className="admin-ops-empty error" role="status">Visitor analytics storage is not available on this host yet. Visits, logins and sign-ups will appear here once the analytics schema has been installed.</div>}
+
+      {query.isLoading ? <LoadingState>Loading visitor analytics…</LoadingState> : query.isError ? <div className="admin-ops-empty error" role="status">Visitor analytics could not be loaded. Refresh after verifying the database-backed service.</div> : <>
+        <section className="admin-ops-metrics compact-metrics" aria-label="Today's visitor activity">
+          <Metric label="Visits today" value={format(today?.visits)} detail="Page views recorded since 00:00 UTC" icon={Globe2} />
+          <Metric label="Distinct visitors today" value={format(today?.uniqueVisitors)} detail="Unique visitor keys in the current UTC day" icon={Users} />
+          <Metric label="Logins today" value={format(today?.logins)} detail="Successful customer and admin sign-ins" icon={LogIn} />
+          <Metric label="Sign-ups today" value={format(today?.signups)} detail="New accounts created" icon={UserPlus} />
+        </section>
+
+        <section className="admin-ops-panel" aria-label="Today compared with yesterday">
+          <div className="admin-ops-panel-head"><div><span className="admin-ops-kicker">Day over day</span><h2>Today vs yesterday</h2></div><span className="admin-ops-subtle">UTC day boundaries</span></div>
+          <div className="admin-ops-table-wrap" role="region" tabIndex={0} aria-label="Today compared with yesterday">
+            <table className="admin-ops-table"><thead><tr><th>Metric</th><th>Today</th><th>Yesterday</th><th>Change</th></tr></thead><tbody>
+              <tr><td><strong>Visits</strong><small>Page views</small></td><td>{format(today?.visits)}</td><td>{format(yesterday?.visits)}</td><td>{trendPill(today?.visits, yesterday?.visits)}</td></tr>
+              <tr><td><strong>Distinct visitors</strong><small>Unique visitor keys</small></td><td>{format(today?.uniqueVisitors)}</td><td>{format(yesterday?.uniqueVisitors)}</td><td>{trendPill(today?.uniqueVisitors, yesterday?.uniqueVisitors)}</td></tr>
+              <tr><td><strong>Logins</strong><small>Successful sign-ins</small></td><td>{format(today?.logins)}</td><td>{format(yesterday?.logins)}</td><td>{trendPill(today?.logins, yesterday?.logins)}</td></tr>
+              <tr><td><strong>Sign-ups</strong><small>New accounts</small></td><td>{format(today?.signups)}</td><td>{format(yesterday?.signups)}</td><td>{trendPill(today?.signups, yesterday?.signups)}</td></tr>
+            </tbody></table>
+          </div>
+        </section>
+
+        <section className="admin-ops-metrics" aria-label={`Totals for the last ${days} days`}>
+          <Metric label={`Visits · ${days}d`} value={format(totals?.visits)} detail="Total page views in range" icon={Globe2} />
+          <Metric label={`Distinct visitors · ${days}d`} value={format(totals?.uniqueVisitors)} detail="Unique visitor keys in range" icon={Users} />
+          <Metric label={`Logins · ${days}d`} value={format(totals?.logins)} detail="Successful sign-ins in range" icon={LogIn} />
+          <Metric label={`Distinct login users · ${days}d`} value={format(totals?.uniqueLogins)} detail="Unique accounts that signed in" icon={BadgeCheck} />
+          <Metric label={`Sign-ups · ${days}d`} value={format(totals?.signups)} detail="New accounts in range" icon={UserPlus} />
+          <Metric label={`Distinct new users · ${days}d`} value={format(totals?.uniqueSignups)} detail="Unique accounts created" icon={BadgeCheck} />
+        </section>
+
+        <section className="admin-ops-panel" aria-label="Daily activity trend">
+          <div className="admin-ops-panel-head"><div><span className="admin-ops-kicker">Daily trend</span><h2>Visits per day</h2></div><span className="admin-ops-subtle">Bars scale to the busiest day ({maxDaily.toLocaleString()})</span></div>
+          {daily.length ? <div className="admin-ops-chart" role="img" aria-label="Daily visits bar chart">{daily.map((row) => <div key={row.eventDate} className="admin-ops-bar-column" title={`${row.eventDate}: ${row.visits} visits, ${row.logins} logins, ${row.signups} sign-ups`}><span>{row.visits.toLocaleString()}</span><i style={{ height: `${Math.max(4, Math.round((row.visits / maxDaily) * 118))}px` }} /><small>{row.eventDate.slice(5)}</small></div>)}</div> : <div className="admin-ops-empty compact">No activity recorded in this window yet.</div>}
+          <div className="admin-ops-table-wrap" role="region" tabIndex={0} aria-label="Daily visitor activity">
+            <table className="admin-ops-table"><thead><tr><th>Date (UTC)</th><th>Visits</th><th>Distinct visitors</th><th>Logins</th><th>Sign-ups</th></tr></thead><tbody>
+              {daily.map((row) => <tr key={row.eventDate}><td><strong>{row.eventDate}</strong></td><td>{row.visits.toLocaleString()}</td><td>{row.uniqueVisitors.toLocaleString()}</td><td>{row.logins.toLocaleString()}</td><td>{row.signups.toLocaleString()}</td></tr>)}
+              {!daily.length && <tr><td colSpan={5} className="admin-ops-table-empty">No daily activity has been recorded in this window.</td></tr>}
+            </tbody></table>
+          </div>
+        </section>
+
+        <section className="admin-ops-panel" aria-label="Visitor countries">
+          <div className="admin-ops-panel-head"><div><span className="admin-ops-kicker">Geography</span><h2>Countries visitors came from</h2></div><span className="admin-ops-subtle">{countries.length} location{countries.length === 1 ? "" : "s"}</span></div>
+          <div className="admin-ops-table-wrap" role="region" tabIndex={0} aria-label="Countries by visit count">
+            <table className="admin-ops-table"><thead><tr><th>Country</th><th>Visits</th><th>Share</th><th>Distinct visitors</th><th>Logins</th><th>Sign-ups</th></tr></thead><tbody>
+              {countries.map((row) => <tr key={row.countryCode ?? "unknown"}><td><strong>{analyticsCountryName(row.countryCode)}</strong><small>{row.countryCode ?? "Unresolved"}</small></td><td>{row.visits.toLocaleString()}</td><td>{`${Math.round((row.visits / totalVisitShare) * 100)}%`}</td><td>{row.uniqueVisitors.toLocaleString()}</td><td>{row.logins.toLocaleString()}</td><td>{row.signups.toLocaleString()}</td></tr>)}
+              {!countries.length && <tr><td colSpan={6} className="admin-ops-table-empty">No country data recorded in this window.</td></tr>}
+            </tbody></table>
+          </div>
+          <div className="admin-ops-note"><ShieldCheck size={16} /><span><strong>How this is measured</strong> Visits come from a first-party, cookie-based beacon fired on page load; logins and sign-ups are recorded server-side the moment authentication or registration succeeds. Country is resolved from trusted edge/CDN headers and falls back to the browser language region, showing "Unknown" when neither is available. Every figure uses UTC calendar days.</span></div>
+        </section>
+      </>}
     </ToolPage>
   );
 }

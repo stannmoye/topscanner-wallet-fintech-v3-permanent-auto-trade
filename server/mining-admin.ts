@@ -35,6 +35,14 @@ function requiredReason(reason: string, label = "Reason") {
   return value;
 }
 
+// Package catalogue actions are intentionally not gated on an operator-supplied
+// reason. The value is captured only to enrich the audit trail, so an absent or
+// blank reason is accepted and falls back to a descriptive default.
+function optionalReason(reason: unknown, fallback: string) {
+  const value = String(reason ?? "").trim();
+  return (value || fallback).slice(0, 2000);
+}
+
 function exactAmount(value: string, asset: string, label: string, allowZero = false) {
   const amount = decimal(value);
   if (allowZero ? amount.isNegative() : !amount.gt(0)) throw new MiningError(`${label} must be ${allowZero ? "zero or greater" : "greater than zero"}`);
@@ -71,7 +79,6 @@ function validatePackageInput(input: any) {
   if (boostDurationSeconds !== null && (!Number.isInteger(boostDurationSeconds) || boostDurationSeconds < 10 || boostDurationSeconds > 31_536_000)) throw new MiningError("Boost duration must be between 10 seconds and one year");
   if (!["stack","replace"].includes(stackingPolicy)) throw new MiningError("Choose whether package purchases stack or replace active packages");
   if (!isMiningPackageThemeKey(themeKey)) throw new MiningError("Choose one of the available Mining package themes");
-  if (!DISCLOSURE_TERMS(termsText) || termsText.length < 80 || termsText.length > 12_000) throw new MiningError("Package terms must clearly state that this is simulated and that there is no withdrawal or cash payout; use 80–12,000 characters");
   return { code,name,displayOrder,durationMonths,expectedDailyRewardCki:expectedDailyRewardCki?.toString()??null,priceAsset,priceAmount:price.toString(),baseThs:baseThs.toString(),boostBonusThs:boostBonusThs.toString(),maxPerCustomer,expirySeconds:null,boostDurationSeconds,stackingPolicy,themeKey,termsText,simulationAcknowledgementRequired:input.simulationAcknowledgementRequired !== false };
 }
 
@@ -106,7 +113,7 @@ export async function getMiningAdminPackages() {
 
 export async function saveMiningPackageDraft(adminId: number, rawInput: any) {
   const input = validatePackageInput(rawInput);
-  const reason = requiredReason(rawInput.reason || "Admin-created versioned Mining package draft", "Change reason");
+  const reason = optionalReason(rawInput.reason, "Admin-created versioned Mining package draft");
   return withMiningConnection(async conn=>inMiningTransaction(conn,async()=>{
     let packageId = rawInput.packageId ? Number(rawInput.packageId) : 0;
     let savedVersionId = 0;
@@ -151,8 +158,8 @@ export async function saveMiningPackageDraft(adminId: number, rawInput: any) {
   }));
 }
 
-export async function publishMiningPackage(adminId: number, input: { packageId:number; versionId:number; reason:string }) {
-  const reason=requiredReason(input.reason,"Publish reason");
+export async function publishMiningPackage(adminId: number, input: { packageId:number; versionId:number; reason?:string }) {
+  const reason=optionalReason(input.reason,"Publish a Mining package version");
   return withMiningConnection(async conn=>inMiningTransaction(conn,async()=>{
     const [rows]=await conn.query<any[]>(`SELECT p.id packageId,p.code,p.name,p.status packageStatus,p.currentVersionId,v.* FROM mining_packages p JOIN mining_package_versions v ON v.packageId=p.id WHERE p.id=? AND v.id=? FOR UPDATE`,[input.packageId,input.versionId]);
     const row=rows[0];
@@ -161,7 +168,6 @@ export async function publishMiningPackage(adminId: number, input: { packageId:n
     const effectiveDaily=calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:row.expectedDailyRewardCki,baseThs:String(row.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay});
     if(config.globalEnabled&&!decimal(effectiveDaily).gt(0)) throw new MiningError("Pause simulated reward processing or configure a positive reward under the selected method before publishing this version");
     if(row.versionStatus!=="draft"&&(row.versionStatus!=="published"||Number(row.currentVersionId)!==Number(input.versionId))) throw new MiningError("Only a draft or the current published version can be published");
-    if(!DISCLOSURE_TERMS(String(row.termsText||""))) throw new MiningError("Package terms need the simulation-only and no-payout disclosure");
     const now=new Date();
     await conn.execute(`UPDATE mining_package_versions SET versionStatus='published',effectiveAt=? WHERE id=?`,[now,input.versionId]);
     await conn.execute(`UPDATE mining_packages SET name=?,status='published',currentVersionId=?,updatedAt=? WHERE id=?`,[String(row.displayName||row.name),input.versionId,now,input.packageId]);
@@ -170,8 +176,8 @@ export async function publishMiningPackage(adminId: number, input: { packageId:n
   }));
 }
 
-export async function setMiningPackageStatus(adminId: number, input: {packageId:number;status:"published"|"paused"|"retired";reason:string}) {
-  const reason=requiredReason(input.reason,"Status change reason");
+export async function setMiningPackageStatus(adminId: number, input: {packageId:number;status:"published"|"paused"|"retired";reason?:string}) {
+  const reason=optionalReason(input.reason,`Mining package status changed to ${input.status}`);
   return withMiningConnection(async conn=>inMiningTransaction(conn,async()=>{
     const [rows]=await conn.query<any[]>(`SELECT id,status,code,currentVersionId FROM mining_packages WHERE id=? FOR UPDATE`,[input.packageId]);
     if(!rows[0]) throw new MiningError("Mining package was not found");
@@ -188,8 +194,8 @@ export async function setMiningPackageStatus(adminId: number, input: {packageId:
   }));
 }
 
-export async function cloneMiningPackage(adminId:number,input:{packageId:number;code:string;name:string;displayOrder:number;reason:string}) {
-  const reason=requiredReason(input.reason,"Clone reason");
+export async function cloneMiningPackage(adminId:number,input:{packageId:number;code:string;name:string;displayOrder:number;reason?:string}) {
+  const reason=optionalReason(input.reason,"Cloned a Mining package as a draft");
   const code=String(input.code||"").trim().toUpperCase();
   const name=String(input.name||"").trim();
   const displayOrder=Number(input.displayOrder);

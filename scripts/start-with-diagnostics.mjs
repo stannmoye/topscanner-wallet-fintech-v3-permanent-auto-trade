@@ -128,6 +128,9 @@ async function main() {
   // Mining customer/admin routes use additive schema fields outside the Drizzle
   // chain, so reconcile them before exposing the application server.
   await runPhase("mining-current-schema-repair", ["scripts/ensure-mining-current-schema.mjs"]);
+  // The administrator visitor-analytics dashboard reads site_analytics_events,
+  // which lives outside the Drizzle chain and is created additively here.
+  await runPhase("visitor-analytics-schema-repair", ["scripts/ensure-analytics-schema.mjs"]);
   await runPhase("worker-runtime-schema-preflight", ["scripts/ensure-worker-runtime-schema.mjs", "--verify-only"]);
   await runPhase("application-server", ["--trace-uncaught", "--unhandled-rejections=strict", "dist/index.js"], {}, true);
 

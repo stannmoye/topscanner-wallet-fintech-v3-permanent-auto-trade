@@ -34,6 +34,8 @@ import { refreshMiningPriceFeeds } from "../mining-admin";
 import { runMiningWorkerCycle } from "../mining";
 import { ensureSessionSecret } from "../../installer/session-secret.mjs";
 import { isValidSettlementEvidenceStorageKey, settlementEvidenceStorageKey, validateSettlementEvidenceUpload } from "../settlement-evidence";
+import { normalizeVisitorKey, recordAnalyticsEvent, VISITOR_COOKIE } from "../site-analytics";
+import { parse as parseCookieHeader } from "cookie";
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
 const customerLoginRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_000, max: 10, message: "Too many login attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-login" });
@@ -44,6 +46,37 @@ const passwordResetRequestRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_
 const passwordResetConfirmRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_000, max: 10, message: "Too many password-reset attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "password-reset-confirm" });
 const emailVerificationRequestRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_000, max: 5, message: "Too many email-verification requests. Try again later.", store: configuredAuthRateLimitStore, scope: "email-verification-request" });
 const emailVerificationConfirmRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_000, max: 10, message: "Too many email-verification attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "email-verification-confirm" });
+const analyticsVisitRateLimit = createAuthRateLimiter({ windowMs: 60_000, max: 120, message: "Too many analytics requests. Try again shortly.", store: configuredAuthRateLimitStore, scope: "analytics-visit" });
+
+/**
+ * Edge/CDN headers that carry a resolved ISO country code. They are trusted only
+ * when a trusted reverse proxy is actually terminating the request in front of
+ * this app; when none is present the Accept-Language region is used as a
+ * best-effort fallback and finally the country is recorded as unknown.
+ */
+const ANALYTICS_COUNTRY_HEADERS = ["cf-ipcountry", "x-vercel-ip-country", "cloudfront-viewer-country", "x-country-code", "x-geo-country", "fly-client-ip-country"];
+
+function normalizeCountryCode(value: unknown): string | null {
+  const code = String(value ?? "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return null;
+  return code === "XX" || code === "T1" || code === "ZZ" ? null : code;
+}
+
+function resolveRequestCountry(req: express.Request): string | null {
+  for (const header of ANALYTICS_COUNTRY_HEADERS) {
+    const raw = req.headers[header];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    const code = normalizeCountryCode(value);
+    if (code) return code;
+  }
+  const acceptLanguage = typeof req.headers["accept-language"] === "string" ? req.headers["accept-language"] : "";
+  const region = acceptLanguage.match(/[a-z]{2,3}-([A-Za-z]{2})\b/i);
+  return region ? normalizeCountryCode(region[1]) : null;
+}
+
+function requestIpAddress(req: express.Request): string | undefined {
+  return req.ip || req.socket?.remoteAddress || undefined;
+}
 
 async function startServer() {
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: new Date().toISOString(), event: "application-bootstrap-entered", nodeVersion: process.version, nodeEnv: process.env.NODE_ENV || "unset", portConfigured: Boolean(process.env.PORT), databaseUrlConfigured: Boolean(process.env.DATABASE_URL) }));
@@ -130,6 +163,30 @@ async function startServer() {
       ipAddress: req.ip || req.socket?.remoteAddress || undefined,
     });
   /**
+   * Resolve (and lazily issue) the anonymous first-party visitor key used to
+   * count distinct daily visitors. It is a random id in an httpOnly cookie and
+   * carries no personal data.
+   */
+  const resolveVisitorKey = (req: express.Request, res: express.Response): string => {
+    const existing = normalizeVisitorKey(parseCookieHeader(req.headers.cookie ?? "")[VISITOR_COOKIE]);
+    if (existing) return existing;
+    const key = randomBytes(16).toString("hex");
+    res.cookie(VISITOR_COOKIE, key, { ...getSessionCookieOptions(req), httpOnly: true, maxAge: 400 * 24 * 60 * 60 * 1000 });
+    return key;
+  };
+  /** Record one website analytics event for an auth outcome; never blocks the response. */
+  const recordAuthAnalytics = (req: express.Request, res: express.Response, eventType: "login" | "signup", userId: number, source: string): void => {
+    void recordAnalyticsEvent({
+      eventType,
+      visitorKey: resolveVisitorKey(req, res),
+      userId,
+      countryCode: resolveRequestCountry(req),
+      source,
+      userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+      ipAddress: requestIpAddress(req),
+    });
+  };
+  /**
    * Shared post-authentication device step. Refuses a blocked device and records
    * a first-seen or returning login. Returns the device key used to bind the
    * session cookie, or null when the sign-in must be refused.
@@ -161,6 +218,7 @@ async function startServer() {
       const user = await createLocalCustomer({ email, passwordHash: passwordHash(password), name: `${firstName || ""} ${lastName || ""}`.trim() || email });
       const device = await registerLoginDevice(req, user.id, req.body?.device);
       setLocalSession(req, res, user, device.deviceKey);
+      recordAuthAnalytics(req, res, "signup", user.id, "customer");
       void requestEmailVerification(user.id).catch(error => console.error("[Email] Registration verification enqueue failed:", error instanceof Error ? error.name : "UnknownError"));
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
@@ -184,6 +242,7 @@ async function startServer() {
       const device = await registerLoginDevice(req, user.id, req.body?.device);
       if (device.blocked) return res.status(403).json({ error: "This device has been blocked for this account. If you believe this is a mistake, contact support or ask an administrator to restore access." });
       setLocalSession(req, res, user, device.deviceKey);
+      recordAuthAnalytics(req, res, "login", user.id, "customer");
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
@@ -202,6 +261,7 @@ async function startServer() {
       const device = await registerLoginDevice(req, user.id, req.body?.device);
       if (device.blocked) return res.status(403).json({ error: "This device has been blocked for this account. If you believe this is a mistake, contact support or ask an administrator to restore access." });
       setLocalSession(req, res, user, device.deviceKey);
+      recordAuthAnalytics(req, res, "login", user.id, "admin");
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
@@ -241,6 +301,27 @@ async function startServer() {
       return res.json({ success: true });
     } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "The verification code is invalid or expired" }); }
   });
+  /**
+   * First-party page-view beacon. The client fires this once per page load so the
+   * administrator dashboard can report total visits and distinct daily visitors.
+   * It is deliberately same-origin, body-less and best-effort: it always answers
+   * 204 so a tracking failure can never affect the customer experience.
+   */
+  const recordVisitBeacon = (req: express.Request, res: express.Response) => {
+    const requestedPath = typeof req.query.path === "string" ? req.query.path : undefined;
+    void recordAnalyticsEvent({
+      eventType: "visit",
+      visitorKey: resolveVisitorKey(req, res),
+      countryCode: resolveRequestCountry(req),
+      source: "site",
+      path: requestedPath ? requestedPath : req.path,
+      userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+      ipAddress: requestIpAddress(req),
+    });
+    return res.status(204).end();
+  };
+  app.get("/api/analytics/visit", analyticsVisitRateLimit, recordVisitBeacon);
+  app.post("/api/analytics/visit", analyticsVisitRateLimit, recordVisitBeacon);
   app.get("/api/platform/config.js", (_req, res) => {
     res.set("Cache-Control", "no-store").type("application/javascript").send(publicPlatformScript());
   });

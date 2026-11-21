@@ -101,4 +101,22 @@ if (window.location.pathname.startsWith("/customer")) {
   });
 }
 
+// First-party visitor analytics: fire one same-origin page-view per app load so
+// the administrator dashboard can report total visits and distinct daily
+// visitors. Deliberately best-effort — a tracking failure must never affect the
+// page, so every branch swallows errors.
+if (typeof window !== "undefined") {
+  const visitPath = window.location.pathname + window.location.search;
+  const visitUrl = `/api/analytics/visit?path=${encodeURIComponent(visitPath)}`;
+  try {
+    if (typeof navigator.sendBeacon === "function") {
+      navigator.sendBeacon(visitUrl, new Blob([], { type: "text/plain" }));
+    } else {
+      void fetch(visitUrl, { method: "GET", credentials: "include", keepalive: true }).catch(() => {});
+    }
+  } catch {
+    // Tracking is optional; ignore any beacon failure.
+  }
+}
+
 renderApp();

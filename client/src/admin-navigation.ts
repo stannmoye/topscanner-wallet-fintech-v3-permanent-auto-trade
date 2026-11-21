@@ -53,6 +53,11 @@ export type AdminNavigationGroup = {
 export const adminNavigationGroups: AdminNavigationGroup[] = [
   { id: "overview", label: "Overview", detail: "Read-mostly operational summary", items: [
     { id: "overview-dashboard", target: "overview", label: "Dashboard", detail: "Health, totals, alerts and live summaries", icon: Gauge },
+    { id: "visitor-analytics", target: "visitorAnalytics", label: "Visitor Analytics", detail: "Daily visits, logins, sign-ups and the countries visitors came from, by count", icon: Activity, children: [
+      { label: "Daily Growth", detail: "Visits, distinct visitors, logins and sign-ups per UTC day" },
+      { label: "Today vs Yesterday", detail: "Day-over-day change for each growth metric" },
+      { label: "Countries", detail: "Where visitors came from, ranked by visit count" },
+    ]},
   ]},
   { id: "customers", label: "Customers", detail: "Accounts, access and customer controls", items: [
     { id: "customer-directory", target: "customers", label: "Customer Directory", detail: "Search, create and manage customer accounts", icon: Users, children: [
