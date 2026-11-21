@@ -1,3 +1,38 @@
+## 2026-11-21 — Stop the guarded-migration crash loop on additive reconciliation
+
+Owner reported a production crash loop and supplied the Railway startup log: the
+`main-database-migrations` phase exited non-zero and every restart aborted with
+`Automatic retry is blocked because the previous main migration run is failed
+(recorded failure code: UNKNOWN). Last recorded failure location:
+mining-customer-package-schema-reconciliation.sql`.
+
+- Root cause: the guarded runner records a `failed` row in `main_migration_run_guard`
+  and permanently refuses to retry. The failure was recorded at the post-migration
+  additive Mining reconciliation step, which only adds columns/indexes and widens
+  nullability/enums and is safe to replay — so blocking the host forever was wrong.
+- `scripts/guarded-main-migrate.mjs`: added an explicit `IDEMPOTENT_RECONCILIATION_STEPS`
+  allow-list and an "APPROVED RECONCILIATION RECOVERY" branch that clears the recorded
+  failure and retries only when the previous failure was one of those additive steps.
+  The safety stop is unchanged for the non-idempotent historical Drizzle chain. The
+  non-zero exit path now also logs the real `Failure detail` message instead of only
+  `code: UNKNOWN`.
+- `scripts/mining-customer-package-lifecycle-schema.mjs`: the verifier previously threw
+  for any `status` enum that was neither the base nor the expected set (a plain `Error`
+  with no `code`, which is why the guard recorded `UNKNOWN`). It now preserves every
+  existing enum value and only adds the required lifecycle values, and recreates a
+  missing `ledgerTransactionId` as a nullable column.
+- `scripts/mining-customer-package-schema.mjs`: the same preserve-and-widen repair for
+  `acquisitionType`, still failing closed only on a genuinely incompatible contract.
+- Tests: added coverage for the reconciliation-recovery branch and error-detail logging
+  (`scripts/guarded-main-migrate-diagnostics.test.mjs`) and for enum widening / missing
+  nullable ledger links (`scripts/mining-customer-package-lifecycle-schema.test.mjs`,
+  `scripts/mining-customer-package-schema.test.mjs`).
+- Verification: `pnpm check`, `pnpm test` (199 files / 1,580 tests passed; 7 skipped),
+  `pnpm build`, and the focused installer/startup suites (34 + 3 passed) succeeded. The
+  separate installer suite still has the 5 unrelated pre-existing failures noted below.
+  The repair applies on the next deployment; on boot the runner clears the recorded
+  additive-reconciliation failure and re-applies the idempotent Mining reconciliation.
+
 ## 2026-11-21 — Mining runtime schema drift and startup repair
 
 Owner supplied admin Mining screenshots showing `Unknown column p.displayOrder` and

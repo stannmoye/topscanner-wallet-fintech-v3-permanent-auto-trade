@@ -15,6 +15,22 @@ const databaseUrl = process.env.DATABASE_URL;
 const lockName = "arbitrade-main-migrations";
 const guardTable = "main_migration_run_guard";
 
+// The guard exists to stop blind replay of the non-idempotent historical
+// Drizzle chain. The post-migration schema reconciliations below are a
+// different class of work: every one of them only adds a column/index, widens
+// nullability, or widens an enum, and each is written to be safely re-runnable.
+// A failure recorded at one of these steps does not describe a partially
+// applied non-idempotent migration, so it is safe to clear the guard and
+// replay the reconciliation instead of blocking the host indefinitely.
+const IDEMPOTENT_RECONCILIATION_STEPS = new Set([
+  "trading-package-schema-drift-reconciliation",
+  "trading-opportunity-execution-lease-schema-reconciliation",
+  "trading-package-policy-schema-reconciliation",
+  "manual-payout-request-lifecycle-schema-reconciliation",
+  "delivery-diagnostics-schema-reconciliation",
+  "mining-customer-package-schema-reconciliation",
+]);
+
 function safeCode(error, fallback = "UNKNOWN") {
   return String(error?.code || fallback).replace(/[^A-Z0-9_]/gi, "").slice(0, 80) || fallback;
 }
@@ -400,6 +416,10 @@ async function main() {
         console.warn("[main-migrate] APPROVED NARROW RECOVERY: failed 0112 statement 5 matched ER_NO_DEFAULT_FOR_FIELD; live fee-policy schema matches the INSERT and all six statements are repeatable UPDATE/INSERT operations. Replaying 0112.");
         await connection.execute("UPDATE `" + guardTable + "` SET status='running',startedAt=CURRENT_TIMESTAMP,finishedAt=NULL,failureCode=NULL,failureMigration=NULL,failureStatementIndex=NULL,failureStatementLabel=NULL WHERE id=1");
         runStarted = true;
+      } else if (previousStatus === "failed" && IDEMPOTENT_RECONCILIATION_STEPS.has(previousMigration)) {
+        console.warn("[main-migrate] APPROVED RECONCILIATION RECOVERY: the previous run failed at the idempotent reconciliation step " + previousMigration + ", which only adds columns/indexes and widens nullability/enums and is safe to replay. Clearing the recorded failure and retrying.");
+        await connection.execute("UPDATE `" + guardTable + "` SET status='running',startedAt=CURRENT_TIMESTAMP,finishedAt=NULL,failureCode=NULL,failureMigration=NULL,failureStatementIndex=NULL,failureStatementLabel=NULL WHERE id=1");
+        runStarted = true;
       } else {
         const location = previousMigration ? " Last recorded failure location: " + previousMigration + ".sql" +
           (previousStatementIndex > 0 ? " statement " + previousStatementIndex : "") +
@@ -557,6 +577,11 @@ async function main() {
       console.error("[main-migrate] ERROR: Database connection was refused before migration SQL ran (code: ECONNREFUSED). This attempt could not inspect or update the migration guard; any existing guard state remains unchanged. Check database service availability, DATABASE_URL host/port, and network access from the app runtime.");
     } else {
       console.error("[main-migrate] ERROR: Main migration run failed" + location + " (code: " + code + "). Review the migration guard and database state before retrying; do not assume this attempt updated the guard unless the connection and migration run had started.");
+      const failureDetail = String(error?.message || error?.sqlMessage || "")
+        .replace(/[^A-Za-z0-9 _.,;:()'=/<>#-]/g, "")
+        .trim()
+        .slice(0, 300);
+      if (failureDetail) console.error("[main-migrate] Failure detail: " + failureDetail);
     }
     if (code === "MIGRATION_RENAME_COLUMNS_MISSING" || code === "MIGRATION_RENAME_COLUMNS_CONFLICT") {
       const renameDetail = String(error?.message || "").replace(/[^A-Za-z0-9 _.,;:()'.-]/g, "").slice(0, 240);

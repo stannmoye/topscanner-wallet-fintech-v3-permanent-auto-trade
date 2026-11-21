@@ -2,9 +2,29 @@ const normalize = value =>
   String(value ?? "")
     .toLowerCase()
     .replace(/\s+/g, "");
-const EXPECTED_STATUS =
-  "enum('active','replaced','expired','cancelled','ended')";
-const LEGACY_STATUS = "enum('active','replaced','expired','cancelled')";
+// The administrator "stop" action writes status='ended', which the base table
+// enum does not contain. Repairs preserve every existing enum value and only
+// add the required lifecycle values, so no stored status is dropped.
+const REQUIRED_STATUSES = [
+  "active",
+  "replaced",
+  "expired",
+  "cancelled",
+  "ended",
+];
+
+function parseEnumValues(columnType) {
+  const match = /^enum\((.*)\)$/i.exec(String(columnType ?? "").trim());
+  if (!match) return null;
+  const values = match[1]
+    .split(",")
+    .map(part => part.trim().replace(/^'(.*)'$/, "$1"));
+  return values.length ? values : null;
+}
+
+function enumSql(values) {
+  return values.map(value => "'" + value.replace(/'/g, "''") + "'").join(",");
+}
 
 async function readColumn(db, name) {
   const [columns] = await db.query(
@@ -18,6 +38,16 @@ async function readColumn(db, name) {
 export async function ensureMiningCustomerPackageLifecycleSchema(db) {
   let repaired = false;
   let ledgerColumn = await readColumn(db, "ledgerTransactionId");
+  if (!ledgerColumn) {
+    // Admin grants are zero-charge entitlements with no wallet movement, so the
+    // ledger link must exist and be nullable. Recreate it additively if a stale
+    // baseline left it out entirely.
+    await db.query(
+      "ALTER TABLE mining_customer_packages ADD COLUMN ledgerTransactionId INT NULL AFTER quoteId"
+    );
+    ledgerColumn = await readColumn(db, "ledgerTransactionId");
+    repaired = true;
+  }
   if (!ledgerColumn || normalize(ledgerColumn.dataType) !== "int") {
     throw new Error(
       "Mining schema verification failed for mining_customer_packages.ledgerTransactionId"
@@ -43,27 +73,39 @@ export async function ensureMiningCustomerPackageLifecycleSchema(db) {
   }
 
   let statusColumn = await readColumn(db, "status");
-  const statusType = normalize(statusColumn?.columnType);
-  if (!statusColumn || ![LEGACY_STATUS, EXPECTED_STATUS].includes(statusType)) {
+  const liveStatuses = parseEnumValues(statusColumn?.columnType);
+  if (!statusColumn || !liveStatuses || !liveStatuses.includes("active")) {
     throw new Error(
       "Mining schema verification failed for mining_customer_packages.status enum"
     );
   }
-  if (
-    statusType !== EXPECTED_STATUS ||
+  const missingStatuses = REQUIRED_STATUSES.filter(
+    value => !liveStatuses.includes(value)
+  );
+  const statusDrift =
+    missingStatuses.length > 0 ||
     normalize(statusColumn.isNullable) !== "no" ||
-    String(statusColumn.columnDefault ?? "").toLowerCase() !== "active"
-  ) {
+    String(statusColumn.columnDefault ?? "").toLowerCase() !== "active";
+  if (statusDrift) {
+    const values = [
+      ...liveStatuses,
+      ...missingStatuses.filter(value => !liveStatuses.includes(value)),
+    ];
     await db.query(
-      "ALTER TABLE mining_customer_packages MODIFY COLUMN status ENUM('active','replaced','expired','cancelled','ended') NOT NULL DEFAULT 'active'"
+      "ALTER TABLE mining_customer_packages MODIFY COLUMN status ENUM(" +
+        enumSql(values) +
+        ") NOT NULL DEFAULT 'active'"
     );
     statusColumn = await readColumn(db, "status");
     repaired = true;
   }
+  const finalStatuses = parseEnumValues(statusColumn?.columnType);
   if (
-    normalize(statusColumn?.columnType) !== EXPECTED_STATUS ||
-    normalize(statusColumn?.isNullable) !== "no" ||
-    String(statusColumn?.columnDefault ?? "").toLowerCase() !== "active"
+    !statusColumn ||
+    !finalStatuses ||
+    REQUIRED_STATUSES.some(value => !finalStatuses.includes(value)) ||
+    normalize(statusColumn.isNullable) !== "no" ||
+    String(statusColumn.columnDefault ?? "").toLowerCase() !== "active"
   ) {
     throw new Error(
       "Mining schema verification failed for mining_customer_packages.status"

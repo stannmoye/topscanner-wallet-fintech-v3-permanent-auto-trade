@@ -4,14 +4,9 @@ import { ensureMiningCustomerPackageLifecycleSchema } from "./mining-customer-pa
 function fakeDb({
   ledgerNullable = "YES",
   statusType = "enum('active','replaced','expired','cancelled')",
+  missingLedger = false,
 } = {}) {
   const columns = {
-    ledgerTransactionId: {
-      dataType: "int",
-      columnType: "int",
-      isNullable: ledgerNullable,
-      columnDefault: null,
-    },
     status: {
       dataType: "enum",
       columnType: statusType,
@@ -19,10 +14,27 @@ function fakeDb({
       columnDefault: "active",
     },
   };
+  if (!missingLedger) {
+    columns.ledgerTransactionId = {
+      dataType: "int",
+      columnType: "int",
+      isNullable: ledgerNullable,
+      columnDefault: null,
+    };
+  }
   const query = vi.fn(async (sql, params) => {
     if (sql.includes("information_schema.columns")) {
       const column = columns[params[0]];
       return [column ? [{ ...column }] : []];
+    }
+    if (sql.includes("ADD COLUMN ledgerTransactionId")) {
+      columns.ledgerTransactionId = {
+        dataType: "int",
+        columnType: "int",
+        isNullable: "YES",
+        columnDefault: null,
+      };
+      return [{ affectedRows: 0 }];
     }
     if (sql.includes("MODIFY COLUMN ledgerTransactionId")) {
       columns.ledgerTransactionId.isNullable = "YES";
@@ -70,10 +82,8 @@ describe("Mining customer-package lifecycle schema reconciliation", () => {
     ).toBe(false);
   });
 
-  it("fails closed instead of dropping an unknown existing status", async () => {
-    const db = fakeDb({
-      statusType: "enum('active','replaced','expired','cancelled','paused')",
-    });
+  it("fails closed when the status column is not an enum", async () => {
+    const db = fakeDb({ statusType: "varchar(16)" });
 
     await expect(
       ensureMiningCustomerPackageLifecycleSchema(db)
@@ -83,6 +93,35 @@ describe("Mining customer-package lifecycle schema reconciliation", () => {
     expect(
       db.query.mock.calls.some(([sql]) => sql.startsWith("ALTER TABLE"))
     ).toBe(false);
+  });
+
+  it("preserves an unknown existing status value while adding the required lifecycle values", async () => {
+    const db = fakeDb({
+      statusType: "enum('active','replaced','expired','cancelled','paused')",
+    });
+
+    await expect(
+      ensureMiningCustomerPackageLifecycleSchema(db)
+    ).resolves.toEqual({ present: true, repaired: true });
+    const alterStatus = db.query.mock.calls.find(
+      ([sql]) => sql.startsWith("ALTER TABLE") && sql.includes("MODIFY COLUMN status")
+    );
+    expect(alterStatus).toBeTruthy();
+    expect(alterStatus[0]).toContain("'paused'");
+    expect(alterStatus[0]).toContain("'ended'");
+  });
+
+  it("recreates a missing grant ledger link as a nullable column", async () => {
+    const db = fakeDb({ missingLedger: true });
+
+    await expect(
+      ensureMiningCustomerPackageLifecycleSchema(db)
+    ).resolves.toEqual({ present: true, repaired: true });
+    expect(
+      db.query.mock.calls.some(([sql]) =>
+        sql.includes("ADD COLUMN ledgerTransactionId INT NULL")
+      )
+    ).toBe(true);
   });
 
   it("rejects an incompatible ledger link type", async () => {

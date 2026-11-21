@@ -18,6 +18,16 @@ describe("guarded main migration failure diagnostics", () => {
     expect(source).toContain("expectedColumns.every");
   });
 
+  it("safely replays only additive, idempotent reconciliation failures and reports the real error", async () => {
+    const source = await readFile(new URL("./guarded-main-migrate.mjs", import.meta.url), "utf8");
+
+    expect(source).toContain("IDEMPOTENT_RECONCILIATION_STEPS");
+    expect(source).toContain('"mining-customer-package-schema-reconciliation"');
+    expect(source).toContain("IDEMPOTENT_RECONCILIATION_STEPS.has(previousMigration)");
+    expect(source).toContain("APPROVED RECONCILIATION RECOVERY");
+    expect(source).toContain("Failure detail: ");
+  });
+
   it("audits base columns referenced by recent package-activation and accounting migrations", async () => {
     const audit = await readFile(new URL("./audit-portal-schema.mjs", import.meta.url), "utf8");
 
