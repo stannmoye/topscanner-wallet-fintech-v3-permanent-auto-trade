@@ -1,3 +1,33 @@
+## 2026-11-21 — Live fixes: customer Mining "paused" and admin Visitor Analytics
+
+Two live-site defects were reproduced on `https://stan.prod.page` and fixed.
+
+- **Customer Mining packages showed "Purchases paused" even though the package
+  was published.** Root cause: `listCustomerMiningPackages` (`server/mining.ts`)
+  gated `purchaseAvailable` on `row.versionStatus === "published"` but its
+  `SELECT` never selected `v.versionStatus`, so the value was always `undefined`
+  and every package reported `purchaseAvailable:false` with the reason
+  "This package is not currently published". Live proof (customer
+  `info@wisebond.org`): `GET /api/trpc/customer.mining.packages` returned
+  `"status":"published"` with `"purchaseAvailable":false`. Added
+  `v.versionStatus` to that `SELECT` (keeping the `v.expectedDailyRewardCki,
+  v.themeKey` substring the theme contract test asserts). The admin query in
+  `mining-admin.ts` already selected it, which is why admin showed the package as
+  available while the customer did not.
+- **Admin Visitor Analytics showed nothing.** Root cause: the additive
+  `site_analytics_events` table is only created by the external startup wrapper
+  (`scripts/start-with-diagnostics.mjs`) or portal migrations, but managed hosts
+  start the application directly from `dist/index.js` (see `cpanel/README.md`),
+  so neither ran and the table was never created — the beacon inserts were
+  silently dropped and the report returned `sourceAvailable:false`. Added
+  `ensureVisitorAnalyticsSchema()` to `server/site-analytics.ts` (uses the shared
+  mysql2 pool, `CREATE TABLE IF NOT EXISTS`, never throws) and awaited it during
+  server bootstrap in `server/_core/index.ts`, so the table is guaranteed
+  regardless of the startup entrypoint. Exposed `getRawDbPool()` from
+  `server/db.ts` for the additive DDL.
+- Verification: `pnpm check`, `pnpm test` (1,580 passed / 36 skipped) and
+  `pnpm build` all pass; both fixes are present in the built `dist/index.js`.
+
 ## 2026-11-21 — Remove the global "package purchases paused" gate
 
 Owner published a package but customers saw it as paused. The cause was the

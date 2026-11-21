@@ -34,7 +34,7 @@ import { refreshMiningPriceFeeds } from "../mining-admin";
 import { runMiningWorkerCycle } from "../mining";
 import { ensureSessionSecret } from "../../installer/session-secret.mjs";
 import { isValidSettlementEvidenceStorageKey, settlementEvidenceStorageKey, validateSettlementEvidenceUpload } from "../settlement-evidence";
-import { normalizeVisitorKey, recordAnalyticsEvent, VISITOR_COOKIE } from "../site-analytics";
+import { normalizeVisitorKey, recordAnalyticsEvent, ensureVisitorAnalyticsSchema, VISITOR_COOKIE } from "../site-analytics";
 import { parse as parseCookieHeader } from "cookie";
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
@@ -469,6 +469,10 @@ async function startServer() {
   const port = Number(process.env.PORT || "3000");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT");
   if (process.env.DATABASE_URL) {
+    // Guarantee the additive visitor-analytics table exists before serving, so
+    // the administrator dashboard works even when this process is started
+    // directly from dist/index.js (which skips the external startup wrapper).
+    await ensureVisitorAnalyticsSchema();
     startEmailWorkers();
     startHeartbeatWorker();
     // Durable queue polling is cheap while idle (indexed lookup only), processes

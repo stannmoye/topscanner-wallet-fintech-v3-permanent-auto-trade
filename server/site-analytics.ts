@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { getDb } from "./db";
+import { getDb, getRawDbPool } from "./db";
 
 /** Cookie name that carries the first-party, anonymous visitor key. */
 export const VISITOR_COOKIE = "arb_visitor";
@@ -87,6 +87,51 @@ export function normalizeVisitorKey(value: unknown): string | null {
 function isMissingTableError(error: unknown): boolean {
   const code = String((error as { code?: unknown } | null)?.code ?? "");
   return code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_FIELD_ERROR";
+}
+
+/** Additive first-party analytics table; it lives outside the Drizzle schema. */
+export const SITE_ANALYTICS_TABLE = "site_analytics_events";
+
+const CREATE_ANALYTICS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS site_analytics_events (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  eventType VARCHAR(16) NOT NULL,
+  eventDate VARCHAR(10) NOT NULL,
+  visitorKey VARCHAR(64) NULL,
+  userId INT NULL,
+  countryCode VARCHAR(8) NULL,
+  source VARCHAR(24) NULL,
+  path VARCHAR(255) NULL,
+  userAgent VARCHAR(255) NULL,
+  ipAddress VARCHAR(128) NULL,
+  createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  INDEX site_analytics_event_date_type_idx (eventDate, eventType),
+  INDEX site_analytics_country_date_idx (countryCode, eventDate),
+  INDEX site_analytics_visitor_date_idx (visitorKey, eventDate),
+  INDEX site_analytics_user_type_idx (userId, eventType)
+) ENGINE=InnoDB`;
+
+/**
+ * Create the additive first-party analytics table when it is missing. Managed
+ * hosts start the application directly from `dist/index.js`, which does not run
+ * the external schema-repair startup wrapper, so the server must guarantee its
+ * own analytics storage. Deliberately never throws: a missing table only means
+ * the administrator dashboard reports that storage is unavailable.
+ */
+export async function ensureVisitorAnalyticsSchema(): Promise<void> {
+  try {
+    if (!process.env.DATABASE_URL) return;
+    const pool = await getRawDbPool();
+    if (!pool) return;
+    const [tables] = await pool.query<any[]>(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=? LIMIT 1",
+      [SITE_ANALYTICS_TABLE],
+    );
+    if (tables.length) return;
+    await pool.query(CREATE_ANALYTICS_TABLE_SQL);
+    console.log("[Analytics] Created site_analytics_events for the administrator dashboard.");
+  } catch (error) {
+    console.error("[Analytics] Failed to ensure analytics schema:", error instanceof Error ? error.name : "UnknownError");
+  }
 }
 
 function totalsFromRow(row: Record<string, unknown> | undefined): VisitorAnalyticsTotals {

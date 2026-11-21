@@ -221,7 +221,7 @@ export async function listCustomerMiningPackages(userId: number) {
   return withMiningConnection(async conn => {
     const now = new Date();
     const [rows] = await conn.query<any[]>(`SELECT p.id packageId,p.code,p.name,p.displayOrder,p.status packageStatus,p.currentVersionId,
-        v.id versionId,v.version,v.displayName,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.expectedDailyRewardCki,v.themeKey,
+        v.id versionId,v.version,v.displayName,v.versionStatus,v.priceAmount,v.priceAsset,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.expectedDailyRewardCki,v.themeKey,
         v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.durationMonths,v.termsText,v.simulationAcknowledgementRequired,v.effectiveAt,
         (SELECT COUNT(*) FROM mining_customer_packages cp WHERE cp.userId=? AND cp.packageId=p.id AND cp.status<>'cancelled') purchasedCount
       FROM mining_packages p JOIN mining_package_versions v ON v.id=p.currentVersionId

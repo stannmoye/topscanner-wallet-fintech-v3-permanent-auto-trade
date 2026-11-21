@@ -149,6 +149,17 @@ export async function closeDbPool(): Promise<void> {
   if (pool) await pool.end();
 }
 
+/**
+ * Raw mysql2 pool used for the additive DDL statements that live outside the
+ * Drizzle schema (for example the first-party visitor-analytics table). The
+ * pooled connection is initialised on demand, exactly as `getDb` does, so this
+ * is safe to call during startup.
+ */
+export async function getRawDbPool(): Promise<Pool | null> {
+  await getDb();
+  return _pool;
+}
+
 export async function getAppSetting(key: string, fallback?: string) {
   const db = await getDb(); if (!db) return fallback;
   const row = (await db.select().from(appSettings).where(eq(appSettings.settingKey, key)).limit(1))[0];
