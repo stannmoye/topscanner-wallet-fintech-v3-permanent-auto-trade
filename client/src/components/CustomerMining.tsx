@@ -418,7 +418,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
             const purchaseInProgress=(quotePurchaseMutation.isPending||confirmPurchaseMutation.isPending)&&buyPackage?.versionId===item.versionId;
             const unavailableReason=String(item.purchaseUnavailableReason||"");
             const statusLabel=activeSame?"ACTIVE":item.alreadyPurchased?"PURCHASED":canPurchase?"AVAILABLE":item.status!=="published"?"PAUSED":"PURCHASES PAUSED";
-            const buttonLabel=item.alreadyPurchased?"Already purchased":purchaseInProgress?"Opening…":canPurchase?intent:item.status!=="published"?"Paused":"Purchases paused";
+            const buttonLabel=item.alreadyPurchased?"Purchased":purchaseInProgress?"Opening…":canPurchase?intent:item.status!=="published"?"Paused":"Purchases paused";
             return <article className={`cm-package-card theme-${theme.key} ${activeSame?"is-current":""}`} key={item.versionId} style={{"--package-accent":theme.accent,"--package-glow":theme.glow,"--package-surface-start":theme.surfaceStart,"--package-surface-end":theme.surfaceEnd,"--package-button-start":theme.buttonStart,"--package-button-end":theme.buttonEnd} as React.CSSProperties}>
               <div className="cm-package-art"><div className="cm-cube"><i/><i/><b><CoinMark iconUrl={tokenIconUrl}/></b></div><span className="cm-package-glow"/></div>
               <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div><small className="cm-package-theme-name">{theme.label} theme</small>
