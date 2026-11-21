@@ -10,10 +10,20 @@
  *  - United States Treasury securities — U.S. Treasury "Fiscal Data" API
  *    (Average Interest Rates on U.S. Treasury Securities, dataset
  *    `v2/accounting/od/avg_interest_rates`).
+ *  - United States Treasury auction results — U.S. Treasury "Fiscal Data" API
+ *    (dataset `v1/accounting/od/auctions_query`: high yield, bid-to-cover and
+ *    amounts accepted from the most recent auction of each security term).
  *  - Euro area AAA government benchmark yield curve — ECB Data Portal
  *    (dataflow `YC`, series key `B.U2.EUR.4F.G_N_A.SV_C_YM.<MATURITY>`).
  *  - Euro area sovereign 10-year government bond yields — ECB Data Portal
  *    (dataflow `IRS`, series key `M.<AREA>.L.L40.CI.0000.EUR.N.Z`).
+ *  - European Union government long-term bond yields — Eurostat
+ *    (dataset `irt_lt_mcby_m`, Maastricht convergence long-term interest rates,
+ *    monthly, covering EU and EEA reporting countries).
+ *  - Non-EU OECD sovereign 10-year government bond yields — OECD SDMX
+ *    (dataflow `DF_FINMARK`, measure `IRLT`: long-term interest rates for
+ *    Australia, Canada, Japan, the United Kingdom, Switzerland, Norway, and
+ *    other OECD members).
  *
  * Nothing here is invented: when a source cannot be reached the provider fails
  * closed for that source and the desk reports the remaining, genuinely fetched
@@ -69,8 +79,11 @@ export type TreasuryBondCatalogue = {
 
 const FISCAL_DATA_BASE = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service";
 const ECB_BASE = "https://data-api.ecb.europa.eu/service/data";
+const OECD_BASE = "https://sdmx.oecd.org/public/rest/data";
+const EUROSTAT_BASE = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data";
 const CATALOGUE_TTL_MS = 10 * 60 * 1000;
 const HISTORY_MONTHS = 12;
+const HISTORY_MONTHS_FETCHED = 24;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const flagFor = (countryCode: string) =>
@@ -78,15 +91,26 @@ const flagFor = (countryCode: string) =>
     ? String.fromCodePoint(...countryCode.toUpperCase().split("").map((c) => 127397 + c.charCodeAt(0)))
     : "🏳️";
 
+/** `YYYY-MM` label for `count` months before now, used to bound history queries. */
+function monthsAgo(count: number): string {
+  const date = new Date();
+  date.setUTCMonth(date.getUTCMonth() - count);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 /**
  * Fetch JSON from a public data source with a hard timeout and a single retry.
  * A retry resolves transient DNS/TLS hiccups and cold-start slowness seen on
  * managed hosts, which would otherwise silently drop a whole data source.
+ *
+ * `accept` is overridable because a few SDMX endpoints (notably the OECD
+ * service) reject `Accept: application/json` with an HTTP 500 and only serve
+ * the JSON-stat payload for a wildcard Accept header.
  */
-async function json(url: string, attempt = 0): Promise<any> {
+async function json(url: string, options: { accept?: string } = {}, attempt = 0): Promise<any> {
   try {
     const response = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "Arbitrade-treasury-desk/1.0" },
+      headers: { Accept: options.accept || "application/json", "User-Agent": "Arbitrade-treasury-desk/1.0" },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -94,7 +118,7 @@ async function json(url: string, attempt = 0): Promise<any> {
   } catch (error) {
     if (attempt < 1) {
       await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-      return json(url, attempt + 1);
+      return json(url, options, attempt + 1);
     }
     throw new Error(`${url} → ${error instanceof Error ? error.message : "request failed"}`);
   }
@@ -408,6 +432,308 @@ export async function fetchEuSovereignInstruments(): Promise<TreasuryBondInstrum
 }
 
 /* ------------------------------------------------------------------ *
+ * Shared 10-year sovereign instrument builder
+ * ------------------------------------------------------------------ */
+
+type SovereignSeed = {
+  /** ISO-3166 alpha-2 code (drives the flag); distinct from provider geo codes. */
+  iso2: string;
+  country: string;
+  currency: string;
+  creditQuality: string;
+  riskLabel: string;
+};
+
+function sovereignInstrument(args: {
+  id: string;
+  seed: SovereignSeed;
+  source: string;
+  sourceSeries: string;
+  latest: TreasuryBondHistoryPoint;
+  history: TreasuryBondHistoryPoint[];
+  summary: string;
+}): TreasuryBondInstrument {
+  const { id, seed, source, sourceSeries, latest, history, summary } = args;
+  return {
+    id,
+    countryCode: seed.iso2,
+    country: seed.country,
+    flag: flagFor(seed.iso2),
+    issuer: `${seed.country} government`,
+    name: `${seed.country} 10-Year Government Bond`,
+    category: "SOVEREIGN",
+    tenorLabel: "10 years",
+    tenorYears: 10,
+    couponRatePct: latest.v,
+    couponFrequency: "Annual coupon",
+    nativeCurrency: seed.currency,
+    minInvestmentMinor: 10000,
+    creditQuality: seed.creditQuality,
+    riskLabel: seed.riskLabel,
+    paymentMethod: "Interest plus principal at maturity",
+    source,
+    sourceSeries,
+    asOf: latest.t,
+    summary,
+    highlights: [
+      `${seed.country} sovereign credit in ${seed.currency}`,
+      "Published benchmark 10-year government yield",
+      `Rate ${latest.v.toFixed(3)}% as of ${latest.t}`,
+    ],
+    history: history.slice(-HISTORY_MONTHS),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * European Union government long-term yields (Eurostat)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Eurostat reports long-term government bond yields on the harmonised Maastricht
+ * convergence basis for all EU/EEA reporting countries. Only the jurisdictions
+ * the ECB euro-area feeds do not already cover are requested here, so a country
+ * is never listed twice across sources. Eurostat uses non-ISO geo codes ("EL"
+ * for Greece, "UK" for the United Kingdom), which is why the ISO code is stored
+ * separately from the provider geo code.
+ */
+const EUROSTAT_SOVEREIGNS: (SovereignSeed & { geo: string })[] = [
+  { geo: "BG", iso2: "BG", country: "Bulgaria", currency: "BGN", creditQuality: "Good (BBB, reference)", riskLabel: "Moderate credit risk" },
+  { geo: "CZ", iso2: "CZ", country: "Czechia", currency: "CZK", creditQuality: "High (AA-, reference)", riskLabel: "Low credit risk" },
+  { geo: "DK", iso2: "DK", country: "Denmark", currency: "DKK", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { geo: "EE", iso2: "EE", country: "Estonia", currency: "EUR", creditQuality: "High (AA-, reference)", riskLabel: "Low credit risk" },
+  { geo: "HR", iso2: "HR", country: "Croatia", currency: "EUR", creditQuality: "Good (A-, reference)", riskLabel: "Moderate credit risk" },
+  { geo: "CY", iso2: "CY", country: "Cyprus", currency: "EUR", creditQuality: "Investment grade (BBB, reference)", riskLabel: "Elevated credit risk" },
+  { geo: "LV", iso2: "LV", country: "Latvia", currency: "EUR", creditQuality: "Good (A, reference)", riskLabel: "Moderate credit risk" },
+  { geo: "LT", iso2: "LT", country: "Lithuania", currency: "EUR", creditQuality: "Good (A, reference)", riskLabel: "Moderate credit risk" },
+  { geo: "HU", iso2: "HU", country: "Hungary", currency: "HUF", creditQuality: "Investment grade (BBB, reference)", riskLabel: "Elevated credit risk" },
+  { geo: "MT", iso2: "MT", country: "Malta", currency: "EUR", creditQuality: "Good (A, reference)", riskLabel: "Moderate credit risk" },
+  { geo: "PL", iso2: "PL", country: "Poland", currency: "PLN", creditQuality: "Good (A-, reference)", riskLabel: "Moderate credit risk" },
+  { geo: "RO", iso2: "RO", country: "Romania", currency: "RON", creditQuality: "Investment grade (BBB-, reference)", riskLabel: "Elevated credit risk" },
+  { geo: "SE", iso2: "SE", country: "Sweden", currency: "SEK", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+];
+
+export async function fetchEurostatSovereignInstruments(): Promise<TreasuryBondInstrument[]> {
+  const payload = await json(`${EUROSTAT_BASE}/irt_lt_mcby_m?format=JSON&lastTimePeriod=${HISTORY_MONTHS}`);
+  const dimension = payload?.dimension;
+  const geoIndex: Record<string, number> = dimension?.geo?.category?.index || {};
+  const geoLabels: Record<string, string> = dimension?.geo?.category?.label || {};
+  const timeIndex: Record<string, number> = dimension?.time?.category?.index || {};
+  const timeLabels: Record<string, string> = dimension?.time?.category?.label || {};
+  const values: Record<string, number> = payload?.value || {};
+  const sizes: number[] = payload?.size || [];
+  if (!Object.keys(geoIndex).length || !Object.keys(timeIndex).length || !Object.keys(values).length) {
+    throw new Error("Eurostat long-term interest-rate dataset was empty");
+  }
+
+  // JSON-stat flat index: (((freq * size[1]) + int_rt) * size[2] + geo) * size[3] + time.
+  // `freq` and `int_rt` are single-valued here, so the leading terms collapse.
+  const timeSize = Number(sizes[3]) || Object.keys(timeIndex).length;
+  const periods = Object.keys(timeIndex).sort((a, b) => timeIndex[a] - timeIndex[b]);
+
+  const instruments = EUROSTAT_SOVEREIGNS.flatMap((seed) => {
+    const geoPosition = geoIndex[seed.geo];
+    if (geoPosition === undefined) return [];
+    const history: TreasuryBondHistoryPoint[] = [];
+    for (let step = 0; step < periods.length; step += 1) {
+      const raw = values[geoPosition * timeSize + step];
+      if (raw === undefined || raw === null) continue;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) continue;
+      const period = periods[step];
+      history.push({ t: timeLabels[period] || period, v: round2(value) });
+    }
+    if (!history.length) return [];
+    const latest = history[history.length - 1];
+    return [sovereignInstrument({
+      id: `eurostat-${seed.iso2.toLowerCase()}-10y`,
+      seed,
+      source: "Eurostat (long-term interest rates)",
+      sourceSeries: `irt_lt_mcby_m · ${seed.geo} · ${geoLabels[seed.geo] || seed.country}`,
+      latest,
+      history,
+      summary: `The harmonised long-term (10-year) government bond yield for ${seed.country}, published by Eurostat on the Maastricht convergence basis.`,
+    })];
+  });
+  if (!instruments.length) throw new Error("Eurostat long-term interest-rate dataset returned no sovereign yields");
+  return instruments;
+}
+
+/* ------------------------------------------------------------------ *
+ * Non-EU OECD sovereign 10-year yields (OECD SDMX)
+ * ------------------------------------------------------------------ */
+
+const OECD_SOVEREIGNS: (SovereignSeed & { code: string })[] = [
+  { code: "AUS", iso2: "AU", country: "Australia", currency: "AUD", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { code: "CAN", iso2: "CA", country: "Canada", currency: "CAD", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { code: "JPN", iso2: "JP", country: "Japan", currency: "JPY", creditQuality: "High (A+, reference)", riskLabel: "Low credit risk" },
+  { code: "GBR", iso2: "GB", country: "United Kingdom", currency: "GBP", creditQuality: "High (AA, reference)", riskLabel: "Low credit risk" },
+  { code: "CHE", iso2: "CH", country: "Switzerland", currency: "CHF", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { code: "NOR", iso2: "NO", country: "Norway", currency: "NOK", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { code: "SWE", iso2: "SE", country: "Sweden", currency: "SEK", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { code: "DNK", iso2: "DK", country: "Denmark", currency: "DKK", creditQuality: "Very high (AAA, reference)", riskLabel: "Very low credit risk" },
+  { code: "POL", iso2: "PL", country: "Poland", currency: "PLN", creditQuality: "Good (A-, reference)", riskLabel: "Moderate credit risk" },
+  { code: "CZE", iso2: "CZ", country: "Czechia", currency: "CZK", creditQuality: "High (AA-, reference)", riskLabel: "Low credit risk" },
+  { code: "HUN", iso2: "HU", country: "Hungary", currency: "HUF", creditQuality: "Investment grade (BBB, reference)", riskLabel: "Elevated credit risk" },
+];
+
+// SDMX keys must carry every dimension, including empty ones: after the country
+// and the fixed `M.IRLT` series there are six trailing empty dimensions.
+const OECD_KEY_SUFFIX = `M.IRLT${".".repeat(6)}`;
+
+export async function fetchOecdSovereignInstruments(): Promise<TreasuryBondInstrument[]> {
+  // A single batched request is used deliberately: the OECD SDMX service
+  // rate-limits per-country requests (HTTP 429/500), while one multi-country
+  // request is served reliably and keeps the outlet within a polite request rate.
+  const codes = OECD_SOVEREIGNS.map((seed) => seed.code);
+  const url = `${OECD_BASE}/OECD.SDD.STES,DSD_STES@DF_FINMARK,4.0/${codes.join("+")}.${OECD_KEY_SUFFIX}?startPeriod=${monthsAgo(HISTORY_MONTHS_FETCHED - 1)}&format=jsondata`;
+  const payload = await json(url, { accept: "*/*" });
+  const seriesList = payload?.data?.dataSets?.[0]?.series;
+  const areaValues: any[] = payload?.data?.structure?.dimensions?.series?.find((dimension: any) => dimension.id === "REF_AREA")?.values || [];
+  const timeValues: any[] = payload?.data?.structure?.dimensions?.observation?.[0]?.values || [];
+  if (!seriesList || !areaValues.length) throw new Error("OECD long-term interest-rate dataset was empty");
+
+  const byCode = new Map<string, { latest: TreasuryBondHistoryPoint; history: TreasuryBondHistoryPoint[] }>();
+  for (const seriesKey of Object.keys(seriesList)) {
+    // REF_AREA is the first series dimension; the observation dimension does not
+    // arrive in time order, so the points are sorted chronologically below.
+    const code = String(areaValues[Number(seriesKey.split(":")[0])]?.id || "");
+    if (!code) continue;
+    const observations = seriesList[seriesKey]?.observations || {};
+    const history: TreasuryBondHistoryPoint[] = [];
+    for (const index of Object.keys(observations)) {
+      const raw = observations[index]?.[0];
+      if (raw === null || raw === undefined) continue;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) continue;
+      const period = String(timeValues[Number(index)]?.id || "");
+      if (!period) continue;
+      history.push({ t: period, v: round2(value) });
+    }
+    if (!history.length) continue;
+    history.sort((a, b) => a.t.localeCompare(b.t));
+    byCode.set(code, { latest: history[history.length - 1], history });
+  }
+
+  const instruments = OECD_SOVEREIGNS.flatMap((seed) => {
+    const row = byCode.get(seed.code);
+    if (!row) return [];
+    return [sovereignInstrument({
+      id: `oecd-${seed.iso2.toLowerCase()}-10y`,
+      seed,
+      source: "OECD SDMX (long-term interest rates)",
+      sourceSeries: `DF_FINMARK · ${seed.code}.M.IRLT`,
+      latest: row.latest,
+      history: row.history,
+      summary: `The ${seed.country} 10-year government benchmark bond yield, published by the OECD from national long-term interest-rate statistics.`,
+    })];
+  });
+  if (!instruments.length) throw new Error("OECD long-term interest-rate dataset returned no sovereign yields");
+  return instruments;
+}
+
+/* ------------------------------------------------------------------ *
+ * United States Treasury auction results (Fiscal Data API)
+ * ------------------------------------------------------------------ */
+
+const AUCTION_CATEGORY: { match: RegExp; category: TreasuryBondInstrument["category"] }[] = [
+  { match: /inflation[- ]?(protected|indexed)|tips/i, category: "TIPS" },
+  { match: /floating/i, category: "FRN" },
+  { match: /bill/i, category: "BILL" },
+  { match: /note/i, category: "NOTE" },
+  { match: /bond/i, category: "BOND" },
+];
+
+function auctionCategory(type: string): TreasuryBondInstrument["category"] | null {
+  const hit = AUCTION_CATEGORY.find((entry) => entry.match.test(type));
+  return hit ? hit.category : null;
+}
+
+/** Normalise an auction term ("29-Year 10-Month", "13-Week") into a tenor bucket. */
+function auctionTerm(term: string): { label: string; years: number } | null {
+  const years = /(\d+)\s*-\s*Year/i.exec(term);
+  const months = /(\d+)\s*-\s*Month/i.exec(term);
+  const weeks = /(\d+)\s*-\s*Week/i.exec(term);
+  if (years) {
+    // Reopenings quote "29-Year 10-Month" etc.; round to the nearest whole year
+    // so a reopened 30-year bond collapses into the single 30-Year bucket.
+    const total = Number(years[1]) + (months ? Number(months[1]) / 12 : 0);
+    const rounded = Math.max(1, Math.round(total));
+    return { label: `${rounded}-Year`, years: rounded };
+  }
+  if (weeks) {
+    const count = Math.max(1, Number(weeks[1]));
+    return { label: `${count}-Week`, years: count / 52 };
+  }
+  if (months) {
+    const count = Math.max(1, Number(months[1]));
+    return { label: `${count}-Month`, years: count / 12 };
+  }
+  return null;
+}
+
+const usdBillions = (value: number) => (Number.isFinite(value) ? `$${(value / 1_000_000_000).toFixed(1)}bn` : "n/a");
+
+export async function fetchUsAuctionInstruments(): Promise<TreasuryBondInstrument[]> {
+  const fields = "auction_date,security_type,security_term,high_yield,offering_amt,bid_to_cover_ratio";
+  const payload = await json(`${FISCAL_DATA_BASE}/v1/accounting/od/auctions_query?filter=high_yield:gt:0&sort=-auction_date&page%5Bsize%5D=250&fields=${fields}`);
+  const rows: any[] = Array.isArray(payload?.data) ? payload.data : [];
+
+  // Keep only the most recent completed auction of each category + tenor bucket.
+  const buckets = new Map<string, { row: any; label: string; years: number; category: TreasuryBondInstrument["category"] }>();
+  for (const row of rows) {
+    const type = String(row?.security_type || "").trim();
+    const term = String(row?.security_term || "").trim();
+    const date = String(row?.auction_date || "");
+    const rate = Number(row?.high_yield);
+    if (!type || !term || !date || !Number.isFinite(rate)) continue;
+    const category = auctionCategory(type);
+    const parsed = auctionTerm(term);
+    if (!category || !parsed) continue;
+    const key = `${category}:${parsed.label}`;
+    const current = buckets.get(key);
+    if (!current || date > current.row.auction_date) buckets.set(key, { row, ...parsed, category });
+  }
+
+  const instruments = Array.from(buckets.values()).map(({ row, label, years, category }) => {
+    const rate = Number(row.high_yield);
+    const cover = Number(row.bid_to_cover_ratio);
+    const accepted = Number(row.total_accepted);
+    const offered = Number(row.offering_amt);
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return {
+      id: `us-auction-${category.toLowerCase()}-${slug}`,
+      countryCode: "US",
+      country: "United States",
+      flag: flagFor("US"),
+      issuer: "U.S. Department of the Treasury",
+      name: `US Treasury ${label.replace("-", " ")} Auction`,
+      category,
+      tenorLabel: label.replace("-", " "),
+      tenorYears: round2(years),
+      couponRatePct: round2(rate),
+      couponFrequency: category === "BILL" ? "Sold at a discount, paid at maturity" : "Semi-annual coupon",
+      nativeCurrency: "USD",
+      minInvestmentMinor: category === "BILL" ? 10000 : 100000,
+      creditQuality: "Very high (AA+ sovereign, reference)",
+      riskLabel: "Lowest credit risk",
+      paymentMethod: "Interest plus principal at maturity",
+      source: "U.S. Treasury Fiscal Data API (auction results)",
+      sourceSeries: `auctions_query · ${row.security_type} ${row.security_term} · ${row.auction_date}`,
+      asOf: row.auction_date,
+      summary: `The most recent US Treasury auction of the ${row.security_term} ${String(row.security_type).toLowerCase()} cleared at a high yield of ${round2(rate).toFixed(3)}%, with bid-to-cover showing the investor demand the auction attracted.`,
+      highlights: [
+        `Cleared high yield ${round2(rate).toFixed(3)}% at the ${row.auction_date} auction`,
+        Number.isFinite(cover) ? `Bid-to-cover ${cover.toFixed(2)}×` : "Bid-to-cover not published for this auction",
+        Number.isFinite(accepted) ? `Accepted ${usdBillions(accepted)} (offered ${usdBillions(offered)})` : "Auction amount accepted not published",
+      ],
+      history: [],
+    } satisfies TreasuryBondInstrument;
+  });
+  if (!instruments.length) throw new Error("US Treasury auction dataset returned no completed auctions");
+  return instruments;
+}
+
+/* ------------------------------------------------------------------ *
  * Catalogue assembly + cache
  * ------------------------------------------------------------------ */
 
@@ -418,22 +744,42 @@ const reasonOf = (result: PromiseSettledResult<unknown>) =>
   result.status === "rejected" ? (result.reason instanceof Error ? result.reason.message : String(result.reason)) : "";
 
 async function buildCatalogue(): Promise<TreasuryBondCatalogue> {
-  const [us, benchmark, sovereign] = await Promise.allSettled([
+  const [us, benchmark, sovereign, eurostat, oecd, auctions] = await Promise.allSettled([
     fetchUsTreasuryInstruments(),
     fetchEuroAreaBenchmarkInstruments(),
     fetchEuSovereignInstruments(),
+    fetchEurostatSovereignInstruments(),
+    fetchOecdSovereignInstruments(),
+    fetchUsAuctionInstruments(),
   ]);
 
   // Surface which source failed so production logs make an egress outage obvious.
-  for (const [label, result] of [["US Treasury", us], ["EU benchmark", benchmark], ["EU sovereigns", sovereign]] as const) {
+  for (const [label, result] of [
+    ["US Treasury", us], ["US auctions", auctions], ["EU benchmark", benchmark],
+    ["EU sovereigns", sovereign], ["Eurostat sovereigns", eurostat], ["OECD sovereigns", oecd],
+  ] as const) {
     if (result.status === "rejected") console.warn(`[TreasuryBonds] ${label} source failed: ${reasonOf(result)}`);
   }
 
-  const instruments: TreasuryBondInstrument[] = [
+  const raw: TreasuryBondInstrument[] = [
     ...(us.status === "fulfilled" ? us.value : []),
     ...(benchmark.status === "fulfilled" ? benchmark.value : []),
     ...(sovereign.status === "fulfilled" ? sovereign.value : []),
+    ...(eurostat.status === "fulfilled" ? eurostat.value : []),
+    ...(oecd.status === "fulfilled" ? oecd.value : []),
+    ...(auctions.status === "fulfilled" ? auctions.value : []),
   ];
+
+  // A country's 10-year sovereign yield can be carried by more than one feed
+  // (e.g. the ECB and Eurostat both cover the euro area). Keep the first — the
+  // most specific — source per jurisdiction so no country is ever listed twice.
+  const seenSovereign = new Set<string>();
+  const instruments = raw.filter((instrument) => {
+    if (instrument.category !== "SOVEREIGN") return true;
+    if (seenSovereign.has(instrument.countryCode)) return false;
+    seenSovereign.add(instrument.countryCode);
+    return true;
+  });
   instruments.sort((a, b) => {
     const order: Record<string, number> = { BILL: 0, FRN: 1, TIPS: 2, NOTE: 3, BOND: 4, BENCHMARK: 5, SOVEREIGN: 6 };
     return (order[a.category] ?? 9) - (order[b.category] ?? 9) || b.couponRatePct - a.couponRatePct;
@@ -444,8 +790,11 @@ async function buildCatalogue(): Promise<TreasuryBondCatalogue> {
 
   const sources: TreasuryBondSource[] = [
     { name: "U.S. Treasury Fiscal Data API", url: "https://fiscaldata.treasury.gov/", status: statusOf(us), detail: us.status === "rejected" ? reasonOf(us) : undefined },
+    { name: "U.S. Treasury — auction results", url: "https://fiscaldata.treasury.gov/datasets/treasury-securities-auctions-data/", status: statusOf(auctions), detail: auctions.status === "rejected" ? reasonOf(auctions) : undefined },
     { name: "ECB Data Portal — euro area yield curve", url: "https://data.ecb.europa.eu/", status: statusOf(benchmark), detail: benchmark.status === "rejected" ? reasonOf(benchmark) : undefined },
     { name: "ECB Data Portal — long-term interest rates", url: "https://data.ecb.europa.eu/", status: statusOf(sovereign), detail: sovereign.status === "rejected" ? reasonOf(sovereign) : undefined },
+    { name: "Eurostat — long-term interest rates", url: "https://ec.europa.eu/eurostat/databrowser/view/irt_lt_mcby_m/", status: statusOf(eurostat), detail: eurostat.status === "rejected" ? reasonOf(eurostat) : undefined },
+    { name: "OECD SDMX — long-term interest rates", url: "https://data-explorer.oecd.org/", status: statusOf(oecd), detail: oecd.status === "rejected" ? reasonOf(oecd) : undefined },
   ];
 
   return {

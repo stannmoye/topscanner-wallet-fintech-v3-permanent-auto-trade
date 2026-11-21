@@ -482,7 +482,7 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
 
     <div id="tb-education"><EducationSection /></div>
 
-    <div className="tb-disclaimer"><ShieldCheck size={15}/><span>Rates, prices and yields shown are published reference figures from official public data sources (U.S. Treasury Fiscal Data API and the ECB Data Portal) and are not offers to sell securities. Purchases on this desk are recorded as internal-ledger positions in your USD wallet. Projections use simple interest and are illustrations, not guarantees. “Risk-free” describes credit quality relative to other issuers and does not remove inflation, interest-rate, liquidity or currency risk.</span></div>
+    <div className="tb-disclaimer"><ShieldCheck size={15}/><span>Rates, prices and yields shown are published reference figures from official public data sources (U.S. Treasury Fiscal Data, the ECB Data Portal, Eurostat and the OECD) and are not offers to sell securities. Purchases on this desk are recorded as internal-ledger positions in your USD wallet. Projections use simple interest and are illustrations, not guarantees. “Risk-free” describes credit quality relative to other issuers and does not remove inflation, interest-rate, liquidity or currency risk.</span></div>
 
     {showCompare && compareRows.length >= 2 && <div className="modal-backdrop" onMouseDown={() => setShowCompare(false)}>
       <div className="op-modal tb-compare-modal" onMouseDown={(e) => e.stopPropagation()}>
