@@ -1,3 +1,23 @@
+## 2026-11-21 — Remove the global "package purchases paused" gate
+
+Owner published a package but customers saw it as paused. The cause was the
+separate operations toggle `packagePurchasesEnabled` (defaults to off), which
+gated every purchase independently of the package's own published state.
+
+- Removed the gate: a published package version is now always purchasable.
+  `listCustomerMiningPackages` no longer folds `packagePurchasesEnabled` into
+  `purchaseAvailable` or the unavailable-reason list; the checks were also
+  removed from `createCustomerMiningPurchaseQuote` and
+  `confirmCustomerMiningPurchase`; and the admin `availableForPurchase` flag in
+  `mining-admin.ts` no longer depends on it.
+- Removed the now-meaningless admin control ("Enable package purchases…") from
+  the Mining Controls settings panel. The stored column/economics field is left
+  in place for schema compatibility, but it no longer gates anything.
+- Note: the per-package Disable/Enable status is unchanged — a disabled (paused)
+  package is still hidden from customers; that is the admin's on/off control.
+- Verification: `pnpm check`, `pnpm test` (1,580 passed / 36 skipped) and
+  `pnpm build` all pass.
+
 ## 2026-11-21 — Remove Mining package creation restrictions + improve theme legibility
 
 Owner reported a package could not be created because the requirements were too

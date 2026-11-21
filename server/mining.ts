@@ -239,7 +239,7 @@ export async function listCustomerMiningPackages(userId: number) {
       const effectiveAt = row.effectiveAt ? new Date(row.effectiveAt).getTime() : Number.NaN;
       const effective = Number.isFinite(effectiveAt) && effectiveAt <= now.getTime();
       const purchaseAvailable = row.packageStatus === "published" && row.versionStatus === "published" &&
-        effective && priceAssetSupported && config.packagePurchasesEnabled && !limitReached;
+        effective && priceAssetSupported && !limitReached;
       const durationMonths = row.durationMonths === null ? null : Number(row.durationMonths);
       const termSeconds = durationMonths !== null ? (addUtcMonths(now, durationMonths).getTime() - now.getTime()) / 1000 : (row.expirySeconds ? Number(row.expirySeconds) : null);
       const projectedTermTokens = termSeconds ? estimate.times(termSeconds).div(86_400) : null;
@@ -271,7 +271,6 @@ export async function listCustomerMiningPackages(userId: number) {
           : limitReached ? "This package has reached its per-customer purchase limit"
           : !effective ? "This package version is not effective yet"
           : !priceAssetSupported ? "This package price cannot be charged from an enabled main-wallet currency"
-          : !config.packagePurchasesEnabled ? "Package purchases are paused by operations"
           : "This package is not currently published",
       };
     });
@@ -282,7 +281,6 @@ export async function createCustomerMiningPurchaseQuote(userId: number, input: {
   return withMiningConnection(async conn => inMiningTransaction(conn, async () => {
     await requireActiveMiningAccount(conn, userId);
     const config = await loadMiningConfig(conn);
-    if (!config.packagePurchasesEnabled) throw new MiningError("Package purchases are paused by operations");
     const product = await getPublishedPackage(conn, input.packageVersionId);
     const maxPerCustomer = product.maxPerCustomer === null || product.maxPerCustomer === undefined ? 0 : Number(product.maxPerCustomer);
     if (maxPerCustomer > 0) {
@@ -332,7 +330,6 @@ export async function confirmCustomerMiningPurchase(userId: number, input: { quo
     if (prior) return prior;
     const checkpoint = await ensureMiningCheckpoint(conn, userId);
     const config = await loadMiningConfig(conn);
-    if (!config.packagePurchasesEnabled) throw new MiningError("Package purchases are paused by operations; no debit was made");
     const [quotes] = await conn.query<any[]>(`SELECT q.*,s.*,p.id packageId,p.code,p.name,p.status packageStatus,p.currentVersionId,
         v.version,v.displayName,v.durationMonths,v.expectedDailyRewardCki,v.versionStatus,v.effectiveAt packageEffectiveAt,v.baseThs,v.boostBonusThs,v.boostDurationSeconds,v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.termsText,v.simulationAcknowledgementRequired
       FROM v5_fx_quotes q JOIN mining_quote_snapshots s ON s.quoteId=q.id

@@ -102,7 +102,7 @@ async function packageList(conn: Db) {
     purchaseCount:Number(row.purchaseCount||0),activeHolders:Number(row.activeHolders||0),activeAllocatedThs:String(row.activeAllocatedThs||"0"),
     expectedDailyRewardCki:row.expectedDailyRewardCki===null?null:String(row.expectedDailyRewardCki),baseDailyRewardCki:baseDaily?.toString()??null,effectiveDailyRewardCki:daily?.toString()??null,estimatedDailyTokens:daily?.toString()??null,
     estimatedHourlyTokens:daily?.div(24).toString()??null,estimatedDailyUsd:daily?.div(config.tokenUnitsPerUsd).toDecimalPlaces(2,Decimal.ROUND_DOWN).toFixed(2)??null,
-    calculationModel:config.calculationModel,ckiPerThsPerDay:config.ckiPerThsPerDay,miningSpeedMultiplier:config.miningSpeedMultiplier,availableForPurchase:row.packageStatus==="published"&&row.versionStatus==="published"&&Number(row.versionId)===Number(row.currentVersionId)&&config.packagePurchasesEnabled,lastConfigurationUpdatedAt:byDate(row.versionCreatedAt),lastConfigurationUpdatedBy:row.versionCreatedBy?Number(row.versionCreatedBy):null,
+    calculationModel:config.calculationModel,ckiPerThsPerDay:config.ckiPerThsPerDay,miningSpeedMultiplier:config.miningSpeedMultiplier,availableForPurchase:row.packageStatus==="published"&&row.versionStatus==="published"&&Number(row.versionId)===Number(row.currentVersionId),lastConfigurationUpdatedAt:byDate(row.versionCreatedAt),lastConfigurationUpdatedBy:row.versionCreatedBy?Number(row.versionCreatedBy):null,
     themeKey:getMiningPackageTheme(row.themeKey).key,termsText:row.termsText||null,effectiveAt:byDate(row.effectiveAt),createdAt:byDate(row.createdAt),updatedAt:byDate(row.updatedAt),
   };});
 }
