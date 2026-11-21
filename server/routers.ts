@@ -15,6 +15,8 @@ import { allocateStake, cancelStake, getStakeDashboard, projectStake } from "./s
 import { getTreasuryBondDashboard, purchaseTreasuryBond } from "./treasuryBonds";
 import { projectTreasuryBondProfit } from "./treasuryBondProvider";
 import { createAdminTreasuryBondInstrument, deleteAdminTreasuryBondInstrument, listAdminTreasuryBondInstruments, setAdminTreasuryBondInstrumentEnabled, updateAdminTreasuryBondInstrument, TREASURY_INSTRUMENT_CATEGORIES } from "./treasuryBondInstruments";
+import { commitCooperateDeptInterest, getCooperateDeptDashboard } from "./cooperateDept";
+import { createAdminCooperateDeptCompany, deleteAdminCooperateDeptCompany, listAdminCooperateDeptCompanies, setAdminCooperateDeptCompanyEnabled, updateAdminCooperateDeptCompany } from "./cooperateDeptCompanies";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
 import { confirmEmailVerification, requestEmailVerification } from "./emailAuth";
@@ -117,6 +119,48 @@ const treasuryInstrumentFieldsSchema = {
 };
 const createTreasuryInstrumentSchema = z.object(treasuryInstrumentFieldsSchema);
 const updateTreasuryInstrumentSchema = z.object({ instrumentId: z.string().trim().min(2).max(80), ...treasuryInstrumentFieldsSchema });
+
+// Administrator-authored Cooperate Dept companies. Every displayed field is
+// administrator-supplied and validated server-side; the country flag is derived
+// from the country code, never typed.
+const cooperateDeptCompanyFieldsSchema = {
+  name: z.string().trim().min(3).max(160),
+  legalName: z.string().trim().max(200).optional(),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  city: z.string().trim().max(80).optional(),
+  state: z.string().trim().max(80).optional(),
+  region: z.string().trim().max(80).optional(),
+  foundedYear: z.number().int().min(1500).max(2100).nullable().optional(),
+  foundedMonth: z.number().int().min(1).max(12).nullable().optional(),
+  founders: z.array(z.string().trim().min(1).max(120)).max(6).optional(),
+  keyPeople: z.array(z.string().trim().min(1).max(120)).max(6).optional(),
+  companyType: z.string().trim().min(2).max(80),
+  sectors: z.array(z.string().trim().min(1).max(80)).max(8).optional(),
+  regulator: z.string().trim().max(160).optional(),
+  problem: z.string().trim().min(8).max(2000),
+  staffCount: z.number().int().min(0).max(5_000_000).nullable().optional(),
+  staffRange: z.string().trim().max(80).optional(),
+  financialStatus: z.string().trim().min(2).max(120),
+  netWorthNote: z.string().trim().max(1000).optional(),
+  regulatorStatus: z.string().trim().max(120).optional(),
+  status: z.enum(["INSOLVENT", "WINDING_UP", "DISTRESSED", "DISSOLVED", "SEEKING_ACQUIRER", "STARTUP"]),
+  severity: z.enum(["CRITICAL", "HIGH", "ELEVATED", "WATCH"]),
+  countdownLabel: z.string().trim().max(120).optional(),
+  countdownDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  countdownDirection: z.enum(["until", "since"]).optional(),
+  ownershipOpportunity: z.string().trim().min(3).max(160),
+  capitalAskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  sourceUrl: z.string().trim().url().max(300).optional(),
+  summary: z.string().trim().max(2000).optional(),
+  highlights: z.array(z.string().trim().min(1).max(160)).max(8).optional(),
+  registrationNumber: z.string().trim().max(40).optional(),
+  lei: z.string().trim().max(24).optional(),
+  ticker: z.string().trim().max(12).optional(),
+  cik: z.string().trim().max(12).optional(),
+  reason: z.string().trim().max(500).optional(),
+};
+const createCooperateDeptCompanySchema = z.object(cooperateDeptCompanyFieldsSchema);
+const updateCooperateDeptCompanySchema = z.object({ companyId: z.string().trim().min(2).max(80), ...cooperateDeptCompanyFieldsSchema });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -530,6 +574,28 @@ export const appRouter = router({
         projectedEndingMinor: input.amountMinor + projectTreasuryBondProfit(input.amountMinor, input.ratePct, input.years),
       })),
     }),
+    cooperateDept: router({
+      market: protectedProcedure.query(({ ctx }) => getCooperateDeptDashboard(ctx.user.id)),
+      commit: protectedProcedure.input(z.object({
+        companyId: z.string().min(2).max(80),
+        amountMinor: z.number().int().positive().max(100_000_000),
+        ownershipBasis: z.enum(["SHARES", "FULL_OWNERSHIP", "ASSET_PURCHASE"]),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(async ({ ctx, input }) => {
+        const result = await commitCooperateDeptInterest(ctx.user.id, input);
+        await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
+          eventType: "INVESTMENT",
+          status: "COMPLETED",
+          title: "Cooperate Dept commitment recorded",
+          message: `${result.companyName} received a ${result.ownershipBasis} commitment and ${result.amountMinor} minor units of ${result.currency} were reserved through the wallet ledger.`,
+          transactionCode: `cooperate-dept:${result.positionCode}`,
+          amountMinor: result.amountMinor,
+          asset: result.currency,
+          metadata: { positionCode: result.positionCode, companyId: result.companyId },
+        });
+        return result;
+      }),
+    }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
       packages: protectedProcedure.query(({ ctx }) => mining.listCustomerMiningPackages(ctx.user.id)),
@@ -908,6 +974,14 @@ export const appRouter = router({
     }),
     setTreasuryInstrumentEnabled: adminProcedure.input(z.object({ instrumentId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminTreasuryBondInstrumentEnabled(ctx.user!.id, input.instrumentId, input.enabled)),
     deleteTreasuryInstrument: adminProcedure.input(z.object({ instrumentId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminTreasuryBondInstrument(ctx.user!.id, input.instrumentId)),
+    cooperateDeptCompanies: adminProcedure.query(() => listAdminCooperateDeptCompanies()),
+    createCooperateDeptCompany: adminProcedure.input(createCooperateDeptCompanySchema).mutation(({ ctx, input }) => createAdminCooperateDeptCompany(ctx.user!.id, input)),
+    updateCooperateDeptCompany: adminProcedure.input(updateCooperateDeptCompanySchema).mutation(({ ctx, input }) => {
+      const { companyId, ...fields } = input;
+      return updateAdminCooperateDeptCompany(ctx.user!.id, companyId, fields);
+    }),
+    setCooperateDeptCompanyEnabled: adminProcedure.input(z.object({ companyId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminCooperateDeptCompanyEnabled(ctx.user!.id, input.companyId, input.enabled)),
+    deleteCooperateDeptCompany: adminProcedure.input(z.object({ companyId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminCooperateDeptCompany(ctx.user!.id, input.companyId)),
     createCustomer: adminProcedure.input(z.object({ name: z.string().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200) })).mutation(({ input }) => createAdminCustomer(input)),
     updateCustomer: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), email: z.string().email() })).mutation(({ input }) => updateAdminCustomer(input)),
     deleteCustomer: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ input }) => {

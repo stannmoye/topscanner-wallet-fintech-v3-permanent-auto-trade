@@ -2,6 +2,7 @@ import {
   Activity,
   BadgeCheck,
   BookOpen,
+  Building2,
   Bell,
   CircleDollarSign,
   Clock3,
@@ -72,6 +73,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "debit-adjustment", target: "debit", label: "Debit Adjustment", detail: "Validated wallet debit action", icon: ReceiptText },
     { id: "currencies-assets", target: "currencies", label: "Currencies & Assets", detail: "Currency registry and valuation rates", icon: Coins },
     { id: "treasury-instruments", target: "treasuryInstruments", label: "Treasury Instruments", detail: "Create treasury-bond instruments and publish them to the customer desk", icon: Landmark },
+    { id: "cooperate-dept-companies", target: "cooperateDeptCompanies", label: "Cooperate Dept", detail: "Publish distressed companies and start-ups that need investors to buy, recapitalise or take ownership", icon: Building2 },
   ]},
   { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
     { id: "mining-overview", target: "miningOverview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [

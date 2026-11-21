@@ -1,3 +1,57 @@
+## 2026-11-22 — Cooperate Dept: distressed-company desk (live registers + admin publishing)
+
+New **Cooperate Dept** feature for the customer portal menu, with a matching admin
+console. It surfaces companies that need investors to buy them, recapitalise them
+or take ownership (insolvent / winding-up / distressed / dissolved / seeking-acquirer
+/ start-up), letting a customer record a wallet-ledger commitment to own shares,
+full ownership or an asset purchase. Built as a full-stack mirror of the existing
+Treasury Bond desk and following the AGENTS.md guardrails (internal ledger only,
+admin-configured values, integer minor-unit money, idempotency, fail closed, no
+fabricated data, history never edited/deleted).
+
+- **Live providers (keyless-first, ~10 sources):** `shared/cooperate-dept-catalogue.ts`
+  is an environment-neutral provider (also used as the browser resilience fallback)
+  that runs `Promise.allSettled` over Norway (Brønnøysund — bankruptcy / winding-up),
+  France (recherche-entreprises.api.gouv.fr — ceased companies), United States
+  (SEC EDGAR full-text + submissions), global GLEIF (retired/`INACTIVE` LEIs),
+  United Kingdom (Companies House, key-gated), CourtListener litigation (key-gated),
+  with global enrichment (Wikidata founders/inception/HQ/industry/employees) and
+  context (World Bank, Eurostat business bankruptcies). Each source reports
+  `ok`/`degraded`/`unavailable` and fails closed on its own; a 10-minute cached
+  catalogue is merged with admin-published records and sorted by severity.
+- **Honesty guardrail:** no free register publishes a private company's net worth
+  and none publishes a literal "days-to-litigation". `NET_WORTH_NOTE` states this
+  in the UI and countdowns are derived **only** from real dated events, tagged with
+  their source and as-of date — nothing is invented.
+- **Admin console** (`client/src/components/AdminCooperateDept.tsx`, additive MySQL
+  `cooperate_dept_companies` table in `server/cooperateDeptCompanies.ts`): publish
+  every required field (country → auto flag, city/state/region, founded year+month,
+  founders, key people, type, sectors, regulator + status, problem, staff count/range,
+  financial status, net-worth note, distress status + severity, countdown
+  label/date/direction, ownership opportunity, capital requirement, identity ids),
+  enable/disable/edit/delete, all audited in `v5_audit_events`; `normalizeInput`
+  fails closed. New records are enabled on publish.
+- **Customer desk** (`client/src/components/CustomerCooperateDept.tsx` +
+  `client/src/components/cooperate-dept.css`): high-contrast RED distress design
+  (severity bars/badges, urgent ticker, source strip, filters + sort), a **live
+  countdown** (until / since, down to days·hours·minutes·seconds), all company
+  fields with country flag, a net-worth disclosure, an education FAQ and a
+  ledger-backed **commitment modal** (shares / full ownership / asset purchase).
+- **Ledger flow** (`server/cooperateDept.ts`, positions table
+  `cooperate_dept_positions`): `commitCooperateDeptInterest` resolves the company
+  server-side (admin record first, then live), locks the wallet row `FOR UPDATE`,
+  writes a `cooperate_dept_commitment` ledger entry, moves available → locked, and
+  records a position + notification + `v5_idempotency_keys` entry in one
+  transaction; deterministic `cooperate-dept:<userId>:<sha256>` idempotency key;
+  USD settlement, $1,000,000 per-commitment ceiling. Storage reads are best-effort
+  so a DB hiccup never hides the live catalogue.
+- **Wiring:** admin nav Finance group → new `cooperateDeptCompanies` destination;
+  customer `cooperate-dept` now renders the real desk (was the generic placeholder).
+  `server/routers.ts` adds the customer `cooperateDept.market/commit` router and the
+  guarded admin lifecycle procedures.
+- Verification: `pnpm check` and `pnpm test` (201 files / 1,596 passed / 36 skipped)
+  pass, including the new `server/cooperate-dept.contract.test.ts` (10 tests).
+
 ## 2026-11-21 — Customer Mining: two new features + advanced design/spacing pass
 
 Enhanced the customer-portal Mining section (`client/src/components/CustomerMining.tsx`

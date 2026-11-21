@@ -1,0 +1,147 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const navigation = readFileSync(new URL("../client/src/admin-navigation.ts", import.meta.url), "utf8");
+const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf8");
+const adminUi = readFileSync(new URL("../client/src/components/AdminCooperateDept.tsx", import.meta.url), "utf8");
+const customerUi = readFileSync(new URL("../client/src/components/CustomerCooperateDept.tsx", import.meta.url), "utf8");
+const countryOptions = readFileSync(new URL("../shared/country-options.ts", import.meta.url), "utf8");
+const catalogue = readFileSync(new URL("../shared/cooperate-dept-catalogue.ts", import.meta.url), "utf8");
+const serverStore = readFileSync(new URL("./cooperateDeptCompanies.ts", import.meta.url), "utf8");
+const serverDesk = readFileSync(new URL("./cooperateDept.ts", import.meta.url), "utf8");
+const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+
+describe("Cooperate Dept distressed-company desk", () => {
+  it("exposes one Finance destination that opens the dedicated publishing console", () => {
+    expect(navigation).toContain('id: "cooperate-dept-companies", target: "cooperateDeptCompanies", label: "Cooperate Dept"');
+    expect(navigation.match(/target: "cooperateDeptCompanies"/g)).toHaveLength(1);
+    const financeIndex = navigation.indexOf('id: "finance"');
+    const miningIndex = navigation.indexOf('id: "mining"');
+    const itemIndex = navigation.indexOf('id: "cooperate-dept-companies"');
+    expect(financeIndex).toBeGreaterThanOrEqual(0);
+    expect(itemIndex).toBeGreaterThan(financeIndex);
+    expect(itemIndex).toBeLessThan(miningIndex);
+
+    expect(app).toContain('const AdminCooperateDept = lazy(() => import("@/components/AdminCooperateDept")');
+    expect(app).toContain('section==="cooperateDeptCompanies"&&<Suspense');
+    expect(app).toContain("<AdminCooperateDept/>");
+  });
+
+  it("replaces the generic customer placeholder with the live Cooperate Dept desk", () => {
+    expect(app).toContain('const CustomerCooperateDept = lazy(() => import("@/components/CustomerCooperateDept")');
+    expect(app).toContain('section==="cooperate-dept"&&<Suspense');
+    expect(app).toContain("<CustomerCooperateDept push={push}/>");
+    // The generic placeholder must explicitly exclude cooperate-dept now.
+    expect(app).toContain('item.id!=="cooperate-dept")&&<CustomerInvestmentCategory');
+
+    expect(customerUi).toContain("trpc.customer.cooperateDept.market.useQuery");
+    expect(customerUi).toContain("trpc.customer.cooperateDept.commit.useMutation");
+    expect(customerUi).toContain('idempotencyKey: crypto.randomUUID()');
+  });
+
+  it("gathers companies from keyless public registers around the world", () => {
+    expect(catalogue).toContain("async function fetchNorwayCompanies(");
+    expect(catalogue).toContain("async function fetchFranceCompanies(");
+    expect(catalogue).toContain("async function fetchUsSecCompanies(");
+    expect(catalogue).toContain("async function fetchGleifCompanies(");
+    expect(catalogue).toContain("async function fetchWikidataFacts(");
+    expect(catalogue).toContain("async function fetchWorldBankContext(");
+    expect(catalogue).toContain("async function fetchEurostatBankruptcies(");
+    expect(catalogue).toContain("async function fetchUkCompaniesHouse(");
+    expect(catalogue).toContain("async function fetchCourtListenerCases(");
+    expect(catalogue).toContain("https://data.brreg.no/enhetsregisteret/api/enheter");
+    expect(catalogue).toContain("konkurs=true");
+    expect(catalogue).toContain("recherche-entreprises.api.gouv.fr/search");
+    expect(catalogue).toContain("efts.sec.gov/LATEST/search-index");
+    expect(catalogue).toContain("api.gleif.org/api/v1/lei-records");
+    expect(catalogue).toContain("query.wikidata.org/sparql");
+    // The shared provider must stay environment-neutral so it also runs as the browser fallback.
+    expect(catalogue).not.toContain("process.env");
+    expect(catalogue).not.toContain("node:");
+  });
+
+  it("never invents a net worth or a litigation countdown", () => {
+    expect(catalogue).toContain("NET_WORTH_NOTE");
+    expect(catalogue).toContain("No free public register publishes a private company's net worth");
+    // Countdowns only exist when a provider publishes a real date.
+    expect(catalogue).toContain("export function compareCooperateDeptCompanies(");
+    expect(catalogue).toContain("export async function getCooperateDeptCatalogue(");
+    expect(catalogue).toContain("export async function findCooperateDeptCompany(");
+  });
+
+  it("derives the country flag from the selected country and never asks the admin to type it", () => {
+    expect(countryOptions).toContain("export function flagFor(countryCode: string): string");
+    expect(countryOptions).toContain("export const COUNTRY_OPTIONS");
+
+    expect(adminUi).toContain("COUNTRY_OPTIONS.map");
+    expect(adminUi).toContain("{flagFor(country.code)} {country.name} ({country.code})");
+    expect(adminUi).toContain("Flag preview:");
+    // Every displayed field is administrator-supplied; money is sent as integer minor units.
+    expect(adminUi).toContain("Founded year");
+    expect(adminUi).toContain("Distress severity");
+    expect(adminUi).toContain("Countdown direction");
+    expect(adminUi).toContain("capitalAskMinor: capitalValue === null ? null : Math.round(capitalValue * 100)");
+  });
+
+  it("stores administrator companies additively, enabled on publish, with an audited create path", () => {
+    expect(serverStore).toContain('export const COOPERATE_DEPT_COMPANIES_TABLE = "cooperate_dept_companies"');
+    expect(serverStore).toContain("CREATE TABLE IF NOT EXISTS cooperate_dept_companies");
+    expect(serverStore).toContain("enabled TINYINT(1) NOT NULL DEFAULT 1");
+    expect(serverStore).toContain("export function ensureCooperateDeptCompaniesSchema()");
+    // New companies are enabled immediately: the INSERT binds the enabled column to 1.
+    expect(serverStore).toContain("1,?,?)");
+    expect(serverStore).toContain("const flag = flagFor(normalized.country.code);");
+    expect(serverStore).toContain('"cooperate_dept_company_created"');
+    expect(serverStore).toContain('"cooperate_dept_company_updated"');
+    expect(serverStore).toContain('"cooperate_dept_company_enabled"');
+    expect(serverStore).toContain('"cooperate_dept_company_disabled"');
+    expect(serverStore).toContain('"cooperate_dept_company_deleted"');
+  });
+
+  it("fails closed on invalid input before writing anything", () => {
+    const start = serverStore.indexOf("function normalizeInput(");
+    const end = serverStore.indexOf("\n}", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const normalize = serverStore.slice(start, end);
+    expect(normalize).toContain('if (!country) throw new Error("Select a supported country for this company")');
+    expect(normalize).toContain('if (!(COMPANY_STATUSES as readonly string[]).includes(input.status)) throw new Error("Select a valid company status")');
+    expect(normalize).toContain('if (!(DISTRESS_SEVERITIES as readonly string[]).includes(input.severity)) throw new Error("Select a valid distress severity")');
+    expect(normalize).toContain("foundedYear < 1500 || foundedYear > 2100");
+    expect(normalize).toContain('countdownDirection !== "until" && countdownDirection !== "since"');
+  });
+
+  it("merges administrator companies into the customer desk and resolves them first for a commitment", () => {
+    expect(catalogue).toContain("export function compareCooperateDeptCompanies(");
+    expect(serverDesk).toContain('from "./cooperateDeptCompanies"');
+    expect(serverDesk).toContain("findEnabledAdminCooperateDeptCompany");
+    expect(serverDesk).toContain("listEnabledAdminCooperateDeptCompanies");
+    expect(serverDesk).toContain("const companies = [...adminCompanies, ...catalogue.companies].sort(compareCooperateDeptCompanies)");
+    expect(serverDesk).toContain("async function resolveCompanyForCommitment(companyId: string)");
+    expect(serverDesk).toContain("const company = await resolveCompanyForCommitment(String(input.companyId || \"\"))");
+  });
+
+  it("reserves a commitment through the audited wallet ledger with idempotency", () => {
+    expect(serverDesk).toContain('export const COOPERATE_DEPT_POSITIONS_TABLE = "cooperate_dept_positions"');
+    expect(serverDesk).toContain("CREATE TABLE IF NOT EXISTS cooperate_dept_positions");
+    expect(serverDesk).toContain("export function ensureCooperateDeptSchema()");
+    expect(serverDesk).toContain("`cooperate-dept:${userId}:${crypto.createHash(");
+    expect(serverDesk).toContain("cooperate_dept_commitment");
+    expect(serverDesk).toContain("SELECT resultJson");
+    expect(serverDesk).toContain("FOR UPDATE");
+    expect(serverDesk).toContain("v5_idempotency_keys");
+  });
+
+  it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
+    expect(serverRouters).toContain("cooperateDept: router({");
+    expect(serverRouters).toContain("market: protectedProcedure.query(({ ctx }) => getCooperateDeptDashboard(ctx.user.id))");
+    expect(serverRouters).toContain("commit: protectedProcedure.input(z.object({");
+    expect(serverRouters).toContain("cooperateDeptCompanies: adminProcedure.query(() => listAdminCooperateDeptCompanies())");
+    expect(serverRouters).toContain("createCooperateDeptCompany: adminProcedure.input(createCooperateDeptCompanySchema).mutation");
+    expect(serverRouters).toContain("updateCooperateDeptCompany: adminProcedure.input(updateCooperateDeptCompanySchema).mutation");
+    expect(serverRouters).toContain("setCooperateDeptCompanyEnabled: adminProcedure.input(z.object({ companyId");
+    expect(serverRouters).toContain("deleteCooperateDeptCompany: adminProcedure.input(z.object({ companyId");
+    expect(serverRouters).toContain("countdownDate: z.string().trim().regex(/^\\d{4}-\\d{2}-\\d{2}$/)");
+    expect(serverRouters).toContain("capitalAskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional()");
+  });
+});
