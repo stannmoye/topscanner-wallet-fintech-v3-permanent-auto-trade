@@ -790,3 +790,113 @@
 @media(prefers-reduced-motion:reduce){
   .cm-dashboard-frame .cm-analytics-bar-track i,.cm-dashboard-frame .cm-analytics-goal-meter i{transition:none}
 }
+
+/* =====================================================================
+   CUSTOMER MINING — PACKAGE CARD ENLARGEMENT & UPGRADE (final override)
+   The package cards were too small (118px wide, 198px tall, 7–9px type).
+   This layer scales every package card element up, improves spacing, and
+   adds a more attractive premium finish (larger art, bolder price,
+   rounded corners, hover lift, stronger glow). Responsive steps included.
+   ===================================================================== */
+
+/* Carousel: wider columns so cards have room to breathe. */
+.cm-dashboard-frame .cm-package-carousel{grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:16px}
+
+/* Card shell: much taller, roomier padding, softer corners, premium surface. */
+.cm-dashboard-frame .cm-package-card{
+  min-height:346px;
+  padding:18px 17px 16px;
+  border-radius:18px;
+  border-width:1.5px;
+  background:
+    radial-gradient(ellipse at 50% 12%,var(--package-glow,rgba(40,220,220,.30)),transparent 55%),
+    linear-gradient(160deg,var(--package-surface-start,#103b4b),var(--package-surface-end,#071b2c));
+  box-shadow:0 18px 44px rgba(0,6,16,.42),inset 0 1px rgba(255,255,255,.05);
+  transition:transform .22s ease,box-shadow .22s ease,border-color .22s ease
+}
+.cm-dashboard-frame .cm-package-card:hover{
+  transform:translateY(-4px);
+  border-color:color-mix(in srgb,var(--package-accent,#52f2e4) 80%,#fff);
+  box-shadow:0 26px 58px rgba(0,6,16,.56),0 0 26px var(--package-glow,rgba(40,220,220,.22)),inset 0 1px rgba(255,255,255,.07)
+}
+.cm-dashboard-frame .cm-package-card.is-current{box-shadow:0 0 0 1.5px var(--package-accent,#52f2e4),0 0 26px var(--package-glow,rgba(40,220,220,.34)),0 18px 44px rgba(0,6,16,.42)}
+
+/* Art area + cube: larger and more imposing. */
+.cm-dashboard-frame .cm-package-art{height:116px;margin-bottom:4px}
+.cm-dashboard-frame .cm-cube{
+  width:74px;height:74px;border-width:2.5px;border-radius:13px;
+  box-shadow:0 0 24px var(--package-glow,rgba(40,220,220,.40)),inset 0 0 16px color-mix(in srgb,var(--package-accent,#52f2e4) 22%,transparent)
+}
+.cm-dashboard-frame .cm-cube b{font-size:32px}
+.cm-dashboard-frame .cm-cube i{inset:7px;border-radius:7px}
+.cm-dashboard-frame .cm-cube i:nth-child(2){inset:14px}
+.cm-dashboard-frame .cm-package-glow{width:92px;height:12px;bottom:6px;border-radius:50%}
+
+/* Label: bigger name + status chip. */
+.cm-dashboard-frame .cm-package-label{gap:8px;margin-top:6px}
+.cm-dashboard-frame .cm-package-label h3{font-size:15px;letter-spacing:-.01em}
+.cm-dashboard-frame .cm-package-label span{font-size:9px;padding:2px 8px;border:1px solid color-mix(in srgb,var(--package-accent,#52f2e4) 55%,transparent);border-radius:999px;background:rgba(0,0,0,.22)}
+.cm-dashboard-frame .cm-package-theme-name{margin-top:5px;font-size:8px}
+
+/* Price: large, prominent. */
+.cm-dashboard-frame .cm-package-price{gap:6px;margin-top:11px}
+.cm-dashboard-frame .cm-package-price strong{font-size:27px;letter-spacing:-.02em}
+.cm-dashboard-frame .cm-package-price small{font-size:11px}
+
+/* Facts: larger, more legible. */
+.cm-dashboard-frame .cm-package-facts{gap:6px;margin:10px 0;font-size:11px;line-height:1.45}
+.cm-dashboard-frame .cm-package-facts b{font-size:12px}
+.cm-dashboard-frame .cm-package-facts small{font-size:10px}
+.cm-dashboard-frame .cm-package-facts span{display:flex;align-items:center;gap:5px}
+.cm-dashboard-frame .cm-package-projection{color:#7cf0c4;font-weight:800;font-size:11px}
+.cm-dashboard-frame .cm-package-limit{color:#a8cfdd;font-size:10px}
+
+/* Terms disclosure: match the new scale. */
+.cm-dashboard-frame .cm-package-terms{margin:0 0 12px;padding:9px 11px;font-size:11px;border-radius:10px}
+
+/* Actions row: bigger buttons with more presence. */
+.cm-dashboard-frame .cm-package-actions{gap:9px;margin-top:4px}
+.cm-dashboard-frame .cm-package-actions .cm-package-buy{min-height:44px;padding:10px 12px;border-radius:11px;font-size:11px}
+.cm-dashboard-frame .cm-package-actions .cm-compare-toggle{min-height:44px;padding:10px 12px;font-size:10px;border-radius:11px}
+
+/* ---- Package card responsive steps ---- */
+@media(max-width:1180px){
+  .cm-dashboard-frame .cm-package-carousel{grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
+  .cm-dashboard-frame .cm-package-card{min-height:330px;padding:16px 15px 15px}
+  .cm-dashboard-frame .cm-package-art{height:104px}
+  .cm-dashboard-frame .cm-cube{width:66px;height:66px}
+  .cm-dashboard-frame .cm-cube b{font-size:28px}
+  .cm-dashboard-frame .cm-package-price strong{font-size:24px}
+}
+@media(max-width:760px){
+  .cm-dashboard-frame .cm-package-carousel{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:8px;gap:12px}
+  .cm-dashboard-frame .cm-package-card{flex:0 0 240px;scroll-snap-align:start;min-height:330px}
+  .cm-dashboard-frame .cm-package-art{height:100px}
+  .cm-dashboard-frame .cm-cube{width:64px;height:64px}
+  .cm-dashboard-frame .cm-cube b{font-size:27px}
+  .cm-dashboard-frame .cm-package-label h3{font-size:14px}
+  .cm-dashboard-frame .cm-package-price strong{font-size:23px}
+  .cm-dashboard-frame .cm-package-facts{font-size:10.5px}
+  .cm-dashboard-frame .cm-package-actions{flex-direction:row}
+  .cm-dashboard-frame .cm-package-actions .cm-package-buy{flex:1}
+}
+@media(max-width:460px){
+  .cm-dashboard-frame .cm-package-card{flex:0 0 210px;min-height:318px;padding:15px 13px 14px}
+  .cm-dashboard-frame .cm-package-art{height:92px}
+  .cm-dashboard-frame .cm-cube{width:58px;height:58px}
+  .cm-dashboard-frame .cm-cube b{font-size:24px}
+  .cm-dashboard-frame .cm-package-label h3{font-size:13px}
+  .cm-dashboard-frame .cm-package-price strong{font-size:21px}
+  .cm-dashboard-frame .cm-package-facts{font-size:10px}
+  .cm-dashboard-frame .cm-package-actions{flex-direction:column}
+  .cm-dashboard-frame .cm-package-actions .cm-compare-toggle,.cm-dashboard-frame .cm-package-actions .cm-package-buy{width:100%}
+}
+@media(min-width:1600px){
+  .cm-dashboard-frame .cm-package-carousel{grid-template-columns:repeat(auto-fill,minmax(252px,1fr));gap:18px}
+  .cm-dashboard-frame .cm-package-card{min-height:360px;padding:20px 18px 17px}
+  .cm-dashboard-frame .cm-package-art{height:124px}
+  .cm-dashboard-frame .cm-cube{width:80px;height:80px}
+  .cm-dashboard-frame .cm-cube b{font-size:35px}
+  .cm-dashboard-frame .cm-package-price strong{font-size:29px}
+  .cm-dashboard-frame .cm-package-facts{font-size:11.5px}
+}
