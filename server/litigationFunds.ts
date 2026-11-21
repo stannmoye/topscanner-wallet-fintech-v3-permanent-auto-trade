@@ -729,3 +729,138 @@ export async function recordLitigationOutcome(adminUserId: number, dossierId: st
     }
   });
 }
+
+/** One case that still carries open customer commitments, for the settlement console. */
+export type LitigationOpenCase = {
+  instrumentId: string;
+  caseName: string;
+  openPositions: number;
+  committedMinor: number;
+  currency: string;
+};
+
+/**
+ * Distinct case instruments that still hold open (unresolved) customer positions.
+ * Every case on the desk is fundable without an administrator dossier, so this is
+ * how an administrator finds a funded case — including one that has no published
+ * economics — to settle it directly.
+ */
+export async function listLitigationOpenCases(): Promise<LitigationOpenCase[]> {
+  await ensureLitigationFundsSchema();
+  return withConnection(async (conn) => {
+    const [rows] = await conn.query<any[]>(
+      `SELECT instrumentId, MAX(instrumentName) caseName, COUNT(*) openPositions, SUM(amountMinor) committedMinor, MAX(currency) currency
+       FROM ${LITIGATION_POSITIONS_TABLE}
+       WHERE instrumentType='CASE' AND outcome IS NULL
+       GROUP BY instrumentId
+       ORDER BY committedMinor DESC, instrumentId`,
+    );
+    return rows.map((row) => ({
+      instrumentId: String(row.instrumentId),
+      caseName: String(row.caseName || row.instrumentId),
+      openPositions: Number(row.openPositions || 0),
+      committedMinor: Number(row.committedMinor || 0),
+      currency: String(row.currency || SETTLEMENT_CURRENCY),
+    }));
+  });
+}
+
+/**
+ * Settle a funded case directly by an administrator-chosen funder multiple. Every
+ * case on the desk can be funded without a dossier, so a case may have no modelled
+ * scenarios; this lets an administrator resolve it anyway. For SETTLE/WIN each
+ * open position is paid principal × funderMultipleBps into the settlement wallet
+ * with a compensating ledger entry; for LOSE the capital is written off (no credit
+ * is fabricated). Positions that already carry an outcome are never paid twice, and
+ * historical entries are never edited. Idempotent against a double submit: a case
+ * with no remaining open positions is rejected rather than paid again.
+ */
+export async function settleLitigationCase(
+  adminUserId: number,
+  input: { instrumentId: string; outcome: LitigationOutcome; funderMultipleBps: number; reason?: string },
+) {
+  const instrumentId = String(input.instrumentId || "").trim();
+  if (!instrumentId) throw new Error("Select a funded case to settle");
+  if (input.outcome !== "SETTLE" && input.outcome !== "WIN" && input.outcome !== "LOSE") throw new Error("Select a valid outcome");
+  const requestedBps = Math.round(Number(input.funderMultipleBps) || 0);
+  if (requestedBps < 0 || requestedBps > 100_000) throw new Error("The funder multiple must be between 0.00x and 10.00x");
+  const funderMultipleBps = input.outcome === "LOSE" ? 0 : requestedBps;
+
+  await ensureLitigationFundsSchema();
+  return withConnection(async (conn) => {
+    await conn.beginTransaction();
+    try {
+      const [positions] = await conn.query<any[]>(
+        `SELECT id, userId, positionCode, amountMinor, instrumentName FROM ${LITIGATION_POSITIONS_TABLE}
+         WHERE instrumentType='CASE' AND instrumentId=? AND outcome IS NULL FOR UPDATE`,
+        [instrumentId],
+      );
+      if (!positions.length) throw new Error("No open positions remain on this case — it may already have been settled.");
+      const caseName = String(positions[0].instrumentName || instrumentId);
+      let paidMinor = 0;
+      let writtenOffMinor = 0;
+      for (const position of positions) {
+        const principal = Number(position.amountMinor || 0);
+        const ownerId = Number(position.userId);
+        const payout = funderMultipleBps === 0 ? 0 : Math.round((principal * funderMultipleBps) / 10_000);
+
+        // The principal was locked at purchase; release that lock now.
+        await conn.execute(
+          `INSERT INTO customer_balances (userId,currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor) VALUES (?,?,0,0,0,0) ON DUPLICATE KEY UPDATE userId=userId`,
+          [ownerId, SETTLEMENT_CURRENCY],
+        );
+        await conn.execute(
+          `UPDATE customer_balances SET availableMinor=availableMinor+?, lockedMinor=GREATEST(0, lockedMinor-?), updatedAt=NOW() WHERE userId=? AND currency=?`,
+          [payout, principal, ownerId, SETTLEMENT_CURRENCY],
+        );
+        if (payout > 0) {
+          await conn.execute(
+            `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,true)`,
+            [ownerId, SETTLEMENT_CURRENCY, payout, "litigation_funds_payout", `litigation-funds-payout:${position.positionCode}`],
+          );
+        }
+        await conn.execute(
+          `UPDATE ${LITIGATION_POSITIONS_TABLE} SET outcome=?, realisedMinor=?, settledAt=NOW(), positionStatus=? WHERE id=?`,
+          [input.outcome, payout, payout > 0 ? "SETTLED" : "WRITTEN_OFF", position.id],
+        );
+        await conn.execute(
+          `INSERT INTO customer_notifications (userId,title,body,eventKey,category,priority) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE eventKey=VALUES(eventKey)`,
+          [
+            ownerId,
+            payout > 0 ? "Litigation Funds payout credited" : "Litigation Funds capital written off",
+            payout > 0
+              ? `Case “${caseName}” resolved as a ${input.outcome.toLowerCase()}. ${payout} minor units of ${SETTLEMENT_CURRENCY} were credited to your wallet, repaying principal plus the configured funder multiple.`
+              : `Case “${caseName}” resolved as a loss. The ${principal} minor units of ${SETTLEMENT_CURRENCY} principal were written off; no credit was made.`,
+            `u${ownerId}:litigation-funds-outcome:${position.positionCode}`,
+            payout > 0 ? "ledger_credit" : "ledger_debit",
+            "normal",
+          ],
+        );
+        if (payout > 0) paidMinor += payout;
+        else if (input.outcome === "LOSE") writtenOffMinor += principal;
+      }
+
+      // If an administrator dossier exists for this case, close it too so it stops
+      // advertising funding. A case funded without a dossier simply has no row here.
+      const dossier = await findAdminLitigationDossier(instrumentId);
+      if (dossier) {
+        await applyDossierOutcome(conn, instrumentId, input.outcome);
+        await conn.execute(`UPDATE ${LITIGATION_DOSSIERS_TABLE} SET dossierStatus='RESOLVED', updatedAt=NOW(3) WHERE dossierId=?`, [instrumentId]);
+      }
+
+      await conn.execute(
+        `INSERT INTO v5_audit_events (actorUserId,action,entityType,entityId,reference,metadataJson) VALUES (?,?,?,?,?,?)`,
+        [
+          adminUserId, "litigation_case_settled", "litigation_fund_case", instrumentId,
+          `litigation_fund_case:${instrumentId}`,
+          JSON.stringify({ instrumentId, outcome: input.outcome, funderMultipleBps, positions: positions.length, paidMinor, writtenOffMinor, hadDossier: Boolean(dossier), reason: input.reason ? String(input.reason).slice(0, 400) : null }),
+        ],
+      );
+      await conn.commit();
+      return { instrumentId, caseName, outcome: input.outcome, funderMultipleBps, positions: positions.length, paidMinor, writtenOffMinor, hadDossier: Boolean(dossier) };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    }
+  });
+}

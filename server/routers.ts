@@ -17,7 +17,7 @@ import { projectTreasuryBondProfit } from "./treasuryBondProvider";
 import { createAdminTreasuryBondInstrument, deleteAdminTreasuryBondInstrument, listAdminTreasuryBondInstruments, setAdminTreasuryBondInstrumentEnabled, updateAdminTreasuryBondInstrument, TREASURY_INSTRUMENT_CATEGORIES } from "./treasuryBondInstruments";
 import { getCooperateDeptDashboard, purchaseCooperateDeptCompany, quoteCooperateDeptPurchase } from "./cooperateDept";
 import { createAdminCooperateDeptCompany, deleteAdminCooperateDeptCompany, listAdminCooperateDeptCompanies, setAdminCooperateDeptCompanyEnabled, updateAdminCooperateDeptCompany } from "./cooperateDeptCompanies";
-import { getLitigationFundsDashboard, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome } from "./litigationFunds";
+import { getLitigationFundsDashboard, listLitigationOpenCases, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome, settleLitigationCase } from "./litigationFunds";
 import { createAdminLitigationBundle, createAdminLitigationDossier, deleteAdminLitigationBundle, deleteAdminLitigationDossier, listAdminLitigationBundles, listAdminLitigationDossiers, reachAdminLitigationMilestone, setAdminLitigationBundleEnabled, setAdminLitigationDossierEnabled, setAdminLitigationDossierStatus, updateAdminLitigationBundle, updateAdminLitigationDossier } from "./litigationFundDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
@@ -1118,6 +1118,13 @@ export const appRouter = router({
       reason: z.string().trim().max(500).optional(),
     })).mutation(({ ctx, input }) => recordLitigationOutcome(ctx.user!.id, input.dossierId, input.outcome)),
     deleteLitigationDossier: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminLitigationDossier(ctx.user!.id, input.dossierId)),
+    litigationOpenCases: adminProcedure.query(() => listLitigationOpenCases()),
+    settleLitigationCase: adminProcedure.input(z.object({
+      instrumentId: z.string().trim().min(2).max(80),
+      outcome: z.enum(["SETTLE", "WIN", "LOSE"]),
+      funderMultipleBps: z.number().int().min(0).max(100_000),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => settleLitigationCase(ctx.user!.id, input)),
     litigationBundles: adminProcedure.query(() => listAdminLitigationBundles()),
     createLitigationBundle: adminProcedure.input(createLitigationBundleSchema).mutation(({ ctx, input }) => createAdminLitigationBundle(ctx.user!.id, input)),
     updateLitigationBundle: adminProcedure.input(updateLitigationBundleSchema).mutation(({ ctx, input }) => {

@@ -90,20 +90,23 @@ type MilestoneForm = { stage: string; label: string; releasePercent: string };
 
 /**
  * Administrator console for the Litigation Funds desk. An administrator reviews
- * real, cited public court records (the discovery layer) and publishes the
+ * real, cited public court records (the discovery layer) and may publish the
  * dossier economics for a case: merit, damages, capital at risk, the funding
- * target, the three outcome scenarios and the escrow milestones. Only a dossier
- * with a target, a complete scenario set and a cited source can be funded, and
- * every displayed figure is administrator-supplied.
+ * target, the three outcome scenarios and the escrow milestones. Every cited
+ * case is fundable without a dossier — a dossier only enriches the case with
+ * fixed economics. The console also settles any funded case directly, choosing
+ * an outcome and a funder multiple to pay out or write off open positions.
  */
 export function AdminLitigationFunds() {
   const utils = trpc.useUtils();
   const dossiersQuery = trpc.adminOperations.litigationDossiers.useQuery(undefined, { refetchInterval: 20000 });
   const bundlesQuery = trpc.adminOperations.litigationBundles.useQuery(undefined, { refetchInterval: 20000 });
+  const openCasesQuery = trpc.adminOperations.litigationOpenCases.useQuery(undefined, { refetchInterval: 20000 });
 
-  const [tab, setTab] = useState<"dossiers" | "bundles">("dossiers");
+  const [tab, setTab] = useState<"dossiers" | "bundles" | "settle">("dossiers");
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
+  const [settleForms, setSettleForms] = useState<Record<string, { outcome: string; multiplePercent: string; reason: string }>>({});
 
   const [dossier, setDossier] = useState<DossierForm>(emptyDossier);
   const [editingDossierId, setEditingDossierId] = useState<string | null>(null);
@@ -121,6 +124,7 @@ export function AdminLitigationFunds() {
   const invalidate = () => {
     void utils.adminOperations.litigationDossiers.invalidate();
     void utils.adminOperations.litigationBundles.invalidate();
+    void utils.adminOperations.litigationOpenCases.invalidate();
     void utils.customer.litigationFunds.market.invalidate();
   };
 
@@ -131,6 +135,14 @@ export function AdminLitigationFunds() {
   const reachMilestone = trpc.adminOperations.reachLitigationMilestone.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `Milestone recorded on ${row.caseName}.`); }, onError });
   const recordOutcome = trpc.adminOperations.recordLitigationOutcome.useMutation({ onSuccess: (result: any) => { invalidate(); report("success", `Outcome ${result.outcome} recorded: ${result.positions} position(s), ${money(result.paidMinor)} paid, ${money(result.writtenOffMinor)} written off.`); }, onError });
   const deleteDossier = trpc.adminOperations.deleteLitigationDossier.useMutation({ onSuccess: (result: any) => { invalidate(); report("success", `Deleted ${result.dossierId}.`); }, onError });
+  const settleCase = trpc.adminOperations.settleLitigationCase.useMutation({
+    onSuccess: (result: any) => {
+      setSettleForms((current) => { const next = { ...current }; delete next[result.instrumentId]; return next; });
+      invalidate();
+      report("success", `Settled “${result.caseName}” as ${result.outcome} at ${multiple(result.funderMultipleBps)}: ${result.positions} position(s), ${money(result.paidMinor)} paid, ${money(result.writtenOffMinor)} written off.`);
+    },
+    onError,
+  });
 
   const createBundle = trpc.adminOperations.createLitigationBundle.useMutation({ onSuccess: (row: any) => { resetBundleForm(); invalidate(); report("success", `Published bundle ${row.bundleId} “${row.name}”.`); }, onError });
   const updateBundle = trpc.adminOperations.updateLitigationBundle.useMutation({ onSuccess: (row: any) => { resetBundleForm(); invalidate(); report("success", `Updated bundle ${row.bundleId}.`); }, onError });
@@ -337,16 +349,29 @@ export function AdminLitigationFunds() {
 
   const dossierRows: any[] = dossiersQuery.data || [];
   const bundleRows: any[] = bundlesQuery.data || [];
+  const openCaseRows: any[] = openCasesQuery.data || [];
   const fundableCount = useMemo(() => dossierRows.filter((row) => row.status === "FUNDING" && row.scenarios.length > 0 && row.fundingAskMinor > 0).length, [dossierRows]);
+  const settleTotalMinor = useMemo(() => openCaseRows.reduce((sum, row) => sum + Number(row.committedMinor || 0), 0), [openCaseRows]);
+
+  const settleFormFor = (instrumentId: string) => settleForms[instrumentId] || { outcome: "SETTLE", multiplePercent: "150", reason: "" };
+  const setSettleForm = (instrumentId: string, key: "outcome" | "multiplePercent" | "reason", value: string) => setSettleForms((current) => ({ ...current, [instrumentId]: { ...(current[instrumentId] || { outcome: "SETTLE", multiplePercent: "150", reason: "" }), [key]: value } }));
+  const runSettleCase = (row: any) => {
+    const form = settleFormFor(row.instrumentId);
+    const funderMultipleBps = form.outcome === "LOSE" ? 0 : toBpsFromPercent(form.multiplePercent);
+    if (form.outcome !== "LOSE" && funderMultipleBps <= 0) { report("error", "Set a funder multiple above 0.00x for a settle or win."); return; }
+    const confirmText = `Settle “${row.caseName}” as ${form.outcome} at ${multiple(funderMultipleBps)}? This releases escrow and pays or writes off all ${row.openPositions} open position(s) across ${money(row.committedMinor)} committed. It cannot be undone.`;
+    if (!window.confirm(confirmText)) return;
+    settleCase.mutate({ instrumentId: row.instrumentId, outcome: form.outcome as any, funderMultipleBps, reason: form.reason.trim() || "Administrator settlement" });
+  };
 
   return <div className="arb-page portal-page lf-page">
     <div className="portal-page-top">
       <div>
         <div className="eyebrow">Litigation desk · Case publishing</div>
         <h1>Litigation Funds console</h1>
-        <p>Review real, cited public court records, then publish the reviewed economics for a case — merit, damages, capital at risk, funding target, the settle / win / lose scenarios and the escrow milestones. Only a dossier with a target, a complete scenario set and a cited source becomes fundable.</p>
+        <p>Review real, cited public court records, then optionally publish the reviewed economics for a case — merit, damages, capital at risk, funding target, the settle / win / lose scenarios and the escrow milestones. Every cited case is fundable without a dossier; a published dossier only enriches the case with fixed economics. Use the Settle open cases tab to resolve a funded case directly.</p>
       </div>
-      <button className="lf-btn" type="button" onClick={() => { void dossiersQuery.refetch(); void bundlesQuery.refetch(); }} disabled={dossiersQuery.isFetching || bundlesQuery.isFetching}>
+      <button className="lf-btn" type="button" onClick={() => { void dossiersQuery.refetch(); void bundlesQuery.refetch(); void openCasesQuery.refetch(); }} disabled={dossiersQuery.isFetching || bundlesQuery.isFetching || openCasesQuery.isFetching}>
         <RefreshCw size={14} className={dossiersQuery.isFetching ? "spin" : ""}/> Refresh
       </button>
     </div>
@@ -358,6 +383,7 @@ export function AdminLitigationFunds() {
     <nav className="lf-tabs" aria-label="Admin litigation sections">
       <button type="button" className={`lf-tab${tab === "dossiers" ? " is-active" : ""}`} onClick={() => setTab("dossiers")}>Dossiers <span className="lf-tab-count">{dossierRows.length}</span></button>
       <button type="button" className={`lf-tab${tab === "bundles" ? " is-active" : ""}`} onClick={() => setTab("bundles")}>Bundles <span className="lf-tab-count">{bundleRows.length}</span></button>
+      <button type="button" className={`lf-tab${tab === "settle" ? " is-active" : ""}`} onClick={() => setTab("settle")}>Settle open cases <span className="lf-tab-count">{openCaseRows.length}</span></button>
     </nav>
 
     {tab === "dossiers" && <div className="lf-admin">
@@ -610,9 +636,54 @@ export function AdminLitigationFunds() {
       </div>
     </div>}
 
+    {tab === "settle" && <div className="lf-admin">
+      <div className="lf-admin-list">
+        <div className="lf-section-head"><div><span className="eyebrow">Settle open cases ({openCaseRows.length}) · {money(settleTotalMinor)} committed</span><h2>Resolve funded cases directly</h2></div></div>
+        <div className="lf-notice">
+          <Gavel size={15}/>
+          <div>Every cited case on the desk is fundable without a dossier, so a case can carry customer commitments even when no administrator economics were ever published. Choose the outcome and the funder multiple here to release escrow and pay or write off every open position on the case. Positions locked as principal are released, a payout is credited as a withdrawable ledger entry, and a loss writes the principal off. This cannot be undone.</div>
+        </div>
+        {!openCaseRows.length && <div className="lf-empty"><Gavel size={16}/> No cases carry open commitments right now. Funded cases appear here for settlement.</div>}
+        {openCaseRows.map((row) => {
+          const form = settleFormFor(row.instrumentId);
+          const payoutPreview = form.outcome === "LOSE" ? 0 : Math.round((Number(row.committedMinor || 0) * toBpsFromPercent(form.multiplePercent)) / 10_000);
+          return <div className="lf-admin-row" key={row.instrumentId}>
+            <div className="lf-admin-row-head">
+              <div>
+                <strong>{row.caseName}</strong>
+                <div className="lf-card-meta"><span className="lf-mono">ID {row.instrumentId}</span></div>
+              </div>
+              <div className="lf-badges"><span className="lf-badge">{row.openPositions} open position{row.openPositions === 1 ? "" : "s"}</span><span className="lf-badge">{money(row.committedMinor)} committed</span></div>
+            </div>
+            <div className="lf-two">
+              <div className="lf-field"><label>Outcome</label>
+                <select value={form.outcome} onChange={(e) => setSettleForm(row.instrumentId, "outcome", e.target.value)}>
+                  {OUTCOME_OPTIONS.map((outcome) => <option key={outcome} value={outcome}>{outcome === "SETTLE" ? "Settle" : outcome === "WIN" ? "Win" : "Lose"}</option>)}
+                </select>
+              </div>
+              <div className="lf-field"><label>Funder multiple (%)</label>
+                <input type="number" min="0" step="1" value={form.multiplePercent} disabled={form.outcome === "LOSE"} onChange={(e) => setSettleForm(row.instrumentId, "multiplePercent", e.target.value)} />
+                <small>{form.outcome === "LOSE" ? "A loss writes every principal off; no multiple is applied." : `Funders receive principal × ${multiple(toBpsFromPercent(form.multiplePercent))}.`}</small>
+              </div>
+            </div>
+            <div className="lf-field"><label>Reason (optional)</label><input value={form.reason} onChange={(e) => setSettleForm(row.instrumentId, "reason", e.target.value)} placeholder="e.g. Settlement approved at 1.40x on 2026-05-01" /></div>
+            <div className="lf-card-meta">
+              <span>Payout preview {money(payoutPreview)} of {money(row.committedMinor)} committed</span>
+              {form.outcome === "LOSE" && <span>{money(row.committedMinor)} written off</span>}
+            </div>
+            <div className="lf-admin-actions">
+              <button className="lf-btn primary" type="button" disabled={settleCase.isPending} onClick={() => runSettleCase(row)}>
+                {settleCase.isPending ? "Settling…" : `Settle as ${form.outcome} at ${form.outcome === "LOSE" ? "0.00x" : multiple(toBpsFromPercent(form.multiplePercent))}`} <Check size={14}/>
+              </button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
     <div className="lf-notice">
       <Scale size={15}/>
-      <div>The discovery layer (real, cited public court records) is read-only here and served live from the platform catalogue. This console only writes administrator dossiers and bundles to the platform database. Every change is audited. A modelled dossier must cite its source URL, its scenarios must sum to 100% and must include the loss case, and an outcome can be recorded only once — payouts and write-offs are internal-ledger compensating entries and are never edited afterwards.</div>
+      <div>The discovery layer (real, cited public court records) is read-only here and served live from the platform catalogue. This console writes administrator dossiers and bundles, and settles funded cases, to the platform database. Every change is audited. Publishing economics requires a cited source URL, scenarios that sum to 100% and include the loss case; a case can be funded without one. Settlement releases escrow and pays or writes off every open position exactly once — payouts and write-offs are internal-ledger compensating entries and are never edited afterwards.</div>
     </div>
   </div>;
 }

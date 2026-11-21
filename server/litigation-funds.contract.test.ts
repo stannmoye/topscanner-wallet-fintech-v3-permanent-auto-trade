@@ -142,6 +142,26 @@ describe("Litigation Funds case-linked capital desk", () => {
     expect(serverDesk).toContain("Insufficient combined spendable wallet balance at current exchange rates");
   });
 
+  it("lets an administrator settle any funded case directly with a chosen multiple", () => {
+    // The desk lists cases that still carry open commitments, for the settlement console.
+    expect(serverDesk).toContain("export type LitigationOpenCase");
+    expect(serverDesk).toContain("export async function listLitigationOpenCases(");
+    expect(serverDesk).toContain("WHERE instrumentType='CASE' AND outcome IS NULL");
+    expect(serverDesk).toContain("GROUP BY instrumentId");
+    // Settlement resolves a case without a dossier by paying principal × multiple or writing it off.
+    expect(serverDesk).toContain("export async function settleLitigationCase(");
+    expect(serverDesk).toContain("const funderMultipleBps = input.outcome === \"LOSE\" ? 0 : requestedBps");
+    expect(serverDesk).toContain("outcome IS NULL FOR UPDATE");
+    expect(serverDesk).toContain("lockedMinor=GREATEST(0, lockedMinor-?)");
+    expect(serverDesk).toContain('"litigation_funds_payout"');
+    expect(serverDesk).toContain('"litigation_case_settled"');
+    // The admin console exposes the settlement console calling the new endpoint.
+    expect(adminUi).toContain("trpc.adminOperations.litigationOpenCases.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.settleLitigationCase.useMutation");
+    expect(adminUi).toContain("Settle open cases");
+    expect(adminUi).toContain("Funder multiple (%)");
+  });
+
   it("gives the customer desk pagination plus the country, claim-type, merit and stage filters", () => {
     expect(customerUi).toContain("const PAGE_SIZES = [6, 12, 24]");
     expect(customerUi).toContain("lf-pagination");
@@ -225,7 +245,7 @@ describe("Litigation Funds case-linked capital desk", () => {
 
   it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
     expect(serverRouters).toContain("litigationFunds: router({");
-    expect(serverRouters).toContain("import { getLitigationFundsDashboard, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome } from \"./litigationFunds\";");
+    expect(serverRouters).toContain("import { getLitigationFundsDashboard, listLitigationOpenCases, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome, settleLitigationCase } from \"./litigationFunds\";");
     expect(serverRouters).toContain("market: protectedProcedure.query(({ ctx }) => getLitigationFundsDashboard(ctx.user.id))");
     expect(serverRouters).toContain("fundingQuote: protectedProcedure.input(z.object({");
     expect(serverRouters).toContain("purchase: protectedProcedure.input(z.object({");
@@ -237,6 +257,9 @@ describe("Litigation Funds case-linked capital desk", () => {
     expect(serverRouters).toContain("reachLitigationMilestone: adminProcedure.input(z.object({");
     expect(serverRouters).toContain("recordLitigationOutcome: adminProcedure.input(z.object({");
     expect(serverRouters).toContain("deleteLitigationDossier: adminProcedure.input(z.object({ dossierId");
+    expect(serverRouters).toContain("litigationOpenCases: adminProcedure.query(() => listLitigationOpenCases())");
+    expect(serverRouters).toContain("settleLitigationCase: adminProcedure.input(z.object({");
+    expect(serverRouters).toContain("mutation(({ ctx, input }) => settleLitigationCase(ctx.user!.id, input))");
     expect(serverRouters).toContain("litigationBundles: adminProcedure.query(() => listAdminLitigationBundles())");
     expect(serverRouters).toContain("createLitigationBundle: adminProcedure.input(createLitigationBundleSchema).mutation");
     expect(serverRouters).toContain("updateLitigationBundle: adminProcedure.input(updateLitigationBundleSchema).mutation");
