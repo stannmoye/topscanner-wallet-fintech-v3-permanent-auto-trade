@@ -1,4 +1,4 @@
-const THEMES = ["aurora", "ember", "glacier", "solar", "nebula"];
+const THEMES = ["aurora", "ember", "glacier", "solar", "nebula", "neon", "plasma", "midnight"];
 
 async function readThemeColumn(db) {
   const [columns] = await db.query(
@@ -32,7 +32,7 @@ export async function ensureMiningPackageThemeSchema(db, { required = false } = 
   }
   verifyThemeColumn(column);
   await db.query(
-    "UPDATE mining_package_versions SET themeKey='aurora' WHERE themeKey IS NULL OR themeKey NOT IN ('aurora','ember','glacier','solar','nebula')",
+    "UPDATE mining_package_versions SET themeKey='aurora' WHERE themeKey IS NULL OR themeKey NOT IN ('aurora','ember','glacier','solar','nebula','neon','plasma','midnight')",
   );
   return { present: true, repaired };
 }

@@ -225,7 +225,7 @@ export async function listCustomerMiningPackages(userId: number) {
         v.maxPerCustomer,v.stackingPolicy,v.expirySeconds,v.durationMonths,v.termsText,v.simulationAcknowledgementRequired,v.effectiveAt,
         (SELECT COUNT(*) FROM mining_customer_packages cp WHERE cp.userId=? AND cp.packageId=p.id AND cp.status<>'cancelled') purchasedCount
       FROM mining_packages p JOIN mining_package_versions v ON v.id=p.currentVersionId
-      WHERE p.status IN ('published','paused') AND v.versionStatus='published' ORDER BY p.displayOrder,p.id`, [userId]);
+      WHERE p.status='published' AND v.versionStatus='published' ORDER BY p.displayOrder,p.id`, [userId]);
     const config = await loadMiningConfig(conn);
     return rows.map(row => {
       const baseDaily = decimal(calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:row.expectedDailyRewardCki,baseThs:String(row.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay}));
@@ -278,7 +278,7 @@ export async function listCustomerMiningPackages(userId: number) {
   });
 }
 
-export async function createCustomerMiningPurchaseQuote(userId: number, input: { packageVersionId: number }) {
+export async function createCustomerMiningPurchaseQuote(userId: number, input: { packageVersionId: number; paymentAsset?: string }) {
   return withMiningConnection(async conn => inMiningTransaction(conn, async () => {
     await requireActiveMiningAccount(conn, userId);
     const config = await loadMiningConfig(conn);
@@ -289,7 +289,9 @@ export async function createCustomerMiningPurchaseQuote(userId: number, input: {
       const [countRows] = await conn.query<any[]>(`SELECT COUNT(*) total FROM mining_customer_packages WHERE userId=? AND packageId=? AND status<>'cancelled'`, [userId, Number(product.packageId)]);
       if (Number(countRows[0]?.total || 0) >= maxPerCustomer) throw new MiningError("This package has reached its per-customer purchase limit");
     }
-    const paymentAsset = assertMainWalletAsset(String(product.priceAsset));
+    // The customer chooses which enabled main-wallet currency funds the purchase.
+    // Defaults to the package's configured price denomination when none is supplied.
+    const paymentAsset = assertMainWalletAsset(String(input.paymentAsset || product.priceAsset));
     const expectedDailyRewardCki = calculatePackageDailyRate({calculationModel:config.calculationModel,expectedDailyRewardCki:product.expectedDailyRewardCki,baseThs:String(product.baseThs),ckiPerThsPerDay:config.ckiPerThsPerDay});
     const priceAsset = assertMainWalletAsset(String(product.priceAsset));
     const priceScale = await getMainWalletScale(conn, priceAsset);
@@ -427,7 +429,7 @@ export async function confirmCustomerMiningPurchase(userId: number, input: { quo
   return { ...purchase, initialAccrualIntervals, immediateAccrualStatus };
 }
 
-export async function purchaseCustomerMiningPackage(userId: number, input: { packageVersionId: number; idempotencyKey: string }) {
+export async function purchaseCustomerMiningPackage(userId: number, input: { packageVersionId: number; idempotencyKey: string; paymentAsset?: string }) {
   if (!Number.isInteger(input.packageVersionId) || input.packageVersionId < 1) throw new MiningError("Choose a valid Mining package");
   const key = requestKey("mining-purchase", userId, input.idempotencyKey);
   const priorResult = async () => withMiningConnection(async conn => {
@@ -439,7 +441,7 @@ export async function purchaseCustomerMiningPackage(userId: number, input: { pac
   const prior = await priorResult();
   if (prior) return prior;
   try {
-    const quote = await createCustomerMiningPurchaseQuote(userId, { packageVersionId: input.packageVersionId });
+    const quote = await createCustomerMiningPurchaseQuote(userId, { packageVersionId: input.packageVersionId, paymentAsset: input.paymentAsset });
     return await confirmCustomerMiningPurchase(userId, { quoteId: Number(quote.quoteId), idempotencyKey: input.idempotencyKey, acceptedTerms: true });
   } catch (error) {
     const completed = await priorResult();

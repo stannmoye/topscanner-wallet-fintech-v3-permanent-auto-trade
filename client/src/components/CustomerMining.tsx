@@ -46,6 +46,12 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
   const [prefTarget, setPrefTarget] = useState("USD");
   const [prefThreshold, setPrefThreshold] = useState("0");
   const [message, setMessage] = useState("");
+  const [packageSearch, setPackageSearch] = useState("");
+  const [packageSort, setPackageSort] = useState("recommended");
+  const [buyPackage, setBuyPackage] = useState<any | null>(null);
+  const [buyAsset, setBuyAsset] = useState("");
+  const [buyQuote, setBuyQuote] = useState<any | null>(null);
+  const [buyTerms, setBuyTerms] = useState(false);
   const boostAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -67,11 +73,16 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
     if (TARGET_ASSETS.includes(preferredSwap)) setSwapTarget(preferredSwap);
   }, [walletPreferences.data?.swapCurrency]);
 
-  const purchaseMutation = trpc.customer.mining.purchasePackage.useMutation({
+  const quotePurchaseMutation = trpc.customer.mining.quotePurchase.useMutation({
+    onSuccess: quote => { setBuyQuote(quote); setBuyAsset(String(quote.paymentAsset || "")); setMessage(""); },
+    onError: error => { setBuyQuote(null); setMessage(error.message); },
+  });
+  const confirmPurchaseMutation = trpc.customer.mining.confirmPurchase.useMutation({
     onSuccess: result => {
+      setBuyPackage(null); setBuyQuote(null); setBuyTerms(false);
       void dashboard.refetch(); void mainWallet.refetch(); void history.refetch(); void packages.refetch();
       push(`${result.packageName} purchased · ${result.receiptReference}`);
-      setMessage(`${result.packageName} is active from ${dateText(result.startsAt)}. ${result.paymentAmount} ${result.paymentAsset} was immediately debited from your main wallet. ${result.rewardPostingReady ? "Eligible CKI rewards are processed automatically." : "Reward processing is currently paused or this package has no configured daily CKI rate."}`);
+      setMessage(`${result.packageName} is active from ${dateText(result.startsAt)}. ${fmt(result.paymentAmount, 8)} ${result.paymentAsset} was debited from your selected wallet. ${result.rewardPostingReady ? "Eligible CKI rewards are processed automatically." : "Reward processing is currently paused or this package has no configured daily CKI rate."}`);
     },
     onError: error => setMessage(error.message),
   });
@@ -170,12 +181,41 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
   const activeBoostCapacity = active.reduce((sum: number, item: any) => sum + (Number.isFinite(Number(item.boostBonusThs)) ? Number(item.boostBonusThs) : 0), 0);
   const activePackageNames = active.length ? active.slice(0, 3).map((item: any) => item.packageName).join(" · ") + (active.length > 3 ? ` · +${active.length - 3} more` : "") : "No active package entitlement";
   const engineIsRunning = hasActiveHashPowerPackage;
-  const filteredPackages = packageRows.filter((item: any) => {
-    if (packageTab === "mine") return Boolean(item.alreadyPurchased) || active.some((current: any) => current.code === item.code);
-    if (packageTab === "upgrade") return Number(item.baseThs) > activeBase;
-    if (packageTab === "downgrade") return Number(item.baseThs) < activeBase;
-    return true;
-  });
+  const filteredPackages = packageRows
+    .filter((item: any) => {
+      if (packageTab === "mine") return Boolean(item.alreadyPurchased) || active.some((current: any) => current.code === item.code);
+      if (packageTab === "upgrade") return Number(item.baseThs) > activeBase;
+      if (packageTab === "downgrade") return Number(item.baseThs) < activeBase;
+      return true;
+    })
+    .filter((item: any) => {
+      const query = packageSearch.trim().toLowerCase();
+      if (!query) return true;
+      return `${item.name ?? ""} ${item.code ?? ""}`.toLowerCase().includes(query);
+    })
+    .sort((a: any, b: any) => {
+      if (packageSort === "price-low") return Number(a.priceAmount) - Number(b.priceAmount);
+      if (packageSort === "price-high") return Number(b.priceAmount) - Number(a.priceAmount);
+      if (packageSort === "hashrate") return Number(b.baseThs) - Number(a.baseThs);
+      if (packageSort === "name") return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+      return Number(a.displayOrder ?? 0) - Number(b.displayOrder ?? 0);
+    });
+  const openBuyDialog = (item: any) => {
+    setMessage("");
+    setBuyPackage(item);
+    setBuyQuote(null);
+    setBuyAsset(String(item.priceAsset || "USD").toUpperCase());
+    setBuyTerms(false);
+    quotePurchaseMutation.mutate({ packageVersionId: item.versionId });
+  };
+  const selectBuyAsset = (asset: string) => {
+    if (!buyPackage) return;
+    setBuyAsset(asset);
+    setBuyQuote(null);
+    quotePurchaseMutation.mutate({ packageVersionId: buyPackage.versionId, paymentAsset: asset });
+  };
+  const buyQuoteExpired = buyQuote ? new Date(buyQuote.expiresAt).getTime() <= now : false;
+  const buyCanConfirm = Boolean(buyQuote && buyQuote.sufficientBalance && !buyQuoteExpired && buyTerms && !confirmPurchaseMutation.isPending && !quotePurchaseMutation.isPending);
 
   const startFullBalanceSwap = () => {
     if (!canSwapAll) return;
@@ -287,7 +327,8 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
       </section>
 
       <section className="cm-glass cm-packages-panel">
-        <div className="cm-packages-header"><div><h2>Mining Packages</h2><p>Choose from packages currently published by operations</p><p className="cm-purchase-disclosure">Clicking Buy immediately purchases the displayed package and charges the package’s configured price currency using a fresh exchange quote. By clicking Buy, you accept the package terms shown on each card. Capacity activates immediately according to that package’s stacking policy (add or replace); configured CKI rewards accrue automatically while reward processing is enabled.</p></div><div className="cm-package-tabs" role="tablist" aria-label="Filter packages">{[["all","All Packages"],["mine","My Packages"],["upgrade","Upgrade"],["downgrade","Downgrade"]].map(([id,label])=><button type="button" role="tab" aria-selected={packageTab===id} className={packageTab===id?"selected":""} key={id} onClick={()=>setPackageTab(id)}>{label}</button>)}</div><button className="cm-refresh-button" type="button" onClick={()=>{void packages.refetch();void dashboard.refetch()}} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
+        <div className="cm-packages-header"><div><h2>Mining Packages</h2><p>Choose from packages currently published by operations</p><p className="cm-purchase-disclosure">Select a package to open a secure purchase panel where you choose which main-wallet balance funds the purchase. A fresh exchange quote is shown before any charge; by confirming, you accept the package terms shown on each card. Capacity activates immediately according to that package’s stacking policy (add or replace); configured CKI rewards accrue automatically while reward processing is enabled.</p></div><div className="cm-package-tabs" role="tablist" aria-label="Filter packages">{[["all","All Packages"],["mine","My Packages"],["upgrade","Upgrade"],["downgrade","Downgrade"]].map(([id,label])=><button type="button" role="tab" aria-selected={packageTab===id} className={packageTab===id?"selected":""} key={id} onClick={()=>setPackageTab(id)}>{label}</button>)}</div></div>
+        <div className="cm-packages-toolbar"><label className="cm-package-search"><span>Search</span><input type="search" value={packageSearch} onChange={e=>setPackageSearch(e.target.value)} placeholder="Search packages…" aria-label="Search mining packages"/></label><label className="cm-package-sort"><span>Sort</span><select value={packageSort} onChange={e=>setPackageSort(e.target.value)} aria-label="Sort mining packages">{[["recommended","Recommended"],["price-low","Price: low to high"],["price-high","Price: high to low"],["hashrate","Highest hash rate"],["name","Name (A–Z)"]].map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><button className="cm-refresh-button" type="button" onClick={()=>{void packages.refetch();void dashboard.refetch()}} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
         {active.length>0&&<div className="cm-active-note"><Cpu size={14}/><b>YOUR ACTIVE CAPACITY</b><span>{activePackageNames} · {fmt(activeBase,3)} TH/s</span></div>}
         <div className="cm-package-carousel">
           {packages.isLoading&&<div className="cm-empty">Loading published packages…</div>}
@@ -297,17 +338,17 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
             const intent=Number(item.baseThs)>activeBase?"Add hash power":"Buy package";
             const theme=getMiningPackageTheme(item.themeKey);
             const canPurchase=item.purchaseAvailable===true;
-            const purchaseInProgress=purchaseMutation.isPending&&purchaseMutation.variables?.packageVersionId===item.versionId;
+            const purchaseInProgress=(quotePurchaseMutation.isPending||confirmPurchaseMutation.isPending)&&buyPackage?.versionId===item.versionId;
             const unavailableReason=String(item.purchaseUnavailableReason||"");
             const statusLabel=activeSame?"ACTIVE":item.alreadyPurchased?"PURCHASED":canPurchase?"AVAILABLE":item.status!=="published"?"PAUSED":"PURCHASES PAUSED";
-            const buttonLabel=item.alreadyPurchased?"Already purchased":purchaseInProgress?"Purchasing…":canPurchase?intent:item.status!=="published"?"Paused":"Purchases paused";
+            const buttonLabel=item.alreadyPurchased?"Already purchased":purchaseInProgress?"Opening…":canPurchase?intent:item.status!=="published"?"Paused":"Purchases paused";
             return <article className={`cm-package-card theme-${theme.key} ${activeSame?"is-current":""}`} key={item.versionId} style={{"--package-accent":theme.accent,"--package-glow":theme.glow,"--package-surface-start":theme.surfaceStart,"--package-surface-end":theme.surfaceEnd,"--package-button-start":theme.buttonStart,"--package-button-end":theme.buttonEnd} as React.CSSProperties}>
               <div className="cm-package-art"><div className="cm-cube"><i/><i/><b><CoinMark iconUrl={tokenIconUrl}/></b></div><span className="cm-package-glow"/></div>
               <div className="cm-package-label"><h3>{item.name}</h3><span>{statusLabel}</span></div><small className="cm-package-theme-name">{theme.label} theme</small>
               <div className="cm-package-price"><strong>{fmt(item.priceAmount,assetScaleFor(item.priceAsset,mainWallet.data?.currencies))}</strong><small>{item.priceAsset}</small></div>
               <div className="cm-package-facts"><b>{fmt(item.baseThs,3)} <small>TH/s</small></b><span>Boost +{fmt(item.boostBonusThs,3)} TH/s</span><span>Term {item.durationMonths==null?(item.termDays?`≈ ${fmt(item.termDays,0)} days`:"not set"):`${item.durationMonths} months`}</span><span>{item.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(item.effectiveDailyRewardCki,8)} CKI/day${Number(item.miningSpeedMultiplier||1)!==1?` · ${fmt(item.miningSpeedMultiplier,4)}× speed`:""}`}</span><span className="cm-package-projection">{item.projectedTermTokens?`Projected term ≈ ${fmt(item.projectedTermTokens,4)} ${tokenSymbol||"CKI"}${item.projectedTermUsd?` · ≈ $${fmt(item.projectedTermUsd,2)}`:""}`:"Term projection unavailable until a duration is set"}</span>{item.remainingPurchases!=null&&<span className="cm-package-limit">Purchases remaining: {item.remainingPurchases}{Number(item.maxPerCustomer)>0?` of ${item.maxPerCustomer}`:""}</span>}</div>
               {item.termsText&&<details className="cm-package-terms"><summary>Review package terms</summary><p>{item.termsText}</p></details>}
-              <button type="button" className="cm-package-buy" disabled={!canPurchase||purchaseMutation.isPending} title={canPurchase?"Click to purchase now; the package's configured currency wallet will be charged immediately.":(unavailableReason||"Unavailable")} aria-label={`Buy ${item.name} now; the package's configured currency wallet will be charged immediately`} onClick={()=>{if(!canPurchase||purchaseMutation.isPending)return;setMessage("");purchaseMutation.mutate({packageVersionId:item.versionId,idempotencyKey:requestId()})}}>{buttonLabel}<ArrowRight size={13}/></button>
+              <button type="button" className="cm-package-buy" disabled={!canPurchase||purchaseInProgress} title={canPurchase?"Open the purchase panel to review a live quote and choose which wallet balance funds this package.":(unavailableReason||"Unavailable")} aria-label={`Buy ${item.name}; opens the purchase panel to choose a wallet and review a live quote`} onClick={()=>{if(!canPurchase||purchaseInProgress)return;openBuyDialog(item)}}>{buttonLabel}<ArrowRight size={13}/></button>
             </article>;
           })}
         </div>
@@ -351,6 +392,57 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
 
       <footer className="cm-disclaimer"><ShieldCheck size={15}/><span>Configured package rewards are internal estimates, prorated by eligible contract time and recorded in the CKI ledger. They are not verified pool output, withdrawable funds, or a cash payout. CKI swaps credit the selected main wallet; no external transfer is initiated here.</span><b>Economics v{data?.economicsVersion||"—"}</b></footer>
     </main>
+
+    {buyPackage && (()=>{
+      const theme=getMiningPackageTheme(buyPackage.themeKey);
+      const currencies=mainWallet.data?.currencies||[];
+      const quote=buyQuote;
+      const quoting=quotePurchaseMutation.isPending;
+      const confirming=confirmPurchaseMutation.isPending;
+      const insufficient=Boolean(quote&&!quote.sufficientBalance);
+      return <div className="cm-buy-backdrop" role="presentation" onClick={()=>{if(!confirming){setBuyPackage(null);setBuyQuote(null);setBuyTerms(false);}}}>
+        <div className={`cm-buy-dialog theme-${theme.key}`} role="dialog" aria-modal="true" aria-label={`Buy ${buyPackage.name}`} onClick={e=>e.stopPropagation()} style={{"--package-accent":theme.accent,"--package-glow":theme.glow,"--package-surface-start":theme.surfaceStart,"--package-surface-end":theme.surfaceEnd,"--package-button-start":theme.buttonStart,"--package-button-end":theme.buttonEnd} as React.CSSProperties}>
+          <header className="cm-buy-head">
+            <div className="cm-buy-heading"><span className="cm-package-theme-name">{theme.label} theme</span><h3>{buyPackage.name}</h3><small>{buyPackage.code}</small></div>
+            <button type="button" className="cm-buy-close" onClick={()=>{setBuyPackage(null);setBuyQuote(null);setBuyTerms(false);}} aria-label="Close purchase panel" disabled={confirming}>×</button>
+          </header>
+          <div className="cm-buy-body">
+            <div className="cm-buy-summary">
+              <div className="cm-buy-summary-price"><span>Package price</span><strong>{fmt(buyPackage.priceAmount,assetScaleFor(buyPackage.priceAsset,mainWallet.data?.currencies))} <small>{buyPackage.priceAsset}</small></strong></div>
+              <div className="cm-buy-facts"><span><b>{fmt(buyPackage.baseThs,3)}</b> TH/s hash rate</span><span>Boost +{fmt(buyPackage.boostBonusThs,3)} TH/s</span><span>Term {buyPackage.durationMonths==null?(buyPackage.termDays?`≈ ${fmt(buyPackage.termDays,0)} days`:"not set"):`${buyPackage.durationMonths} months`}</span><span>{buyPackage.effectiveDailyRewardCki==null?"Daily CKI rate not configured":`≈ ${fmt(buyPackage.effectiveDailyRewardCki,8)} CKI/day`}</span>{buyPackage.projectedTermTokens&&<span>Projected ≈ {fmt(buyPackage.projectedTermTokens,4)} {tokenSymbol||"CKI"}</span>}</div>
+            </div>
+            <div className="cm-buy-section">
+              <h4>Pay from wallet</h4>
+              <p className="cm-buy-hint">Select which of your main-wallet balances funds this purchase. A fresh exchange quote is calculated for your choice.</p>
+              <div className="cm-buy-wallets" role="radiogroup" aria-label="Select payment wallet">
+                {(currencies.length?currencies.map((c:any)=>c.code):TARGET_ASSETS).map((code:string)=>{
+                  return <button type="button" role="radio" aria-checked={buyAsset===code} key={code} className={`cm-buy-wallet${buyAsset===code?" selected":""}`} onClick={()=>selectBuyAsset(code)} disabled={quoting||confirming}>
+                    <i>{currencyIcons[code]||code.slice(0,1)}</i>
+                    <b>{code}</b>
+                    <small>{fmt(mainWalletAvailable(code),mainWalletScale(code)||assetScaleFor(code,currencies))} available</small>
+                  </button>;
+                })}
+              </div>
+            </div>
+            <div className="cm-buy-quote">
+              <div className="cm-buy-row"><span>Package price</span><b>{buyPackage.priceAsset} {fmt(buyPackage.priceAmount,assetScaleFor(buyPackage.priceAsset,mainWallet.data?.currencies))}</b></div>
+              <div className="cm-buy-row"><span>Payment wallet</span><b>{buyAsset||"—"}</b></div>
+              <div className="cm-buy-row"><span>Amount charged{buyQuote&&Number(buyQuote.fee)>0?" (incl. fee)":""}</span><b>{quoting?"Calculating…":quote?`${fmt(quote.sourceAmount,mainWalletScale(quote.paymentAsset))} ${quote.paymentAsset}`:"—"}</b></div>
+              <div className="cm-buy-row"><span>Fee</span><b>{quote?`${fmt(quote.fee,mainWalletScale(quote.paymentAsset))} ${quote.paymentAsset}`:"—"}</b></div>
+              <div className="cm-buy-row"><span>Available balance</span><b>{quote?`${fmt(quote.availableBalance,mainWalletScale(quote.paymentAsset))} ${quote.paymentAsset}`:fmt(mainWalletAvailable(buyAsset),mainWalletScale(buyAsset))+" "+buyAsset}</b></div>
+              {quote&&<div className={`cm-buy-status${buyQuoteExpired?" expired":insufficient?" short":" ok"}`}>{buyQuoteExpired?"This quote expired — choose a wallet again to refresh.":insufficient?`Insufficient ${buyAsset} balance for this purchase.`:"Quote is valid and your balance is sufficient."}</div>}
+              {quote&&!buyQuoteExpired&&!insufficient&&<div className="cm-buy-expiry">Quote valid until {dateText(quote.expiresAt)} · provider {quote.provider||"—"}</div>}
+            </div>
+            {buyPackage.termsText&&<details className="cm-buy-terms"><summary>Review package terms</summary><p>{buyPackage.termsText}</p></details>}
+            <label className="cm-checkbox cm-buy-accept"><input type="checkbox" checked={buyTerms} onChange={e=>setBuyTerms(e.target.checked)} disabled={confirming}/><span>I have reviewed the package terms and accept the amount shown above.</span></label>
+          </div>
+          <footer className="cm-buy-actions">
+            <button type="button" className="cm-secondary-button" onClick={()=>{setBuyPackage(null);setBuyQuote(null);setBuyTerms(false);}} disabled={confirming}>Cancel</button>
+            <button type="button" className="cm-glow-button cm-buy-confirm" disabled={!buyCanConfirm} onClick={()=>{if(!buyQuote||!buyCanConfirm)return;confirmPurchaseMutation.mutate({quoteId:buyQuote.quoteId,idempotencyKey:requestId(),acceptedTerms:true});}}>{confirming?"Processing purchase…":"Confirm purchase"}<ArrowRight size={14}/></button>
+          </footer>
+        </div>
+      </div>;
+    })()}
 
   </div>;
 }

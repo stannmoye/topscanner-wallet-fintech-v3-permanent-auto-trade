@@ -504,7 +504,7 @@ try {
           [example.themeKey, example.code],
         );
       }
-      const metadata = { packageVersionThemeKey: true, presets: ["aurora", "ember", "glacier", "solar", "nebula"], legacyDefault: "aurora", catalogExamples };
+      const metadata = { packageVersionThemeKey: true, presets: ["aurora", "ember", "glacier", "solar", "nebula", "neon", "plasma", "midnight"], legacyDefault: "aurora", catalogExamples };
       await connection.execute("INSERT INTO mining_schema_migrations (migrationKey,detailsJson) VALUES (?,?)", [packageThemesMigrationKey, JSON.stringify(metadata)]);
       await connection.execute(
         `INSERT INTO v5_audit_events (actorUserId,action,entityType,entityId,reason,reference,metadataJson)

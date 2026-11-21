@@ -20,15 +20,17 @@ const mainMigration = readFileSync(new URL("../scripts/guarded-main-migrate.mjs"
 const portalMigration = readFileSync(new URL("../scripts/apply-portal-migrations.mjs", import.meta.url), "utf8");
 
 describe("Mining package visual themes", () => {
-  it("provides five distinct, safe presets and a stable legacy fallback", () => {
-    expect(MINING_PACKAGE_THEMES).toHaveLength(5);
-    expect(new Set(MINING_PACKAGE_THEMES.map((theme) => theme.key)).size).toBe(5);
-    expect(new Set(MINING_PACKAGE_THEMES.map((theme) => theme.accent)).size).toBe(5);
+  it("provides eight distinct, safe presets and a stable legacy fallback", () => {
+    expect(MINING_PACKAGE_THEMES).toHaveLength(8);
+    expect(new Set(MINING_PACKAGE_THEMES.map((theme) => theme.key)).size).toBe(8);
+    expect(new Set(MINING_PACKAGE_THEMES.map((theme) => theme.accent)).size).toBe(8);
+    expect(new Set(MINING_PACKAGE_THEMES.map((theme) => theme.label)).size).toBe(8);
     expect(MINING_PACKAGE_THEMES.map((theme) => theme.label)).toEqual([
-      "Aurora", "Ember", "Glacier", "Solar", "Nebula",
+      "Aurora", "Ember", "Glacier", "Solar", "Nebula", "Neon", "Plasma", "Midnight",
     ]);
     expect(DEFAULT_MINING_PACKAGE_THEME).toBe("aurora");
     expect(isMiningPackageThemeKey("nebula")).toBe(true);
+    expect(isMiningPackageThemeKey("midnight")).toBe(true);
     expect(isMiningPackageThemeKey("url(https://invalid)")).toBe(false);
     expect(getMiningPackageTheme("unknown").key).toBe(DEFAULT_MINING_PACKAGE_THEME);
   });
@@ -60,10 +62,10 @@ describe("Mining package visual themes", () => {
     expect(mainMigration).toContain("ensureMiningPackageThemeSchema(connection)");
     expect(portalMigration).toContain("ensureMiningPackageThemeSchema(connection, { required: true })");
     expect(schemaRepair).toContain("ensureMiningPackageThemeSchema(db, { required: true })");
-    expect(themeSchemaRepair).toContain("themeKey NOT IN ('aurora','ember','glacier','solar','nebula')");
+    expect(themeSchemaRepair).toContain("themeKey NOT IN ('aurora','ember','glacier','solar','nebula','neon','plasma','midnight')");
   });
 
-  it("shows all five selectable previews in the admin package form", () => {
+  it("shows all eight selectable previews in the admin package form", () => {
     expect(adminUi).toContain("MINING_PACKAGE_THEMES.map(theme");
     expect(adminUi).toContain('aria-label="Package color themes"');
     expect(adminUi).toContain("setPackage(\"themeKey\",theme.key)");
