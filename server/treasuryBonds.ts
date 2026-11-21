@@ -88,56 +88,82 @@ function tenureDays(instrument: TreasuryBondInstrument) {
 }
 
 /**
+ * Read one customer's stored treasury-bond positions and wallet balances.
+ * Storage is strictly best-effort: a database hiccup must never hide the live
+ * instrument catalogue, so failures degrade to an empty store plus a warning
+ * rather than throwing and blanking the whole desk.
+ */
+async function readTreasuryBondStore(userId: number): Promise<{ positions: any[]; balances: any[]; warning: string | null }> {
+  try {
+    await ensureTreasuryBondSchema();
+    return await withConnection(async (conn) => {
+      const [positions] = await conn.query<any[]>(
+        `SELECT id, positionCode, instrumentId, instrumentName, issuer, country, countryCode, category,
+                couponRateBps, tenorYears, tenureDays, principalMinor, expectedProfitMinor, currency,
+                dataSource, dataAsOf, status, openedAt, maturityAt, ledgerReference
+         FROM treasury_bond_positions WHERE userId=? ORDER BY openedAt DESC`,
+        [userId],
+      );
+      const [balances] = await conn.query<any[]>(
+        `SELECT c.code currency, c.symbol, c.scale, c.name currencyName,
+                COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor,
+                COALESCE(b.promotionalMinor,0) promotionalMinor, COALESCE(b.earnedMinor,0) earnedMinor
+         FROM currency_registry c LEFT JOIN customer_balances b ON b.currency=c.code AND b.userId=?
+         WHERE c.enabled=true ORDER BY c.id`,
+        [userId],
+      );
+      return { positions, balances, warning: null };
+    });
+  } catch (error) {
+    console.error("[TreasuryBonds] Failed to read position store:", error instanceof Error ? error.message : "UnknownError");
+    return {
+      positions: [],
+      balances: [],
+      warning: "Your saved positions and wallet balance could not be loaded right now. The live catalogue below is unaffected.",
+    };
+  }
+}
+
+/**
  * Assemble the treasury-bond desk for one customer: the live instrument
  * catalogue, that customer's own positions, wallet balances and a derived
- * summary. Positions are read from storage; instruments are read from the live
- * public data sources.
+ * summary. The catalogue read and the storage read run independently so that a
+ * failure in either one still returns everything the other can provide.
  */
 export async function getTreasuryBondDashboard(userId: number) {
-  await ensureTreasuryBondSchema();
-  const catalogue = await getTreasuryBondCatalogue();
-  return withConnection(async (conn) => {
-    const [positions] = await conn.query<any[]>(
-      `SELECT id, positionCode, instrumentId, instrumentName, issuer, country, countryCode, category,
-              couponRateBps, tenorYears, tenureDays, principalMinor, expectedProfitMinor, currency,
-              dataSource, dataAsOf, status, openedAt, maturityAt, ledgerReference
-       FROM treasury_bond_positions WHERE userId=? ORDER BY openedAt DESC`,
-      [userId],
-    );
-    const [balances] = await conn.query<any[]>(
-      `SELECT c.code currency, c.symbol, c.scale, c.name currencyName,
-              COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor,
-              COALESCE(b.promotionalMinor,0) promotionalMinor, COALESCE(b.earnedMinor,0) earnedMinor
-       FROM currency_registry c LEFT JOIN customer_balances b ON b.currency=c.code AND b.userId=?
-       WHERE c.enabled=true ORDER BY c.id`,
-      [userId],
-    );
-    const active = positions.filter((p) => p.status === "ACTIVE");
-    const investedMinor = active.reduce((sum, p) => sum + Number(p.principalMinor || 0), 0);
-    const expectedProfitMinor = active.reduce((sum, p) => sum + Number(p.expectedProfitMinor || 0), 0);
-    const countries = new Set(active.map((p) => String(p.country || ""))).size;
-    const rates = active.map((p) => Number(p.couponRateBps || 0)).filter((value) => value > 0);
-    const summary = {
-      investedMinor,
-      expectedProfitMinor,
-      activePositions: active.length,
-      completedPositions: positions.filter((p) => p.status !== "ACTIVE").length,
-      countries,
-      averageRatePct: rates.length ? Math.round((rates.reduce((a, b) => a + b, 0) / rates.length)) / 100 : 0,
-    };
-    const usd = balances.find((b) => b.currency === SETTLEMENT_CURRENCY);
-    return {
-      instruments: catalogue.instruments,
-      positions,
-      balances,
-      settlementCurrency: SETTLEMENT_CURRENCY,
-      availableMinor: Number(usd?.availableMinor || 0),
-      summary,
-      sources: catalogue.sources,
-      fetchedAt: catalogue.fetchedAt,
-      degraded: catalogue.degraded,
-    };
-  });
+  const [catalogue, store] = await Promise.all([
+    getTreasuryBondCatalogue(),
+    readTreasuryBondStore(userId),
+  ]);
+
+  const positions = store.positions;
+  const balances = store.balances;
+  const active = positions.filter((p) => p.status === "ACTIVE");
+  const investedMinor = active.reduce((sum, p) => sum + Number(p.principalMinor || 0), 0);
+  const expectedProfitMinor = active.reduce((sum, p) => sum + Number(p.expectedProfitMinor || 0), 0);
+  const countries = new Set(active.map((p) => String(p.country || ""))).size;
+  const rates = active.map((p) => Number(p.couponRateBps || 0)).filter((value) => value > 0);
+  const summary = {
+    investedMinor,
+    expectedProfitMinor,
+    activePositions: active.length,
+    completedPositions: positions.filter((p) => p.status !== "ACTIVE").length,
+    countries,
+    averageRatePct: rates.length ? Math.round((rates.reduce((a, b) => a + b, 0) / rates.length)) / 100 : 0,
+  };
+  const usd = balances.find((b) => b.currency === SETTLEMENT_CURRENCY);
+  return {
+    instruments: catalogue.instruments,
+    positions,
+    balances,
+    settlementCurrency: SETTLEMENT_CURRENCY,
+    availableMinor: Number(usd?.availableMinor || 0),
+    summary,
+    sources: catalogue.sources,
+    fetchedAt: catalogue.fetchedAt,
+    degraded: catalogue.degraded,
+    storeWarning: store.warning,
+  };
 }
 
 /**

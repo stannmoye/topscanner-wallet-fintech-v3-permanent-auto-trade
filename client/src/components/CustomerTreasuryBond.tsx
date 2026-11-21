@@ -6,32 +6,13 @@ import {
   CircleHelp, Clock, Coins, Filter, Globe2, Info, Landmark, Percent, PieChart, RefreshCw, Scale,
   Search, ShieldCheck, Sparkles, Star, TrendingUp, Wallet, X,
 } from "lucide-react";
+import { getTreasuryBondCatalogue, type TreasuryBondInstrument } from "@shared/treasury-bond-catalogue";
 import "./treasury-bond.css";
 
-type TreasuryInstrument = {
-  id: string;
-  countryCode: string;
-  country: string;
-  flag: string;
-  issuer: string;
-  name: string;
-  category: "BILL" | "NOTE" | "BOND" | "TIPS" | "FRN" | "BENCHMARK" | "SOVEREIGN";
-  tenorLabel: string;
-  tenorYears: number;
-  couponRatePct: number;
-  couponFrequency: string;
-  nativeCurrency: string;
-  minInvestmentMinor: number;
-  creditQuality: string;
-  riskLabel: string;
-  paymentMethod: string;
-  source: string;
-  sourceSeries: string;
-  asOf: string;
-  summary: string;
-  highlights: string[];
-  history: { t: string; v: number }[];
-};
+// The desk renders the shared catalogue instrument shape verbatim; aliasing keeps
+// the component's local naming while guaranteeing the browser fallback and the
+// server response can never drift apart.
+type TreasuryInstrument = TreasuryBondInstrument;
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
 const WATCHLIST_STORAGE_KEY = "arbitrade_treasury_bond_watchlist";
@@ -220,10 +201,44 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
     onError: (error) => setMessage(error.message),
   });
 
-  const instruments: TreasuryInstrument[] = useMemo(() => (market.data?.instruments || []) as TreasuryInstrument[], [market.data]);
+  const serverInstruments = useMemo(() => (market.data?.instruments || []) as TreasuryInstrument[], [market.data]);
+  const hasServerInstruments = serverInstruments.length > 0;
+
+  // Resilience fallback: both public data sources are CORS-enabled, so if the
+  // account service (or its network egress) cannot reach them, the desk fetches
+  // the exact same verified catalogue directly in the customer's browser. No
+  // data is ever fabricated — a failed fetch stays a visible, retryable state.
+  const [fallback, setFallback] = useState<{ instruments: TreasuryInstrument[]; sources: any[]; fetchedAt: string; degraded: boolean } | null>(null);
+  const [fallbackError, setFallbackError] = useState("");
+
+  useEffect(() => {
+    if (market.isLoading || market.isFetching || hasServerInstruments) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const catalogue = await getTreasuryBondCatalogue();
+        if (cancelled) return;
+        if (catalogue.instruments.length) {
+          setFallback({ instruments: catalogue.instruments as TreasuryInstrument[], sources: catalogue.sources, fetchedAt: catalogue.fetchedAt, degraded: catalogue.degraded });
+          setFallbackError("");
+        } else {
+          setFallbackError("The public data sources did not return any instruments.");
+        }
+      } catch (error) {
+        if (!cancelled) setFallbackError(error instanceof Error ? error.message : "Live market data could not be loaded");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [market.isLoading, market.isFetching, hasServerInstruments]);
+
+  const usingFallback = !hasServerInstruments && !!fallback?.instruments.length;
+  const instruments: TreasuryInstrument[] = hasServerInstruments ? serverInstruments : (fallback?.instruments || []);
+  // True while the browser fallback is still contacting the public data sources.
+  const contactingSources = !market.isLoading && !market.isError && !hasServerInstruments && !instruments.length && !usingFallback && !fallbackError;
   const positions: any[] = (market.data?.positions || []) as any[];
   const available = Number(market.data?.availableMinor || 0);
   const summary = market.data?.summary || { investedMinor: 0, expectedProfitMinor: 0, activePositions: 0, completedPositions: 0, countries: 0, averageRatePct: 0 };
+  const storeWarning = String((market.data as any)?.storeWarning || "");
 
   const regions = useMemo(() => {
     const map = new Map<string, string>();
@@ -291,7 +306,9 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
     purchase.mutate({ instrumentId: selected.id, amountMinor: Math.round(amount), idempotencyKey: crypto.randomUUID() });
   };
 
-  const sources = market.data?.sources || [];
+  const sources = usingFallback ? (fallback?.sources || []) : (market.data?.sources || []);
+  const fetchedAt = usingFallback ? fallback?.fetchedAt : market.data?.fetchedAt;
+  const degraded = usingFallback ? !!fallback?.degraded : !!market.data?.degraded;
 
   return <div className="arb-page portal-page tb-page">
     <section className="tb-hero" aria-label="Treasury bond desk">
@@ -299,8 +316,8 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
       <div className="tb-hero-top">
         <div className="tb-hero-badge"><Landmark size={15}/> TREASURY BOND DESK</div>
         <div className="tb-hero-sources">
-          <span className={`tb-source-chip${market.data?.degraded ? " is-degraded" : ""}`}><span className="pulse"/> {market.data?.degraded ? "Some feeds degraded" : "Live market data"}</span>
-          <button type="button" className="tb-refresh" onClick={() => market.refetch()} disabled={market.isFetching} aria-label="Refresh market data"><RefreshCw size={13} className={market.isFetching ? "spin" : ""}/> {market.data?.fetchedAt ? `Updated ${new Date(market.data.fetchedAt).toLocaleTimeString()}` : "Refresh"}</button>
+          <span className={`tb-source-chip${degraded ? " is-degraded" : ""}`}><span className="pulse"/> {degraded ? "Some feeds degraded" : usingFallback ? "Live data (browser fallback)" : "Live market data"}</span>
+          <button type="button" className="tb-refresh" onClick={() => market.refetch()} disabled={market.isFetching} aria-label="Refresh market data"><RefreshCw size={13} className={market.isFetching ? "spin" : ""}/> {fetchedAt ? `Updated ${new Date(fetchedAt).toLocaleTimeString()}` : "Refresh"}</button>
         </div>
       </div>
       <div className="tb-hero-body">
@@ -330,8 +347,28 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
 
     {sources.length > 0 && <div className="tb-source-strip">
       <span className="tb-source-strip-label"><BarChart3 size={13}/> Data sources</span>
-      {sources.map((s: any) => <span className={`tb-source-pill${s.status === "ok" ? " is-ok" : " is-down"}`} key={s.name} title={s.url}>{s.status === "ok" ? <Check size={12}/> : <AlertTriangle size={12}/>} {s.name}</span>)}
+      {sources.map((s: any) => <span className={`tb-source-pill${s.status === "ok" ? " is-ok" : " is-down"}`} key={s.name} title={s.detail || s.url}>{s.status === "ok" ? <Check size={12}/> : <AlertTriangle size={12}/>} {s.name}</span>)}
     </div>}
+
+    {market.isError && !usingFallback && <div className="tb-alert tb-alert-error" role="status">
+      <AlertTriangle size={16}/>
+      <div className="tb-alert-body"><strong>The desk could not reach the account service.</strong><p>{market.error?.message || "Live market data could not be loaded."} Contacting the official data sources directly…</p></div>
+      <button type="button" className="secondary-button" onClick={() => market.refetch()}>Retry</button>
+    </div>}
+
+    {usingFallback && <div className="tb-alert tb-alert-info" role="status">
+      <Globe2 size={16}/>
+      <div className="tb-alert-body"><strong>Live rates loaded directly from the official data sources.</strong><p>The account service could not reach the market data feeds, so the catalogue was fetched securely in your browser (both sources allow it). Positions and purchases resume automatically when the service reconnects.</p></div>
+      <button type="button" className="secondary-button" onClick={() => market.refetch()}>Reconnect</button>
+    </div>}
+
+    {!market.isLoading && !market.isError && !usingFallback && !instruments.length && fallbackError && <div className="tb-alert tb-alert-warn" role="status">
+      <Info size={16}/>
+      <div className="tb-alert-body"><strong>Live market data is temporarily unavailable.</strong><p>{fallbackError}</p></div>
+      <button type="button" className="secondary-button" onClick={() => { setFallbackError(""); market.refetch(); }}>Retry</button>
+    </div>}
+
+    {storeWarning && <div className="tb-alert tb-alert-warn" role="status"><AlertTriangle size={16}/><div className="tb-alert-body"><p>{storeWarning}</p></div></div>}
 
     <div className="tb-charts">
       <YieldCurveChart instruments={instruments} />
@@ -374,8 +411,8 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
         </div>
       </div>}
 
-      {market.isLoading && !instruments.length && <div className="tb-grid">{Array.from({ length: 6 }).map((_, i) => <div className="tb-card tb-card-skeleton" key={i}><div className="tb-card-loading">Loading live instrument…</div></div>)}</div>}
-      {!market.isLoading && !filtered.length && <div className="tb-empty-inline"><Info size={15}/> No instruments match the current filters. Try clearing the search or widening the filters.</div>}
+      {(market.isLoading || contactingSources) && !instruments.length && <div className="tb-grid">{Array.from({ length: 6 }).map((_, i) => <div className="tb-card tb-card-skeleton" key={i}><div className="tb-card-loading">Loading live instrument…</div></div>)}</div>}
+      {instruments.length > 0 && !filtered.length && <div className="tb-empty-inline"><Info size={15}/> No instruments match the current filters. Try clearing the search or widening the filters.</div>}
 
       <div className="tb-grid">
         {filtered.map((instrument) => {
