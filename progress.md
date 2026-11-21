@@ -1,3 +1,32 @@
+## 2026-11-21 — Customer Mining: two new features + advanced design/spacing pass
+
+Enhanced the customer-portal Mining section (`client/src/components/CustomerMining.tsx`
+and `client/src/mining-portal.css`) so it reads as a more advanced product and so
+customers can see two net-new tools. No backend changes: both features derive from
+data the mining API already returns (`dashboard`, `packages`, `transactions`).
+
+- **New feature 1 — Mining Analytics & Forecast** (`cm-analytics`): four KPI tiles
+  (Mined today, Mined · 7 days, Projected daily, Remaining forecast), a 7-day
+  rewards bar chart bucketed from posted reward ledger rows, and a Reward Goal
+  tracker with a progress meter, remaining amount, and estimated days-to-goal.
+  The goal persists in `localStorage` (`cm-mining-goal`).
+- **New feature 2 — Package Comparison** (`cm-compare-*`): a per-card Compare
+  toggle (up to 3), a sticky bottom selection bar with removable chips, and a
+  comparison dialog table (price, base/boost/total hash power, daily CKI, term,
+  projected term CKI + USD, entry cost per TH/s) with a "Best value" badge
+  computed from price-per-TH/s when the selected packages share a payment asset.
+- **Advanced design pass** appended to `mining-portal.css` as a final override
+  layer: even section rhythm, a unified card surface (balanced 19–20px padding,
+  cyan hairline, dual glows), and — addressing the reported complaint — a rebuilt
+  hash-power boost card (`padding:9px 11px` → `20px 22px`, `min-height:112px` →
+  `168px`, larger machine + copy gaps).
+- **Responsive**: overrides at 1600 / 1180 / 1024 / 900 / 760 / 560 / 460 / 410 px
+  (plus reduced-motion) for desktop, laptop, tablet and mobile; the boost card
+  steps down at 760 px and 410 px; analytics KPIs go 4 → 2 → 1 columns; the
+  compare bar wraps and package actions stack on phones.
+- Verification: `pnpm check`, `pnpm test` (199 files / 1,580 passed / 36 skipped)
+  and `pnpm build:static` all pass; the `CustomerMining-*.js` chunk rebuilds clean.
+
 ## 2026-11-21 — Remove the global "reward processing paused" switch completely
 
 Owner reported reward processing appeared permanently paused. The cause was the
