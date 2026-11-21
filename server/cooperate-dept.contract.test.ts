@@ -35,7 +35,9 @@ describe("Cooperate Dept distressed-company desk", () => {
     expect(app).toContain('item.id!=="cooperate-dept")&&<CustomerInvestmentCategory');
 
     expect(customerUi).toContain("trpc.customer.cooperateDept.market.useQuery");
-    expect(customerUi).toContain("trpc.customer.cooperateDept.commit.useMutation");
+    // Customers buy: the desk says "purchase", never "commit".
+    expect(customerUi).toContain("trpc.customer.cooperateDept.purchase.useMutation");
+    expect(customerUi).not.toContain("cooperateDept.commit");
     expect(customerUi).toContain('idempotencyKey: crypto.randomUUID()');
   });
 
@@ -111,31 +113,83 @@ describe("Cooperate Dept distressed-company desk", () => {
     expect(normalize).toContain('countdownDirection !== "until" && countdownDirection !== "since"');
   });
 
-  it("merges administrator companies into the customer desk and resolves them first for a commitment", () => {
+  it("merges administrator companies into the customer desk and resolves them first for a purchase", () => {
     expect(catalogue).toContain("export function compareCooperateDeptCompanies(");
     expect(serverDesk).toContain('from "./cooperateDeptCompanies"');
     expect(serverDesk).toContain("findEnabledAdminCooperateDeptCompany");
     expect(serverDesk).toContain("listEnabledAdminCooperateDeptCompanies");
     expect(serverDesk).toContain("const companies = [...adminCompanies, ...catalogue.companies].sort(compareCooperateDeptCompanies)");
-    expect(serverDesk).toContain("async function resolveCompanyForCommitment(companyId: string)");
-    expect(serverDesk).toContain("const company = await resolveCompanyForCommitment(String(input.companyId || \"\"))");
+    expect(serverDesk).toContain("async function resolveCompanyForPurchase(companyId: string)");
+    expect(serverDesk).toContain("const company = await resolveCompanyForPurchase(String(input.companyId || \"\"))");
   });
 
-  it("reserves a commitment through the audited wallet ledger with idempotency", () => {
+  it("records a purchase through the audited wallet ledger with idempotency", () => {
     expect(serverDesk).toContain('export const COOPERATE_DEPT_POSITIONS_TABLE = "cooperate_dept_positions"');
     expect(serverDesk).toContain("CREATE TABLE IF NOT EXISTS cooperate_dept_positions");
     expect(serverDesk).toContain("export function ensureCooperateDeptSchema()");
     expect(serverDesk).toContain("`cooperate-dept:${userId}:${crypto.createHash(");
-    expect(serverDesk).toContain("cooperate_dept_commitment");
+    expect(serverDesk).toContain("cooperate_dept_purchase");
     expect(serverDesk).toContain("SELECT resultJson");
     expect(serverDesk).toContain("FOR UPDATE");
     expect(serverDesk).toContain("v5_idempotency_keys");
   });
 
+  it("funds a purchase from any single wallet or the combined balance of every wallet", () => {
+    // The desk reuses the shared cross-wallet FX engine so nothing is hard-coded.
+    expect(serverDesk).toContain('from "./modules/trading-wallet-fx"');
+    expect(serverDesk).toContain("planCrossWalletFunding");
+    expect(serverDesk).toContain("calculateCombinedAvailableTargetMinor");
+    expect(serverDesk).toContain("getFreshTradingFxRate");
+    expect(serverDesk).toContain("getWalletFundingPriorityForFunding");
+    expect(serverDesk).toContain('export const COOPERATE_DEPT_COMBINED_SOURCE = "COMBINED"');
+    expect(serverDesk).toContain("function planPurchaseFunding(");
+    expect(serverDesk).toContain("async function quoteCooperateDeptPurchase(");
+    // Every wallet is read and locked for a purchase; the plan is persisted per position.
+    expect(serverDesk).toContain("async function readWalletRows(");
+    expect(serverDesk).toContain("FROM customer_balances b");
+    expect(serverDesk).toContain("FOR UPDATE");
+    expect(serverDesk).toContain("fundingSource VARCHAR(24) NULL");
+    expect(serverDesk).toContain("fundingPlanJson TEXT NULL");
+    expect(serverDesk).toContain("cooperate_dept_fx_debit");
+    expect(serverDesk).toContain("cooperate_dept_fx_credit");
+    // Missing FX fails closed rather than silently skipping a wallet.
+    expect(serverDesk).toContain("Insufficient combined spendable wallet balance at current exchange rates");
+  });
+
+  it("gives the customer desk pagination, a country filter and the extra controls", () => {
+    // Pagination: previous / next plus a page pill and page-size selector.
+    expect(customerUi).toContain("const PAGE_SIZES = [6, 12, 24]");
+    expect(customerUi).toContain("cd-pagination");
+    expect(customerUi).toContain("Previous</button>");
+    expect(customerUi).toContain("Next <ChevronRight");
+    expect(customerUi).toContain("Page {currentPage} of {pageCount}");
+    expect(customerUi).toContain("const pageRows = filtered.slice(");
+    // Country filter plus sector, company type, severity, status, urgency, watchlist and capital.
+    expect(customerUi).toContain('aria-label="Filter by country"');
+    expect(customerUi).toContain("const countryOptions = useMemo(");
+    expect(customerUi).toContain('aria-label="Filter by sector"');
+    expect(customerUi).toContain('aria-label="Filter by company type"');
+    expect(customerUi).toContain("urgentOnly");
+    expect(customerUi).toContain("watchlistOnly");
+    expect(customerUi).toContain("minCapital");
+    // Extra features: watchlist, compare, portfolio dashboard and CSV export.
+    expect(customerUi).toContain("WATCHLIST_KEY");
+    expect(customerUi).toContain("const toggleCompare = (id: string)");
+    expect(customerUi).toContain("cd-portfolio-stats");
+    expect(customerUi).toContain("function downloadCsv(");
+    // Funding-source selector with a live quote.
+    expect(customerUi).toContain("utils.customer.cooperateDept.fundingQuote.fetch");
+    expect(customerUi).toContain("cd-funding-options");
+    expect(customerUi).toContain("Combined balance");
+  });
+
   it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
     expect(serverRouters).toContain("cooperateDept: router({");
+    expect(serverRouters).toContain("import { getCooperateDeptDashboard, purchaseCooperateDeptCompany, quoteCooperateDeptPurchase } from \"./cooperateDept\";");
     expect(serverRouters).toContain("market: protectedProcedure.query(({ ctx }) => getCooperateDeptDashboard(ctx.user.id))");
-    expect(serverRouters).toContain("commit: protectedProcedure.input(z.object({");
+    expect(serverRouters).toContain("fundingQuote: protectedProcedure.input(z.object({");
+    expect(serverRouters).toContain("purchase: protectedProcedure.input(z.object({");
+    expect(serverRouters).not.toContain("commit: protectedProcedure");
     expect(serverRouters).toContain("cooperateDeptCompanies: adminProcedure.query(() => listAdminCooperateDeptCompanies())");
     expect(serverRouters).toContain("createCooperateDeptCompany: adminProcedure.input(createCooperateDeptCompanySchema).mutation");
     expect(serverRouters).toContain("updateCooperateDeptCompany: adminProcedure.input(updateCooperateDeptCompanySchema).mutation");

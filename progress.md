@@ -1,3 +1,45 @@
+## 2026-11-22 — Cooperate Dept phase 2: buy from any/combined wallet, pagination, filters + 5 more features
+
+Follow-up to the Cooperate Dept desk. Four owner asks, all delivered.
+
+- **Fund from any wallet or every wallet combined** (`server/cooperateDept.ts`,
+  `server/routers.ts`): a purchase no longer assumes the USD settlement wallet.
+  The desk now reuses the platform's existing cross-wallet FX engine
+  (`planCrossWalletFunding`, `calculateCombinedAvailableTargetMinor`,
+  `getFreshTradingFxRate`, `getWalletFundingPriorityForFunding`). A customer can
+  pay from the USD settlement wallet, **any single funded wallet** (converted at
+  the live rate), or **all wallets combined** (`COOPERATE_DEPT_COMBINED_SOURCE`)
+  in admin funding-priority order. Every source wallet is read and locked
+  `FOR UPDATE`, debited per-wallet (`cooperate_dept_fx_debit` / `_fx_credit`
+  ledger entries + `fx_rate_snapshots`), then settled in USD and locked
+  (`cooperate_dept_purchase`). Positions persist `fundingSource` +
+  `fundingPlanJson`; a missing FX quote or a shortfall fails closed (nothing is
+  debited partially). New `cooperateDept.fundingQuote` query previews the exact
+  per-wallet debits and combined affordability without touching any balance.
+- **"Commit" → "purchase" everywhere:** the router procedure is now
+  `cooperateDept.purchase`, the ledger entry `cooperate_dept_purchase`, the
+  backend `purchaseCooperateDeptCompany` / `resolveCompanyForPurchase`, and every
+  customer label reads Buy / Purchase / "Review & buy" / "Confirm purchase" so
+  customers know they are buying.
+- **Pagination:** the catalogue renders one page at a time — `Previous` / `Next`,
+  a `Page X of Y` pill and a per-page selector (6 / 12 / 24) — instead of dumping
+  every company at once; the page resets to 1 on any filter change.
+- **Filters:** **country** (derived from the live catalogue) plus sector, company
+  type, severity, status, an "urgent only" (critical or ≤90-day) toggle, a
+  minimum-capital input, a watchlist-only toggle, sort, and a "clear N filters"
+  control.
+- **Five+ more features:** (1) persistent **watchlist** (localStorage, starred
+  cards + watchlist-only filter); (2) **compare** up to 3 companies in a side-by-side
+  table; (3) **portfolio dashboard** with summary stats and by-country bars;
+  (4) **CSV export** for both the filtered catalogue and the purchases; (5) the
+  **funding-source selector with a debounced live quote** described above.
+- **Styling:** all new classes (pagination, filters/checkboxes, watchlist/compare
+  rail, portfolio stats/bars, funding options, quote states, compare modal) added
+  to `client/src/components/cooperate-dept.css`.
+- Verification: `pnpm check` clean; `pnpm test` (201 files / 1,598 passed / 36
+  skipped) passes, including the updated `server/cooperate-dept.contract.test.ts`
+  (now 12 tests covering cross-wallet funding, pagination and the new filters).
+
 ## 2026-11-22 — Cooperate Dept: distressed-company desk (live registers + admin publishing)
 
 New **Cooperate Dept** feature for the customer portal menu, with a matching admin

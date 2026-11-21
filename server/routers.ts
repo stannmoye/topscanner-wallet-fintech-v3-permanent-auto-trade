@@ -15,7 +15,7 @@ import { allocateStake, cancelStake, getStakeDashboard, projectStake } from "./s
 import { getTreasuryBondDashboard, purchaseTreasuryBond } from "./treasuryBonds";
 import { projectTreasuryBondProfit } from "./treasuryBondProvider";
 import { createAdminTreasuryBondInstrument, deleteAdminTreasuryBondInstrument, listAdminTreasuryBondInstruments, setAdminTreasuryBondInstrumentEnabled, updateAdminTreasuryBondInstrument, TREASURY_INSTRUMENT_CATEGORIES } from "./treasuryBondInstruments";
-import { commitCooperateDeptInterest, getCooperateDeptDashboard } from "./cooperateDept";
+import { getCooperateDeptDashboard, purchaseCooperateDeptCompany, quoteCooperateDeptPurchase } from "./cooperateDept";
 import { createAdminCooperateDeptCompany, deleteAdminCooperateDeptCompany, listAdminCooperateDeptCompanies, setAdminCooperateDeptCompanyEnabled, updateAdminCooperateDeptCompany } from "./cooperateDeptCompanies";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
@@ -576,22 +576,27 @@ export const appRouter = router({
     }),
     cooperateDept: router({
       market: protectedProcedure.query(({ ctx }) => getCooperateDeptDashboard(ctx.user.id)),
-      commit: protectedProcedure.input(z.object({
+      fundingQuote: protectedProcedure.input(z.object({
+        amountMinor: z.number().int().min(0).max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+      })).query(({ ctx, input }) => quoteCooperateDeptPurchase(ctx.user.id, input)),
+      purchase: protectedProcedure.input(z.object({
         companyId: z.string().min(2).max(80),
         amountMinor: z.number().int().positive().max(100_000_000),
         ownershipBasis: z.enum(["SHARES", "FULL_OWNERSHIP", "ASSET_PURCHASE"]),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
         idempotencyKey: z.string().min(8).max(160),
       })).mutation(async ({ ctx, input }) => {
-        const result = await commitCooperateDeptInterest(ctx.user.id, input);
+        const result = await purchaseCooperateDeptCompany(ctx.user.id, input);
         await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
           eventType: "INVESTMENT",
           status: "COMPLETED",
-          title: "Cooperate Dept commitment recorded",
-          message: `${result.companyName} received a ${result.ownershipBasis} commitment and ${result.amountMinor} minor units of ${result.currency} were reserved through the wallet ledger.`,
+          title: "Cooperate Dept purchase recorded",
+          message: `${result.companyName} received a ${result.ownershipBasis} purchase of ${result.amountMinor} minor units of ${result.currency}, funded from ${result.fundingSource === "COMBINED" ? "combined wallets" : result.fundingSource} through the wallet ledger.`,
           transactionCode: `cooperate-dept:${result.positionCode}`,
           amountMinor: result.amountMinor,
           asset: result.currency,
-          metadata: { positionCode: result.positionCode, companyId: result.companyId },
+          metadata: { positionCode: result.positionCode, companyId: result.companyId, fundingSource: result.fundingSource },
         });
         return result;
       }),

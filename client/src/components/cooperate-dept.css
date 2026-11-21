@@ -344,3 +344,152 @@
 
 .cd-utility { display: flex; gap: 18px; flex-wrap: wrap; padding: 12px 4px 0; border-top: 1px solid var(--cd-line); font-size: 0.76rem; color: var(--arb-color-text-muted); }
 .cd-utility-item { display: inline-flex; align-items: center; gap: 7px; }
+
+/* ------------------------------------------------------------------ *
+ * Filters — narrow inputs, checkboxes, clear control
+ * ------------------------------------------------------------------ */
+.cd-filter.is-narrow { flex: 0 1 160px; }
+.cd-filter.is-narrow input, .cd-filter.is-narrow select { min-width: 0; }
+.cd-filter input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.cd-filter input[type="number"]::-webkit-outer-spin-button,
+.cd-filter input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+.cd-checkbox {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 42px; padding: 0 12px; border-radius: 12px;
+  border: 1px solid var(--cd-line);
+  background: color-mix(in srgb, var(--arb-color-surface) 80%, transparent);
+  font-size: 0.8rem; color: var(--arb-color-text-soft); cursor: pointer; user-select: none;
+}
+.cd-checkbox input { width: 15px; height: 15px; accent-color: var(--cd-critical); cursor: pointer; }
+.cd-checkbox:has(input:checked) { border-color: color-mix(in srgb, var(--cd-critical) 50%, var(--cd-line)); color: var(--arb-color-text); }
+
+.cd-clear {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 42px; padding: 0 12px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--cd-critical) 40%, var(--cd-line));
+  background: color-mix(in srgb, var(--cd-critical) 10%, transparent);
+  color: var(--arb-color-text); font-size: 0.78rem; font-weight: 600; cursor: pointer;
+}
+.cd-clear:hover { filter: brightness(1.1); }
+
+/* ------------------------------------------------------------------ *
+ * Results bar, compare selection
+ * ------------------------------------------------------------------ */
+.cd-results-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-top: 14px; font-size: 0.78rem; color: var(--arb-color-text-muted);
+}
+.cd-compare-bar {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 8px 6px 12px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--cd-critical) 40%, var(--cd-line));
+  background: color-mix(in srgb, var(--cd-critical) 10%, transparent);
+  color: var(--arb-color-text);
+}
+.cd-compare-open {
+  border: none; border-radius: 999px; padding: 4px 12px; cursor: pointer;
+  font-weight: 700; font-size: 0.74rem; color: #fff;
+  background: linear-gradient(120deg, var(--cd-critical), var(--cd-critical-deep));
+}
+.cd-compare-open:hover { filter: brightness(1.08); }
+.cd-compare-bar .cd-clear { min-height: 24px; padding: 0 8px; border-radius: 999px; background: transparent; }
+
+/* ------------------------------------------------------------------ *
+ * Card tool rail (watchlist + compare)
+ * ------------------------------------------------------------------ */
+.cd-card-tools { display: inline-flex; gap: 6px; }
+.cd-icon-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--cd-critical) 60%, transparent); outline-offset: 1px; }
+
+/* ------------------------------------------------------------------ *
+ * Pagination
+ * ------------------------------------------------------------------ */
+.cd-pagination {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--cd-line);
+}
+.cd-page-pill {
+  font-size: 0.8rem; font-weight: 700; color: var(--arb-color-text);
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--cd-line);
+  background: color-mix(in srgb, var(--arb-color-surface) 70%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.cd-page-size { display: inline-flex; align-items: center; gap: 8px; font-size: 0.76rem; color: var(--arb-color-text-muted); }
+.cd-page-size select {
+  border: 1px solid var(--cd-line); border-radius: 10px; padding: 6px 10px;
+  background: color-mix(in srgb, var(--arb-color-surface) 80%, transparent);
+  color: var(--arb-color-text); font-size: 0.78rem; cursor: pointer;
+}
+.cd-pagination .secondary-button:disabled, .cd-pagination .secondary-button[disabled] { opacity: 0.5; cursor: default; }
+
+/* ------------------------------------------------------------------ *
+ * FAQ (education)
+ * ------------------------------------------------------------------ */
+.cd-faq { border: 1px solid var(--cd-line); border-radius: 12px; padding: 10px 14px; background: color-mix(in srgb, var(--arb-color-surface) 55%, transparent); }
+.cd-faq summary { cursor: pointer; font-weight: 600; color: var(--arb-color-text); font-size: 0.86rem; }
+.cd-faq[open] summary { color: var(--cd-critical); }
+.cd-faq > div { color: var(--arb-color-text-soft); font-size: 0.84rem; line-height: 1.55; margin-top: 8px; display: grid; gap: 6px; }
+.cd-faq ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+
+/* ------------------------------------------------------------------ *
+ * Portfolio stats + by-country bars
+ * ------------------------------------------------------------------ */
+.cd-panel-actions { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cd-portfolio-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.cd-portfolio-stat {
+  border-radius: 14px; border: 1px solid var(--cd-line); padding: 12px 14px;
+  background: color-mix(in srgb, var(--arb-color-surface) 60%, transparent); display: grid; gap: 3px;
+}
+.cd-portfolio-stat span { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arb-color-text-muted); font-weight: 700; }
+.cd-portfolio-stat strong { font-size: 1.35rem; color: var(--arb-color-text); line-height: 1.1; }
+.cd-portfolio-stat strong.is-critical { color: var(--cd-critical); }
+.cd-portfolio-stat small { font-size: 0.72rem; color: var(--arb-color-text-muted); }
+
+.cd-portfolio-bars { display: grid; gap: 8px; }
+.cd-bar-row { display: grid; grid-template-columns: minmax(80px, 150px) 1fr auto; align-items: center; gap: 10px; font-size: 0.78rem; color: var(--arb-color-text-soft); }
+.cd-bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cd-bar-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--arb-color-surface-raised) 80%, transparent); overflow: hidden; }
+.cd-bar-fill { display: block; height: 100%; border-radius: 999px; background: linear-gradient(120deg, var(--cd-critical), var(--cd-high)); }
+.cd-bar-row b { color: var(--arb-color-text); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ *
+ * Purchase modal — funding source + live quote
+ * ------------------------------------------------------------------ */
+.cd-commit-modal { max-width: 720px; }
+.cd-funding-options { display: grid; gap: 8px; margin-top: 8px; }
+.cd-funding-option {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  border: 1px solid var(--cd-line); border-radius: 12px; padding: 10px 12px;
+  background: color-mix(in srgb, var(--arb-color-surface) 70%, transparent);
+  color: var(--arb-color-text-soft); cursor: pointer;
+}
+.cd-funding-option > span { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.cd-funding-option strong { color: var(--arb-color-text); font-size: 0.86rem; }
+.cd-funding-option small { font-size: 0.72rem; color: var(--arb-color-text-muted); }
+.cd-funding-option b { color: var(--arb-color-text); font-variant-numeric: tabular-nums; font-size: 0.84rem; }
+.cd-funding-option.is-on { border-color: color-mix(in srgb, var(--cd-critical) 55%, var(--cd-line)); background: color-mix(in srgb, var(--cd-critical) 10%, transparent); color: var(--arb-color-text); }
+.cd-funding-option:disabled { opacity: 0.55; cursor: default; }
+
+.cd-quote {
+  margin-top: 12px; border-radius: 12px; padding: 12px 14px; font-size: 0.8rem;
+  border: 1px dashed var(--cd-line); background: color-mix(in srgb, var(--arb-color-surface) 60%, transparent);
+  color: var(--arb-color-text-soft); line-height: 1.5;
+}
+.cd-quote strong { display: inline-flex; align-items: center; gap: 6px; color: var(--arb-color-text); }
+.cd-quote ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.cd-quote em { font-style: normal; color: var(--arb-color-text-muted); font-size: 0.72rem; }
+.cd-quote.is-ok { border-style: solid; border-color: color-mix(in srgb, #34d399 45%, var(--cd-line)); background: color-mix(in srgb, #34d399 8%, transparent); }
+.cd-quote.is-short { border-style: solid; border-color: color-mix(in srgb, var(--cd-critical) 45%, var(--cd-line)); background: color-mix(in srgb, var(--cd-critical) 10%, transparent); color: var(--arb-color-text); }
+.cd-quote.is-short strong { color: var(--cd-critical); }
+
+/* ------------------------------------------------------------------ *
+ * Compare modal
+ * ------------------------------------------------------------------ */
+.cd-compare-modal { max-width: 960px; width: min(96vw, 960px); }
+.cd-compare-scroll { overflow-x: auto; margin: 6px 0 12px; border: 1px solid var(--cd-line); border-radius: 12px; }
+.cd-compare-table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 0.8rem; }
+.cd-compare-table th, .cd-compare-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--cd-line); vertical-align: top; }
+.cd-compare-table thead th { position: sticky; top: 0; background: var(--arb-color-surface-raised); color: var(--arb-color-text); font-size: 0.8rem; z-index: 1; }
+.cd-compare-table tbody td:first-child { color: var(--arb-color-text-muted); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.06em; font-weight: 700; white-space: nowrap; }
+.cd-compare-table tbody tr:last-child td { border-bottom: none; }
+.cd-compare-table tbody td { color: var(--arb-color-text-soft); }

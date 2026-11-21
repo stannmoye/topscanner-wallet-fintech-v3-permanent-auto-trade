@@ -12,10 +12,17 @@ import {
   listEnabledAdminCooperateDeptCompanies,
   type OwnershipBasis,
 } from "./cooperateDeptCompanies";
+import {
+  FxRateUnavailableError,
+  planCrossWalletFunding,
+  calculateCombinedAvailableTargetMinor,
+  type FxRateSnapshot,
+} from "./modules/trading-wallet-fx";
+import { getFreshTradingFxRate, getWalletFundingPriorityForFunding } from "./db";
 
 type Db = mysql.PoolConnection;
 
-/** Additive, self-hosted storage for Cooperate Dept commitments (outside Drizzle). */
+/** Additive, self-hosted storage for Cooperate Dept purchases (outside Drizzle). */
 export const COOPERATE_DEPT_POSITIONS_TABLE = "cooperate_dept_positions";
 
 const CREATE_POSITIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS cooperate_dept_positions (
@@ -31,6 +38,8 @@ const CREATE_POSITIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS cooperate_dept_po
   ownershipBasis VARCHAR(24) NOT NULL,
   amountMinor BIGINT NOT NULL,
   currency VARCHAR(12) NOT NULL DEFAULT 'USD',
+  fundingSource VARCHAR(24) NULL,
+  fundingPlanJson TEXT NULL,
   targetDate VARCHAR(24) NULL,
   dataSource VARCHAR(160) NULL,
   dataAsOf VARCHAR(24) NULL,
@@ -42,8 +51,38 @@ const CREATE_POSITIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS cooperate_dept_po
   KEY cooperate_dept_positions_user_idx (userId, status)
 ) ENGINE=InnoDB`;
 
+/** Columns added after the first release; `ADD COLUMN IF NOT EXISTS` is not portable, so they are attempted and tolerated. */
+const ADD_POSITIONS_COLUMNS_SQL = [
+  "ALTER TABLE cooperate_dept_positions ADD COLUMN fundingSource VARCHAR(24) NULL",
+  "ALTER TABLE cooperate_dept_positions ADD COLUMN fundingPlanJson TEXT NULL",
+];
+
+/** Every Cooperate Dept purchase settles into this currency; other wallets fund it through live FX. */
 const SETTLEMENT_CURRENCY = "USD";
-const MAX_COMMITMENT_MINOR = 100_000_000; // $1,000,000 ceiling per commitment
+export const COOPERATE_DEPT_COMBINED_SOURCE = "COMBINED";
+const MAX_PURCHASE_MINOR = 100_000_000; // $1,000,000 ceiling per purchase
+
+type WalletRow = {
+  id: number;
+  currency: string;
+  scale: number;
+  assetType: "fiat" | "crypto" | "token";
+  externalCode: string | null;
+  symbol: string | null;
+  currencyName: string | null;
+  availableMinor: number;
+  lockedMinor: number;
+};
+
+type FundingDebit = { currency: string; amountMinor: number; convertedUsdMinor: number; rate: FxRateSnapshot };
+
+type PurchaseFundingPlan = {
+  requiredUsdMinor: number;
+  usdAvailableMinor: number;
+  convertedUsdMinor: number;
+  debits: FundingDebit[];
+  targetRate: FxRateSnapshot;
+};
 
 async function withConnection<T>(fn: (conn: Db) => Promise<T>) {
   const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
@@ -65,6 +104,9 @@ export function ensureCooperateDeptSchema(): Promise<void> {
       if (!process.env.DATABASE_URL) return;
       await withConnection(async (conn) => {
         await conn.query(CREATE_POSITIONS_TABLE_SQL);
+        for (const statement of ADD_POSITIONS_COLUMNS_SQL) {
+          try { await conn.query(statement); } catch { /* column already exists */ }
+        }
       });
     } catch (error) {
       schemaReady = null;
@@ -80,8 +122,142 @@ function idempotencyKey(input: string | undefined, userId: number) {
   return `cooperate-dept:${userId}:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
+/** The dollar value of one unit of the settlement currency is fixed parity. */
+function usdUnitRate(scale: number): FxRateSnapshot {
+  return {
+    currency: SETTLEMENT_CURRENCY,
+    scale,
+    rateUsdPerUnit: "1",
+    provider: "platform-parity",
+    sourceDate: new Date().toISOString().slice(0, 10),
+    fetchedAt: new Date(),
+  };
+}
+
+/** Lock or read every enabled, spendable wallet for a customer. */
+async function readWalletRows(conn: Db, userId: number, forUpdate = false): Promise<WalletRow[]> {
+  const [rows] = await conn.query<any[]>(
+    `SELECT b.id, b.currency, c.scale, c.assetType, c.externalCode, c.symbol, c.name currencyName,
+            COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor
+     FROM customer_balances b
+     INNER JOIN currency_registry c ON c.code=b.currency
+     WHERE b.userId=? AND c.enabled=true
+     ORDER BY b.currency${forUpdate ? " FOR UPDATE" : ""}`,
+    [userId],
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    currency: String(row.currency).toUpperCase(),
+    scale: Number(row.scale || 0),
+    assetType: row.assetType,
+    externalCode: row.externalCode ? String(row.externalCode) : null,
+    symbol: row.symbol ? String(row.symbol) : null,
+    currencyName: row.currencyName ? String(row.currencyName) : null,
+    availableMinor: Number(row.availableMinor || 0),
+    lockedMinor: Number(row.lockedMinor || 0),
+  }));
+}
+
 /**
- * Read one customer's stored Cooperate Dept commitments and wallet balances.
+ * Fetch the live USD rate for every funded, non-settlement wallet that could be
+ * used as a source. A missing quote is recorded as `null` so the funding planner
+ * fails closed on the wallet it actually needs (it never silently skips it).
+ */
+async function loadWalletRates(wallets: WalletRow[]): Promise<Map<string, FxRateSnapshot | null>> {
+  const rates = new Map<string, FxRateSnapshot | null>();
+  await Promise.all(
+    wallets
+      .filter((wallet) => wallet.currency !== SETTLEMENT_CURRENCY && wallet.availableMinor > 0)
+      .map(async (wallet) => {
+        try {
+          const rate = await getFreshTradingFxRate({
+            code: wallet.currency,
+            scale: wallet.scale,
+            assetType: wallet.assetType,
+            externalCode: wallet.externalCode,
+          });
+          rates.set(wallet.currency, rate);
+        } catch {
+          rates.set(wallet.currency, null);
+        }
+      }),
+  );
+  return rates;
+}
+
+/**
+ * Build the all-or-nothing funding plan for a purchase that settles in USD.
+ *
+ * - `COMBINED` spends the settlement wallet first and then draws on the other
+ *   wallets in administrator funding-priority order, converting through live FX.
+ * - A currency code funds the whole purchase from that one wallet (converted when
+ *   it is not the settlement currency).
+ *
+ * Any shortfall or missing rate throws; nothing is ever debited partially.
+ */
+function planPurchaseFunding(
+  wallets: WalletRow[],
+  rates: Map<string, FxRateSnapshot | null>,
+  requiredUsdMinor: number,
+  fundingSource: string,
+  priorityOrder: string[] | null,
+): PurchaseFundingPlan {
+  if (!Number.isSafeInteger(requiredUsdMinor) || requiredUsdMinor < 1) throw new Error("Enter a valid purchase amount");
+  if (requiredUsdMinor > MAX_PURCHASE_MINOR) throw new Error("This amount exceeds the per-purchase ceiling for the Cooperate Dept desk");
+
+  const usd = wallets.find((wallet) => wallet.currency === SETTLEMENT_CURRENCY);
+  const usdScale = usd ? usd.scale : 2;
+  const usdAvailableMinor = usd ? usd.availableMinor : 0;
+  const targetRate = usdUnitRate(usdScale);
+  const source = String(fundingSource || COOPERATE_DEPT_COMBINED_SOURCE).trim().toUpperCase();
+  const insufficient = new Error("Insufficient combined spendable wallet balance at current exchange rates");
+
+  if (source === SETTLEMENT_CURRENCY) {
+    if (requiredUsdMinor <= usdAvailableMinor) return { requiredUsdMinor, usdAvailableMinor, convertedUsdMinor: 0, debits: [], targetRate };
+    throw insufficient;
+  }
+
+  const fundedNonSettlement = wallets.filter((wallet) => wallet.currency !== SETTLEMENT_CURRENCY && wallet.availableMinor > 0);
+  const candidates = source === COOPERATE_DEPT_COMBINED_SOURCE
+    ? fundedNonSettlement
+    : fundedNonSettlement.filter((wallet) => wallet.currency === source);
+
+  if (source === COOPERATE_DEPT_COMBINED_SOURCE && requiredUsdMinor <= usdAvailableMinor && !candidates.length) {
+    return { requiredUsdMinor, usdAvailableMinor, convertedUsdMinor: 0, debits: [], targetRate };
+  }
+  const targetAvailableMinor = source === COOPERATE_DEPT_COMBINED_SOURCE ? usdAvailableMinor : 0;
+  if (requiredUsdMinor <= targetAvailableMinor) return { requiredUsdMinor, usdAvailableMinor, convertedUsdMinor: 0, debits: [], targetRate };
+  if (!candidates.length) throw insufficient;
+
+  const plan = planCrossWalletFunding({
+    requiredTargetMinor: requiredUsdMinor,
+    targetAvailableMinor,
+    targetRate,
+    sourceWallets: candidates.map((wallet) => ({
+      currency: wallet.currency,
+      scale: wallet.scale,
+      availableMinor: wallet.availableMinor,
+      rate: rates.get(wallet.currency) ?? null,
+    })),
+    priorityCurrencies: source === COOPERATE_DEPT_COMBINED_SOURCE ? priorityOrder : null,
+  });
+
+  return {
+    requiredUsdMinor,
+    usdAvailableMinor,
+    convertedUsdMinor: plan.targetCreditMinor,
+    debits: plan.sourceDebits.map((debit) => ({
+      currency: debit.currency,
+      amountMinor: debit.amountMinor,
+      convertedUsdMinor: debit.convertedTargetMinor,
+      rate: debit.rate,
+    })),
+    targetRate,
+  };
+}
+
+/**
+ * Read one customer's stored Cooperate Dept purchases and wallet balances.
  * Storage is strictly best-effort: a database hiccup must never hide the live
  * company catalogue, so failures degrade to an empty store plus a warning.
  */
@@ -91,7 +267,8 @@ async function readCooperateDeptStore(userId: number): Promise<{ positions: any[
     return await withConnection(async (conn) => {
       const [positions] = await conn.query<any[]>(
         `SELECT id, positionCode, companyId, companyName, country, countryCode, severity, companyStatus,
-                ownershipBasis, amountMinor, currency, targetDate, dataSource, dataAsOf, status, openedAt, ledgerReference
+                ownershipBasis, amountMinor, currency, fundingSource, fundingPlanJson, targetDate,
+                dataSource, dataAsOf, status, openedAt, ledgerReference
          FROM cooperate_dept_positions WHERE userId=? ORDER BY openedAt DESC`,
         [userId],
       );
@@ -106,11 +283,11 @@ async function readCooperateDeptStore(userId: number): Promise<{ positions: any[
       return { positions, balances, warning: null };
     });
   } catch (error) {
-    console.error("[CooperateDept] Failed to read position store:", error instanceof Error ? error.message : "UnknownError");
+    console.error("[CooperateDept] Failed to read purchase store:", error instanceof Error ? error.message : "UnknownError");
     return {
       positions: [],
       balances: [],
-      warning: "Your saved commitments and wallet balance could not be loaded right now. The live catalogue below is unaffected.",
+      warning: "Your saved purchases and wallet balances could not be loaded right now. The live catalogue below is unaffected.",
     };
   }
 }
@@ -130,9 +307,9 @@ async function readAdminCompanies(): Promise<CooperateDeptCompany[]> {
 
 /**
  * Assemble the Cooperate Dept desk for one customer: the live company catalogue
- * plus administrator-published companies, that customer's own commitments,
- * wallet balances and a derived summary. The catalogue read and the storage
- * read run independently so a failure in either one still returns the rest.
+ * plus administrator-published companies, that customer's own purchases, wallet
+ * balances and a derived summary. The catalogue read and the storage read run
+ * independently so a failure in either one still returns the rest.
  */
 export async function getCooperateDeptDashboard(userId: number) {
   const [catalogue, store, adminCompanies] = await Promise.all([
@@ -156,7 +333,7 @@ export async function getCooperateDeptDashboard(userId: number) {
   const positions = store.positions;
   const balances = store.balances;
   const active = positions.filter((p) => p.status === "ACTIVE");
-  const committedMinor = active.reduce((sum, p) => sum + Number(p.amountMinor || 0), 0);
+  const purchasedMinor = active.reduce((sum, p) => sum + Number(p.amountMinor || 0), 0);
   const countries = new Set(active.map((p) => String(p.country || "")).filter(Boolean)).size;
   const critical = companies.filter((company) => company.severity === "CRITICAL").length;
   const imminent = companies.filter((company) => {
@@ -166,9 +343,9 @@ export async function getCooperateDeptDashboard(userId: number) {
     return target - Date.now() <= 90 * 86400000;
   }).length;
   const summary = {
-    committedMinor,
-    activeCommitments: active.length,
-    completedCommitments: positions.filter((p) => p.status !== "ACTIVE").length,
+    purchasedMinor,
+    activePurchases: active.length,
+    completedPurchases: positions.filter((p) => p.status !== "ACTIVE").length,
     countries,
     criticalCompanies: critical,
     imminentLitigation: imminent,
@@ -178,7 +355,10 @@ export async function getCooperateDeptDashboard(userId: number) {
     companies,
     positions,
     balances,
+    wallets: balances,
     settlementCurrency: SETTLEMENT_CURRENCY,
+    combinedSource: COOPERATE_DEPT_COMBINED_SOURCE,
+    /** Settlement-wallet balance only; the combined figure needs live FX and is quoted on demand. */
     availableMinor: Number(usd?.availableMinor || 0),
     summary,
     sources,
@@ -189,11 +369,11 @@ export async function getCooperateDeptDashboard(userId: number) {
 }
 
 /**
- * Resolve the company for a commitment. Administrator-published companies are
+ * Resolve the company for a purchase. Administrator-published companies are
  * checked first so a manually created record never depends on the public data
  * providers; a lookup failure there falls through to the live catalogue.
  */
-async function resolveCompanyForCommitment(companyId: string): Promise<CooperateDeptCompany | null> {
+async function resolveCompanyForPurchase(companyId: string): Promise<CooperateDeptCompany | null> {
   try {
     const admin = await findEnabledAdminCooperateDeptCompany(companyId);
     if (admin) return admin;
@@ -204,25 +384,108 @@ async function resolveCompanyForCommitment(companyId: string): Promise<Cooperate
 }
 
 /**
- * Reserve a commitment against a company from the customer's USD wallet.
- * Debits the existing wallet ledger, locks the amount as a commitment, and
- * records one position plus a durable notice. Idempotent per request key; the
- * company's published data is re-read server-side so a client cannot dictate
- * severity, ownership basis or the recorded source.
+ * Preview how a purchase would be funded without touching any balance. Returns
+ * the combined spendable value and the exact per-wallet debits the settlement
+ * wallet would draw on. Fails soft: an unknown rate or shortfall is reported as
+ * a shortfall rather than an error, so the customer sees what is missing.
  */
-export async function commitCooperateDeptInterest(
+export async function quoteCooperateDeptPurchase(
   userId: number,
-  input: { companyId: string; amountMinor: number; ownershipBasis: OwnershipBasis; idempotencyKey: string },
+  input: { amountMinor: number; fundingSource?: string },
+) {
+  const amountMinor = Math.round(Number(input.amountMinor) || 0);
+  const wallets = await withConnection((conn) => readWalletRows(conn, userId));
+  const rates = await loadWalletRates(wallets);
+  const usd = wallets.find((wallet) => wallet.currency === SETTLEMENT_CURRENCY);
+  const targetRate = usdUnitRate(usd ? usd.scale : 2);
+
+  let combinedAvailableMinor: number | null = null;
+  try {
+    combinedAvailableMinor = calculateCombinedAvailableTargetMinor({
+      targetCurrency: SETTLEMENT_CURRENCY,
+      targetRate,
+      wallets: wallets.map((wallet) => ({
+        currency: wallet.currency,
+        scale: wallet.scale,
+        availableMinor: wallet.availableMinor,
+        rate: wallet.currency === SETTLEMENT_CURRENCY ? null : rates.get(wallet.currency) ?? null,
+      })),
+    });
+  } catch {
+    combinedAvailableMinor = null;
+  }
+
+  const priority = await getWalletFundingPriorityForFunding();
+  const order = "blocked" in priority ? null : priority.order;
+
+  try {
+    const plan = planPurchaseFunding(wallets, rates, amountMinor, String(input.fundingSource || COOPERATE_DEPT_COMBINED_SOURCE), order);
+    return {
+      amountMinor,
+      fundingSource: String(input.fundingSource || COOPERATE_DEPT_COMBINED_SOURCE).toUpperCase(),
+      sufficient: true,
+      combinedAvailableMinor,
+      settlementCurrency: SETTLEMENT_CURRENCY,
+      usdAvailableMinor: plan.usdAvailableMinor,
+      convertedUsdMinor: plan.convertedUsdMinor,
+      shortfallMinor: 0,
+      debits: plan.debits.map((debit) => ({
+        currency: debit.currency,
+        amountMinor: debit.amountMinor,
+        convertedUsdMinor: debit.convertedUsdMinor,
+        rate: debit.rate.rateUsdPerUnit,
+        rateProvider: debit.rate.provider,
+      })),
+      message: null as string | null,
+    };
+  } catch (error) {
+    const rateGap = error instanceof FxRateUnavailableError;
+    const shortfallMinor = combinedAvailableMinor !== null ? Math.max(0, amountMinor - combinedAvailableMinor) : amountMinor;
+    return {
+      amountMinor,
+      fundingSource: String(input.fundingSource || COOPERATE_DEPT_COMBINED_SOURCE).toUpperCase(),
+      sufficient: false,
+      combinedAvailableMinor,
+      settlementCurrency: SETTLEMENT_CURRENCY,
+      usdAvailableMinor: usd ? usd.availableMinor : 0,
+      convertedUsdMinor: 0,
+      shortfallMinor,
+      debits: [],
+      message: rateGap ? (error as Error).message : "Insufficient combined spendable wallet balance at current exchange rates",
+    };
+  }
+}
+
+/**
+ * Buy a stake in (or the whole of) a company with the customer's own money. The
+ * purchase settles in USD and may be funded from the settlement wallet alone, a
+ * single chosen wallet, or every wallet combined through live FX. The existing
+ * wallet ledger is debited per source wallet, the amount is locked, and one
+ * durable position plus a notice is written in a single transaction. Idempotent
+ * per request key; the company's published data is re-read server-side so a
+ * client cannot dictate severity, ownership basis or the recorded source.
+ */
+export async function purchaseCooperateDeptCompany(
+  userId: number,
+  input: { companyId: string; amountMinor: number; ownershipBasis: OwnershipBasis; fundingSource?: string; idempotencyKey: string },
 ) {
   await ensureCooperateDeptSchema();
-  const company = await resolveCompanyForCommitment(String(input.companyId || ""));
+  const company = await resolveCompanyForPurchase(String(input.companyId || ""));
   if (!company) throw new Error("This company is not currently published on the Cooperate Dept desk. Refresh and try again.");
-  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) throw new Error("Enter a valid commitment amount");
-  if (input.amountMinor > MAX_COMMITMENT_MINOR) throw new Error("This amount exceeds the per-commitment ceiling for the Cooperate Dept desk");
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) throw new Error("Enter a valid purchase amount");
+  if (input.amountMinor > MAX_PURCHASE_MINOR) throw new Error("This amount exceeds the per-purchase ceiling for the Cooperate Dept desk");
   if (!["SHARES", "FULL_OWNERSHIP", "ASSET_PURCHASE"].includes(input.ownershipBasis)) throw new Error("Select a valid ownership basis");
 
+  const fundingSource = String(input.fundingSource || COOPERATE_DEPT_COMBINED_SOURCE).trim().toUpperCase();
   const key = idempotencyKey(input.idempotencyKey, userId);
   const targetDate = company.countdown?.targetDate || null;
+
+  // Rates and the administrator funding order are resolved before the transaction
+  // opens: network calls must never run while wallet rows are locked.
+  const priority = await getWalletFundingPriorityForFunding();
+  if ("blocked" in priority) throw new Error(priority.blocked);
+  const preWallets = await withConnection((conn) => readWalletRows(conn, userId));
+  const rates = await loadWalletRates(preWallets);
 
   return withConnection(async (conn) => {
     await conn.beginTransaction();
@@ -233,43 +496,99 @@ export async function commitCooperateDeptInterest(
       );
       if (prior.length) { await conn.commit(); return JSON.parse(prior[0].resultJson); }
 
-      const [balanceRows] = await conn.query<any[]>(
-        `SELECT * FROM customer_balances WHERE userId=? AND currency=? FOR UPDATE`,
+      // Guarantee the settlement wallet exists before it is locked.
+      await conn.execute(
+        `INSERT INTO customer_balances (userId,currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor) VALUES (?,?,0,0,0,0) ON DUPLICATE KEY UPDATE userId=userId`,
         [userId, SETTLEMENT_CURRENCY],
       );
-      const balance = balanceRows[0];
-      if (!balance || Number(balance.availableMinor) < input.amountMinor) {
-        throw new Error(`Insufficient available ${SETTLEMENT_CURRENCY} balance for this commitment`);
-      }
+      const wallets = await readWalletRows(conn, userId, true);
+      const plan = planPurchaseFunding(wallets, rates, input.amountMinor, fundingSource, priority.order);
 
       const now = new Date();
       const positionCode = `CD-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
-      const reference = `cooperate-dept-commitment:${positionCode}`;
+      const reference = `cooperate-dept-purchase:${positionCode}`;
 
+      // Debit every source wallet and credit the settlement wallet through FX.
+      for (const debit of plan.debits) {
+        const row = wallets.find((wallet) => wallet.currency === debit.currency);
+        if (!row) throw new Error(`Source wallet ${debit.currency} disappeared during funding`);
+        const [update] = await conn.execute<any>(
+          `UPDATE customer_balances SET availableMinor=availableMinor-?, updatedAt=NOW() WHERE id=? AND availableMinor>=?`,
+          [debit.amountMinor, row.id, debit.amountMinor],
+        );
+        if (Number(update.affectedRows || 0) !== 1) throw new Error(`Insufficient spendable ${debit.currency} balance to fund this purchase`);
+        await conn.execute(
+          `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`,
+          [userId, debit.currency, -debit.amountMinor, "cooperate_dept_fx_debit", `${reference}-fx-${debit.currency}-debit`],
+        );
+        await conn.execute(
+          `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`,
+          [userId, SETTLEMENT_CURRENCY, debit.convertedUsdMinor, "cooperate_dept_fx_credit", `${reference}-fx-${debit.currency}-credit`],
+        );
+        await conn.execute(
+          `INSERT INTO fx_rate_snapshots (baseAsset,quoteAsset,rate,provider,sourceDate,rawJson) VALUES (?,?,?,?,?,?)`,
+          [
+            debit.currency, SETTLEMENT_CURRENCY, debit.rate.rateUsdPerUnit, debit.rate.provider, debit.rate.sourceDate,
+            JSON.stringify({
+              purpose: "cooperate_dept_cross_wallet_conversion",
+              positionCode, targetCurrency: SETTLEMENT_CURRENCY,
+              targetCreditMinor: debit.convertedUsdMinor, sourceDebitMinor: debit.amountMinor,
+              fetchedAt: debit.rate.fetchedAt.toISOString(), scale: debit.rate.scale,
+            }),
+          ],
+        );
+      }
+
+      const usdRow = wallets.find((wallet) => wallet.currency === SETTLEMENT_CURRENCY)!;
+      const minimumFromSettlement = Math.max(0, input.amountMinor - plan.convertedUsdMinor);
+      const [settlementUpdate] = await conn.execute<any>(
+        `UPDATE customer_balances SET availableMinor=availableMinor+?-?, lockedMinor=lockedMinor+?, updatedAt=NOW() WHERE id=? AND availableMinor>=?`,
+        [plan.convertedUsdMinor, input.amountMinor, input.amountMinor, usdRow.id, minimumFromSettlement],
+      );
+      if (Number(settlementUpdate.affectedRows || 0) !== 1) throw new Error("Insufficient available settlement balance to complete this purchase");
       await conn.execute(
         `INSERT INTO balance_ledger (userId,currency,amountMinor,entryType,reference,withdrawable) VALUES (?,?,?,?,?,false)`,
-        [userId, SETTLEMENT_CURRENCY, -input.amountMinor, "cooperate_dept_commitment", reference],
+        [userId, SETTLEMENT_CURRENCY, -input.amountMinor, "cooperate_dept_purchase", reference],
       );
-      await conn.execute(
-        `UPDATE customer_balances SET availableMinor=availableMinor-?, lockedMinor=lockedMinor+?, updatedAt=NOW() WHERE id=?`,
-        [input.amountMinor, input.amountMinor, balance.id],
-      );
+
+      const fundingPlanJson = JSON.stringify({
+        fundingSource,
+        settlementCurrency: SETTLEMENT_CURRENCY,
+        requiredUsdMinor: input.amountMinor,
+        settlementWalletMinor: input.amountMinor - plan.convertedUsdMinor,
+        convertedUsdMinor: plan.convertedUsdMinor,
+        sourceDebits: plan.debits.map((debit) => ({
+          currency: debit.currency,
+          amountMinor: debit.amountMinor,
+          convertedUsdMinor: debit.convertedUsdMinor,
+          rate: debit.rate.rateUsdPerUnit,
+          rateProvider: debit.rate.provider,
+          rateSourceDate: debit.rate.sourceDate,
+        })),
+        recordedAt: now.toISOString(),
+      });
+
       await conn.execute(
         `INSERT INTO cooperate_dept_positions
-          (positionCode,userId,companyId,companyName,country,countryCode,severity,companyStatus,ownershipBasis,amountMinor,currency,targetDate,dataSource,dataAsOf,status,openedAt,ledgerReference)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE', NOW(), ?)`,
+          (positionCode,userId,companyId,companyName,country,countryCode,severity,companyStatus,ownershipBasis,amountMinor,currency,fundingSource,fundingPlanJson,targetDate,dataSource,dataAsOf,status,openedAt,ledgerReference)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE', NOW(), ?)`,
         [
           positionCode, userId, company.id, company.name, company.country, company.countryCode,
           company.severity, company.status, input.ownershipBasis, input.amountMinor, SETTLEMENT_CURRENCY,
-          targetDate, company.source, company.asOf, reference,
+          fundingSource, fundingPlanJson, targetDate, company.source, company.asOf, reference,
         ],
       );
+
+      const basisLabel = input.ownershipBasis === "FULL_OWNERSHIP" ? "full-ownership" : input.ownershipBasis === "SHARES" ? "share" : "asset-purchase";
+      const fundingLabel = plan.debits.length
+        ? `funded from ${plan.debits.map((debit) => debit.currency).join(", ")} alongside ${SETTLEMENT_CURRENCY}`
+        : `funded from your ${SETTLEMENT_CURRENCY} balance`;
       await conn.execute(
         `INSERT INTO customer_notifications (userId,title,body,eventKey,category,priority) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE eventKey=VALUES(eventKey)`,
         [
           userId,
-          "Cooperate Dept commitment recorded",
-          `A ${input.ownershipBasis === "FULL_OWNERSHIP" ? "full-ownership" : input.ownershipBasis === "SHARES" ? "share" : "asset-purchase"} commitment of ${input.amountMinor} minor units of ${SETTLEMENT_CURRENCY} was reserved against ${company.name} through the wallet ledger. The desk administrator will contact you to progress due diligence.`,
+          "Cooperate Dept purchase recorded",
+          `A ${basisLabel} purchase of ${input.amountMinor} minor units of ${SETTLEMENT_CURRENCY} in ${company.name} was recorded through the wallet ledger, ${fundingLabel}. The desk administrator will contact you to progress due diligence.`,
           `u${userId}:cooperate-dept:${positionCode}`,
           "ledger_debit",
           "normal",
@@ -287,6 +606,8 @@ export async function commitCooperateDeptInterest(
         ownershipBasis: input.ownershipBasis,
         amountMinor: input.amountMinor,
         currency: SETTLEMENT_CURRENCY,
+        fundingSource,
+        fundingPlan: JSON.parse(fundingPlanJson),
         targetDate,
         status: "ACTIVE",
         openedAt: now.toISOString(),
@@ -294,7 +615,7 @@ export async function commitCooperateDeptInterest(
       };
       await conn.execute(
         `INSERT INTO v5_idempotency_keys (userId,keyValue,command,resultJson) VALUES (?,?,?,?)`,
-        [userId, key, "cooperate-dept.commit", JSON.stringify(result)],
+        [userId, key, "cooperate-dept.purchase", JSON.stringify(result)],
       );
       await conn.commit();
       return result;
