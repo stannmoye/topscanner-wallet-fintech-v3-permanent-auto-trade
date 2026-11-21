@@ -619,9 +619,8 @@
 /* ---- 3. Engine row: spacier side stack + expanded hash-power boost ---- */
 .cm-dashboard-frame .cm-top-grid{gap:14px}
 .cm-dashboard-frame .cm-side-stack{grid-template-rows:minmax(0,1fr) auto;gap:14px}
-.cm-dashboard-frame .cm-side-stack>.cm-boost-card{min-height:0}
 .cm-dashboard-frame .cm-progress-card{padding:20px 20px 18px;border-radius:19px}
-.cm-dashboard-frame .cm-boost-card{
+.cm-dashboard-frame .cm-side-stack .cm-boost-card{
   grid-template-columns:92px minmax(0,1fr);
   grid-template-rows:auto minmax(52px,auto);
   gap:16px 18px;
@@ -747,7 +746,7 @@
   .cm-dashboard-frame .cm-dashboard-main>*+*{margin-top:13px}
   .cm-dashboard-frame .cm-top-grid{gap:12px}
   .cm-dashboard-frame .cm-side-stack{gap:12px;min-height:0}
-  .cm-dashboard-frame .cm-boost-card{grid-template-columns:76px minmax(0,1fr);grid-template-rows:auto minmax(48px,auto);gap:14px 14px;padding:16px 16px 18px;min-height:176px;align-content:start;align-items:start}
+  .cm-dashboard-frame .cm-side-stack .cm-boost-card{grid-template-columns:76px minmax(0,1fr);grid-template-rows:auto minmax(48px,auto);gap:14px 14px;padding:16px 16px 18px;min-height:176px;align-content:start;align-items:start}
   .cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:74px;height:100px;align-self:stretch}
   .cm-dashboard-frame .cm-boost-card .cm-glow-button{height:44px;padding:9px 14px}
   .cm-dashboard-frame .cm-boost-readout strong{font-size:17px}
@@ -776,7 +775,7 @@
 }
 @media(max-width:410px){
   .cm-dashboard-frame .cm-dashboard-main{padding:11px 9px 22px}
-  .cm-dashboard-frame .cm-boost-card{grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto minmax(44px,auto);gap:12px 12px;padding:14px 14px 16px;min-height:160px;align-content:start;align-items:start}
+  .cm-dashboard-frame .cm-side-stack .cm-boost-card{grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto minmax(44px,auto);gap:12px 12px;padding:14px 14px 16px;min-height:160px;align-content:start;align-items:start}
   .cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:62px;height:86px;align-self:stretch}
   .cm-dashboard-frame .cm-boost-card .cm-glow-button{height:42px;padding:8px 12px}
   .cm-dashboard-frame .cm-boost-readout strong{font-size:15px}
