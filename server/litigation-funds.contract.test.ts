@@ -70,9 +70,30 @@ describe("Litigation Funds case-linked capital desk", () => {
     expect(catalogue).toContain("export function defaultMilestones(");
     expect(catalogue).toContain("export async function getLitigationFundsCatalogue(");
     expect(catalogue).toContain("export async function findLitigationCase(");
-    // Scraped claims stay unfundable with null economics until an admin publishes a dossier.
-    expect(catalogue).toContain("fundable: false");
+    // Scraped claims still carry null economics and no scenarios — the desk never
+    // invents a merit, a damage figure or a multiple for an unreviewed record.
     expect(catalogue).toContain("meritGrade: null");
+    expect(catalogue).toContain("estimatedDamagesMinor: null");
+    expect(catalogue).toContain("expectedMultipleBps: null");
+    expect(catalogue).toContain("scenarios: []");
+  });
+
+  it("lets a customer fund any cited case without administrator approval, from any wallet or all combined", () => {
+    // The server resolves a case from the live catalogue as well as from an admin dossier.
+    expect(serverDesk).toContain("const live = await findLitigationCase(");
+    expect(serverDesk).toContain("findLitigationCase,");
+    // The old administrator-approval gate is gone: the case only has to exist.
+    expect(serverDesk).not.toContain("not open for funding");
+    expect(serverDesk).not.toContain("not currently published on the Litigation Funds desk");
+    // Every cited case on the desk counts as open for funding in the summary.
+    expect(serverDesk).toContain("fundableCases: cases.length");
+    // Funding still routes through the shared cross-wallet FX engine.
+    expect(serverDesk).toContain("planCrossWalletFunding");
+    expect(serverDesk).toContain('export const LITIGATION_COMBINED_SOURCE = "COMBINED"');
+    // The customer card always offers the funding action, with no approval prompt.
+    expect(customerUi).toContain("Fund this case");
+    expect(customerUi).not.toContain("cannot invest");
+    expect(customerUi).not.toContain("Why can’t I invest");
   });
 
   it("stores administrator dossiers and bundles additively with an audited lifecycle", () => {

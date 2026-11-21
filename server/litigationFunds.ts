@@ -3,6 +3,7 @@ import mysql from "mysql2/promise";
 import { mysqlConnectionOptions } from "./_core/mysql";
 import {
   compareLitigationCases,
+  findLitigationCase,
   getLitigationFundsCatalogue,
   type LitigationCase,
   type LitigationBundle,
@@ -332,7 +333,10 @@ export async function getLitigationFundsDashboard(userId: number) {
     activePositions: active.length,
     settledPositions: positions.filter((p) => p.positionStatus === "SETTLED").length,
     writtenOffPositions: positions.filter((p) => p.positionStatus === "WRITTEN_OFF").length,
-    fundableCases: cases.filter((item) => item.fundable).length,
+    // Every cited case on the desk is open for funding without administrator
+    // approval; administrators only ever enrich a case with published economics.
+    fundableCases: cases.length,
+    modelledCases: cases.filter((item) => item.fundable).length,
     bundles: bundles.length,
     realisedMinor,
   };
@@ -438,17 +442,32 @@ type ResolvedInstrument = {
   asOf: string;
 };
 
-/** Resolve the administrator-published instrument a customer is funding. */
+/**
+ * Resolve the instrument a customer is funding. Every cited case on the desk is
+ * fundable without an administrator publishing a dossier: the gate is simply
+ * that the case exists. An administrator-reviewed dossier, when present, only
+ * enriches the case with published economics (merit, scenarios, a configured
+ * multiple); its absence never blocks a commitment.
+ */
 async function resolveInstrument(instrumentType: LitigationInstrumentType, instrumentId: string): Promise<ResolvedInstrument> {
   if (instrumentType === "CASE") {
-    const item = await findEnabledAdminLitigationDossier(instrumentId);
-    if (!item) throw new Error("This case is not currently published on the Litigation Funds desk. Refresh and try again.");
-    if (!item.fundable) throw new Error("This case is not open for funding (its outcome scenarios or target are not yet published).");
-    return {
-      instrumentType, instrumentId: item.id, instrumentName: item.caseName, claimType: item.claimType,
-      jurisdiction: item.jurisdiction, countryCode: item.countryCode, stage: item.stage, status: item.status,
-      expectedMultipleBps: item.expectedMultipleBps, unitPriceMinor: null, source: item.source, asOf: item.asOf,
-    };
+    const dossier = await findEnabledAdminLitigationDossier(instrumentId);
+    if (dossier) {
+      return {
+        instrumentType, instrumentId: dossier.id, instrumentName: dossier.caseName, claimType: dossier.claimType,
+        jurisdiction: dossier.jurisdiction, countryCode: dossier.countryCode, stage: dossier.stage, status: dossier.status,
+        expectedMultipleBps: dossier.expectedMultipleBps, unitPriceMinor: null, source: dossier.source, asOf: dossier.asOf,
+      };
+    }
+    const live = await findLitigationCase(instrumentId);
+    if (live) {
+      return {
+        instrumentType, instrumentId: live.id, instrumentName: live.caseName, claimType: live.claimType,
+        jurisdiction: live.jurisdiction, countryCode: live.countryCode, stage: live.stage, status: live.status,
+        expectedMultipleBps: live.expectedMultipleBps, unitPriceMinor: null, source: live.source, asOf: live.asOf,
+      };
+    }
+    throw new Error("This case is not currently listed on the Litigation Funds desk. Refresh and try again.");
   }
   const bundle = await findEnabledAdminLitigationBundle(instrumentId);
   if (!bundle || !bundle.enabled) throw new Error("This bundle is not currently open on the Litigation Funds desk. Refresh and try again.");

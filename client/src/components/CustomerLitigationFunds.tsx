@@ -260,7 +260,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
   const pageRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   useEffect(() => { setPage(1); }, [query, country, claimType, caseClass, merit, stage, status, fundableOnly, watchlistOnly, pageSize, tab]);
 
-  const fundableCases = cases.filter((item) => item.fundable);
+  const modelledCases = cases.filter((item) => item.fundable);
   const compareCases = cases.filter((item) => compareIds.includes(item.id));
   const activeFilters = [country !== "ALL", claimType !== "ALL", caseClass !== "ALL", merit !== "ALL", stage !== "ALL", status !== "ALL", fundableOnly, watchlistOnly].filter(Boolean).length;
   const analytics = useMemo(() => buildLitigationAnalytics(cases), [cases]);
@@ -352,10 +352,10 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
         </div>
       </div>
       <h1 className="lf-hero-title">Fund real, cited legal claims — at risk, against milestones.</h1>
-      <p className="lf-hero-sub">Every case begins as a real public court filing or enforcement notice, cited to its source. An administrator then publishes the reviewed economics — merit, damages, capital at risk and the modelled settle / win / lose outcomes — and only then can it be funded. Your money is held in escrow and released as the case passes each stage. A favourable outcome repays principal plus the configured multiple; a loss writes the capital off.</p>
+      <p className="lf-hero-sub">Every case on the desk is a real public court filing or enforcement notice, cited to its source — and every one of them is open to fund. No administrator approval is needed: your commitment is drawn straight from your wallet, or from all of your wallets combined through live FX. Administrators independently publish the reviewed economics — merit, damages, capital at risk and the modelled settle / win / lose outcomes — which set the configured funder multiple. Your money is held in escrow and released as the case passes each stage; a favourable outcome repays principal plus the configured multiple and a loss writes the capital off.</p>
       <div className="lf-hero-stats">
         <div className="lf-stat"><span>Cases listed</span><strong>{cases.length}</strong></div>
-        <div className="lf-stat"><span>Open for funding</span><strong>{summary.fundableCases}</strong></div>
+        <div className="lf-stat"><span>Reviewed economics</span><strong>{modelledCases.length}</strong></div>
         <div className="lf-stat"><span>Your committed</span><strong>{fmtMinor(summary.committedMinor)}</strong></div>
         <div className="lf-stat"><span>Your realised</span><strong>{fmtMinor(summary.realisedMinor)}</strong></div>
       </div>
@@ -381,7 +381,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
     {message && !target && <div className="lf-notice is-error" role="alert"><AlertTriangle size={16}/><div>{message}</div></div>}
 
     <nav className="lf-tabs" aria-label="Litigation Funds sections">
-      <button type="button" className={`lf-tab${tab === "cases" ? " is-active" : ""}`} onClick={() => setTab("cases")}>Cases needing funding <span className="lf-tab-count">{fundableCases.length}</span></button>
+      <button type="button" className={`lf-tab${tab === "cases" ? " is-active" : ""}`} onClick={() => setTab("cases")}>Cases open for funding <span className="lf-tab-count">{cases.length}</span></button>
       <button type="button" className={`lf-tab${tab === "bundles" ? " is-active" : ""}`} onClick={() => setTab("bundles")}>Bundles <span className="lf-tab-count">{bundles.length}</span></button>
       <button type="button" className={`lf-tab${tab === "portfolio" ? " is-active" : ""}`} onClick={() => setTab("portfolio")}>Portfolio <span className="lf-tab-count">{positions.length}</span></button>
       <button type="button" className={`lf-tab${tab === "timeline" ? " is-active" : ""}`} onClick={() => setTab("timeline")}>Case timeline <span className="lf-tab-count">{timeline.length}</span></button>
@@ -401,7 +401,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
           <div className="lf-filter"><label>Sort</label><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="fundable">Open for funding first</option><option value="deadline">Closing soonest</option><option value="filed">Most recently filed</option><option value="merit">Highest merit</option><option value="damages">Largest claim</option><option value="name">Case name A–Z</option><option value="country">Country A–Z</option></select></div>
         </div>
         <div className="lf-toolbar-actions">
-          <label className="cd-checkbox"><input type="checkbox" checked={fundableOnly} onChange={(e) => setFundableOnly(e.target.checked)} /> Open for funding</label>
+          <label className="cd-checkbox"><input type="checkbox" checked={fundableOnly} onChange={(e) => setFundableOnly(e.target.checked)} /> Reviewed economics only</label>
           <label className="cd-checkbox"><input type="checkbox" checked={watchlistOnly} onChange={(e) => setWatchlistOnly(e.target.checked)} /> Watchlist ({watchlist.length})</label>
           {activeFilters > 0 && <button type="button" className="lf-btn lf-btn-sm ghost" onClick={clearFilters}><X size={13}/> Clear {activeFilters}</button>}
           <button type="button" className="lf-btn lf-btn-sm" onClick={exportCatalogue} disabled={!filtered.length}><Download size={13}/> Export CSV</button>
@@ -473,16 +473,14 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
               <ScenarioList scenarios={item.scenarios} />
               <div className="lf-evalue"><TrendingUp size={12}/> Probability-weighted expected recovery <strong>{item.expectedValueMinor !== null ? fmtMinor(item.expectedValueMinor) : "—"}</strong> · full loss scenario is shown</div>
               <MilestoneStrip milestones={item.milestones} />
-            </> : <div className="lf-unfundable"><AlertTriangle size={13}/> Not modelled — cannot invest. This claim is a real, cited record awaiting administrator due diligence (merit, damages and outcomes are not yet published).</div>}
+            </> : <div className="lf-unfundable"><AlertTriangle size={13}/> Reviewed economics not yet published — you can still fund this case. It is a real, cited record; the administrator’s merit, damages and settle / win / lose multiple are pending, so the repayment multiple is not yet fixed. Your commitment is held in escrow and a loss writes the capital off.</div>}
 
             <p className="lf-card-meta">{item.problem}</p>
             {item.highlights.length > 0 && <div className="lf-badges">{item.highlights.slice(0, 4).map((value) => <span className="lf-badge" key={value}>{value}</span>)}</div>}
 
             <div className="lf-card-actions" style={{ justifyContent: "space-between" }}>
               <span className="lf-card-meta" title={item.sourceUrl || item.source}><Scale size={11}/> {item.asOf} · {item.source}{item.verified ? " · desk-verified" : " · discovery"}</span>
-              {item.fundable
-                ? <button className="lf-btn primary" onClick={() => openPurchase({ type: "CASE", id: item.id, name: item.caseName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this case <ChevronRight size={14}/></button>
-                : <button className="lf-btn lf-btn-sm" onClick={() => document.getElementById("lf-education")?.scrollIntoView({ behavior: "smooth" })}><CircleHelp size={13}/> Why can’t I invest?</button>}
+              <button className="lf-btn primary" onClick={() => openPurchase({ type: "CASE", id: item.id, name: item.caseName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this case <ChevronRight size={14}/></button>
             </div>
           </article>;
         })}
@@ -675,7 +673,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
     <div id="lf-education" className="lf-notice">
       <ShieldCheck size={16}/>
       <div>
-        <strong>How the Litigation Funds desk works.</strong> Two layers sit behind every card. The <em>discovery</em> layer is a real, cited public court filing or enforcement notice — a candidate claim, with no economics and not investable. The <em>dossier</em> layer is an administrator’s reviewed economics for that case, each figure traceable to a source URL and an as-of date. Only dossiers with a funding target and a complete set of settle / win / lose scenarios can be funded, and the full loss scenario is always shown. Your commitment settles in {settlement}, may be funded from any wallet you hold or all wallets combined at the live rate, is held in escrow and released against milestones, and is paid or written off when the case resolves. Nothing here is a prediction, and no external transfer occurs on this desk.
+        <strong>How the Litigation Funds desk works.</strong> Every card is a real, cited public court filing or enforcement notice, and <em>every case on the desk is open for funding</em> — no administrator approval is required. The <em>discovery</em> layer is that cited record. The <em>dossier</em> layer is an administrator’s reviewed economics for the case — merit, damages, capital at risk and the modelled settle / win / lose scenarios — each figure traceable to a source URL and an as-of date; when published it fixes the configured funder multiple and the full loss scenario is always shown. Cases without reviewed economics can still be funded, but their repayment multiple is not yet fixed, so a reader sees that plainly. Your commitment settles in {settlement}, is drawn from any wallet you hold or from all wallets combined at the live rate, is held in escrow and released against milestones, and is paid or written off when the case resolves. Nothing here is a prediction, and no external transfer occurs on this desk.
       </div>
     </div>
 
@@ -708,7 +706,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
               <tr><td>Funded</td>{compareCases.map((item) => <td key={item.id}>{fmtPercent(item.fundedBps)}</td>)}</tr>
               <tr><td>Deadline</td>{compareCases.map((item) => <td key={item.id}>{item.fundingDeadline ? `${formatDate(item.fundingDeadline)} (${daysLabel(item.remainingDays)})` : "—"}</td>)}</tr>
               <tr><td>Expected value</td>{compareCases.map((item) => <td key={item.id}>{item.expectedValueMinor !== null ? fmtMinor(item.expectedValueMinor) : "Not modelled"}</td>)}</tr>
-              <tr><td>Investable</td>{compareCases.map((item) => <td key={item.id}>{item.fundable ? "Yes" : "Not modelled"}</td>)}</tr>
+              <tr><td>Investable</td>{compareCases.map((item) => <td key={item.id}>{item.fundable ? "Yes — economics published" : "Yes — economics pending"}</td>)}</tr>
             </tbody>
           </table>
         </div>
