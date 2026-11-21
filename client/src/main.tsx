@@ -54,6 +54,23 @@ if (typeof document !== "undefined") {
   });
 }
 
+/**
+ * Friendly, retryable error surfaced when the API gateway returns the SPA's
+ * HTML shell instead of JSON. This happens during server restarts, deployments
+ * or reverse-proxy failover, when `/api/trpc/*` is temporarily served by the
+ * static-file fallback. Without this guard the tRPC client throws a raw
+ * "Unexpected token '<', \"<!DOCTYPE\"..." parse error that leaks into the UI.
+ */
+class TransientApiError extends Error {
+  constructor() {
+    super("Service is reconnecting…");
+    this.name = "TransientApiError";
+  }
+}
+
+/** Returns true when a response body is the SPA HTML shell rather than JSON. */
+const isHtmlShell = (body: string) => body.trimStart().startsWith("<");
+
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
@@ -64,6 +81,23 @@ const trpcClient = trpc.createClient({
         return globalThis.fetch(input, {
           ...(init ?? {}),
           credentials: "include",
+        }).then(async (response) => {
+          const contentType = response.headers.get("content-type") || "";
+          // The tRPC middleware always returns application/json. Any other
+          // content type (text/html, text/plain, empty) means the request did
+          // not reach the tRPC handler — treat it as a transient outage.
+          if (!contentType.includes("application/json")) {
+            const body = await response.text().catch(() => "");
+            if (isHtmlShell(body) || !contentType.includes("json")) {
+              throw new TransientApiError();
+            }
+          }
+          return response;
+        }).catch((error) => {
+          // Network failures and non-JSON responses are transient and
+          // auto-retried by react-query. Hide the raw technical message.
+          if (error instanceof TransientApiError) throw error;
+          throw new TransientApiError();
         });
       },
     }),

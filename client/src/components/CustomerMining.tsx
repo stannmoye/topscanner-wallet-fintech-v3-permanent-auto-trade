@@ -303,12 +303,14 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
 
     <main className="cm-dashboard-main" id="mining-dashboard">
       {message && <div className="cm-message" role="status"><Info size={15}/><span>{message}</span><button type="button" onClick={()=>setMessage("")} aria-label="Dismiss">×</button></div>}
-      {dashboard.error && <div className="cm-error" role="alert">Mining service unavailable: {dashboard.error.message}</div>}
-      {packages.isError && <div className="cm-error" role="alert">Mining packages unavailable: {packages.error.message}</div>}
-      {boostStatus.isError && <div className="cm-error" role="alert">Mining boost status unavailable: {boostStatus.error.message}</div>}
-      {history.isError && <div className="cm-error" role="alert">Mining activity unavailable: {history.error.message}</div>}
-      {mainWallet.isError && <div className="cm-error" role="alert">Main-wallet balances unavailable: {mainWallet.error.message}</div>}
-      {walletPreferences.isError && <div className="cm-error" role="alert">Wallet preferences unavailable: {walletPreferences.error.message}</div>}
+      {/* Polling queries auto-refresh on an interval. Transient API outages
+          (server restarts, proxy failover) must never surface raw technical
+          error messages such as "Unexpected token '<!DOCTYPE'..." to the
+          customer. Show a single soft refresh notice instead; the data
+          recovers on the next successful poll. */}
+      {(dashboard.isError || packages.isError || boostStatus.isError || history.isError || mainWallet.isError || walletPreferences.isError) && !dashboard.data && (
+        <div className="cm-error cm-error--soft" role="status">Refreshing your mining dashboard…</div>
+      )}
 
       <section className="cm-top-grid" aria-label="Mining engine status and controls">
         <article className="cm-factory scene-playing">
