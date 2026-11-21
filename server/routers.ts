@@ -14,6 +14,7 @@ import { ACCOUNT_CLOSURE_TICKET_SUBJECT, AccountClosureDecisionError, applyAccou
 import { allocateStake, cancelStake, getStakeDashboard, projectStake } from "./stakeEarn";
 import { getTreasuryBondDashboard, purchaseTreasuryBond } from "./treasuryBonds";
 import { projectTreasuryBondProfit } from "./treasuryBondProvider";
+import { createAdminTreasuryBondInstrument, deleteAdminTreasuryBondInstrument, listAdminTreasuryBondInstruments, setAdminTreasuryBondInstrumentEnabled, updateAdminTreasuryBondInstrument, TREASURY_INSTRUMENT_CATEGORIES } from "./treasuryBondInstruments";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
 import { confirmEmailVerification, requestEmailVerification } from "./emailAuth";
@@ -92,6 +93,30 @@ const tradeRecordClearInputSchema = z.object({
 }).strict()
   .refine(value => Object.values(value.categories).some(Boolean), { message: "Select at least one record group to clear." })
   .refine(value => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), { message: "Start of the clear window must not be after the end." });
+
+// Administrator-authored treasury-bond instruments. Country, rate, tenor and
+// minimum are all administrator-supplied and validated server-side; the flag is
+// derived from the country code, never typed.
+const treasuryInstrumentFieldsSchema = {
+  name: z.string().trim().min(3).max(120),
+  issuer: z.string().trim().min(2).max(120),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  category: z.enum(TREASURY_INSTRUMENT_CATEGORIES),
+  tenorYears: z.number().gt(0).max(60),
+  tenorLabel: z.string().trim().max(40).optional(),
+  couponRatePct: z.number().min(0).max(100),
+  couponFrequency: z.string().trim().max(32).optional(),
+  nativeCurrency: z.string().trim().max(12).optional(),
+  minInvestmentMinor: z.number().int().min(100).max(100_000_000),
+  creditQuality: z.string().trim().max(48).optional(),
+  riskLabel: z.string().trim().max(80).optional(),
+  paymentMethod: z.string().trim().max(64).optional(),
+  summary: z.string().trim().max(2000).optional(),
+  highlights: z.array(z.string().trim().min(1).max(160)).max(8).optional(),
+  reason: z.string().trim().max(500).optional(),
+};
+const createTreasuryInstrumentSchema = z.object(treasuryInstrumentFieldsSchema);
+const updateTreasuryInstrumentSchema = z.object({ instrumentId: z.string().trim().min(2).max(80), ...treasuryInstrumentFieldsSchema });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -875,6 +900,14 @@ export const appRouter = router({
     customerBalances: adminProcedure.input(z.object({ userId: z.number().int().positive() })).query(({ input }) => listBalances(input.userId)),
     currencies: adminProcedure.query(() => listCurrencies()),
     upsertCurrency: adminProcedure.input(z.object({ code: z.string().min(2).max(32), name: z.string().min(2).max(120), symbol: z.string().min(1).max(16), scale: z.number().int().min(0).max(18), assetType: z.enum(["fiat","crypto","token"]), usdRate: z.string().min(1).max(64), rateProvider: z.string().min(1).max(120), externalCode: z.string().max(80).optional(), enabled: z.boolean().optional() })).mutation(({ input }) => upsertCurrency(input)),
+    treasuryInstruments: adminProcedure.query(() => listAdminTreasuryBondInstruments()),
+    createTreasuryInstrument: adminProcedure.input(createTreasuryInstrumentSchema).mutation(({ ctx, input }) => createAdminTreasuryBondInstrument(ctx.user!.id, input)),
+    updateTreasuryInstrument: adminProcedure.input(updateTreasuryInstrumentSchema).mutation(({ ctx, input }) => {
+      const { instrumentId, ...fields } = input;
+      return updateAdminTreasuryBondInstrument(ctx.user!.id, instrumentId, fields);
+    }),
+    setTreasuryInstrumentEnabled: adminProcedure.input(z.object({ instrumentId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminTreasuryBondInstrumentEnabled(ctx.user!.id, input.instrumentId, input.enabled)),
+    deleteTreasuryInstrument: adminProcedure.input(z.object({ instrumentId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminTreasuryBondInstrument(ctx.user!.id, input.instrumentId)),
     createCustomer: adminProcedure.input(z.object({ name: z.string().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200) })).mutation(({ input }) => createAdminCustomer(input)),
     updateCustomer: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), email: z.string().email() })).mutation(({ input }) => updateAdminCustomer(input)),
     deleteCustomer: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ input }) => {

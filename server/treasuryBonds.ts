@@ -2,11 +2,13 @@ import crypto from "node:crypto";
 import mysql from "mysql2/promise";
 import { mysqlConnectionOptions } from "./_core/mysql";
 import {
+  compareTreasuryBondInstruments,
   findTreasuryBondInstrument,
   getTreasuryBondCatalogue,
   projectTreasuryBondProfit,
   type TreasuryBondInstrument,
 } from "./treasuryBondProvider";
+import { findEnabledAdminTreasuryBondInstrument, listEnabledAdminTreasuryBondInstruments } from "./treasuryBondInstruments";
 
 type Db = mysql.PoolConnection;
 
@@ -125,16 +127,42 @@ async function readTreasuryBondStore(userId: number): Promise<{ positions: any[]
 }
 
 /**
+ * Read administrator-published instruments for the customer desk. Best-effort:
+ * a database hiccup must never hide the live public-data catalogue, so failures
+ * degrade to an empty list rather than throwing.
+ */
+async function readAdminInstruments(): Promise<TreasuryBondInstrument[]> {
+  try {
+    return await listEnabledAdminTreasuryBondInstruments();
+  } catch (error) {
+    console.error("[TreasuryBonds] Failed to read administrator instruments:", error instanceof Error ? error.message : "UnknownError");
+    return [];
+  }
+}
+
+/**
  * Assemble the treasury-bond desk for one customer: the live instrument
- * catalogue, that customer's own positions, wallet balances and a derived
- * summary. The catalogue read and the storage read run independently so that a
- * failure in either one still returns everything the other can provide.
+ * catalogue plus administrator-published instruments, that customer's own
+ * positions, wallet balances and a derived summary. The catalogue read and the
+ * storage read run independently so that a failure in either one still returns
+ * everything the other can provide.
  */
 export async function getTreasuryBondDashboard(userId: number) {
-  const [catalogue, store] = await Promise.all([
+  const [catalogue, store, adminInstruments] = await Promise.all([
     getTreasuryBondCatalogue(),
     readTreasuryBondStore(userId),
+    readAdminInstruments(),
   ]);
+
+  const instruments = [...adminInstruments, ...catalogue.instruments].sort(compareTreasuryBondInstruments);
+  const sources = adminInstruments.length
+    ? [...catalogue.sources, {
+        name: "Arbitrade desk — administrator published",
+        url: "",
+        status: "ok" as const,
+        detail: `${adminInstruments.length} administrator-published instrument${adminInstruments.length === 1 ? "" : "s"}`,
+      }]
+    : catalogue.sources;
 
   const positions = store.positions;
   const balances = store.balances;
@@ -153,17 +181,33 @@ export async function getTreasuryBondDashboard(userId: number) {
   };
   const usd = balances.find((b) => b.currency === SETTLEMENT_CURRENCY);
   return {
-    instruments: catalogue.instruments,
+    instruments,
     positions,
     balances,
     settlementCurrency: SETTLEMENT_CURRENCY,
     availableMinor: Number(usd?.availableMinor || 0),
     summary,
-    sources: catalogue.sources,
+    sources,
     fetchedAt: catalogue.fetchedAt,
     degraded: catalogue.degraded,
     storeWarning: store.warning,
   };
+}
+
+/**
+ * Resolve the instrument for a purchase. Administrator-published instruments
+ * are checked first so a manually created bond never depends on the public data
+ * providers; a lookup failure there falls through to the live catalogue rather
+ * than blocking a genuine live purchase.
+ */
+async function resolveInstrumentForPurchase(instrumentId: string): Promise<TreasuryBondInstrument | null> {
+  try {
+    const admin = await findEnabledAdminTreasuryBondInstrument(instrumentId);
+    if (admin) return admin;
+  } catch (error) {
+    console.error("[TreasuryBonds] Failed to resolve administrator instrument:", error instanceof Error ? error.message : "UnknownError");
+  }
+  return findTreasuryBondInstrument(instrumentId);
 }
 
 /**
@@ -177,7 +221,7 @@ export async function purchaseTreasuryBond(
   input: { instrumentId: string; amountMinor: number; idempotencyKey: string },
 ) {
   await ensureTreasuryBondSchema();
-  const instrument = await findTreasuryBondInstrument(String(input.instrumentId || ""));
+  const instrument = await resolveInstrumentForPurchase(String(input.instrumentId || ""));
   if (!instrument) throw new Error("This treasury bond is not currently published on the desk. Refresh and try again.");
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) throw new Error("Enter a valid purchase amount");
   if (input.amountMinor < instrument.minInvestmentMinor) {

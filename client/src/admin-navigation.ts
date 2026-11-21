@@ -13,6 +13,7 @@ import {
   Gauge,
   Globe2,
   History,
+  Landmark,
   Layers3,
   Mail,
   MessageSquare,
@@ -70,6 +71,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "credit-adjustment", target: "credit", label: "Credit Adjustment", detail: "Auditable wallet credit action", icon: CircleDollarSign },
     { id: "debit-adjustment", target: "debit", label: "Debit Adjustment", detail: "Validated wallet debit action", icon: ReceiptText },
     { id: "currencies-assets", target: "currencies", label: "Currencies & Assets", detail: "Currency registry and valuation rates", icon: Coins },
+    { id: "treasury-instruments", target: "treasuryInstruments", label: "Treasury Instruments", detail: "Create treasury-bond instruments and publish them to the customer desk", icon: Landmark },
   ]},
   { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
     { id: "mining-overview", target: "miningOverview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [

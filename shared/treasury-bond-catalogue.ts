@@ -30,7 +30,11 @@
  * instruments (or an explicit "market data unavailable" state), never filler.
  */
 
+import { flagFor } from "./country-options";
+
 export type TreasuryBondHistoryPoint = { t: string; v: number };
+
+export type TreasuryBondCategory = TreasuryBondInstrument["category"];
 
 export type TreasuryBondInstrument = {
   /** Stable slug used by the wallet ledger and positions table. */
@@ -86,10 +90,19 @@ const HISTORY_MONTHS = 12;
 const HISTORY_MONTHS_FETCHED = 24;
 const REQUEST_TIMEOUT_MS = 15_000;
 
-const flagFor = (countryCode: string) =>
-  countryCode.length === 2
-    ? String.fromCodePoint(...countryCode.toUpperCase().split("").map((c) => 127397 + c.charCodeAt(0)))
-    : "🏳️";
+/** Canonical desk ordering: instrument category precedence, then highest rate first. */
+const CATEGORY_ORDER: Record<TreasuryBondCategory, number> = {
+  BILL: 0, FRN: 1, TIPS: 2, NOTE: 3, BOND: 4, BENCHMARK: 5, SOVEREIGN: 6,
+};
+
+/**
+ * Shared ordering used by both the live catalogue and the customer dashboard so
+ * administrator-published instruments slot into the desk in the same order.
+ */
+export function compareTreasuryBondInstruments(a: TreasuryBondInstrument, b: TreasuryBondInstrument): number {
+  return (CATEGORY_ORDER[a.category] ?? 9) - (CATEGORY_ORDER[b.category] ?? 9)
+    || b.couponRatePct - a.couponRatePct;
+}
 
 /** `YYYY-MM` label for `count` months before now, used to bound history queries. */
 function monthsAgo(count: number): string {
@@ -780,10 +793,7 @@ async function buildCatalogue(): Promise<TreasuryBondCatalogue> {
     seenSovereign.add(instrument.countryCode);
     return true;
   });
-  instruments.sort((a, b) => {
-    const order: Record<string, number> = { BILL: 0, FRN: 1, TIPS: 2, NOTE: 3, BOND: 4, BENCHMARK: 5, SOVEREIGN: 6 };
-    return (order[a.category] ?? 9) - (order[b.category] ?? 9) || b.couponRatePct - a.couponRatePct;
-  });
+  instruments.sort(compareTreasuryBondInstruments);
 
   const statusOf = (result: PromiseSettledResult<unknown[]>) =>
     (result.status === "fulfilled" && result.value.length ? "ok" : "unavailable") as "ok" | "unavailable";
