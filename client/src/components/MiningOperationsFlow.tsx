@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, ArrowDownUp, Cpu, Database, WalletCards } from "lucide-react";
+import { Activity, CheckCircle2, Cpu, Hash, ListOrdered, Radio, Share2, ShieldCheck, WalletCards } from "lucide-react";
 
 type MiningOperationsFlowProps = {
   hasActivePackage: boolean;
@@ -13,11 +13,12 @@ type MiningOperationsFlowProps = {
 };
 
 const FLOW_STEPS = [
-  { label: "Purchased package", detail: "Customer contract entitlement", Icon: Cpu },
-  { label: "Hash-power allocation", detail: "Package TH/s × eligible time", Icon: Activity },
-  { label: "Farm settlement", detail: "Recorded third-party settlement", Icon: Database },
-  { label: "Customer CKI ledger", detail: "Posted database credit", Icon: WalletCards },
-  { label: "Main-wallet conversion", detail: "Customer-selected asset", Icon: ArrowDownUp },
+  { label: "Allocating", detail: "Customer contract entitlement", Icon: Share2 },
+  { label: "Sequencing", detail: "Package TH/s × eligible time", Icon: ListOrdered },
+  { label: "Hashing", detail: "Recorded third-party settlement", Icon: Hash },
+  { label: "Validating", detail: "Posted database credit", Icon: ShieldCheck },
+  { label: "Broadcasting", detail: "Customer-selected asset", Icon: Radio },
+  { label: "Confirming", detail: "Final wallet confirmation", Icon: CheckCircle2 },
 ];
 
 const fmt = (value: number, digits = 8) => Number.isFinite(value)
