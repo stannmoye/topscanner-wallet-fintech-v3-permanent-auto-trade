@@ -619,14 +619,17 @@
 /* ---- 3. Engine row: spacier side stack + expanded hash-power boost ---- */
 .cm-dashboard-frame .cm-top-grid{gap:14px}
 .cm-dashboard-frame .cm-side-stack{grid-template-rows:minmax(0,1fr) auto;gap:14px}
+.cm-dashboard-frame .cm-side-stack>.cm-boost-card{min-height:0}
 .cm-dashboard-frame .cm-progress-card{padding:20px 20px 18px;border-radius:19px}
 .cm-dashboard-frame .cm-boost-card{
   grid-template-columns:92px minmax(0,1fr);
-  grid-template-rows:auto auto;
-  gap:14px 18px;
-  align-content:center;
-  min-height:168px;
-  padding:20px 22px;
+  grid-template-rows:auto minmax(52px,auto);
+  gap:16px 18px;
+  align-content:start;
+  align-items:start;
+  min-height:205px;
+  padding:20px 22px 22px;
+  overflow:visible;
   border-color:#1b5a86;
   border-radius:19px;
   background:
@@ -635,7 +638,7 @@
     linear-gradient(150deg,#08203a,#03101f 84%);
   box-shadow:0 16px 40px rgba(0,4,12,.42),inset 0 1px rgba(255,255,255,.05)
 }
-.cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:90px;height:110px}
+.cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:90px;height:118px;align-self:stretch}
 .cm-dashboard-frame .cm-boost-copy{display:flex;flex-direction:column;justify-content:center;gap:10px}
 .cm-dashboard-frame .cm-boost-topline>b{font-size:10px;letter-spacing:.08em}
 .cm-dashboard-frame .cm-boost-readout{gap:4px}
@@ -644,7 +647,7 @@
 .cm-dashboard-frame .cm-boost-bottomline{margin-top:0;display:flex;flex-direction:column;gap:9px}
 .cm-dashboard-frame .cm-boost-reward-note{color:#8fe6ff;font-size:9px;font-weight:800}
 .cm-dashboard-frame .cm-boost-charge{height:9px;border-radius:10px}
-.cm-dashboard-frame .cm-boost-card .cm-glow-button{height:40px;padding:8px 14px;font-size:10px;border-radius:12px}
+.cm-dashboard-frame .cm-boost-card .cm-glow-button{grid-column:2;grid-row:2;align-self:end;height:46px;padding:10px 16px;font-size:10px;border-radius:12px;margin-bottom:0}
 
 /* ---- 4. Mining Analytics & forecast (new feature) ---- */
 .cm-dashboard-frame .cm-analytics{display:flex;flex-direction:column;gap:16px}
@@ -744,8 +747,9 @@
   .cm-dashboard-frame .cm-dashboard-main>*+*{margin-top:13px}
   .cm-dashboard-frame .cm-top-grid{gap:12px}
   .cm-dashboard-frame .cm-side-stack{gap:12px;min-height:0}
-  .cm-dashboard-frame .cm-boost-card{grid-template-columns:76px minmax(0,1fr);gap:12px 14px;padding:16px;min-height:150px}
-  .cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:74px;height:94px}
+  .cm-dashboard-frame .cm-boost-card{grid-template-columns:76px minmax(0,1fr);grid-template-rows:auto minmax(48px,auto);gap:14px 14px;padding:16px 16px 18px;min-height:176px;align-content:start;align-items:start}
+  .cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:74px;height:100px;align-self:stretch}
+  .cm-dashboard-frame .cm-boost-card .cm-glow-button{height:44px;padding:9px 14px}
   .cm-dashboard-frame .cm-boost-readout strong{font-size:17px}
   .cm-dashboard-frame .cm-analytics{padding:16px 15px}
   .cm-dashboard-frame .cm-analytics-kpis{gap:11px}
@@ -772,8 +776,9 @@
 }
 @media(max-width:410px){
   .cm-dashboard-frame .cm-dashboard-main{padding:11px 9px 22px}
-  .cm-dashboard-frame .cm-boost-card{grid-template-columns:64px minmax(0,1fr);gap:10px 12px;padding:14px}
-  .cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:62px;height:82px}
+  .cm-dashboard-frame .cm-boost-card{grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto minmax(44px,auto);gap:12px 12px;padding:14px 14px 16px;min-height:160px;align-content:start;align-items:start}
+  .cm-dashboard-frame .cm-boost-card .cm-boost-machine{width:62px;height:86px;align-self:stretch}
+  .cm-dashboard-frame .cm-boost-card .cm-glow-button{height:42px;padding:8px 12px}
   .cm-dashboard-frame .cm-boost-readout strong{font-size:15px}
 }
 
