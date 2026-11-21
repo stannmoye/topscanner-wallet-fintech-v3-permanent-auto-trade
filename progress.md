@@ -1,3 +1,27 @@
+## 2026-11-21 — Clear the pre-existing installer/scripts test failures
+
+Owner asked to clean up the outstanding test failures as long as nothing in the
+application is affected.
+
+- Stale Drizzle-journal snapshots (the journal has since grown to end at
+  `0121_device_details`): refreshed the frozen tail lists in
+  `scripts/trading-settlement-timing-schema-repair.test.mjs`,
+  `scripts/trading-package-subscription-repair.test.mjs`, and
+  `scripts/apply-portal-migrations-safety.test.mjs`.
+- `scripts/opportunity-delivery-lifecycle.contract.test.mjs`: the ack guard was
+  intentionally hardened (a missing lease token now throws instead of silently
+  returning), so the assertion was updated to the current behaviour. The
+  no-financial-state and no-allocation assertions are unchanged.
+- `installer/create-admin-safety.test.mjs`: it reads the root `.env.example`,
+  which was referenced by `README.md`, the deployment guides, `BUILD_SOURCE.json`,
+  and the release workflow but had never been committed. Added `.env.example`
+  with the required and optional runtime variables (no SMTP/provider entries, as
+  the test requires).
+- Verification (test-only plus one missing reference file; no runtime code
+  change): focused suites 15/15, the full installer/scripts config 196/196 across
+  34 files, and `pnpm test` 1,580 passed / 36 skipped. No production behaviour
+  changed.
+
 ## 2026-11-21 — Fix the MariaDB enum-default check that re-blocked startup
 
 The deployment now picks up the corrected repository and reaches the additive

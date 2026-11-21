@@ -41,15 +41,6 @@ describe("Trading customer package subscription schema repair", () => {
     const tailStart = entries.length - 25;
     const tail = entries.slice(tailStart);
     expect(tail.map((item) => item.tag)).toEqual([
-      "0086_trading_popup_policy_snapshots",
-      "0087_trading_opportunity_execution_leases",
-      "0088_trading_package_policy_schema_reconciliation",
-      "0089_trading_popup_policy_ranges",
-      "0090_trading_company_spotlight_rotation",
-      "0091_trading_popup_trade_snapshots",
-      "0092_trading_trade_wallet_funding_plan_snapshot",
-      "0093_admin_wallet_adjustment_idempotency",
-      "0094_trading_policy_duration_bounds_nullable",
       "0095_fx_snapshot_source_timestamp_precision",
       "0096_trade_settlement_review_timestamp",
       "0097_trading_daily_execution_attempt_accounting",
@@ -63,9 +54,18 @@ describe("Trading customer package subscription schema repair", () => {
       "0105_default_on_global_information_delivery",
       "0106_package_popup_defaults",
       "0107_accurate_opportunity_delivery_monitoring",
+      "0108_settlement_evidence_records",
       "0109_customer_company_country_restrictions",
       "0110_opportunity_delivery_diagnostic_history",
       "0111_automatic_market_result_settlement",
+      "0112_permanent_automatic_financial_execution",
+      "0113_enable_tiers_for_informational_delivery",
+      "0114_enable_automatic_financial_execution_all_packages",
+      "0115_trade_public_id_registry",
+      "0116_immediate_trade_settlement",
+      "0119_customer_personal_details",
+      "0120_trusted_devices",
+      "0121_device_details",
     ]);
     tail.forEach((item, offset) => {
       const index = tailStart + offset;

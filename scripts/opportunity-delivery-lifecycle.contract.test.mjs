@@ -67,7 +67,8 @@ describe("opportunity delivery lifecycle migration and state boundaries", () => 
     ]);
     expect(eligibility).toContain("Browser-side delivery acknowledgements must never decide allocation.");
     expect(eligibility).not.toContain("deliveryStatus = String(input.deliveryStatus");
-    expect(lifecycle).toContain("if (!process.env.DATABASE_URL || !leaseToken) return;");
+    expect(lifecycle).toContain('if (!deliveryLeaseToken) throw new Error("Popup delivery acknowledgement requires the delivery lease token.");');
+    expect(lifecycle).toContain("if (!process.env.DATABASE_URL) return;");
     expect(lifecycle).toContain("deliveryLeaseToken=? AND deliveryStatus IN ('in_progress','received')");
     expect(policySql).toContain("DELIVERY_FINANCIAL_EFFECTS = false");
     expect(lifecycle).not.toMatch(/UPDATE opportunity_popup_events SET[^`]*\b(?:wallet|ledger|tradeId|executionStatus|executionLastErrorCode)\s*=/i);
