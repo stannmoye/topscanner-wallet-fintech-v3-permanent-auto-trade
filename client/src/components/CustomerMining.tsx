@@ -366,6 +366,7 @@ export function CustomerMining({ push }: { push: (message: string) => void }) {
 	        engineActivitySeconds={Number(data?.engineActivity?.eligibleSeconds || 0)}
 	        latestRewardReference={latestReward?.reference}
 	        latestRewardCreatedAt={latestReward?.createdAt}
+	        nextRewardAt={data?.nextRewardAt}
       />
 
       <section className="cm-analytics" aria-label="Mining performance analytics and forecast">

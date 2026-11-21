@@ -10,6 +10,7 @@ type MiningOperationsFlowProps = {
   engineActivitySeconds: number;
   latestRewardReference?: string;
   latestRewardCreatedAt?: string;
+  nextRewardAt?: string;
 };
 
 const FLOW_STEPS = [
@@ -34,26 +35,58 @@ export function MiningOperationsFlow({
   engineActivitySeconds,
   latestRewardReference,
   latestRewardCreatedAt,
+  nextRewardAt,
 }: MiningOperationsFlowProps) {
   const [stage, setStage] = useState(0);
+  const [cycleProgress, setCycleProgress] = useState(0);
   const [receiptPulse, setReceiptPulse] = useState(false);
 
-  // A deliberately slow, continuous visualization of the operational path. It
-  // never creates a token, receipt, hash-rate sample, or wallet transaction.
+  // The settlement flow mirrors the real per-minute reward cycle. Rewards are
+  // accrued across a 60s window and posted at the minute boundary returned by
+  // the dashboard as `nextRewardAt`. We map the position within that window to
+  // the 6 operational stages so the animation advances in lock-step with the
+  // mining that is actually being recorded. It never creates a token, receipt,
+  // hash-rate sample, or wallet transaction.
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       setStage(0);
+      setCycleProgress(0);
       return;
     }
     if (!hasActivePackage) {
       setStage(0);
+      setCycleProgress(0);
       return;
     }
-    const timer = window.setInterval(() => {
-      setStage(current => (current + 1) % FLOW_STEPS.length);
-    }, 9000);
+    if (!nextRewardAt) {
+      // No reward timestamp yet — fall back to a slow fixed cycle so the UI
+      // still conveys activity without inventing timing.
+      setCycleProgress(0);
+      const timer = window.setInterval(() => {
+        setStage(current => (current + 1) % FLOW_STEPS.length);
+      }, 9000);
+      return () => window.clearInterval(timer);
+    }
+
+    const target = new Date(nextRewardAt).getTime();
+    const CYCLE_MS = 60_000;
+
+    const tick = () => {
+      const msUntilReward = target - Date.now();
+      // 0 at the start of the minute, 1 when the reward boundary is reached.
+      let progress = 1 - msUntilReward / CYCLE_MS;
+      if (progress < 0) progress = 0;
+      // Hold at the final stage once the boundary is reached; the next
+      // dashboard refresh will supply a fresh nextRewardAt and the cycle
+      // restarts from the beginning.
+      if (progress > 1) progress = 1;
+      setCycleProgress(progress);
+      setStage(Math.min(FLOW_STEPS.length - 1, Math.floor(progress * FLOW_STEPS.length)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 500);
     return () => window.clearInterval(timer);
-  }, [hasActivePackage]);
+  }, [hasActivePackage, nextRewardAt]);
 
   useEffect(() => {
     if (!latestRewardReference) return;
@@ -63,7 +96,11 @@ export function MiningOperationsFlow({
   }, [latestRewardReference]);
 
   const active = hasActivePackage && hashPowerThs > 0;
-  const progress = active ? stage / (FLOW_STEPS.length - 1) : 0;
+  const progress = active
+    ? nextRewardAt
+      ? cycleProgress
+      : stage / (FLOW_STEPS.length - 1)
+    : 0;
   const status = !active
     ? "Idle · customer has no active package"
     : latestRewardReference
