@@ -5,13 +5,14 @@ function fakeDb({
   ledgerNullable = "YES",
   statusType = "enum('active','replaced','expired','cancelled')",
   missingLedger = false,
+  statusDefault = "active",
 } = {}) {
   const columns = {
     status: {
       dataType: "enum",
       columnType: statusType,
       isNullable: "NO",
-      columnDefault: "active",
+      columnDefault: statusDefault,
     },
   };
   if (!missingLedger) {
@@ -72,6 +73,20 @@ describe("Mining customer-package lifecycle schema reconciliation", () => {
   it("leaves a correct lifecycle schema unchanged", async () => {
     const db = fakeDb({
       statusType: "enum('active','replaced','expired','cancelled','ended')",
+    });
+
+    await expect(
+      ensureMiningCustomerPackageLifecycleSchema(db)
+    ).resolves.toEqual({ present: true, repaired: false });
+    expect(
+      db.query.mock.calls.some(([sql]) => sql.startsWith("ALTER TABLE"))
+    ).toBe(false);
+  });
+
+  it("accepts a correct lifecycle schema whose default is quoted (MariaDB)", async () => {
+    const db = fakeDb({
+      statusType: "enum('active','replaced','expired','cancelled','ended')",
+      statusDefault: "'active'",
     });
 
     await expect(

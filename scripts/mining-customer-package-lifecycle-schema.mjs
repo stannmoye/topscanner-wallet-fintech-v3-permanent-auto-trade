@@ -26,6 +26,12 @@ function enumSql(values) {
   return values.map(value => "'" + value.replace(/'/g, "''") + "'").join(",");
 }
 
+// MySQL returns column_default unquoted ("active"); MariaDB returns it quoted
+// ("'active'"). Strip either form so the drift check cannot loop on a correct
+// column and permanently block the guarded migration.
+const defaultIsActive = column =>
+  String(column?.columnDefault ?? "").replace(/^['"]|['"]$/g, "").toLowerCase() === "active";
+
 async function readColumn(db, name) {
   const [columns] = await db.query(
     "SELECT data_type AS dataType,column_type AS columnType,is_nullable AS isNullable,column_default AS columnDefault " +
@@ -85,7 +91,7 @@ export async function ensureMiningCustomerPackageLifecycleSchema(db) {
   const statusDrift =
     missingStatuses.length > 0 ||
     normalize(statusColumn.isNullable) !== "no" ||
-    String(statusColumn.columnDefault ?? "").toLowerCase() !== "active";
+    !defaultIsActive(statusColumn);
   if (statusDrift) {
     const values = [
       ...liveStatuses,
@@ -105,7 +111,7 @@ export async function ensureMiningCustomerPackageLifecycleSchema(db) {
     !finalStatuses ||
     REQUIRED_STATUSES.some(value => !finalStatuses.includes(value)) ||
     normalize(statusColumn.isNullable) !== "no" ||
-    String(statusColumn.columnDefault ?? "").toLowerCase() !== "active"
+    !defaultIsActive(statusColumn)
   ) {
     throw new Error(
       "Mining schema verification failed for mining_customer_packages.status"

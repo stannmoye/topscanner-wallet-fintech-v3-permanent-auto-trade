@@ -1,3 +1,27 @@
+## 2026-11-21 — Fix the MariaDB enum-default check that re-blocked startup
+
+The deployment now picks up the corrected repository and reaches the additive
+Mining reconciliation, then aborts again with
+`Mining schema verification failed for mining_customer_packages.status`.
+
+- Root cause: `scripts/mining-customer-package-lifecycle-schema.mjs` compared
+  `information_schema.columns.column_default` to the bare string `active`. MySQL
+  returns the default unquoted (`active`), but MariaDB returns it quoted
+  (`'active'`). On MariaDB the drift check was always true, so the verifier
+  re-ran the `ALTER` every boot and then failed the final check — an endless
+  crash loop with the guard correctly replaying the idempotent step.
+- Fix: added a quote-tolerant `defaultIsActive` helper (mirroring the existing
+  `defaultIsPurchase` in `mining-customer-package-schema.mjs`) and used it in
+  both the drift and final checks. The covered sibling verifiers and
+  `mining-package-theme-schema.mjs` already stripped quotes.
+- Test: added a regression case that supplies a quoted `'active'` default with a
+  correct lifecycle enum and asserts the verifier resolves with `repaired:false`
+  and issues no `ALTER`.
+- Verification: focused lifecycle/acquisition tests 12/12 passed, `pnpm check`,
+  `pnpm build` passed. The installer/scripts suite still has the same 4
+  pre-existing stale journal-tail failures noted elsewhere; they do not affect
+  this startup path and do not run under `pnpm test`/`pnpm build`.
+
 ## 2026-11-21 — Correct the deployment repository identity
 
 Owner asked to remove the wrong repository reference once and for all. The build
