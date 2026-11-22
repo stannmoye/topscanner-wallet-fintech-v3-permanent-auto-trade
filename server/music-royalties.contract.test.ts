@@ -33,7 +33,7 @@ describe("Music Royalties desk", () => {
     expect(app).toContain('section==="music-royalties"&&<Suspense');
     expect(app).toContain("<CustomerMusicRoyalties push={push}/>");
     // The generic placeholder must explicitly exclude music-royalties now.
-    expect(app).toContain('item.id!=="ip-royalties"&&item.id!=="music-royalties")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment")&&<CustomerInvestmentCategory');
     // The customer menu reaches the desk through the shared slide menu.
     expect(slideMenu).toContain('target: "music-royalties"');
 

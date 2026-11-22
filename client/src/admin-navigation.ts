@@ -29,6 +29,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  Sprout,
   TicketCheck,
   Users,
   WalletCards,
@@ -79,6 +80,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "litigation-funds", target: "litigationFundDossiers", label: "Litigation Funds", detail: "Publish cited case dossiers and bundles with modelled outcome scenarios, milestones and funding targets", icon: Gavel },
     { id: "ip-royalties", target: "ipRoyaltyDossiers", label: "IP Royalties", detail: "Publish sourced IP-right dossiers and portfolios with royalty basis, modelled distribution scenarios and funding targets", icon: Layers3 },
     { id: "music-royalties", target: "musicRoyaltyDossiers", label: "Music Royalties", detail: "Publish music-only opportunities in 14 types — shows, concerts, festivals, tours, artists, albums, endorsements, brand labels, masters, publishing, sync, merchandise, videos, catalogue and royalty streams", icon: Music },
+    { id: "agro-investment", target: "agroInvestmentDossiers", label: "Agro Investment", detail: "Publish agriculture-only opportunities in 14 types — row crops, orchard & vineyard, livestock, dairy, poultry, aquaculture, greenhouse, farmland, irrigation, machinery, storage & logistics, agri inputs, agritech and processing", icon: Sprout },
   ]},
   { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
     { id: "mining-overview", target: "miningOverview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [
