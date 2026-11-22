@@ -7,6 +7,7 @@ import {
   Search, ShieldCheck, Sparkles, Star, TrendingUp, Wallet, X,
 } from "lucide-react";
 import { getTreasuryBondCatalogue, type TreasuryBondInstrument } from "@shared/treasury-bond-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./treasury-bond.css";
 
 // The desk renders the shared catalogue instrument shape verbatim; aliasing keeps
@@ -66,6 +67,67 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** The least a customer can place in any desk opportunity (USD 500), matching the economics engine. */
+const MIN_INVESTMENT_MINOR = 50_000;
+
+type EconomicsView = {
+  econ: DeskEconomics;
+  currency: string;
+  scale: number;
+  symbol: string;
+  ticketMinMinor: number;
+  fundingTargetMinor: number;
+  profitBps: number;
+  termDays: number;
+  closeDate: string;
+  maturityDate: string;
+  platformFeeBps: number;
+  settlementDelayDays: number | null;
+};
+
+/**
+ * The auto-assigned economic profile the server merges onto each instrument
+ * (investable amount, profit, term, presentation currency, platform fee and any
+ * settlement delay). Absent on the raw public catalogue, so every consumer must
+ * tolerate a null and fall back to the published-only view.
+ */
+function economicsView(instrument: TreasuryInstrument): EconomicsView | null {
+  const econ = instrument.economics ?? null;
+  if (!econ) return null;
+  return {
+    econ,
+    currency: econ.currency,
+    scale: econ.currencyScale,
+    symbol: econ.currencySymbol,
+    ticketMinMinor: econ.ticketMinMinor,
+    fundingTargetMinor: econ.fundingTargetMinor,
+    profitBps: econ.profitBps,
+    termDays: econ.termDays,
+    closeDate: econ.closeDate,
+    maturityDate: econ.maturityDate,
+    platformFeeBps: econ.platformFeeBps,
+    settlementDelayDays: econ.settlementDelayDays ?? null,
+  };
+}
+
+/** Format an amount held in the offer's own currency and scale. */
+function fmtEcon(minor: number, currency: string, scale = 2) {
+  const code = String(currency || "USD").toUpperCase();
+  const digits = Math.min(Math.max(0, Math.round(Number.isFinite(scale) ? scale : 2)), 8);
+  const value = Number(minor || 0) / Math.pow(10, digits);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: code, maximumFractionDigits: digits }).format(value);
+  } catch {
+    return `${code} ${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  }
+}
+
+/** A basis-point rate as a percentage string (2,500 bps → "25%", 2,575 bps → "25.75%"). */
+function fmtBps(bps: number) {
+  const value = Number(bps || 0) / 100;
+  return `${value.toFixed(Number(bps) % 100 === 0 ? 0 : 2)}%`;
 }
 
 function useWatchlist() {
@@ -329,12 +391,19 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
   const toggleCompare = (id: string) => setCompare((current) => current.includes(id) ? current.filter((x) => x !== id) : current.length < 3 ? [...current, id] : current);
 
   const openPurchase = (instrument: TreasuryInstrument) => {
+    const view = economicsView(instrument);
+    // Seed the amount from the assigned "invest from" floor (USD 500 minimum),
+    // converted to the USD minor units the settlement wallet works in.
+    const econFloorUsd = view ? currencyMinorToUsdMinor(view.ticketMinMinor, view.currency) : 0;
+    const floor = Math.max(instrument.minInvestmentMinor, MIN_INVESTMENT_MINOR, econFloorUsd);
     setSelected(instrument);
     setMessage("");
     setFundingSource("COMBINED");
     setQuote(null);
-    setAmount(Math.max(instrument.minInvestmentMinor, Math.min(available, instrument.minInvestmentMinor * 2)));
+    setAmount(Math.max(floor, Math.min(available, floor * 2)));
   };
+
+  const selectedEconomics = selected ? economicsView(selected) : null;
 
   const projectedProfit = selected ? Math.floor((Math.max(0, amount) * selected.couponRatePct * selected.tenorYears) / 100) : 0;
 
@@ -483,6 +552,7 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
         {filtered.map((instrument) => {
           const isWatched = watchlist.has(instrument.id);
           const inCompare = compare.includes(instrument.id);
+          const view = economicsView(instrument);
           return <article className={`tb-card tb-cat-${instrument.category.toLowerCase()}`} key={instrument.id}>
             <div className="tb-card-top">
               <span className="tb-card-flag" aria-hidden="true">{instrument.flag}</span>
@@ -502,6 +572,21 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
               <div><span>Profit on {fmtMinor(instrument.minInvestmentMinor)}</span><b className="tb-positive">{fmtMinor(Math.floor((instrument.minInvestmentMinor * instrument.couponRatePct * instrument.tenorYears) / 100))}</b></div>
               <div><span>Credit quality</span><b>{instrument.creditQuality}</b></div>
             </div>
+            {view && <div className="tb-card-econ">
+              <div className="tb-card-econ-head"><Sparkles size={12}/> Investment offer</div>
+              <div className="tb-card-econ-items">
+                <div className="tb-econ-item"><span>Currency</span><b>{view.currency} {view.symbol}</b></div>
+                <div className="tb-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+                <div className="tb-econ-item"><span>Profit</span><b className="tb-positive">{fmtBps(view.profitBps)}</b></div>
+                <div className="tb-econ-item"><span>Term</span><b>{view.termDays} days</b></div>
+                <div className="tb-econ-item"><span>Platform fee</span><b>{fmtBps(view.platformFeeBps)}</b></div>
+                <div className="tb-econ-item"><span>Closes</span><b>{formatDate(view.closeDate)}</b></div>
+                <div className="tb-econ-item"><span>Profit realised</span><b>{formatDate(view.maturityDate)}</b></div>
+                {view.settlementDelayDays
+                  ? <div className="tb-econ-item tb-econ-delay"><span>Payout delay</span><b>+{view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}</b></div>
+                  : <div className="tb-econ-item"><span>Payout</span><b className="tb-econ-ok">On time</b></div>}
+              </div>
+            </div>}
             <p className="tb-card-summary">{instrument.summary}</p>
             <div className="tb-card-foot">
               <span className="tb-card-asof" title={instrument.sourceSeries}><Clock size={11}/> {instrument.asOf} · {instrument.source}</span>
@@ -586,6 +671,22 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
           <div><span>Amount required</span><strong>{fmtMinor(selected.minInvestmentMinor)}</strong></div>
           <div><span>Payment</span><strong>{selected.couponFrequency}</strong></div>
         </div>
+        {selectedEconomics && <div className="tb-econ-panel">
+          <div className="tb-econ-panel-head"><Sparkles size={13}/> Investment offer · {selectedEconomics.settlementDelayDays ? "may settle late" : "on schedule"}</div>
+          <div className="tb-econ-row">
+            <div className="tb-econ-item"><span>Currency</span><b>{selectedEconomics.currency} {selectedEconomics.symbol}</b></div>
+            <div className="tb-econ-item"><span>Invest from</span><b>{fmtEcon(selectedEconomics.ticketMinMinor, selectedEconomics.currency, selectedEconomics.scale)}</b></div>
+            <div className="tb-econ-item"><span>Funding target</span><b>{fmtEcon(selectedEconomics.fundingTargetMinor, selectedEconomics.currency, selectedEconomics.scale)}</b></div>
+            <div className="tb-econ-item"><span>Profit</span><b className="tb-positive">{fmtBps(selectedEconomics.profitBps)}</b></div>
+            <div className="tb-econ-item"><span>Term</span><b>{selectedEconomics.termDays} days</b></div>
+            <div className="tb-econ-item"><span>Platform fee</span><b>{fmtBps(selectedEconomics.platformFeeBps)}</b></div>
+            <div className="tb-econ-item"><span>Closes</span><b>{formatDate(selectedEconomics.closeDate)}</b></div>
+            <div className="tb-econ-item"><span>Profit realised</span><b>{formatDate(selectedEconomics.maturityDate)}</b></div>
+          </div>
+          {selectedEconomics.settlementDelayDays
+            ? <div className="tb-econ-delay"><Clock size={13}/> A system settlement delay of up to {selectedEconomics.settlementDelayDays} day{selectedEconomics.settlementDelayDays === 1 ? "" : "s"} applies to this opportunity, so the payout may arrive shortly after the realisation date.</div>
+            : <div className="tb-econ-ontime"><Check size={13}/> This opportunity settles on the realisation date — no settlement delay applies.</div>}
+        </div>}
         <div className="amount-field"><label>Purchase amount (USD)</label><div><span>$</span><input type="number" min={selected.minInvestmentMinor / 100} step="100" value={(amount / 100).toString()} onChange={(e) => setAmount(Math.round((Number(e.target.value) || 0) * 100))}/></div><small>Minimum {fmtMinor(selected.minInvestmentMinor)} · USD settlement balance {fmtMinor(available)}</small></div>
         <div className="tb-funding">
           <span className="tb-funding-label"><Wallet size={13}/> Pay with</span>

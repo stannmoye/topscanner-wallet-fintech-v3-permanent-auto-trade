@@ -1,3 +1,43 @@
+## 2026-11-23 (feat) — Desk economics engine rolled out to the Treasury Bond desk
+
+Fifth desk to carry the auto-assigned economic profile (after Agro, Carbon Credit, Music Royalties
+and IP Royalties). Every treasury-bond instrument now shows an investable amount (USD 500–1,000,000
+equivalent), a 25%–38% profit, a 30–365 day term, a USD-dominant presentation currency, a 7%–10%
+platform fee and an occasional settlement-delay bolt-on — all overridable by an administrator. The
+shared engine/store are unchanged; this pass only wires the Treasury desk (desk key `"treasury"`)
+into them. The desk still settles in USD; the profile is presentation only.
+
+- **Catalogue (`shared/treasury-bond-catalogue.ts`).** `TreasuryBondInstrument` gains an optional
+  `economics?: DeskEconomics | null` (environment-neutral import from `./investment-economics`).
+- **Server (`server/treasuryBonds.ts`).** New `TREASURY_DESK_KEY = "treasury"`; `getTreasuryBondDashboard()`
+  batch-reads the profile via `getDeskEconomicsMap(TREASURY_DESK_KEY, …)` (try/catch + empty-map
+  fallback) and merges it through a `withTreasuryEconomics()` helper that only fills `economics` — the
+  published coupon, tenor, source and as-of date are never touched, and the contract-tested
+  `const instruments = [...adminInstruments, ...catalogue.instruments].sort(compareTreasuryBondInstruments)`
+  line is preserved verbatim (the enriched array is a separate `instrumentsWithEconomics`), which is
+  what the dashboard now returns. `resolveInstrumentForPurchase()` attaches the same profile via
+  `getOrAssignTreasuryEconomics()` so a purchase carries the offer the customer reviewed.
+- **Customer desk (`client/src/components/CustomerTreasuryBond.tsx`).** New `economicsView()` /
+  `fmtEcon()` / `fmtBps()` and an `EconomicsView` type; `MIN_INVESTMENT_MINOR = 50_000` (USD 500)
+  seeds the invest amount. Each card gains an `Investment offer` block (`tb-card-econ` /
+  `tb-econ-item`, with `tb-econ-delay` for a delayed payout or `tb-econ-ok` "On time"); the purchase
+  modal carries the same `tb-econ-panel` (`tb-econ-delay` / `tb-econ-ontime` note).
+- **CSS (`client/src/components/treasury-bond.css`).** Added `.tb-card-econ`, `.tb-card-econ-head`,
+  `.tb-card-econ-items`, `.tb-econ-item`, `.tb-econ-item.tb-econ-delay`, `.tb-econ-ok`,
+  `.tb-econ-panel`, `.tb-econ-panel-head`, `.tb-econ-row`, `.tb-econ-delay`, `.tb-econ-ontime` and a
+  640px responsive collapse, derived from existing `--tb-*` / `--arb-color-*` tokens.
+- **Admin console (`client/src/components/AdminTreasuryInstruments.tsx`).** A `settings-tabs` rail
+  splits the console into **Instruments** and **Economic profiles**; the new tab is an editable
+  economics console (currency, minimum ticket + funding target with USD hints, profit % 25–38, term
+  days, platform fee % 7–10, close/realise dates, optional settlement delay) with **Save economic
+  profile** and **Re-roll auto profile**, wired to `deskEconomicsBatch` / `setDeskEconomics` /
+  `reassignDeskEconomics` for `desk: "treasury"`.
+- **Test (`server/treasury-instruments.contract.test.ts`).** New case asserts the treasury wiring
+  (catalogue field, server merge + key, router procedures, customer panel classes, admin tab).
+- Verification: `server/treasury-instruments.contract.test.ts` 8/8 passed; `pnpm check` clean;
+  `pnpm build:static` succeeded.
+- **Next:** roll the same engine to the remaining two desks (Litigation Funds, Cooperate Dept).
+
 ## 2026-11-23 (feat) — Desk economics engine rolled out to the IP Royalties desk
 
 Fourth desk to carry the auto-assigned economic profile (after Agro, Carbon Credit and Music

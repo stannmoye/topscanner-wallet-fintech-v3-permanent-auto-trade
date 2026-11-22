@@ -10,6 +10,9 @@ const serverStore = readFileSync(new URL("./treasuryBondInstruments.ts", import.
 const serverDesk = readFileSync(new URL("./treasuryBonds.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const customerUi = readFileSync(new URL("../client/src/components/CustomerTreasuryBond.tsx", import.meta.url), "utf8");
+const investmentEconomics = readFileSync(new URL("../shared/investment-economics.ts", import.meta.url), "utf8");
+const deskEconomics = readFileSync(new URL("./deskEconomics.ts", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../client/src/components/treasury-bond.css", import.meta.url), "utf8");
 
 describe("Administrator treasury-instrument publishing", () => {
   it("exposes one Finance destination that opens the dedicated publishing console", () => {
@@ -125,5 +128,66 @@ describe("Administrator treasury-instrument publishing", () => {
     expect(customerUi).toContain("All wallets combined");
     expect(customerUi).toContain("function moneyMinor(");
     expect(customerUi).toContain("amountMinor: Math.round(amount), fundingSource, idempotencyKey: crypto.randomUUID()");
+  });
+
+  it("auto-assigns every instrument a richer economic profile — amount, profit, term, currency, platform fee and an occasional settlement delay", () => {
+    // The shared, environment-neutral engine is the single source of the profile.
+    expect(investmentEconomics).toContain("export type DeskKey");
+    expect(investmentEconomics).toContain("export const DESK_KEYS");
+    expect(investmentEconomics).toContain("export const INVESTMENT_CURRENCIES");
+    expect(investmentEconomics).toContain("export function currencyMinorToUsdMinor(");
+    expect(investmentEconomics).toContain("export function currencyByCode(");
+    expect(investmentEconomics).toContain("export const ECONOMICS_BOUNDS");
+    expect(investmentEconomics).toContain("export function assignDeskEconomics(");
+    expect(investmentEconomics).toContain("settlementDelayDays");
+    expect(investmentEconomics).toContain("export function normalizeEconomicsOverride(");
+
+    // The desk derives and persists the profile additively, so a value survives a restart.
+    expect(deskEconomics).toContain('export const DESK_ECONOMICS_TABLE = "desk_investment_economics"');
+    expect(deskEconomics).toContain("export async function getOrAssignDeskEconomics(");
+    expect(deskEconomics).toContain("export async function getDeskEconomicsMap(");
+    expect(deskEconomics).toContain("export async function setDeskEconomicsOverride(");
+    expect(deskEconomics).toContain("export async function reassignDeskEconomics(");
+    // An administrator override is authoritative and is never re-derived.
+    expect(deskEconomics).toContain('if (existing.source === "ADMIN") return existing;');
+
+    // The catalogue carries the auto-assigned profile on every served instrument.
+    expect(catalogue).toContain("economics?: DeskEconomics");
+
+    // The treasury desk merges the profile into every served instrument, and the
+    // resolve path attaches the same profile to a purchase.
+    expect(serverDesk).toContain('import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics"');
+    expect(serverDesk).toContain('const TREASURY_DESK_KEY = "treasury" as const;');
+    expect(serverDesk).toContain("function withTreasuryEconomics(");
+    expect(serverDesk).toContain("getDeskEconomicsMap(TREASURY_DESK_KEY");
+    expect(serverDesk).toContain("instruments: instrumentsWithEconomics");
+
+    // The administrator can view and override the auto-assigned values.
+    expect(serverRouters).toContain("deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds");
+    expect(serverRouters).toContain("setDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+    expect(serverRouters).toContain("reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+
+    // The customer row and purchase modal surface the extended profile.
+    expect(customerUi).toContain("function economicsView(");
+    expect(customerUi).toContain('className="tb-econ-panel"');
+    expect(customerUi).toContain("tb-econ-delay");
+    expect(customerUi).toContain("currencyMinorToUsdMinor");
+    expect(customerUi).toContain("settlementDelayDays");
+
+    // The admin console gets an editable economics console with a re-roll.
+    expect(adminUi).toContain("trpc.adminOperations.deskEconomicsBatch.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.setDeskEconomics.useMutation");
+    expect(adminUi).toContain("trpc.adminOperations.reassignDeskEconomics.useMutation");
+    expect(adminUi).toContain('{ desk: "treasury", instrumentIds: economicsIds }');
+    expect(adminUi).toContain("const econFormFor = (id: string)");
+    expect(adminUi).toContain("Save economic profile");
+    expect(adminUi).toContain("Re-roll auto profile");
+    expect(adminUi).toContain("ECONOMICS_BOUNDS");
+    expect(adminUi).toContain("INVESTMENT_CURRENCIES");
+    expect(adminUi).toContain("currencyMinorToUsdMinor");
+
+    // The extended profile is styled consistently with the rest of the desk.
+    expect(styles).toContain(".tb-econ-panel");
+    expect(styles).toContain(".tb-econ-delay");
   });
 });

@@ -31,6 +31,7 @@
  */
 
 import { flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 export type TreasuryBondHistoryPoint = { t: string; v: number };
 
@@ -65,6 +66,13 @@ export type TreasuryBondInstrument = {
   summary: string;
   highlights: string[];
   history: TreasuryBondHistoryPoint[];
+  /**
+   * Auto-assigned, admin-overridable economic profile for the desk offer
+   * (investable amount, profit, term, presentation currency, platform fee and
+   * any settlement delay). Filled by the server on the customer desk; absent on
+   * the raw public-data catalogue.
+   */
+  economics?: DeskEconomics | null;
 };
 
 export type TreasuryBondSource = {

@@ -16,8 +16,13 @@ import {
   type FxRateSnapshot,
 } from "./modules/trading-wallet-fx";
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
+import type { DeskEconomics } from "@shared/investment-economics";
 
 type Db = mysql.PoolConnection;
+
+/** The desk key this desk's auto-assigned economics are stored under. */
+const TREASURY_DESK_KEY = "treasury" as const;
 
 /** Additive, self-hosted storage for treasury-bond positions (outside Drizzle). */
 export const TREASURY_BOND_POSITIONS_TABLE = "treasury_bond_positions";
@@ -362,6 +367,26 @@ async function readAdminInstruments(): Promise<TreasuryBondInstrument[]> {
 }
 
 /**
+ * Read one instrument's auto-assigned economic profile, assigning and persisting
+ * it on first sight. Fails soft: a storage problem still yields the
+ * deterministically derived profile so a card never loses its offer details.
+ */
+async function getOrAssignTreasuryEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics(TREASURY_DESK_KEY, instrumentId);
+  } catch (error) {
+    console.error("[TreasuryBonds] Failed to assign economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
+
+/** Merge an instrument's economic profile without touching its published data. */
+function withTreasuryEconomics(instrument: TreasuryBondInstrument, economics: DeskEconomics | null | undefined): TreasuryBondInstrument {
+  if (!economics) return instrument;
+  return { ...instrument, economics };
+}
+
+/**
  * Assemble the treasury-bond desk for one customer: the live instrument
  * catalogue plus administrator-published instruments, that customer's own
  * positions, wallet balances and a derived summary. The catalogue read and the
@@ -376,6 +401,19 @@ export async function getTreasuryBondDashboard(userId: number) {
   ]);
 
   const instruments = [...adminInstruments, ...catalogue.instruments].sort(compareTreasuryBondInstruments);
+
+  // Every instrument the desk shows carries an auto-assigned economic profile
+  // (investable amount, profit, term, currency, platform fee and any settlement
+  // delay). It is read as one batch and merged additively; the published rate,
+  // tenor, source and observation date are never touched.
+  let economicsByInstrument = new Map<string, DeskEconomics>();
+  try {
+    economicsByInstrument = await getDeskEconomicsMap(TREASURY_DESK_KEY, instruments.map((instrument) => instrument.id));
+  } catch (error) {
+    console.error("[TreasuryBonds] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const instrumentsWithEconomics = instruments.map((instrument) => withTreasuryEconomics(instrument, economicsByInstrument.get(instrument.id)));
+
   const sources = adminInstruments.length
     ? [...catalogue.sources, {
         name: "Arbitrade desk — administrator published",
@@ -402,7 +440,7 @@ export async function getTreasuryBondDashboard(userId: number) {
   };
   const usd = balances.find((b) => b.currency === SETTLEMENT_CURRENCY);
   return {
-    instruments,
+    instruments: instrumentsWithEconomics,
     positions,
     balances,
     wallets: balances,
@@ -425,13 +463,18 @@ export async function getTreasuryBondDashboard(userId: number) {
  * than blocking a genuine live purchase.
  */
 async function resolveInstrumentForPurchase(instrumentId: string): Promise<TreasuryBondInstrument | null> {
+  let instrument: TreasuryBondInstrument | null = null;
   try {
     const admin = await findEnabledAdminTreasuryBondInstrument(instrumentId);
-    if (admin) return admin;
+    if (admin) instrument = admin;
   } catch (error) {
     console.error("[TreasuryBonds] Failed to resolve administrator instrument:", error instanceof Error ? error.message : "UnknownError");
   }
-  return findTreasuryBondInstrument(instrumentId);
+  if (!instrument) instrument = await findTreasuryBondInstrument(instrumentId);
+  if (!instrument) return null;
+  // The published rate still drives settlement; the economic profile is attached
+  // so the purchase carries the same offer details the customer reviewed.
+  return withTreasuryEconomics(instrument, await getOrAssignTreasuryEconomics(instrument.id));
 }
 
 /**
