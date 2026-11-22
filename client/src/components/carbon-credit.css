@@ -311,6 +311,16 @@
 .cc-pin-glyph { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--cc-line); background: var(--cc-tint-weak); color: var(--cc-teal-soft); flex: none; }
 .cc-star { background: transparent; border: none; cursor: pointer; color: var(--cc-muted); padding: 2px; }
 .cc-star.is-on { color: var(--cc-reference); }
+.cc-pin-card-econ { display: grid; gap: 3px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--cc-line); background: var(--cc-well); font-size: 0.72rem; color: var(--cc-muted); }
+.cc-pin-card-econ b { color: var(--cc-white); }
+.cc-pin-card-invest { display: flex; gap: 8px; }
+.cc-pin-card-invest .cc-btn { flex: 1; }
+.cc-profit { color: var(--cc-verified); }
+.cc-invest-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.cc-invest-figure { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--cc-line); background: var(--cc-well); display: grid; gap: 2px; }
+.cc-invest-figure span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--cc-muted); }
+.cc-invest-figure b { font-size: 0.9rem; }
+.cc-invest-figure--profit { border-color: var(--cc-verified-line); }
 
 .cc-card-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.74rem; color: var(--cc-muted); align-items: center; }
 

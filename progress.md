@@ -1,3 +1,29 @@
+## 2026-11-23 (fix 3) — Carbon Credit desk: invest straight from every card, with the amount and projected profit stated
+
+The desk showed no purchase/invest affordance until a project was first selected: the **Invest now**
+button lived only inside the slide-out dossier, so a customer browsing the pin board saw no way to buy.
+
+- **Invest button on every card (`client/src/components/CustomerCarbonCredit.tsx`).** Each pin-board
+  card now carries its own **Invest now** button that opens the purchase modal directly (stopping
+  propagation so it does not clash with the card's select-for-dossier click). The card container
+  moved from `<button>` to a `role="button"` `<div>` because a real button cannot nest inside a
+  button — the same reason the watch star was already a `span`. The dossier button is retained and
+  now reads *"Invest now from {minimum}"*.
+- **The amount they can invest and the profit they will realise, stated on the card and in the
+  dossier.** New helpers `investableFloor` (the opportunity minimum, floored at USD 1,000),
+  `profitMinor`/`returnMinor`/`fmtProfit` (integer basis points, minor-unit math). Each card shows
+  *"You can invest from …"* and *"Projected profit on …"*; the dossier adds **You can invest from**
+  and **Projected profit at minimum** stats; the purchase modal adds an invest-figures strip —
+  **You invest**, **Projected return at {multiple}**, and **Projected profit you will realise** —
+  that updates live with the amount.
+- **Empty-state dossier** now explains *How to invest* so the affordance is obvious before any pin
+  is opened.
+- **CSS (`carbon-credit.css`).** Added `.cc-pin-card-econ`, `.cc-pin-card-invest`, `.cc-profit`,
+  `.cc-invest-figures` / `.cc-invest-figure(--profit)`, all derived from existing theme tokens.
+- **Test.** New `server/carbon-credit.contract.test.ts` case asserts the card-level invest button,
+  the stated amount and projected profit, the dossier stats and the modal figures.
+- Verification: `pnpm check` clean; `pnpm test` 206 files / 1,670 passed / 36 skipped.
+
 ## 2026-11-23 (fix 2) — Carbon Credit desk: read the customer's wallets without a cross-collation join
 
 The desk then reported *"Your wallet balances could not be loaded right now."* — i.e. the wallet

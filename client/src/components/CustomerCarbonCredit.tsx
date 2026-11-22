@@ -97,6 +97,20 @@ const fmtMinor = (minor: number | null | undefined, currency = "USD") => moneyMi
 const fmtPercent = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 100).toFixed(Number(bps) % 100 === 0 ? 0 : 1)}%`);
 const fmtMultiple = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 10_000).toFixed(2)}x`);
 const fmtTonnes = (tonnes: number | null | undefined) => (tonnes === null || tonnes === undefined ? "—" : `${Number(tonnes).toLocaleString(undefined, { maximumFractionDigits: 0 })} tCO₂e`);
+/** Default investable floor when an opportunity publishes no explicit minimum (USD 1,000 in minor units). */
+const CARBON_MIN_INVESTMENT_MINOR = 100_000;
+/** The amount a customer may start from on a given opportunity. */
+const investableFloor = (opportunity: Pick<CarbonOpportunity, "minimumInvestmentMinor">) => Math.max(opportunity.minimumInvestmentMinor || 0, CARBON_MIN_INVESTMENT_MINOR);
+/** Profit implied by an amount at the opportunity's expected multiple (integer basis points). */
+const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
+  multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
+/** Projected return = principal + profit at the expected multiple. */
+const returnMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
+  multipleBps === null || multipleBps === undefined ? null : Number(amountMinor || 0) + (profitMinor(amountMinor, multipleBps) || 0);
+const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) => {
+  const profit = profitMinor(amountMinor, multipleBps);
+  return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
+};
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -350,7 +364,8 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
     const TypeIcon = TYPE_ICON[item.creditType];
     const verified = item.verificationStatus === "VERIFIED";
     const watched = watchlist.includes(item.id);
-    return <button type="button" className={`cc-pin-card${selectedId === item.id ? " is-active" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}>
+    const minimum = investableFloor(item);
+    return <div className={`cc-pin-card${selectedId === item.id ? " is-active" : ""}`} key={item.id} role="button" tabIndex={0} onClick={() => setSelectedId(item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(item.id); } }}>
       <div className="cc-pin-card-top">
         <span className="cc-pin-glyph"><TypeIcon size={15}/></span>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -370,11 +385,18 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
         <span>Per tonne <b>{item.pricePerTonneMinor ? fmtMinor(item.pricePerTonneMinor) : "—"}</b></span>
         <span>Expected <b>{fmtMultiple(item.expectedMultipleBps)}</b></span>
       </div>
+      <div className="cc-pin-card-econ">
+        <span>You can invest from <b>{fmtMinor(minimum)}</b></span>
+        <span>Projected profit on {fmtMinor(minimum)} <b className="cc-profit">{fmtProfit(minimum, item.expectedMultipleBps)}</b></span>
+      </div>
       {item.fundable && <div className="cc-progress">
         <div className="cc-progress-label"><span>Funding progress</span><span>{fmtPercent(item.fundedBps)} of {fmtMinor(item.fundingAskMinor ?? 0)}</span></div>
         <div className="cc-progress-bar"><i style={{ width: `${Math.max(0, Math.min(100, Math.round(item.fundedBps / 100)))}%` }} /></div>
       </div>}
-    </button>;
+      <div className="cc-pin-card-invest">
+        <button type="button" className="cc-btn cc-btn--invest" onClick={(event) => { event.stopPropagation(); openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, minimum); }}><Coins size={14}/> Invest now</button>
+      </div>
+    </div>;
   };
 
   const renderDossier = (item: CarbonOpportunity) => {
@@ -402,6 +424,8 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
         <div className="cc-dossier-stat"><span>Expected issuance</span><b>{fmtTonnes(item.creditVolumeTonnes)}</b></div>
         <div className="cc-dossier-stat"><span>Price per tonne</span><b>{item.pricePerTonneMinor ? fmtMinor(item.pricePerTonneMinor) : "—"}</b></div>
         <div className="cc-dossier-stat"><span>Expected multiple</span><b>{fmtMultiple(item.expectedMultipleBps)}</b></div>
+        <div className="cc-dossier-stat"><span>You can invest from</span><b>{fmtMinor(investableFloor(item))}</b></div>
+        <div className="cc-dossier-stat"><span>Projected profit at minimum</span><b className="cc-profit">{fmtProfit(investableFloor(item), item.expectedMultipleBps)}</b></div>
         <div className="cc-dossier-stat"><span>Stage</span><b>{carbonStageLabel(item.stage)}</b></div>
       </div>
       {item.fundable
@@ -427,7 +451,7 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
       {item.highlights.length > 0 && <div className="cc-dossier-tags">{item.highlights.slice(0, 5).map((value) => <span className="cc-chip" key={value}>{value}</span>)}</div>}
 
       <div className="cc-admin-actions">
-        <button type="button" className="cc-btn cc-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.minimumInvestmentMinor || 0, 100_000))}><Coins size={14}/> Invest now</button>
+        <button type="button" className="cc-btn cc-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, investableFloor(item))}><Coins size={14}/> Invest now from {fmtMinor(investableFloor(item))}</button>
         <button type="button" className={`cc-btn cc-btn--ghost cc-btn--sm`} onClick={() => toggleWatch(item.id)}><Star size={13} fill={watchlist.includes(item.id) ? "currentColor" : "none"}/> {watchlist.includes(item.id) ? "Watching" : "Watch"}</button>
       </div>
     </aside>;
@@ -540,6 +564,7 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
         {selected ? renderDossier(selected) : <aside className="cc-dossier-drawer" aria-label="Project dossier placeholder">
           <div className="cc-dossier-head"><div><div className="cc-eyebrow">Project dossier</div><h3>Select a pin</h3></div></div>
           <p className="cc-dossier-sub">Click a pin on the atlas — or a card below — to open the project's verified dossier: method, standard, expected issuance, modelled outcomes, milestones and its cited source. Nothing is shown for a project until its record is loaded.</p>
+          <div className="cc-dossier-block"><h4>How to invest</h4><p>Every project is investable. Press <strong>Invest now</strong> on any card below — or inside a project's dossier — enter the amount you want to place, and confirm to debit your wallet. Each card states the amount you can invest from and the profit you would realise at the project's expected multiple.</p></div>
           <div className="cc-dossier-block"><h4>How to read the atlas</h4><p>Pins are coloured by verification status. A green pin is an administrator-published instrument with sourced economics; a gold pin is a cited public reference that can still be invested in but carries no funding target.</p></div>
         </aside>}
       </div>
@@ -655,6 +680,12 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
             <input type="number" min="1" step="100" value={(amount / 100).toString()} onChange={(e) => setAmount(Math.round((Number(e.target.value) || 0) * 100))} />
             <small>Your wallet will be debited on submit. You can pay from the {settlement} wallet, any single wallet, or all wallets combined.</small>
           </div>
+
+          {target.expectedMultipleBps !== null && amount > 0 && <div className="cc-invest-figures">
+            <div className="cc-invest-figure"><span>You invest</span><b>{fmtMinor(amount)}</b></div>
+            <div className="cc-invest-figure"><span>Projected return at {fmtMultiple(target.expectedMultipleBps)}</span><b>{fmtMinor(returnMinor(amount, target.expectedMultipleBps))}</b></div>
+            <div className="cc-invest-figure cc-invest-figure--profit"><span>Projected profit you will realise</span><b className="cc-profit">{fmtProfit(amount, target.expectedMultipleBps)}</b></div>
+          </div>}
 
           <div>
             <span className="cc-eyebrow">Pay from</span>

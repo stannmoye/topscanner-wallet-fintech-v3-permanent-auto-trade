@@ -112,6 +112,24 @@ describe("Carbon Credit desk", () => {
     expect(serverDossiers).toContain('"A modelled opportunity must cite its source URL so the economics can be verified"');
   });
 
+  it("lets a customer invest straight from a pin-board card and states the investable amount and projected profit", () => {
+    // The Invest button lives on every pin-board card, not only inside the dossier,
+    // so a customer can purchase without first opening a project.
+    expect(customerUi).toContain('className="cc-pin-card-invest"');
+    expect(customerUi).toContain('className="cc-pin-card-econ"');
+    // The card states the amount that can be invested and the profit it realises.
+    expect(customerUi).toContain("You can invest from");
+    expect(customerUi).toContain("Projected profit on");
+    // The dossier stats repeat both figures for the selected project.
+    expect(customerUi).toContain("<span>You can invest from</span>");
+    expect(customerUi).toContain("<span>Projected profit at minimum</span>");
+    // The purchase modal shows the projected return and profit for the chosen amount.
+    expect(customerUi).toContain('className="cc-invest-figures"');
+    expect(customerUi).toContain("Projected profit you will realise");
+    expect(styles).toContain(".cc-pin-card-invest");
+    expect(styles).toContain(".cc-profit");
+  });
+
   it("reads the customer's existing wallets without a cross-collation join", () => {
     // customer_balances inherits the database-default collation while
     // currency_registry is pinned to utf8mb4_unicode_ci, so a SQL JOIN on
