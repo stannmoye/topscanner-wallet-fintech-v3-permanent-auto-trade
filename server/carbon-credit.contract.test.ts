@@ -112,6 +112,17 @@ describe("Carbon Credit desk", () => {
     expect(serverDossiers).toContain('"A modelled opportunity must cite its source URL so the economics can be verified"');
   });
 
+  it("reads the customer's existing wallets independently of the new position store", () => {
+    // The customer's wallets live in the platform's own customer_balances /
+    // currency_registry tables; the desk's own position table is separate. A
+    // problem reading the position store must not hide the existing wallets, so
+    // the two reads fail independently instead of behind one shared try/catch.
+    expect(serverDesk).toContain("FROM currency_registry c LEFT JOIN customer_balances b");
+    expect(serverDesk).toContain("Failed to read wallet balances");
+    expect(serverDesk).toContain("Failed to read position store");
+    expect(serverDesk).toContain("could not be loaded right now. The live catalogue below is unaffected.");
+  });
+
   it("stores administrator dossiers additively with an audited lifecycle", () => {
     expect(serverDossiers).toContain('export const CARBON_DOSSIERS_TABLE = "carbon_credit_dossiers"');
     expect(serverDossiers).toContain("CREATE TABLE IF NOT EXISTS carbon_credit_dossiers");

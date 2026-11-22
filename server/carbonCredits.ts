@@ -245,21 +245,22 @@ function planPurchaseFunding(
 }
 
 /**
- * Read one customer's stored positions and wallet balances. Best-effort: a
- * database hiccup must never hide the live public catalogue.
+ * Read one customer's stored positions and the platform's existing wallet
+ * balances. The two reads are deliberately independent: the customer's
+ * wallets live in the platform's own `customer_balances` / `currency_registry`
+ * tables, so a hiccup in the new position store must never hide them (and the
+ * live public catalogue stays unaffected either way).
  */
 async function readCarbonStore(userId: number): Promise<{ positions: any[]; balances: any[]; warning: string | null }> {
+  await ensureCarbonCreditSchema();
+  const failed: string[] = [];
+
+  // The customer's existing wallets are read first and on their own, so they
+  // always load even when the (separate) position store is unavailable.
+  let balances: any[] = [];
   try {
-    await ensureCarbonCreditSchema();
-    return await withConnection(async (conn) => {
-      const [positions] = await conn.query<any[]>(
-        `SELECT id, positionCode, instrumentId, instrumentName, creditType, sector, standard, amountMinor, currency, fundingSource,
-                units, statusAtPurchase, expectedMultipleBps, distributedMinor, outcome, realisedMinor, settledAt,
-                dataSource, dataAsOf, positionStatus, openedAt, ledgerReference
-         FROM ${CARBON_POSITIONS_TABLE} WHERE userId=? ORDER BY openedAt DESC`,
-        [userId],
-      );
-      const [balances] = await conn.query<any[]>(
+    balances = await withConnection(async (conn) => {
+      const [rows] = await conn.query<any[]>(
         `SELECT c.code currency, c.symbol, c.scale, c.name currencyName,
                 COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor,
                 COALESCE(b.promotionalMinor,0) promotionalMinor, COALESCE(b.earnedMinor,0) earnedMinor
@@ -267,16 +268,38 @@ async function readCarbonStore(userId: number): Promise<{ positions: any[]; bala
          WHERE c.enabled=true ORDER BY c.id`,
         [userId],
       );
-      return { positions, balances, warning: null };
+      return rows;
+    });
+  } catch (error) {
+    console.error("[CarbonCredits] Failed to read wallet balances:", error instanceof Error ? error.message : "UnknownError");
+    failed.push("wallet balances");
+  }
+
+  // Positions are served by the desk's own additive table; a missing or
+  // not-yet-migrated table degrades to "no positions", never to a blank desk.
+  let positions: any[] = [];
+  try {
+    positions = await withConnection(async (conn) => {
+      const [rows] = await conn.query<any[]>(
+        `SELECT id, positionCode, instrumentId, instrumentName, creditType, sector, standard, amountMinor, currency, fundingSource,
+                units, statusAtPurchase, expectedMultipleBps, distributedMinor, outcome, realisedMinor, settledAt,
+                dataSource, dataAsOf, positionStatus, openedAt, ledgerReference
+         FROM ${CARBON_POSITIONS_TABLE} WHERE userId=? ORDER BY openedAt DESC`,
+        [userId],
+      );
+      return rows;
     });
   } catch (error) {
     console.error("[CarbonCredits] Failed to read position store:", error instanceof Error ? error.message : "UnknownError");
-    return {
-      positions: [],
-      balances: [],
-      warning: "Your saved positions and wallet balances could not be loaded right now. The live catalogue below is unaffected.",
-    };
+    failed.push("saved positions");
   }
+
+  const warning = failed.length >= 2
+    ? "Your saved positions and wallet balances could not be loaded right now. The live catalogue below is unaffected."
+    : failed.length === 1
+      ? `Your ${failed[0]} could not be loaded right now. The live catalogue below is unaffected.`
+      : null;
+  return { positions, balances, warning };
 }
 
 async function readAdminOpportunities(): Promise<CarbonOpportunity[]> {

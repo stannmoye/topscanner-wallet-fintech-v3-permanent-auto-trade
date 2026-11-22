@@ -1,3 +1,21 @@
+## 2026-11-23 (fix) — Carbon Credit desk: load the customer's existing wallets independently of the position store
+
+Fixed the Carbon Credit desk showing *"Your saved positions and wallet balances could not be
+loaded right now."* even though the platform's wallets were fine.
+
+- **Cause.** `readCarbonStore` ran the new `carbon_credit_positions` query and the platform's
+  `customer_balances`/`currency_registry` wallet query inside one shared `try/catch`. Any problem
+  reading the desk's own position table threw and also discarded the wallet balances, so the
+  customer's existing wallets were hidden behind a blank warning.
+- **Fix (`server/carbonCredits.ts`).** The two reads are now independent: the wallet balances are
+  read first on their own and always load, and a missing/not-yet-migrated position table degrades
+  to "no positions" instead of a blank desk. The warning is now specific — it names only the part
+  that actually failed (`wallet balances`, `saved positions`, or both) — and the live catalogue is
+  unaffected either way.
+- **Test.** Extended `server/carbon-credit.contract.test.ts` to assert the wallet read is decoupled
+  from the position store.
+- Verification: `pnpm check` clean; `pnpm test` 206 files / 1,669 passed / 36 skipped.
+
 ## 2026-11-23 — Carbon Credit desk: new "Atlas / region-map" design identity + full vertical
 
 Built the next Finance menu item, **Carbon Credit**, as a complete vertical (customer desk +
