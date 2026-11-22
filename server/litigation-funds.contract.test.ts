@@ -33,7 +33,7 @@ describe("Litigation Funds case-linked capital desk", () => {
     expect(app).toContain("<CustomerLitigationFunds push={push}/>");
     // The generic placeholder must explicitly exclude litigation-funds (and the
     // other desks that now have their own consoles, including ip-royalties).
-    expect(app).toContain('item.id!=="litigation-funds"&&item.id!=="cooperate-dept"&&item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="litigation-funds"&&item.id!=="cooperate-dept"&&item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit")&&<CustomerInvestmentCategory');
     // The customer menu reaches the desk through the shared slide menu.
     expect(slideMenu).toContain('target: "litigation-funds"');
 

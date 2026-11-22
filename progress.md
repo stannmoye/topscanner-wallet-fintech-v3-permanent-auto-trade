@@ -1,3 +1,51 @@
+## 2026-11-23 — Carbon Credit desk: new "Atlas / region-map" design identity + full vertical
+
+Built the next Finance menu item, **Carbon Credit**, as a complete vertical (customer desk +
+admin publish console + investable positions with the cross-wallet FX ledger + cited keyless
+discovery feed + contract tests), with a deliberately **different design structure** from the
+register/lane/ledger desks — a geographic atlas.
+
+- **New layout (`client/src/components/carbon-credit.css`).** A three-part atlas shell
+  (`.cc-atlas-shell` = region rail + pin canvas + slide-out dossier drawer), a teal-led hero,
+  a self-contained equirectangular map canvas, pins coloured by verification status
+  (`.cc-pin-dot.is-verified` = theme accent, `.is-reference` = theme warning with a pulsing
+  `.cc-pin-halo`), a sticky `.cc-dossier-drawer` with a `cc-drawer-in` slide-in, a pin board,
+  a positions table and desk analytics. Every surface/border/text tone still derives from the
+  platform semantic tokens (`--arb-color-*`); the desk adds no fixed palette. Responsive at
+  1180px (drawer drops below, admin single-column) and 760px (rail becomes a horizontal scroller).
+- **Customer desk (`CustomerCarbonCredit.tsx`).** Region rail with live counts + bars, an SVG
+  world atlas (graticule + continent silhouettes + region labels) plotting each project at
+  `carbonCountryPoint(countryCode)` (multiple projects per country fan out radially), a
+  slide-out project dossier (verification chip, type/standard/status/risk chips, expected
+  issuance, price per tonne, expected multiple, stage, funding progress or a cited-reference
+  note, method blurb, scenarios, milestones, highlights), plus a pin board, a positions table,
+  and a desk-analytics tab. Features: watchlist, CSV export (catalogue + positions), filters
+  for region/type/standard/status/sector/territory, fundable-only and watchlist-only toggles,
+  and a live funding-quote modal offering **Combined balance** or a single wallet.
+- **Admin console (`AdminCarbonCredit.tsx`).** Publish/edit dossiers, enable/disable, change
+  status, reach milestones, delete, record distributions and settle/write-off instruments.
+  Carbon-specific fields: 14-type grouped picker, verification standard, `creditVolumeTonnes`,
+  `pricePerTonneUsd`, and a **derived read-only atlas region** (`carbonRegionLabel(carbonRegionOf(countryCode))`).
+- **Shared catalogue (`shared/carbon-credit-catalogue.ts`).** 14 carbon-only types in four
+  groups (Nature-based / Community & waste / Engineered removals / Energy & industry), sectors,
+  standards (Verra VCS / Gold Standard / CDM / ACR / CAR / Plan Vivo / Puro.earth / other),
+  stages, statuses, outcomes, value/territory bands, the atlas helpers (`CARBON_REGION_LIST`,
+  `carbonRegionOf`, `carbonCountryPoint`) and `buildCarbonAnalytics`. Discovery drains two
+  keyless public feeds (Eurostat ESTAT + World Bank Open Data) via `Promise.allSettled`, fail-soft
+  and citation-only (`fundable: false`); it invents no deal economics.
+- **Server.** `server/carbonCreditDossiers.ts` (additive `carbon_credit_dossiers` table, admin
+  CRUD, audit via `v5_audit_events`, bps-sum validation, source-citation requirement) and
+  `server/carbonCredits.ts` (positions table, idempotent transactional purchase through the
+  shared cross-wallet FX engine, pro-rata distribution, settlement/write-off); wired into
+  `server/routers.ts` (customer `carbonCredit` sub-router + admin procedures + Zod schemas).
+- **Client wiring.** `App.tsx` lazy imports + `section==="carbon-credit"` and
+  `section==="carbonCreditDossiers"` routes + placeholder-exclusion entry;
+  `admin-navigation.ts` Finance item; `CustomerSlideMenu.tsx` already listed the desk.
+- Verification: `pnpm check` clean; `pnpm test` (206 files / 1,668 passed / 36 skipped),
+  including the new `server/carbon-credit.contract.test.ts` (13 tests). The five earlier
+  vertical contract tests were extended to include `carbon-credit` in the ordered
+  placeholder-exclusion chain, matching how each vertical was appended.
+
 ## 2026-11-22 — IP Royalties desk: new "licensing-register" design identity + restrained, theme-native palette
 
 Reworked the **IP Royalties** desk so it no longer shares the glow-hero → horizontal

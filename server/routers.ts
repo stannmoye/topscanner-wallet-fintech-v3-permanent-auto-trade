@@ -25,6 +25,8 @@ import { getMusicRoyaltiesDashboard, listMusicOpenInstruments, purchaseMusicOppo
 import { createAdminMusicDossier, deleteAdminMusicDossier, listAdminMusicDossiers, reachAdminMusicMilestone, setAdminMusicDossierEnabled, setAdminMusicDossierStatus, updateAdminMusicDossier } from "./musicRoyaltyDossiers";
 import { getAgroInvestmentDashboard, listAgroOpenInstruments, purchaseAgroOpportunity, quoteAgroPurchase, recordAgroDistribution, settleAgroInstrument } from "./agroInvestments";
 import { createAdminAgroDossier, deleteAdminAgroDossier, listAdminAgroDossiers, reachAdminAgroMilestone, setAdminAgroDossierEnabled, setAdminAgroDossierStatus, updateAdminAgroDossier } from "./agroInvestmentDossiers";
+import { getCarbonInvestmentDashboard, listCarbonOpenInstruments, purchaseCarbonOpportunity, quoteCarbonPurchase, recordCarbonDistribution, settleCarbonInstrument } from "./carbonCredits";
+import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDossiers, reachAdminCarbonMilestone, setAdminCarbonDossierEnabled, setAdminCarbonDossierStatus, updateAdminCarbonDossier } from "./carbonCreditDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
 import { confirmEmailVerification, requestEmailVerification } from "./emailAuth";
@@ -424,6 +426,63 @@ const agroDossierFieldsSchema = {
 };
 const createAgroDossierSchema = z.object(agroDossierFieldsSchema);
 const updateAgroDossierSchema = z.object({ dossierId: z.string().trim().min(2).max(80), ...agroDossierFieldsSchema });
+
+// Administrator-authored Carbon Credit dossiers. Carbon-only: every displayed
+// economics field is administrator-supplied and validated server-side, evidence
+// must be cited, and the three modelled outcomes (HIGH_ISSUANCE / ON_PLAN /
+// WRITE_OFF), when present, must be complete and sum to 100%.
+const carbonScenarioSchema = z.object({
+  outcome: z.enum(["HIGH_ISSUANCE", "ON_PLAN", "WRITE_OFF"]),
+  label: z.string().trim().max(80).optional(),
+  probabilityBps: z.number().int().min(0).max(10000),
+  grossRevenueMinor: z.number().int().min(0).max(100_000_000_000),
+  durationMonths: z.number().int().min(0).max(600),
+  funderMultipleBps: z.number().int().min(0).max(1_000_000),
+});
+const carbonMilestoneSchema = z.object({
+  stage: z.enum(["PLANNED", "FUNDING", "DEVELOPMENT", "VALIDATION", "ISSUANCE", "RETIRING", "CLOSED"]),
+  label: z.string().trim().min(1).max(60),
+  releaseBps: z.number().int().min(0).max(10000),
+  status: z.enum(["PENDING", "REACHED"]),
+  reachedAt: z.string().trim().max(40).nullable(),
+});
+const carbonDossierFieldsSchema = {
+  title: z.string().trim().min(3).max(200),
+  operator: z.string().trim().min(2).max(160),
+  creditType: z.enum(["REFORESTATION", "FOREST_CONSERVATION", "SOIL_CARBON", "BLUE_CARBON", "COOKSTOVES", "BIOCHAR", "DIRECT_AIR_CAPTURE", "BECCS", "ENHANCED_WEATHERING", "OCEAN_ALKALINITY", "RENEWABLE_ENERGY", "METHANE_CAPTURE", "WASTE_MANAGEMENT", "INDUSTRIAL_EFFICIENCY"]),
+  sector: z.enum(["FORESTRY", "AGRICULTURE", "ENERGY", "WASTE", "INDUSTRIAL", "OCEAN", "GEOLOGICAL", "OTHER"]),
+  standard: z.enum(["VERRA_VCS", "GOLD_STANDARD", "CDM", "ACR", "CAR", "PLAN_VIVO", "PURO_EARTH", "OTHER"]).nullable().optional(),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  territory: z.string().trim().max(120).nullable().optional(),
+  territoryBand: z.enum(["LOCAL", "REGIONAL", "NATIONAL", "GLOBAL"]).nullable().optional(),
+  offtaker: z.string().trim().max(160).nullable().optional(),
+  description: z.string().trim().min(8).max(2000),
+  dealType: z.string().trim().max(120).nullable().optional(),
+  revenueSharesBps: z.number().int().min(0).max(10000).nullable().optional(),
+  expectedMultipleBps: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  expectedDurationMonths: z.number().int().min(0).max(600).nullable().optional(),
+  projectedRevenueMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  capitalAtRiskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  fundingAskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  creditVolumeTonnes: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  pricePerTonneMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  minimumInvestmentMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  unitPriceMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  eventDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  fundingDeadline: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  stage: z.enum(["PLANNED", "FUNDING", "DEVELOPMENT", "VALIDATION", "ISSUANCE", "RETIRING", "CLOSED"]),
+  status: z.enum(["FUNDING", "ESCROW", "DEVELOPMENT", "ACTIVE", "ISSUING", "COMPLETED", "WITHDRAWN"]),
+  riskGrade: z.enum(["PRIME", "BALANCED", "SPECULATIVE", "HIGH_RISK"]).nullable().optional(),
+  highlights: z.array(z.string().trim().min(1).max(200)).max(12).nullable().optional(),
+  scenarios: z.array(carbonScenarioSchema).max(3).nullable().optional(),
+  milestones: z.array(carbonMilestoneSchema).max(10).nullable().optional(),
+  source: z.string().trim().max(160).nullable().optional(),
+  sourceUrl: z.string().trim().url().max(300).nullable().optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  reason: z.string().trim().max(500).nullable().optional(),
+};
+const createCarbonDossierSchema = z.object(carbonDossierFieldsSchema);
+const updateCarbonDossierSchema = z.object({ dossierId: z.string().trim().min(2).max(80), ...carbonDossierFieldsSchema });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -975,6 +1034,32 @@ export const appRouter = router({
         return result;
       }),
     }),
+    carbonCredit: router({
+      market: protectedProcedure.query(({ ctx }) => getCarbonInvestmentDashboard(ctx.user.id)),
+      fundingQuote: protectedProcedure.input(z.object({
+        amountMinor: z.number().int().min(0).max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+      })).query(({ ctx, input }) => quoteCarbonPurchase(ctx.user.id, input)),
+      purchase: protectedProcedure.input(z.object({
+        instrumentId: z.string().min(2).max(80),
+        amountMinor: z.number().int().positive().max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(async ({ ctx, input }) => {
+        const result = await purchaseCarbonOpportunity(ctx.user.id, input);
+        await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
+          eventType: "INVESTMENT",
+          status: "COMPLETED",
+          title: "Carbon Credit recorded",
+          message: `${result.instrumentName} received a carbon-credit commitment of ${result.amountMinor} minor units of ${result.currency}, funded from ${result.fundingSource === "COMBINED" ? "combined wallets" : result.fundingSource} through the wallet ledger.`,
+          transactionCode: `carbon-credits:${result.positionCode}`,
+          amountMinor: result.amountMinor,
+          asset: result.currency,
+          metadata: { positionCode: result.positionCode, instrumentId: result.instrumentId, creditType: result.creditType, fundingSource: result.fundingSource },
+        });
+        return result;
+      }),
+    }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
       packages: protectedProcedure.query(({ ctx }) => mining.listCustomerMiningPackages(ctx.user.id)),
@@ -1497,6 +1582,37 @@ export const appRouter = router({
       funderMultipleBps: z.number().int().min(0).max(1_000_000),
       reason: z.string().trim().max(500).optional(),
     })).mutation(({ ctx, input }) => settleAgroInstrument(ctx.user!.id, input)),
+    carbonDossiers: adminProcedure.query(() => listAdminCarbonDossiers()),
+    createCarbonDossier: adminProcedure.input(createCarbonDossierSchema).mutation(({ ctx, input }) => createAdminCarbonDossier(ctx.user!.id, input)),
+    updateCarbonDossier: adminProcedure.input(updateCarbonDossierSchema).mutation(({ ctx, input }) => {
+      const { dossierId, ...fields } = input;
+      return updateAdminCarbonDossier(ctx.user!.id, dossierId, fields);
+    }),
+    setCarbonDossierEnabled: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminCarbonDossierEnabled(ctx.user!.id, input.dossierId, input.enabled)),
+    setCarbonDossierStatus: adminProcedure.input(z.object({
+      dossierId: z.string().trim().min(2).max(80),
+      status: z.enum(["FUNDING", "ESCROW", "DEVELOPMENT", "ACTIVE", "ISSUING", "COMPLETED", "WITHDRAWN"]),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => setAdminCarbonDossierStatus(ctx.user!.id, input.dossierId, input.status, input.reason)),
+    reachCarbonMilestone: adminProcedure.input(z.object({
+      dossierId: z.string().trim().min(2).max(80),
+      stage: z.enum(["PLANNED", "FUNDING", "DEVELOPMENT", "VALIDATION", "ISSUANCE", "RETIRING", "CLOSED"]),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => reachAdminCarbonMilestone(ctx.user!.id, input.dossierId, input.stage, input.reason)),
+    deleteCarbonDossier: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminCarbonDossier(ctx.user!.id, input.dossierId)),
+    carbonOpenInstruments: adminProcedure.query(() => listCarbonOpenInstruments()),
+    recordCarbonDistribution: adminProcedure.input(z.object({
+      instrumentId: z.string().trim().min(2).max(80),
+      amountMinor: z.number().int().positive().max(100_000_000_000),
+      note: z.string().trim().max(400).optional(),
+      idempotencyKey: z.string().min(8).max(160),
+    })).mutation(({ ctx, input }) => recordCarbonDistribution(ctx.user!.id, input)),
+    settleCarbonInstrument: adminProcedure.input(z.object({
+      instrumentId: z.string().trim().min(2).max(80),
+      outcome: z.enum(["HIGH_ISSUANCE", "ON_PLAN", "WRITE_OFF"]),
+      funderMultipleBps: z.number().int().min(0).max(1_000_000),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => settleCarbonInstrument(ctx.user!.id, input)),
     createCustomer: adminProcedure.input(z.object({ name: z.string().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200) })).mutation(({ input }) => createAdminCustomer(input)),
     updateCustomer: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), email: z.string().email() })).mutation(({ input }) => updateAdminCustomer(input)),
     deleteCustomer: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ input }) => {
