@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { visibilityAwareRefetchInterval } from "@/visibility-aware-polling";
 import {
-  AlertTriangle, ArrowUpRight, BadgeCheck, CalendarClock, Check, ChevronLeft, ChevronRight, CircleHelp,
+  AlertTriangle, ArrowUpRight, BadgeCheck, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Download, Globe2, Layers, Layers3, RefreshCw, ShieldCheck, Star, TrendingUp, X,
 } from "lucide-react";
 import {
@@ -150,6 +150,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
   const [watchlist, setWatchlist] = useState<string[]>(() => loadWatchlist());
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [target, setTarget] = useState<PurchaseTarget | null>(null);
   const [fundingSource, setFundingSource] = useState("COMBINED");
   const [amount, setAmount] = useState(0);
@@ -323,29 +324,30 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
   const timeline = useMemo(() => rights.slice().sort((a, b) => (a.remainingDays ?? 9_999) - (b.remainingDays ?? 9_999)), [rights]);
 
   return <div className="arb-page portal-page ipr-page">
-    <section className="ipr-hero" aria-label="IP Royalties desk">
-      <div className="ipr-hero-grid" aria-hidden="true" />
-      <div className="ipr-hero-top">
-        <div className="ipr-hero-badge"><Layers3 size={15}/> IP Royalties · Licensing capital</div>
-        <div className="cd-hero-sources">
-          <span className={`cd-source-chip${degraded ? " is-degraded" : ""}`}>{degraded ? "Some register sources degraded" : "Live administrator economics"}</span>
-          <button type="button" className="cd-refresh" onClick={() => market.refetch()} disabled={market.isFetching} aria-label="Refresh the desk"><RefreshCw size={13} className={market.isFetching ? "spin" : ""}/> {fetchedAt ? `Updated ${new Date(fetchedAt).toLocaleTimeString()}` : "Refresh"}</button>
+    <header className="ipr-hero" aria-label="IP Royalties desk">
+      <div className="ipr-masthead">
+        <div className="ipr-masthead-lead">
+          <span className="eyebrow">IP Royalties · Licensing capital</span>
+          <h1 className="ipr-title">Fund licensed intellectual property — paid as royalties are collected.</h1>
+          <p className="ipr-lede">Every entry below is an administrator-reviewed IP right (or a portfolio of rights) with its royalty economics sourced and dated — the licensor, the royalty basis and rate, the collection cadence, the term and the modelled distribution scenarios. Public IP registers publish ownership but never royalty rates, so nothing here is invented: an entry only appears once its economics are published. Commitments settle in {settlement}, draw from any wallet you hold or from all wallets combined at the live rate, and the principal is held while royalties are collected.</p>
+        </div>
+        <div className="ipr-masthead-side">
+          <div className="ipr-sources">
+            <span className={`ipr-source-chip${degraded ? " is-degraded" : " is-ok"}`}>{degraded ? "Some register sources degraded" : "Live administrator economics"}</span>
+            {sources.map((source) => <span className={`ipr-source-chip is-${source.status}`} key={source.name} title={source.detail || source.url}>
+              {source.status === "ok" ? <Check size={11}/> : <AlertTriangle size={11}/>} {source.name}
+            </span>)}
+          </div>
+          <button type="button" className="ipr-btn ipr-btn-sm" onClick={() => market.refetch()} disabled={market.isFetching} aria-label="Refresh the desk"><RefreshCw size={13} className={market.isFetching ? "spin" : ""}/> {fetchedAt ? `Updated ${new Date(fetchedAt).toLocaleTimeString()}` : "Refresh"}</button>
         </div>
       </div>
-      <h1 className="ipr-hero-title">Fund licensed intellectual property — paid as royalties are collected.</h1>
-      <p className="ipr-hero-sub">Every opportunity on this desk is an administrator-reviewed IP right (or a portfolio of rights) with its royalty economics sourced and dated — the licensor, the royalty basis and rate, the collection cadence, the term and the modelled distribution scenarios. Public IP registers publish ownership but never royalty rates, so nothing here is invented: a right only appears once its economics are published. Your commitment settles in USD, is drawn from any wallet you hold or from all wallets combined at the live rate, and the principal is held while royalties are collected. Recorded distributions are credited pro-rata to your wallet; at completion the principal is returned against the administrator-configured multiple, or written off.</p>
-      <div className="ipr-hero-stats">
-        <div className="ipr-stat"><span>Rights published</span><strong>{rights.length}</strong></div>
-        <div className="ipr-stat"><span>With modelled economics</span><strong>{modelledRights.length}</strong></div>
-        <div className="ipr-stat"><span>Your committed</span><strong>{fmtMinor(summary.committedMinor)}</strong></div>
-        <div className="ipr-stat"><span>Distributions credited</span><strong>{fmtMinor(summary.distributedMinor)}</strong></div>
+      <div className="ipr-figures">
+        <div className="ipr-figure"><b>{rights.length}</b><span>Rights published</span></div>
+        <div className="ipr-figure"><b>{modelledRights.length}</b><span>Fundable now</span></div>
+        <div className="ipr-figure"><b>{fmtMinor(summary.committedMinor)}</b><span>Your committed</span></div>
+        <div className="ipr-figure"><b>{fmtMinor(summary.distributedMinor)}</b><span>Distributions credited</span></div>
       </div>
-      {sources.length > 0 && <div className="ipr-source-list">
-        {sources.map((source) => <span className={`ipr-source-chip is-${source.status}`} key={source.name} title={source.detail || source.url}>
-          {source.status === "ok" ? <Check size={11}/> : <AlertTriangle size={11}/>} {source.name}
-        </span>)}
-      </div>}
-    </section>
+    </header>
 
     {market.isError && <div className="ipr-notice is-error" role="alert">
       <AlertTriangle size={16}/>
@@ -356,121 +358,157 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
     {storeWarning && <div className="ipr-notice" role="status"><AlertTriangle size={16}/><div>{storeWarning}</div></div>}
     {message && !target && <div className="ipr-notice is-error" role="alert"><AlertTriangle size={16}/><div>{message}</div></div>}
 
-    <nav className="ipr-tabs" aria-label="IP Royalties sections">
-      <button type="button" className={`ipr-tab${tab === "rights" ? " is-active" : ""}`} onClick={() => setTab("rights")}>Rights open for funding <span className="ipr-tab-count">{rights.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "portfolios" ? " is-active" : ""}`} onClick={() => setTab("portfolios")}>Portfolios <span className="ipr-tab-count">{portfolios.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "portfolio" ? " is-active" : ""}`} onClick={() => setTab("portfolio")}>My positions <span className="ipr-tab-count">{positions.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "timeline" ? " is-active" : ""}`} onClick={() => setTab("timeline")}>Distribution timeline <span className="ipr-tab-count">{timeline.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "analytics" ? " is-active" : ""}`} onClick={() => setTab("analytics")}>Royalty analytics</button>
-    </nav>
-
-    {tab === "rights" && <section className="ipr-section" aria-label="IP rights catalogue">
-      <nav className="ipr-tabs" aria-label="IP royalty sectors">
-        <button type="button" className={`ipr-tab${sector === "ALL" ? " is-active" : ""}`} onClick={() => setSector("ALL")}>All sectors <span className="ipr-tab-count">{rights.length}</span></button>
-        {IP_ROYALTY_SECTORS.map((value) => <button type="button" key={value} className={`ipr-tab${sector === value ? " is-active" : ""}`} onClick={() => setSector(value)}>
-          {sectorLabel(value)} <span className="ipr-tab-count">{rights.filter((item) => sectorForRightType(item.rightType) === value).length}</span>
-        </button>)}
-      </nav>
-      <p className="ipr-card-meta">Sectors: <strong>{sectorLabel("REGISTERED_IP")}</strong> — {SECTOR_RIGHT_TYPES.REGISTERED_IP.map(rightTypeLabel).join(", ")}; <strong>{sectorLabel("CREATIVE_MEDIA")}</strong> — {SECTOR_RIGHT_TYPES.CREATIVE_MEDIA.map(rightTypeLabel).join(", ")}; <strong>{sectorLabel("BUSINESS_TECH")}</strong> — {SECTOR_RIGHT_TYPES.BUSINESS_TECH.map(rightTypeLabel).join(", ")}.</p>
-
-      <div className="ipr-toolbar">
-        <div className="ipr-filters">
-          <div className="ipr-filter"><label>Search</label><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Right, licensor or asset" /></div>
-          <div className="ipr-filter"><label>Country</label><select value={country} onChange={(e) => setCountry(e.target.value)}><option value="ALL">All countries</option>{countryOptions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></div>
-          <div className="ipr-filter"><label>Right type</label><select value={rightType} onChange={(e) => setRightType(e.target.value)}><option value="ALL">All right types</option>{IP_RIGHT_TYPES.map((value) => <option key={value} value={value}>{rightTypeLabel(value)}</option>)}</select></div>
-          <div className="ipr-filter"><label>Royalty basis</label><select value={basis} onChange={(e) => setBasis(e.target.value)}><option value="ALL">All bases</option>{IP_ROYALTY_BASES.map((value) => <option key={value} value={value}>{basisLabel(value)}</option>)}</select></div>
-          <div className="ipr-filter"><label>Cadence</label><select value={cadence} onChange={(e) => setCadence(e.target.value)}><option value="ALL">All cadences</option>{IP_ROYALTY_CADENCES.map((value) => <option key={value} value={value}>{cadenceLabel(value)}</option>)}</select></div>
-          <div className="ipr-filter"><label>Risk grade</label><select value={riskGrade} onChange={(e) => setRiskGrade(e.target.value)}><option value="ALL">All grades</option>{IP_ROYALTY_RISK_GRADES.map((value) => <option key={value} value={value}>{riskGradeLabel(value)}</option>)}</select></div>
-          <div className="ipr-filter"><label>Status</label><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="ALL">All statuses</option>{IP_ROYALTY_DOSSIER_STATUSES.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}</select></div>
-          <div className="ipr-filter"><label>Sort</label><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="fundable">Open for funding first</option><option value="deadline">Closing soonest</option><option value="ask">Largest funding target</option><option value="multiple">Highest expected multiple</option><option value="distribution">Largest expected distribution</option><option value="name">Right A–Z</option><option value="type">Right type A–Z</option><option value="country">Country A–Z</option></select></div>
+    <div className="ipr-workspace">
+      <aside className="ipr-rail" aria-label="IP Royalties workspace">
+        <div className="ipr-rail-group">
+          <span className="ipr-rail-label">Desk</span>
+          <button type="button" className={`ipr-rail-item${tab === "rights" ? " is-active" : ""}`} onClick={() => setTab("rights")}>Rights open for funding <span className="ipr-rail-count">{rights.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "portfolios" ? " is-active" : ""}`} onClick={() => setTab("portfolios")}>Portfolios <span className="ipr-rail-count">{portfolios.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "portfolio" ? " is-active" : ""}`} onClick={() => setTab("portfolio")}>My positions <span className="ipr-rail-count">{positions.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "timeline" ? " is-active" : ""}`} onClick={() => setTab("timeline")}>Distribution timeline <span className="ipr-rail-count">{timeline.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "analytics" ? " is-active" : ""}`} onClick={() => setTab("analytics")}>Royalty analytics</button>
         </div>
-        <div className="ipr-toolbar-actions">
-          <label className="ipr-checkbox"><input type="checkbox" checked={fundableOnly} onChange={(e) => setFundableOnly(e.target.checked)} /> Modelled economics only</label>
-          <label className="ipr-checkbox"><input type="checkbox" checked={watchlistOnly} onChange={(e) => setWatchlistOnly(e.target.checked)} /> Watchlist ({watchlist.length})</label>
-          {activeFilters > 0 && <button type="button" className="ipr-btn ipr-btn-sm ghost" onClick={clearFilters}><X size={13}/> Clear {activeFilters}</button>}
-          <button type="button" className="ipr-btn ipr-btn-sm" onClick={exportCatalogue} disabled={!filtered.length}><Download size={13}/> Export CSV</button>
-          {compareIds.length > 0 && <button type="button" className="ipr-btn ipr-btn-sm" onClick={() => setCompareOpen(true)}><Layers size={13}/> Compare {compareIds.length}</button>}
+
+        {tab === "rights" && <>
+          <div className="ipr-rail-group">
+            <span className="ipr-rail-label">Sector</span>
+            <button type="button" className={`ipr-rail-item${sector === "ALL" ? " is-active" : ""}`} onClick={() => setSector("ALL")}>All sectors <span className="ipr-rail-count">{rights.length}</span></button>
+            {IP_ROYALTY_SECTORS.map((value) => <button type="button" key={value} className={`ipr-rail-item${sector === value ? " is-active" : ""}`} onClick={() => setSector(value)}>
+              {sectorLabel(value)} <span className="ipr-rail-count">{rights.filter((item) => sectorForRightType(item.rightType) === value).length}</span>
+            </button>)}
+          </div>
+
+          <div className="ipr-rail-group">
+            <span className="ipr-rail-label">Refine</span>
+            <div className="ipr-filters">
+              <div className="ipr-filter"><label>Search</label><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Right, licensor or asset" /></div>
+              <div className="ipr-filter"><label>Country</label><select value={country} onChange={(e) => setCountry(e.target.value)}><option value="ALL">All countries</option>{countryOptions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></div>
+              <div className="ipr-filter"><label>Right type</label><select value={rightType} onChange={(e) => setRightType(e.target.value)}><option value="ALL">All right types</option>{IP_RIGHT_TYPES.map((value) => <option key={value} value={value}>{rightTypeLabel(value)}</option>)}</select></div>
+              <div className="ipr-filter"><label>Royalty basis</label><select value={basis} onChange={(e) => setBasis(e.target.value)}><option value="ALL">All bases</option>{IP_ROYALTY_BASES.map((value) => <option key={value} value={value}>{basisLabel(value)}</option>)}</select></div>
+              <div className="ipr-filter"><label>Cadence</label><select value={cadence} onChange={(e) => setCadence(e.target.value)}><option value="ALL">All cadences</option>{IP_ROYALTY_CADENCES.map((value) => <option key={value} value={value}>{cadenceLabel(value)}</option>)}</select></div>
+              <div className="ipr-filter"><label>Risk grade</label><select value={riskGrade} onChange={(e) => setRiskGrade(e.target.value)}><option value="ALL">All grades</option>{IP_ROYALTY_RISK_GRADES.map((value) => <option key={value} value={value}>{riskGradeLabel(value)}</option>)}</select></div>
+              <div className="ipr-filter"><label>Status</label><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="ALL">All statuses</option>{IP_ROYALTY_DOSSIER_STATUSES.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}</select></div>
+              <div className="ipr-filter"><label>Sort</label><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="fundable">Open for funding first</option><option value="deadline">Closing soonest</option><option value="ask">Largest funding target</option><option value="multiple">Highest expected multiple</option><option value="distribution">Largest expected distribution</option><option value="name">Right A–Z</option><option value="type">Right type A–Z</option><option value="country">Country A–Z</option></select></div>
+            </div>
+          </div>
+
+          <div className="ipr-rail-foot">
+            <label className="ipr-checkbox"><input type="checkbox" checked={fundableOnly} onChange={(e) => setFundableOnly(e.target.checked)} /> Modelled economics only</label>
+            <label className="ipr-checkbox"><input type="checkbox" checked={watchlistOnly} onChange={(e) => setWatchlistOnly(e.target.checked)} /> Watchlist ({watchlist.length})</label>
+            {compareIds.length > 0 && <button type="button" className="ipr-btn ipr-btn-sm" onClick={() => setCompareOpen(true)}><Layers size={13}/> Compare {compareIds.length}</button>}
+            <button type="button" className="ipr-btn ipr-btn-sm" onClick={exportCatalogue} disabled={!filtered.length}><Download size={13}/> Export CSV</button>
+            {activeFilters > 0 && <button type="button" className="ipr-btn ipr-btn-sm ghost" onClick={clearFilters}><X size={13}/> Clear {activeFilters}</button>}
+          </div>
+        </>}
+      </aside>
+
+      <div className="ipr-main">
+    {tab === "rights" && <section className="ipr-section" aria-label="IP rights catalogue">
+      <div className="ipr-section-head">
+        <div>
+          <span className="eyebrow">{filtered.length} of {rights.length} rights · page {currentPage} of {pageCount}</span>
+          <h2>Licensing schedule</h2>
+          <p>Sectors: <strong>{sectorLabel("REGISTERED_IP")}</strong> — {SECTOR_RIGHT_TYPES.REGISTERED_IP.map(rightTypeLabel).join(", ")}; <strong>{sectorLabel("CREATIVE_MEDIA")}</strong> — {SECTOR_RIGHT_TYPES.CREATIVE_MEDIA.map(rightTypeLabel).join(", ")}; <strong>{sectorLabel("BUSINESS_TECH")}</strong> — {SECTOR_RIGHT_TYPES.BUSINESS_TECH.map(rightTypeLabel).join(", ")}.</p>
         </div>
       </div>
 
-      <div className="ipr-section-head"><span className="eyebrow">{filtered.length} of {rights.length} rights · page {currentPage} of {pageCount}</span></div>
-
-      {market.isLoading && !rights.length && <div className="ipr-grid">{Array.from({ length: 6 }).map((_, index) => <div className="ipr-card" key={index}><div className="ipr-spinner" /> Loading published economics…</div>)}</div>}
+      {market.isLoading && !rights.length && <div className="ipr-schedule">{Array.from({ length: 6 }).map((_, index) => <div className="ipr-entry" key={index}><span className="ipr-entry-index">··</span><div className="ipr-entry-main"><div className="ipr-entry-sub"><span className="ipr-spinner" /> Loading published economics…</div></div></div>)}</div>}
       {!market.isLoading && !rights.length && <div className="ipr-empty"><CircleHelp size={16}/> No IP rights are published for funding right now. Public IP registers do not publish royalty economics, so a right appears here only once an administrator publishes its sourced royalty terms. Check back soon.</div>}
       {rights.length > 0 && !filtered.length && <div className="ipr-empty"><CircleHelp size={16}/> No rights match the current filters. Clear the search or widen the filters.</div>}
 
-      <div className="ipr-grid">
-        {pageRows.map((item) => {
+      {filtered.length > 0 && <div className="ipr-schedule">
+        {pageRows.map((item, index) => {
           const watched = watchlist.includes(item.id);
           const comparing = compareIds.includes(item.id);
-          return <article className={`ipr-card${item.fundable ? " is-fundable" : ""}`} key={item.id}>
-            <div className="ipr-card-head">
-              <div>
-                <div className="ipr-card-title">{item.flag} {item.rightName}</div>
-                <div className="ipr-card-meta"><span>{item.licensor}</span>{item.licenseeSummary && <span>· {item.licenseeSummary}</span>}</div>
-                <div className="ipr-card-meta"><span>{item.jurisdiction}</span>{item.assetClass && <span>· {item.assetClass}</span>}</div>
+          const open = openId === item.id;
+          const rank = (currentPage - 1) * pageSize + index + 1;
+          return <article className={`ipr-entry${item.fundable ? " is-fundable" : ""}${open ? " is-open" : ""}`} key={item.id}>
+            <span className="ipr-entry-index">{String(rank).padStart(2, "0")}</span>
+            <div className="ipr-entry-main">
+              <div className="ipr-entry-title">
+                <button type="button" className="ipr-entry-toggle" onClick={() => setOpenId(open ? null : item.id)} aria-expanded={open}>
+                  <ChevronDown size={15} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms ease" }} /> {item.flag} {item.rightName}
+                </button>
+                <span className="ipr-badge ipr-badge--sector">{sectorLabel(sectorForRightType(item.rightType))}</span>
+                <span className="ipr-badge ipr-badge--type">{rightTypeLabel(item.rightType)}</span>
+                {item.riskGrade && <span className={riskClass(item.riskGrade)}>{riskGradeLabel(item.riskGrade)}</span>}
+                <span className={statusClass(item.status)}>{statusLabel(item.status)}</span>
               </div>
-              <div className="ipr-card-actions">
+              <div className="ipr-entry-sub">{item.licensor}{item.licenseeSummary ? ` · ${item.licenseeSummary}` : ""} · {item.jurisdiction}{item.assetClass ? ` · ${item.assetClass}` : ""}</div>
+              <div className="ipr-entry-facts">
+                <span>Rate <b>{rateDescription(item)}</b></span>
+                <span>Basis <b>{basisLabel(item.royaltyBasis)}</b></span>
+                <span>Cadence <b>{cadenceLabel(item.cadence)}</b></span>
+                {item.termMonths ? <span>Term <b>{item.termMonths}mo</b></span> : null}
+                <span>Expected <b>{fmtMultiple(item.expectedMultipleBps)}</b></span>
+                {item.fundable
+                  ? <span>Funded <b>{fmtPercent(item.fundedBps)}</b> of {fmtMinor(item.fundingAskMinor ?? 0)}</span>
+                  : <span>Target <b>not published</b></span>}
+              </div>
+
+              {!item.fundable && <div className="ipr-unfundable"><AlertTriangle size={13}/> Economics not yet published — this right is cited but not fundable. A right becomes fundable only once an administrator publishes its sourced royalty terms, target and scenarios.</div>}
+
+              {open && <div className="ipr-dossier">
+                <div className="ipr-dossier-grid">
+                  <div className="ipr-dossier-block">
+                    <h4>Royalty terms</h4>
+                    <p>Rate {rateDescription(item)}. Basis {basisLabel(item.royaltyBasis)}.{item.termMonths ? ` Term ${item.termMonths} months.` : ""}{item.minimumGuaranteeMinor ? ` Minimum guarantee ${fmtMinor(item.minimumGuaranteeMinor)}.` : ""}</p>
+                  </div>
+                  <div className="ipr-dossier-block">
+                    <h4>Licensees</h4>
+                    <p>{item.licenseeCount ? `${item.licenseeCount} licensee${item.licenseeCount === 1 ? "" : "s"}. ` : ""}{item.topLicenseeConcentrationBps !== null && item.topLicenseeConcentrationBps !== undefined ? `Top licensee carries ${fmtPercent(item.topLicenseeConcentrationBps)} of the stream.` : "Licensee concentration not published."}</p>
+                  </div>
+                  <div className="ipr-dossier-block">
+                    <h4>Expected outcome</h4>
+                    <p>Expected {fmtMultiple(item.expectedMultipleBps)}{item.expectedDurationMonths ? ` over ${item.expectedDurationMonths} months` : ""}{item.expectedAnnualDistributionMinor !== null && item.expectedAnnualDistributionMinor !== undefined ? ` · ${fmtMinor(item.expectedAnnualDistributionMinor)}/yr` : ""}.</p>
+                  </div>
+                  <div className="ipr-dossier-block">
+                    <h4>Source</h4>
+                    <p title={item.sourceUrl || item.source}><ShieldCheck size={11}/> {item.asOf} · {item.source}</p>
+                  </div>
+                </div>
+
+                {item.paymentHistory && <div className="ipr-history">
+                  <span className="eyebrow">Payment history</span>
+                  <span className="ipr-history-chip"><BadgeCheck size={11}/> {fmtPercent(item.paymentHistory.onTimeBps)} on time</span>
+                  <span className="ipr-history-chip">{item.paymentHistory.averageCollectionDays}d avg collection</span>
+                  <span className="ipr-history-chip">{item.paymentHistory.periodsObserved} periods observed</span>
+                </div>}
+
+                {item.fundable && <>
+                  <div className="ipr-progress">
+                    <div className="ipr-progress-label"><span>Funding progress</span><span>{fmtPercent(item.fundedBps)} of {fmtMinor(item.fundingAskMinor ?? 0)}</span></div>
+                    <SlotBar bps={item.fundedBps} />
+                  </div>
+                  <div className="ipr-countdown"><CalendarClock size={12}/> {daysLabel(item.remainingDays)}{item.fundingDeadline ? ` · closes ${formatDate(item.fundingDeadline)}` : ""}</div>
+                  {item.scenarios.length > 0 && <div className="ipr-scenarios">
+                    {item.scenarios.map((scenario, scenarioIndex) => <div className={`ipr-scenario ipr-scenario--${scenario.label.toLowerCase().replace(/[^a-z]+/g, "-")}`} key={`${scenario.label}-${scenarioIndex}`}>
+                      <span className="ipr-scenario-head">{scenario.label}</span>
+                      <span>{fmtPercent(scenario.probabilityBps)} · {fmtMinor(scenario.expectedAnnualDistributionMinor)}/yr · {scenario.durationMonths}mo · {fmtMultiple(scenario.funderMultipleBps)}</span>
+                    </div>)}
+                  </div>}
+                  <div className="ipr-evalue"><TrendingUp size={12}/> Expected annual distribution <strong>{fmtMinor(item.expectedAnnualDistributionMinor ?? 0)}</strong> · stress cases are shown in full</div>
+                </>}
+
+                <div className="ipr-dossier-block">
+                  <h4>Description</h4>
+                  <p>{item.problem}</p>
+                </div>
+                {item.highlights.length > 0 && <div className="ipr-badges">{item.highlights.slice(0, 4).map((value) => <span className="ipr-badge" key={value}>{value}</span>)}</div>}
+              </div>}
+            </div>
+            <div className="ipr-entry-aside">
+              <div className="ipr-entry-tools">
                 <button type="button" className={`ipr-star${watched ? " is-on" : ""}`} onClick={() => toggleWatch(item.id)} aria-pressed={watched} title={watched ? "Remove from watchlist" : "Add to watchlist"}><Star size={15}/></button>
                 <button type="button" className={`ipr-star${comparing ? " is-on" : ""}`} onClick={() => toggleCompare(item.id)} aria-pressed={comparing} title={comparing ? "Remove from compare" : "Add to compare (max 3)"}><Layers size={15}/></button>
               </div>
-            </div>
-
-            <div className="ipr-badges">
-              <span className="ipr-badge ipr-badge--sector">{sectorLabel(sectorForRightType(item.rightType))}</span>
-              <span className="ipr-badge ipr-badge--type">{rightTypeLabel(item.rightType)}</span>
-              <span className="ipr-badge ipr-badge--basis">{basisLabel(item.royaltyBasis)}</span>
-              <span className="ipr-badge ipr-badge--cadence">{cadenceLabel(item.cadence)}</span>
-              {item.riskGrade && <span className={riskClass(item.riskGrade)}>{riskGradeLabel(item.riskGrade)}</span>}
-              <span className={statusClass(item.status)}>{statusLabel(item.status)}</span>
-            </div>
-
-            <div className="ipr-card-meta">
-              <span>Rate {rateDescription(item)}</span>
-              {item.termMonths ? <span>Term {item.termMonths}mo</span> : null}
-              {item.minimumGuaranteeMinor ? <span>Min guarantee {fmtMinor(item.minimumGuaranteeMinor)}</span> : null}
-            </div>
-
-            <div className="ipr-card-meta">
-              {item.licenseeCount ? <span>{item.licenseeCount} licensee{item.licenseeCount === 1 ? "" : "s"}</span> : null}
-              {item.topLicenseeConcentrationBps !== null && item.topLicenseeConcentrationBps !== undefined ? <span>Top licensee {fmtPercent(item.topLicenseeConcentrationBps)}</span> : null}
-              <span>Expected {fmtMultiple(item.expectedMultipleBps)}{item.expectedDurationMonths ? ` · ${item.expectedDurationMonths}mo` : ""}</span>
-            </div>
-
-            {item.paymentHistory && <div className="ipr-history">
-              <span className="eyebrow">Payment history</span>
-              <span className="ipr-history-chip"><BadgeCheck size={11}/> {fmtPercent(item.paymentHistory.onTimeBps)} on time</span>
-              <span className="ipr-history-chip">{item.paymentHistory.averageCollectionDays}d avg collection</span>
-              <span className="ipr-history-chip">{item.paymentHistory.periodsObserved} periods observed</span>
-            </div>}
-
-            {item.fundable ? <>
-              <div className="ipr-progress">
-                <div className="ipr-progress-label"><span>Funding progress</span><span>{fmtPercent(item.fundedBps)} of {fmtMinor(item.fundingAskMinor ?? 0)}</span></div>
-                <SlotBar bps={item.fundedBps} />
-              </div>
-              <div className="ipr-countdown"><CalendarClock size={12}/> {daysLabel(item.remainingDays)}{item.fundingDeadline ? ` · closes ${formatDate(item.fundingDeadline)}` : ""}</div>
-              {item.scenarios.length > 0 && <div className="ipr-scenarios">
-                {item.scenarios.map((scenario, index) => <div className={`ipr-scenario ipr-scenario--${scenario.label.toLowerCase().replace(/[^a-z]+/g, "-")}`} key={`${scenario.label}-${index}`}>
-                  <span className="ipr-scenario-head">{scenario.label}</span>
-                  <span>{fmtPercent(scenario.probabilityBps)} · {fmtMinor(scenario.expectedAnnualDistributionMinor)}/yr · {scenario.durationMonths}mo · {fmtMultiple(scenario.funderMultipleBps)}</span>
-                </div>)}
-              </div>}
-              <div className="ipr-evalue"><TrendingUp size={12}/> Expected annual distribution <strong>{fmtMinor(item.expectedAnnualDistributionMinor ?? 0)}</strong> · stress cases are shown in full</div>
-            </> : <div className="ipr-unfundable"><AlertTriangle size={13}/> Economics not yet published — this right is cited but not fundable. A right becomes fundable only once an administrator publishes its sourced royalty terms, target and scenarios.</div>}
-
-            <p className="ipr-card-meta">{item.problem}</p>
-            {item.highlights.length > 0 && <div className="ipr-badges">{item.highlights.slice(0, 4).map((value) => <span className="ipr-badge" key={value}>{value}</span>)}</div>}
-
-            <div className="ipr-card-actions" style={{ justifyContent: "space-between" }}>
-              <span className="ipr-card-meta" title={item.sourceUrl || item.source}><ShieldCheck size={11}/> {item.asOf} · {item.source}</span>
               {item.fundable
                 ? <button className="ipr-btn primary" onClick={() => openPurchase({ type: "RIGHT", id: item.id, name: item.rightName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this right <ChevronRight size={14}/></button>
                 : <button className="ipr-btn" disabled>Not open for funding</button>}
             </div>
           </article>;
         })}
-      </div>
+      </div>}
 
       {filtered.length > 0 && <div className="ipr-pagination">
         <button type="button" className="ipr-page-btn" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={14}/> Previous</button>
@@ -485,36 +523,46 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
         <div><span className="eyebrow">Right portfolios</span><h2>Pooled IP rights</h2><p>A portfolio is a pro-rata share of a set of IP rights. You are paid your share of the portfolio’s recorded distributions, allocated per right by the administrator’s configured weights. Pooling spreads the royalty stream across several rights; it does not guarantee a return.</p></div>
       </div>
       {!portfolios.length && <div className="ipr-empty"><Layers3 size={16}/> No portfolios are published right now.</div>}
-      <div className="ipr-grid">
-        {portfolios.map((portfolio) => <article className="ipr-card is-fundable" key={portfolio.id}>
-          <div className="ipr-card-head">
-            <div>
-              <div className="ipr-card-title">{portfolio.name}</div>
-              <div className="ipr-card-meta"><span>{portfolio.jurisdiction} · {rightTypeLabel(portfolio.rightType)}</span></div>
+      {portfolios.length > 0 && <div className="ipr-schedule">
+        {portfolios.map((portfolio, index) => {
+          const open = openId === portfolio.id;
+          return <article className={`ipr-entry is-fundable${open ? " is-open" : ""}`} key={portfolio.id}>
+            <span className="ipr-entry-index">{String(index + 1).padStart(2, "0")}</span>
+            <div className="ipr-entry-main">
+              <div className="ipr-entry-title">
+                <button type="button" className="ipr-entry-toggle" onClick={() => setOpenId(open ? null : portfolio.id)} aria-expanded={open}>
+                  <ChevronDown size={15} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms ease" }} /> {portfolio.name}
+                </button>
+                <span className="ipr-badge ipr-badge--type">{rightTypeLabel(portfolio.rightType)}</span>
+                <span className={riskClass(portfolio.riskGrade)}>{riskGradeLabel(portfolio.riskGrade)}</span>
+              </div>
+              <div className="ipr-entry-sub">{portfolio.jurisdiction} · {portfolio.rightIds.length} right{portfolio.rightIds.length === 1 ? "" : "s"} pooled</div>
+              <div className="ipr-entry-facts">
+                <span>Target <b>{fmtMinor(portfolio.targetMinor)}</b></span>
+                <span>Unit <b>{fmtMinor(portfolio.unitPriceMinor)}</b> × {portfolio.unitCount.toLocaleString()}</span>
+                <span>Expected <b>{fmtMultiple(portfolio.expectedMultipleBps)}</b>{portfolio.expectedDurationMonths ? ` · ${portfolio.expectedDurationMonths}mo` : ""}</span>
+                {portfolio.expectedAnnualDistributionMinor !== null && portfolio.expectedAnnualDistributionMinor !== undefined ? <span>Distribution <b>{fmtMinor(portfolio.expectedAnnualDistributionMinor)}</b>/yr</span> : null}
+                <span>Funded <b>{fmtPercent(portfolio.fundedBps)}</b></span>
+              </div>
+              {open && <div className="ipr-dossier">
+                <div className="ipr-dossier-block"><h4>Summary</h4><p>{portfolio.summary}</p></div>
+                <div className="ipr-progress">
+                  <div className="ipr-progress-label"><span>Portfolio funding</span><span>{fmtPercent(portfolio.fundedBps)} of {fmtMinor(portfolio.targetMinor)}</span></div>
+                  <SlotBar bps={portfolio.fundedBps} />
+                </div>
+                <div className="ipr-alloc">
+                  <span>Planned allocation ({portfolio.rightIds.length} right{portfolio.rightIds.length === 1 ? "" : "s"}):</span>
+                  {portfolio.rightIds.map((rightId) => <span className="ipr-badge" key={rightId}>{rightId} · {fmtPercent(portfolio.allocationBpsByRight[rightId] || 0)}</span>)}
+                </div>
+                <div className="ipr-dossier-block"><h4>Source</h4><p><ShieldCheck size={11}/> {portfolio.asOf} · {portfolio.source}</p></div>
+              </div>}
             </div>
-            <span className={riskClass(portfolio.riskGrade)}>{riskGradeLabel(portfolio.riskGrade)}</span>
-          </div>
-          <p className="ipr-card-meta">{portfolio.summary}</p>
-          <div className="ipr-card-meta">
-            <span>Target {fmtMinor(portfolio.targetMinor)}</span>
-            <span>Unit {fmtMinor(portfolio.unitPriceMinor)} × {portfolio.unitCount.toLocaleString()}</span>
-            <span>Expected {fmtMultiple(portfolio.expectedMultipleBps)}{portfolio.expectedDurationMonths ? ` · ${portfolio.expectedDurationMonths}mo` : ""}</span>
-          </div>
-          {portfolio.expectedAnnualDistributionMinor !== null && portfolio.expectedAnnualDistributionMinor !== undefined && <div className="ipr-card-meta"><span>Expected distribution {fmtMinor(portfolio.expectedAnnualDistributionMinor)}/yr</span></div>}
-          <div className="ipr-progress">
-            <div className="ipr-progress-label"><span>Portfolio funding</span><span>{fmtPercent(portfolio.fundedBps)} of {fmtMinor(portfolio.targetMinor)}</span></div>
-            <SlotBar bps={portfolio.fundedBps} />
-          </div>
-          <div className="ipr-alloc">
-            <span>Planned allocation ({portfolio.rightIds.length} right{portfolio.rightIds.length === 1 ? "" : "s"}):</span>
-            {portfolio.rightIds.map((rightId) => <span className="ipr-badge" key={rightId}>{rightId} · {fmtPercent(portfolio.allocationBpsByRight[rightId] || 0)}</span>)}
-          </div>
-          <div className="ipr-card-actions" style={{ justifyContent: "space-between" }}>
-            <span className="ipr-card-meta"><ShieldCheck size={11}/> {portfolio.asOf} · {portfolio.source}</span>
-            <button className="ipr-btn primary" onClick={() => openPurchase({ type: "PORTFOLIO", id: portfolio.id, name: portfolio.name, expectedMultipleBps: portfolio.expectedMultipleBps }, Math.max(portfolio.unitPriceMinor, 100_000))}>Fund this portfolio <ChevronRight size={14}/></button>
-          </div>
-        </article>)}
-      </div>
+            <div className="ipr-entry-aside">
+              <button className="ipr-btn primary" onClick={() => openPurchase({ type: "PORTFOLIO", id: portfolio.id, name: portfolio.name, expectedMultipleBps: portfolio.expectedMultipleBps }, Math.max(portfolio.unitPriceMinor, 100_000))}>Fund this portfolio <ChevronRight size={14}/></button>
+            </div>
+          </article>;
+        })}
+      </div>}
     </section>}
 
     {tab === "portfolio" && <section className="ipr-section" aria-label="Your IP royalties portfolio">
@@ -617,6 +665,8 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
         </div>
       </div>}
     </section>}
+      </div>
+    </div>
 
     <div id="ipr-education" className="ipr-notice">
       <ShieldCheck size={16}/>

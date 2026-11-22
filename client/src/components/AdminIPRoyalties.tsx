@@ -402,35 +402,46 @@ export function AdminIPRoyalties() {
   };
 
   return <div className="arb-page portal-page ipr-page">
-    <div className="ipr-hero">
-      <div className="ipr-hero-grid" aria-hidden="true"/>
-      <div className="ipr-hero-top">
-        <span className="ipr-hero-badge"><ScrollText size={13}/> IP royalties desk · Dossier publishing</span>
-        <button className="ipr-btn" type="button" onClick={() => { void dossiersQuery.refetch(); void portfoliosQuery.refetch(); void openInstrumentsQuery.refetch(); }} disabled={dossiersQuery.isFetching || portfoliosQuery.isFetching || openInstrumentsQuery.isFetching}>
-          <RefreshCw size={14} className={dossiersQuery.isFetching ? "spin" : ""}/> Refresh
-        </button>
+    <header className="ipr-hero" aria-label="IP Royalties console">
+      <div className="ipr-masthead">
+        <div className="ipr-masthead-lead">
+          <span className="eyebrow">IP royalties · Dossier publishing</span>
+          <h1 className="ipr-title">IP Royalties console</h1>
+          <p className="ipr-lede">Review a right and publish its sourced royalty economics — basis, rate, term, licensees, the modelled distribution scenarios and the funding target — as a dossier. Public IP registers publish ownership, not royalty economics, so discovery contributes no fundable rights; a published dossier is the only thing a customer can fund. Pool rights into a portfolio, record recurring distributions, or settle a funded instrument here.</p>
+        </div>
+        <div className="ipr-masthead-side">
+          <button className="ipr-btn ipr-btn-sm" type="button" onClick={() => { void dossiersQuery.refetch(); void portfoliosQuery.refetch(); void openInstrumentsQuery.refetch(); }} disabled={dossiersQuery.isFetching || portfoliosQuery.isFetching || openInstrumentsQuery.isFetching}>
+            <RefreshCw size={14} className={dossiersQuery.isFetching ? "spin" : ""}/> Refresh
+          </button>
+        </div>
       </div>
-      <h1 className="ipr-hero-title">IP Royalties console</h1>
-      <p className="ipr-hero-sub">Review a right and publish its sourced royalty economics — basis, rate, term, licensees, the modelled distribution scenarios and the funding target — as a dossier. Public IP registers publish ownership, not royalty economics, so discovery contributes no fundable rights; a published dossier is the only thing a customer can fund. Pool rights into a portfolio, record recurring distributions, or settle a funded instrument here.</p>
-      <div className="ipr-hero-stats">
-        <div className="ipr-stat"><strong>{dossierRows.length}</strong><span>Dossiers</span></div>
-        <div className="ipr-stat"><strong>{fundableCount}</strong><span>Fundable</span></div>
-        <div className="ipr-stat"><strong>{portfolioRows.length}</strong><span>Portfolios</span></div>
-        <div className="ipr-stat"><strong>{money(openCommittedMinor)}</strong><span>Open commitments</span></div>
+      <div className="ipr-figures">
+        <div className="ipr-figure"><b>{dossierRows.length}</b><span>Dossiers</span></div>
+        <div className="ipr-figure"><b>{fundableCount}</b><span>Fundable</span></div>
+        <div className="ipr-figure"><b>{portfolioRows.length}</b><span>Portfolios</span></div>
+        <div className="ipr-figure"><b>{money(openCommittedMinor)}</b><span>Open commitments</span></div>
       </div>
-    </div>
+    </header>
 
     {message && <div className={`ipr-notice${messageKind === "error" ? " is-error" : " is-success"}`} role={messageKind === "error" ? "alert" : "status"} aria-live="polite">
       <ShieldCheck size={15}/><div>{message}</div>
     </div>}
 
-    <nav className="ipr-tabs" aria-label="Admin IP royalties sections">
-      <button type="button" className={`ipr-tab${tab === "dossiers" ? " is-active" : ""}`} onClick={() => setTab("dossiers")}>Dossiers <span className="ipr-tab-count">{dossierRows.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "portfolios" ? " is-active" : ""}`} onClick={() => setTab("portfolios")}>Portfolios <span className="ipr-tab-count">{portfolioRows.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "distributions" ? " is-active" : ""}`} onClick={() => setTab("distributions")}>Record distributions <span className="ipr-tab-count">{openInstrumentRows.length}</span></button>
-      <button type="button" className={`ipr-tab${tab === "settle" ? " is-active" : ""}`} onClick={() => setTab("settle")}>Settle &amp; write off <span className="ipr-tab-count">{openInstrumentRows.length}</span></button>
-    </nav>
+    <div className="ipr-workspace">
+      <aside className="ipr-rail" aria-label="IP Royalties console sections">
+        <div className="ipr-rail-group">
+          <span className="ipr-rail-label">Console</span>
+          <button type="button" className={`ipr-rail-item${tab === "dossiers" ? " is-active" : ""}`} onClick={() => setTab("dossiers")}>Dossiers <span className="ipr-rail-count">{dossierRows.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "portfolios" ? " is-active" : ""}`} onClick={() => setTab("portfolios")}>Portfolios <span className="ipr-rail-count">{portfolioRows.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "distributions" ? " is-active" : ""}`} onClick={() => setTab("distributions")}>Record distributions <span className="ipr-rail-count">{openInstrumentRows.length}</span></button>
+          <button type="button" className={`ipr-rail-item${tab === "settle" ? " is-active" : ""}`} onClick={() => setTab("settle")}>Settle &amp; write off <span className="ipr-rail-count">{openInstrumentRows.length}</span></button>
+        </div>
+        <div className="ipr-rail-foot">
+          <span className="ipr-card-meta"><ShieldCheck size={13}/> Every change is audited; a dossier becomes fundable only with FUNDING status, a funding target and modelled scenarios.</span>
+        </div>
+      </aside>
 
+      <div className="ipr-main">
     {tab === "dossiers" && <div className="ipr-admin">
       <div className="ipr-admin-form">
         <div className="ipr-section-head"><div><span className="eyebrow">{editingDossierId ? "Edit dossier" : "Publish dossier"}</span><h2>{editingDossierId ? editingDossierId : "New IP right dossier"}</h2></div>{editingDossierId && <button className="ipr-btn ipr-btn-sm" type="button" onClick={resetDossierForm}>Cancel edit</button>}</div>
@@ -732,6 +743,8 @@ export function AdminIPRoyalties() {
         })}
       </div>
     </div>}
+      </div>
+    </div>
 
     <div className="ipr-notice">
       <ShieldCheck size={15}/>

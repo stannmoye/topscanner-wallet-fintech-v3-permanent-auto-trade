@@ -1,3 +1,35 @@
+## 2026-11-22 — IP Royalties desk: new "licensing-register" design identity + restrained, theme-native palette
+
+Reworked the **IP Royalties** desk so it no longer shares the glow-hero → horizontal
+tabs → card-grid skeleton of the litigation / treasury / cooperate desks, and dropped the
+five-hue accent scheme for one calm, theme-derived palette.
+
+- **New layout (`client/src/components/ip-royalties.css`).** A flat, document-like
+  masthead (`.ipr-hero` = `.ipr-masthead` + hairline `.ipr-figures`, no radial glow / grid),
+  a sticky left workspace rail (`.ipr-workspace` / `.ipr-rail`) carrying the section nav,
+  sector nav and filters, and a dense licensing schedule (`.ipr-schedule` / `.ipr-entry`)
+  with an expandable dossier drawer (`.ipr-dossier`) per right. The primary tabs and card
+  grid are gone from the rendered markup.
+- **Restrained, matching palette.** The desk keeps ONE accent (`--ipr-accent`) tone-mapped
+  from the active theme's own `--arb-color-accent` (so it matches every portal theme —
+  violet / blue / emerald / cyan / gold — instead of adding a sixth colour), and its
+  caution / negative states reuse the platform's `--arb-color-warning` / `--arb-color-danger`
+  tokens. Primary buttons now use the shared accent/canvas pairing. Structure carries the
+  hierarchy, not colour.
+- **Customer desk (`CustomerIPRoyalties.tsx`).** Masthead + rail + schedule; each entry
+  expands to a dossier drawer (royalty terms, licensees, expected outcome, payment history,
+  progress, scenarios, source). Portfolios use the same schedule treatment. All existing
+  features preserved: watchlist, compare, CSV export, funding-quote modal, pagination, and
+  the **Fund this right / portfolio** purchase buttons.
+- **Admin console (`AdminIPRoyalties.tsx`).** Same flat masthead + rail identity, with a
+  console section rail; every form field, control and asserted string
+  (`RightTypeOptions`, `Settle & write off`, `Funder multiple (×)`, `COUNTRY_OPTIONS.map`, …)
+  unchanged.
+- Verification: `pnpm check` clean; `pnpm test` (203 files / 1,624 passed / 36 skipped) and
+  `server/ip-royalties.contract.test.ts` (12 tests) pass.
+- Note: the legacy `.ipr-tabs` / glow-hero CSS classes remain in the stylesheet, unused and
+  harmless, to avoid touching unrelated selectors.
+
 ## 2026-11-22 — IP Royalties desk: three licensing sectors, scope boundaries, free-API discovery
 
 Refined the **Finance → IP Royalties** desk to the user's updated scope and made the
