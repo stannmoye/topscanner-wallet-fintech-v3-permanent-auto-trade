@@ -101,9 +101,11 @@ describe("Music Royalties desk", () => {
     // The shared provider must stay environment-neutral so it also runs as the browser fallback.
     expect(catalogue).not.toContain("process.env");
     expect(catalogue).not.toContain("node:");
-    // The customer desk states plainly that a cited reference is not open for investment.
-    expect(customerUi).toContain("Catalogue reference only — no published economics");
-    expect(customerUi).toContain('item.fundable ? "Invest now" : "Not open"');
+    // Every listed opportunity — including a cited reference — is investable, so the
+    // invest button is always live; the reference still states its economics are unset.
+    expect(customerUi).toContain("Cited catalogue reference — the administrator has not yet published");
+    expect(customerUi).toContain("<Coins size={14}/> Invest now");
+    expect(customerUi).not.toContain('"Invest now" : "Not open"');
   });
 
   it("keeps economics admin-sourced: an opportunity is fundable only once a sourced dossier is published", () => {
@@ -111,7 +113,7 @@ describe("Music Royalties desk", () => {
     expect(catalogue).toContain('"WRITE_OFF"');
     // Only a FUNDING record with a modelled, sourced funding target is fundable.
     expect(adminUi).toContain('row.status === "FUNDING" && row.scenarios.length > 0 && row.fundingAskMinor > 0 && !row.outcome');
-    expect(adminUi).toContain("Not modelled — customers cannot invest until the outcomes and a funding target are published with a cited source.");
+    expect(adminUi).toContain("Not modelled — customers can still invest");
     expect(serverDossiers).toContain('"A modelled opportunity must cite its source URL so the economics can be verified"');
   });
 
@@ -146,6 +148,10 @@ describe("Music Royalties desk", () => {
     // The purchase debits the customer wallet through the guarded balance UPDATE.
     expect(serverDesk).toContain("lockedMinor=lockedMinor+?");
     expect(serverDesk).toContain("INSERT INTO customer_balances");
+    // Every listed opportunity is investable: a cited discovery reference resolves on
+    // its own record instead of being rejected as "not open for investment".
+    expect(serverDesk).toContain("instrumentId: discovery.id");
+    expect(serverDesk).not.toContain("so it is not open for investment");
   });
 
   it("funds a position from any single wallet or the combined balance of every wallet, failing closed", () => {

@@ -185,14 +185,14 @@ function loadWatchlist(): string[] {
 type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null };
 
 /**
- * Customer desk for Music Royalties. This desk is music-only and every fundable
- * instrument is an administrator-published music dossier — a show or concert, a
- * festival, a tour, a new artist or album, an endorsement deal, a brand label, a
- * master or publishing right, a sync deal, merchandise, a music video, a
- * catalogue acquisition or a royalty stream. Public music catalogues (the iTunes
- * search index) publish titles and artists but never deal economics, so the
- * discovery layer is cited, not synthesised, and carries no investment button:
- * only an administrator-published dossier with sourced economics is fundable.
+ * Customer desk for Music Royalties. This desk is music-only and every listed
+ * opportunity is investable — a show or concert, a festival, a tour, a new artist
+ * or album, an endorsement deal, a brand label, a master or publishing right, a
+ * sync deal, merchandise, a music video, a catalogue acquisition or a royalty
+ * stream. Public music catalogues (the iTunes search index) publish titles and
+ * artists but never deal economics, so the discovery layer is cited, not
+ * synthesised; an administrator-published dossier adds the sourced funding target
+ * and settlement multiple, but a customer can invest in any listed opportunity.
  * Commitments settle in USD and may be funded from the settlement wallet, any
  * single wallet, or all wallets combined through live FX — the same
  * internal-ledger cross-wallet engine as the rest of the platform. The principal
@@ -426,7 +426,7 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
               <SlotBar bps={item.fundedBps} />
               <div className="mr-countdown"><CalendarClock size={12}/> {daysLabel(item.remainingDays)}{item.fundingDeadline ? ` · closes ${formatDate(item.fundingDeadline)}` : ""}</div>
             </div>
-          : <div className="mr-reference-note"><AlertTriangle size={13}/> Catalogue reference only — no published economics, so it is not open for investment. This is a real, cited record; an administrator publishes the sourced economics that make an opportunity fundable.</div>}
+          : <div className="mr-reference-note"><AlertTriangle size={13}/> Cited catalogue reference — the administrator has not yet published its funding economics, so it carries no funding target or modelled multiple. You can still invest now; the position settles on the administrator-configured multiple.</div>}
 
         {open && <div className="mr-dossier">
           <div className="mr-dossier-grid">
@@ -450,8 +450,8 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
       </div>
       <div className="mr-card-foot">
         <button type="button" className="mr-link" onClick={() => setOpenId(open ? null : item.id)} aria-expanded={open}>{open ? "Hide details" : "View details"} <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none" }}/></button>
-        <button type="button" className="mr-btn mr-btn--invest" disabled={!item.fundable} title={item.fundable ? "Invest in this opportunity" : "Reference records are not open for investment — wait for the administrator to publish its economics"} onClick={() => item.fundable && openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.minimumInvestmentMinor || 0, 100_000))}>
-          <Coins size={14}/> {item.fundable ? "Invest now" : "Not open"}
+        <button type="button" className="mr-btn mr-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.minimumInvestmentMinor || 0, 100_000))}>
+          <Coins size={14}/> Invest now
         </button>
       </div>
     </article>;
@@ -464,7 +464,7 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
         <div className="mr-masthead-lead">
           <span className="mr-eyebrow mr-eyebrow--gold">Music Royalties · Creative capital</span>
           <h1 className="mr-title">Invest in music — shows, artists, records and rights.</h1>
-          <p className="mr-lede">Every entry below is music-only: a concert or festival, a tour, a new artist or album, an endorsement deal, a brand or record label, a master or publishing right, a sync deal, merchandise, a music video, a catalogue acquisition or a royalty stream — {MUSIC_INVESTMENT_TYPES.length} fundable types. You can invest in upcoming shows and concerts, and an administrator can publish any new music opportunity by selecting its type. Public music catalogues publish titles and artists but never deal economics, so nothing here is invented: an opportunity is open for investment only once an administrator publishes its sourced economics. Commitments settle in {settlement}, draw from any wallet you hold or from all wallets combined at the live rate, and the principal is held against the opportunity's published milestones.</p>
+          <p className="mr-lede">Every entry below is music-only: a concert or festival, a tour, a new artist or album, an endorsement deal, a brand or record label, a master or publishing right, a sync deal, merchandise, a music video, a catalogue acquisition or a royalty stream — {MUSIC_INVESTMENT_TYPES.length} fundable types. You can invest in upcoming shows and concerts, and an administrator can publish any new music opportunity by selecting its type. Public music catalogues publish titles and artists but never deal economics, so nothing here is invented: every listed opportunity can be invested in, and an administrator-published dossier adds the sourced funding target and settlement multiple. Commitments settle in {settlement}, draw from any wallet you hold or from all wallets combined at the live rate, and the principal is held against the opportunity's published milestones.</p>
         </div>
         <div className="mr-masthead-side">
           <div className="mr-sources">
@@ -676,7 +676,7 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
     <div id="mr-education" className="mr-notice mr-education">
       <ShieldCheck size={16}/>
       <div>
-        <strong>How the Music Royalties desk works.</strong> This desk is music-only across {MUSIC_INVESTMENT_TYPES.length} investment types — {MUSIC_TYPE_GROUPS.map((group) => `${group.label} (${group.types.map((value) => musicTypeLabel(value)).join(", ")})`).join("; ")}. IP royalties, NFTs, agro investment, green energy and carbon credits have their own menus and are excluded here. You can invest in upcoming shows and concerts; an administrator publishes any new music opportunity by selecting its type, and every displayed figure is administrator-supplied and cited. The discovery layer (the keyless iTunes search index) publishes titles and artists but never deal economics, so a cited catalogue reference is <em>not</em> open for investment — only an administrator-published dossier with sourced economics is, and the investment button is enabled only for those. Your commitment settles in {settlement}, is drawn from any wallet you hold or from all wallets combined at the live rate, the wallet is debited on submit, and the principal is held against the opportunity. Recorded distributions are credited pro-rata to your wallet as internal-ledger entries; at settlement the principal is released against the administrator-configured multiple, or written off. Nothing here is a prediction, and no external transfer occurs on this desk.
+        <strong>How the Music Royalties desk works.</strong> This desk is music-only across {MUSIC_INVESTMENT_TYPES.length} investment types — {MUSIC_TYPE_GROUPS.map((group) => `${group.label} (${group.types.map((value) => musicTypeLabel(value)).join(", ")})`).join("; ")}. IP royalties, NFTs, agro investment, green energy and carbon credits have their own menus and are excluded here. You can invest in upcoming shows and concerts; an administrator publishes any new music opportunity by selecting its type, and every displayed figure is administrator-supplied and cited. The discovery layer (the keyless iTunes search index) publishes titles and artists but never deal economics; every listed opportunity — including a cited catalogue reference — can be invested in, and an administrator-published dossier adds the sourced funding target and settlement multiple. Your commitment settles in {settlement}, is drawn from any wallet you hold or from all wallets combined at the live rate, the wallet is debited on submit, and the principal is held against the opportunity. Recorded distributions are credited pro-rata to your wallet as internal-ledger entries; at settlement the principal is released against the administrator-configured multiple, or written off. Nothing here is a prediction, and no external transfer occurs on this desk.
       </div>
     </div>
 

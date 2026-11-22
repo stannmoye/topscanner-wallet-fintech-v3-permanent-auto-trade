@@ -423,9 +423,13 @@ type ResolvedInstrument = {
 };
 
 /**
- * Resolve the instrument a customer is funding. Only an administrator-published
- * (enabled) opportunity can be funded: a discovery catalogue reference carries
- * no economics and is never an investment target.
+ * Resolve the instrument a customer is funding. Every opportunity on the desk is
+ * investable: an administrator-published (enabled) dossier is the primary target,
+ * and a cited discovery catalogue reference resolves on its own record so a
+ * customer can fund it too. A reference carries no administrator-published
+ * economics, so its funding target, progress and top-up multiple stay unset until
+ * an administrator publishes them; the position still settles on the
+ * administrator-configured multiple.
  */
 async function resolveInstrument(instrumentId: string): Promise<ResolvedInstrument> {
   const dossier = await findEnabledAdminMusicDossier(instrumentId);
@@ -438,7 +442,11 @@ async function resolveInstrument(instrumentId: string): Promise<ResolvedInstrume
   }
   const discovery = await findMusicOpportunity(instrumentId);
   if (discovery) {
-    throw new Error("This is a catalogue reference with no published economics, so it is not open for investment. Choose an administrator-published opportunity.");
+    return {
+      instrumentId: discovery.id, instrumentName: discovery.title, musicType: discovery.musicType, genre: discovery.genre,
+      status: discovery.status, expectedMultipleBps: discovery.expectedMultipleBps, unitPriceMinor: discovery.unitPriceMinor,
+      source: discovery.source, asOf: discovery.asOf,
+    };
   }
   throw new Error("This opportunity is not currently open on the Music Royalties desk. Refresh and try again.");
 }

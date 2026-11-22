@@ -510,7 +510,7 @@ export function AdminMusicRoyalties() {
               <button className="mr-btn mr-btn--danger mr-btn--sm" type="button" disabled={deleteDossier.isPending || row.committedMinor > 0} onClick={() => { if (window.confirm(`Delete opportunity “${row.title}”? It is removed from the customer desk.`)) deleteDossier.mutate({ dossierId: row.dossierId }); }}><Trash2 size={13}/> Delete</button>
             </div>
             {!fundable && !row.outcome && row.scenarios.length > 0 && <div className="mr-reference-note"><AlertTriangle size={13}/> Not currently fundable — status is {statusLabel(row.status)} or the funding target is unset.</div>}
-            {!row.scenarios.length && <div className="mr-reference-note"><AlertTriangle size={13}/> Not modelled — customers cannot invest until the outcomes and a funding target are published with a cited source.</div>}
+            {!row.scenarios.length && <div className="mr-reference-note"><AlertTriangle size={13}/> Not modelled — customers can still invest, but the funding progress and the settlement multiple stay unset until the outcomes and a funding target are published with a cited source.</div>}
           </div>;
         })}
       </div>
