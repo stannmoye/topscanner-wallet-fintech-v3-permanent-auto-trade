@@ -15,7 +15,7 @@ import {
   calculateCombinedAvailableTargetMinor,
   type FxRateSnapshot,
 } from "./modules/trading-wallet-fx";
-import { getFreshTradingFxRate, getWalletFundingPriorityForFunding } from "./db";
+import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 
 type Db = mysql.PoolConnection;
 
@@ -145,26 +145,41 @@ function usdUnitRate(scale: number): FxRateSnapshot {
 
 /** Lock or read every enabled, spendable wallet for a customer. */
 async function readWalletRows(conn: Db, userId: number, forUpdate = false): Promise<WalletRow[]> {
-  const [rows] = await conn.query<any[]>(
-    `SELECT b.id, b.currency, c.scale, c.assetType, c.externalCode, c.symbol, c.name currencyName,
-            COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor
-     FROM customer_balances b
-     INNER JOIN currency_registry c ON c.code=b.currency
-     WHERE b.userId=? AND c.enabled=true
-     ORDER BY b.currency${forUpdate ? " FOR UPDATE" : ""}`,
+  // The balances and the currency metadata are read separately and merged in
+  // code rather than with a SQL JOIN. `customer_balances` inherits the database
+  // default collation while `currency_registry` is pinned to utf8mb4_unicode_ci,
+  // so joining them on `currency=code` fails with "Illegal mix of collations" on
+  // databases whose default differs — the platform's own wallet reader reads
+  // them separately for the same reason.
+  const [currencyRows] = await conn.query<any[]>(
+    `SELECT code, scale, assetType, externalCode, symbol, name currencyName
+     FROM currency_registry WHERE enabled=true ORDER BY id`,
+  );
+  const [balanceRows] = await conn.query<any[]>(
+    `SELECT b.id, b.currency, COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor
+     FROM customer_balances b WHERE b.userId=? ORDER BY b.currency${forUpdate ? " FOR UPDATE" : ""}`,
     [userId],
   );
-  return rows.map((row) => ({
-    id: Number(row.id),
-    currency: String(row.currency).toUpperCase(),
-    scale: Number(row.scale || 0),
-    assetType: row.assetType,
-    externalCode: row.externalCode ? String(row.externalCode) : null,
-    symbol: row.symbol ? String(row.symbol) : null,
-    currencyName: row.currencyName ? String(row.currencyName) : null,
-    availableMinor: Number(row.availableMinor || 0),
-    lockedMinor: Number(row.lockedMinor || 0),
-  }));
+  const currencyByCode = new Map<string, any>();
+  for (const row of currencyRows) currencyByCode.set(String(row.code).toUpperCase(), row);
+  return balanceRows
+    .map((row) => {
+      const code = String(row.currency).toUpperCase();
+      const currency = currencyByCode.get(code);
+      if (!currency) return null; // balance for a currency no longer enabled
+      return {
+        id: Number(row.id),
+        currency: code,
+        scale: Number(currency.scale || 0),
+        assetType: currency.assetType,
+        externalCode: currency.externalCode ? String(currency.externalCode) : null,
+        symbol: currency.symbol ? String(currency.symbol) : null,
+        currencyName: currency.currencyName ? String(currency.currencyName) : null,
+        availableMinor: Number(row.availableMinor || 0),
+        lockedMinor: Number(row.lockedMinor || 0),
+      } as WalletRow;
+    })
+    .filter((wallet): wallet is WalletRow => wallet !== null);
 }
 
 /**
@@ -267,39 +282,69 @@ function planPurchaseFunding(
 
 /**
  * Read one customer's stored treasury-bond positions and wallet balances.
- * Storage is strictly best-effort: a database hiccup must never hide the live
- * instrument catalogue, so failures degrade to an empty store plus a warning
- * rather than throwing and blanking the whole desk.
+ * The two reads are deliberately independent: the customer's wallets live in
+ * the platform's own `customer_balances` / `currency_registry` tables, so a
+ * hiccup in the new position store must never hide them (and the live
+ * instrument catalogue stays unaffected either way).
  */
 async function readTreasuryBondStore(userId: number): Promise<{ positions: any[]; balances: any[]; warning: string | null }> {
+  const failed: string[] = [];
+
+  // The customer's existing wallets are read first, through the platform's own
+  // wallet readers. They read `customer_balances` and `currency_registry`
+  // separately (never a cross-collation JOIN) so the desk shows exactly the
+  // same wallets as the rest of the portal, and they always load even when the
+  // (separate) position store is unavailable.
+  let balances: any[] = [];
+  try {
+    const [balanceRows, currencies] = await Promise.all([listBalances(userId), listCurrencies()]);
+    const currencyByCode = new Map(currencies.map((currency) => [String(currency.code).toUpperCase(), currency]));
+    balances = balanceRows.map((row) => {
+      const code = String(row.currency).toUpperCase();
+      const currency = currencyByCode.get(code);
+      return {
+        currency: code,
+        symbol: currency?.symbol ?? code,
+        scale: currency?.scale ?? 2,
+        name: currency?.name ?? code,
+        currencyName: currency?.name ?? code,
+        availableMinor: Number(row.availableMinor || 0),
+        lockedMinor: Number(row.lockedMinor || 0),
+        promotionalMinor: Number(row.promotionalMinor || 0),
+        earnedMinor: Number(row.earnedMinor || 0),
+      };
+    });
+  } catch (error) {
+    console.error("[TreasuryBonds] Failed to read wallet balances:", error instanceof Error ? error.message : "UnknownError");
+    failed.push("wallet balances");
+  }
+
+  // Positions are served by the desk's own additive table; a missing or
+  // not-yet-migrated table degrades to "no positions", never to a blank desk.
+  let positions: any[] = [];
   try {
     await ensureTreasuryBondSchema();
-    return await withConnection(async (conn) => {
-      const [positions] = await conn.query<any[]>(
+    positions = await withConnection(async (conn) => {
+      const [rows] = await conn.query<any[]>(
         `SELECT id, positionCode, instrumentId, instrumentName, issuer, country, countryCode, category,
                 couponRateBps, tenorYears, tenureDays, principalMinor, expectedProfitMinor, currency,
                 fundingSource, fundingPlanJson, dataSource, dataAsOf, status, openedAt, maturityAt, ledgerReference
          FROM treasury_bond_positions WHERE userId=? ORDER BY openedAt DESC`,
         [userId],
       );
-      const [balances] = await conn.query<any[]>(
-        `SELECT c.code currency, c.symbol, c.scale, c.name currencyName,
-                COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor,
-                COALESCE(b.promotionalMinor,0) promotionalMinor, COALESCE(b.earnedMinor,0) earnedMinor
-         FROM currency_registry c LEFT JOIN customer_balances b ON b.currency=c.code AND b.userId=?
-         WHERE c.enabled=true ORDER BY c.id`,
-        [userId],
-      );
-      return { positions, balances, warning: null };
+      return rows;
     });
   } catch (error) {
     console.error("[TreasuryBonds] Failed to read position store:", error instanceof Error ? error.message : "UnknownError");
-    return {
-      positions: [],
-      balances: [],
-      warning: "Your saved positions and wallet balance could not be loaded right now. The live catalogue below is unaffected.",
-    };
+    failed.push("saved positions");
   }
+
+  const warning = failed.length >= 2
+    ? "Your saved positions and wallet balance could not be loaded right now. The live catalogue below is unaffected."
+    : failed.length === 1
+      ? `Your ${failed[0]} could not be loaded right now. The live catalogue below is unaffected.`
+      : null;
+  return { positions, balances, warning };
 }
 
 /**

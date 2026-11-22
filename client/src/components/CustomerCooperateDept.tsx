@@ -500,6 +500,10 @@ export function CustomerCooperateDept({ push }: { push: (message: string) => voi
               {company.founderNames.length > 0 && <span className="cd-tag"><UserRound size={11}/> {company.founderNames[0]}{company.founderNames.length > 1 ? ` +${company.founderNames.length - 1}` : ""}</span>}
             </div>
 
+            <div className="cd-econ">
+              <span>You can invest from <b>{fmtMinor(Math.max(company.capitalAskMinor || 0, 100_000))}</b></span>
+              <span>Profit is fixed when the administrator settles the stake</span>
+            </div>
             <div className="cd-card-foot">
               <span className="cd-card-asof" title={company.sourceUrl || company.source}><MapPin size={11}/> {company.asOf} · {company.source}{company.verified ? " · desk-verified" : ""}</span>
               <button className="cd-buy" onClick={() => openPurchase(company)}>Review &amp; buy <ChevronRight size={14}/></button>

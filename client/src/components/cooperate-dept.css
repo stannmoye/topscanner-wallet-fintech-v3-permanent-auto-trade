@@ -302,6 +302,8 @@
 .cd-problem { font-size: 0.82rem; color: var(--arb-color-text-soft); line-height: 1.5; border-left: 3px solid color-mix(in srgb, var(--cd-critical) 45%, transparent); padding-left: 10px; }
 
 .cd-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cd-econ { display: grid; gap: 3px; margin: 10px 0 4px; font-size: 0.72rem; color: var(--arb-color-text-muted); }
+.cd-econ b { color: var(--arb-color-text); }
 .cd-card-asof { display: inline-flex; align-items: center; gap: 6px; font-size: 0.7rem; color: var(--arb-color-text-muted); }
 .cd-buy { background: linear-gradient(120deg, var(--cd-critical), var(--cd-critical-deep)); border: none; color: #fff; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 10px; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
 .cd-buy:hover { filter: brightness(1.08); }

@@ -119,7 +119,28 @@ export async function getStakeDashboard(userId: number) {
       const [positions] = await conn.query<any[]>(`SELECT p.*, sp.name productName, sp.category, sp.rewardFrequency, sp.annualRateBps, sp.lockDays FROM stake_positions p JOIN stake_products sp ON sp.id=p.productId WHERE p.userId=? ORDER BY p.openedAt DESC`, [userId]);
       const [rewards] = await conn.query<any[]>(`SELECT r.*, p.positionCode FROM stake_rewards r JOIN stake_positions p ON p.id=r.positionId WHERE r.userId=? ORDER BY r.postedAt DESC LIMIT 50`, [userId]);
       const [events] = await conn.query<any[]>(`SELECT e.*, p.positionCode FROM stake_events e LEFT JOIN stake_positions p ON p.id=e.positionId WHERE e.userId=? ORDER BY e.createdAt DESC LIMIT 50`, [userId]);
-      const [balances] = await conn.query<any[]>(`SELECT c.code currency, c.symbol, c.scale, c.name currencyName, COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor, COALESCE(b.promotionalMinor,0) promotionalMinor, COALESCE(b.earnedMinor,0) earnedMinor FROM currency_registry c LEFT JOIN customer_balances b ON b.currency=c.code AND b.userId=? WHERE c.enabled=true ORDER BY c.id`, [userId]);
+      // Read the currency registry and the customer's balances separately and
+      // merge them in code. `customer_balances` inherits the database default
+      // collation while `currency_registry` is pinned to utf8mb4_unicode_ci, so
+      // joining them on currency=code fails with "Illegal mix of collations" on
+      // databases whose default differs — mirroring the platform wallet reader.
+      const [currencyRows] = await conn.query<any[]>(`SELECT code, symbol, scale, name currencyName FROM currency_registry WHERE enabled=true ORDER BY id`);
+      const [balanceRows] = await conn.query<any[]>(`SELECT currency, COALESCE(availableMinor,0) availableMinor, COALESCE(lockedMinor,0) lockedMinor, COALESCE(promotionalMinor,0) promotionalMinor, COALESCE(earnedMinor,0) earnedMinor FROM customer_balances WHERE userId=?`, [userId]);
+      const balanceByCode = new Map<string, any>(balanceRows.map((row) => [String(row.currency).toUpperCase(), row]));
+      const balances = currencyRows.map((currency) => {
+        const code = String(currency.code).toUpperCase();
+        const balance = balanceByCode.get(code);
+        return {
+          currency: code,
+          symbol: currency.symbol,
+          scale: currency.scale,
+          currencyName: currency.currencyName,
+          availableMinor: Number(balance?.availableMinor || 0),
+          lockedMinor: Number(balance?.lockedMinor || 0),
+          promotionalMinor: Number(balance?.promotionalMinor || 0),
+          earnedMinor: Number(balance?.earnedMinor || 0),
+        };
+      });
       const [ledger] = await conn.query<any[]>(`SELECT COALESCE(SUM(CASE WHEN entryType='stake_reward' THEN amountMinor ELSE 0 END),0) rewards, COALESCE(SUM(CASE WHEN entryType IN ('stake_allocation','stake_principal_release') THEN -amountMinor ELSE 0 END),0) allocated FROM balance_ledger WHERE userId=?`, [userId]);
       await conn.commit();
       const allocatedMinor = positions.filter(p => p.status !== "COMPLETED" && p.status !== "CANCELLED").reduce((n,p)=>n+Number(p.principalMinor),0);

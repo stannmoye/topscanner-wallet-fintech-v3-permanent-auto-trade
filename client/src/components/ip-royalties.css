@@ -217,6 +217,9 @@
 .ipr-entry-aside { display: grid; gap: 8px; justify-items: end; align-content: start; min-width: 156px; }
 .ipr-entry-aside .ipr-btn { width: 100%; justify-content: center; }
 .ipr-entry-tools { display: flex; gap: 4px; }
+.ipr-econ { display: grid; gap: 3px; justify-items: end; text-align: right; font-size: 0.72rem; color: var(--ipr-muted); }
+.ipr-econ b { color: var(--arb-color-text); }
+.ipr-profit { color: var(--ipr-positive); }
 
 @media (max-width: 720px) {
   .ipr-entry { grid-template-columns: 30px minmax(0, 1fr); }

@@ -240,6 +240,9 @@
 .ag-card-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.74rem; color: var(--ag-muted); }
 .ag-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--ag-line); background: var(--ag-tint-weak); }
 .ag-card-foot .ag-btn { min-width: 132px; }
+.ag-econ { display: grid; gap: 3px; padding: 10px 16px; font-size: 0.72rem; color: var(--ag-muted); border-top: 1px solid var(--ag-line-soft); }
+.ag-econ b { color: var(--ag-white); }
+.ag-profit { color: var(--ag-green); }
 
 /* -------------------------------- Chips -------------------------------- */
 .ag-chip {

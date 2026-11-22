@@ -239,6 +239,9 @@
 .mr-card-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.74rem; color: var(--mr-muted); }
 .mr-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--mr-line); background: var(--mr-tint-weak); }
 .mr-card-foot .mr-btn { min-width: 132px; }
+.mr-econ { display: grid; gap: 3px; padding: 10px 16px; font-size: 0.72rem; color: var(--mr-muted); border-top: 1px solid var(--mr-line-soft); }
+.mr-econ b { color: var(--mr-white); }
+.mr-profit { color: var(--mr-green); }
 
 /* -------------------------------- Chips -------------------------------- */
 .mr-chip {

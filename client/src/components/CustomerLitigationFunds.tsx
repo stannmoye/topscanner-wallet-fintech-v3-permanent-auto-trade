@@ -63,6 +63,16 @@ function fmtMultiple(bps: number | null | undefined) {
   return `${(Number(bps) / 10_000).toFixed(2)}x`;
 }
 
+/** Default investable floor when a case or bundle publishes no explicit minimum (USD 1,000 in minor units). */
+const MIN_INVESTMENT_MINOR = 100_000;
+/** Profit implied by an amount at the expected multiple (integer basis points). */
+const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
+  multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
+const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) => {
+  const profit = profitMinor(amountMinor, multipleBps);
+  return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
+};
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -478,6 +488,10 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
             <p className="lf-card-meta">{item.problem}</p>
             {item.highlights.length > 0 && <div className="lf-badges">{item.highlights.slice(0, 4).map((value) => <span className="lf-badge" key={value}>{value}</span>)}</div>}
 
+            <div className="lf-econ">
+              <span>You can invest from <b>{fmtMinor(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR))}</b></span>
+              <span>Projected profit <b className="lf-profit">{fmtProfit(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR), item.expectedMultipleBps)}</b></span>
+            </div>
             <div className="lf-card-actions" style={{ justifyContent: "space-between" }}>
               <span className="lf-card-meta" title={item.sourceUrl || item.source}><Scale size={11}/> {item.asOf} · {item.source}{item.verified ? " · desk-verified" : " · discovery"}</span>
               <button className="lf-btn primary" onClick={() => openPurchase({ type: "CASE", id: item.id, name: item.caseName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this case <ChevronRight size={14}/></button>
@@ -524,6 +538,10 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
               <span>Planned allocation ({bundle.caseIds.length} case{bundle.caseIds.length === 1 ? "" : "s"}):</span>
               {bundle.caseIds.map((caseId) => <span className="lf-badge" key={caseId}>{caseId} · {fmtPercent(bundle.allocationBpsByCase[caseId] || 0)}</span>)}
               {!bundle.caseIds.length && <span>Allocation weights are set by the administrator.</span>}
+            </div>
+            <div className="lf-econ">
+              <span>You can invest from <b>{fmtMinor(Math.max(bundle.unitPriceMinor, MIN_INVESTMENT_MINOR))}</b></span>
+              <span>Projected profit <b className="lf-profit">{fmtProfit(Math.max(bundle.unitPriceMinor, MIN_INVESTMENT_MINOR), bundle.expectedMultipleBps)}</b></span>
             </div>
             <div className="lf-card-actions" style={{ justifyContent: "space-between" }}>
               <span className="lf-card-meta"><Scale size={11}/> {bundle.asOf} · {bundle.source}</span>

@@ -138,6 +138,18 @@ function fmtMultiple(bps: number | null | undefined) {
   return `${(Number(bps) / 10_000).toFixed(2)}x`;
 }
 
+/** Default investable floor when an opportunity publishes no explicit minimum (USD 1,000 in minor units). */
+const MIN_INVESTMENT_MINOR = 100_000;
+/** The least a customer can place in an opportunity. */
+const investableFloor = (minimumMinor: number | null | undefined) => Math.max(Number(minimumMinor || 0), MIN_INVESTMENT_MINOR);
+/** Profit implied by an amount at the opportunity's expected multiple (integer basis points). */
+const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
+  multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
+const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) => {
+  const profit = profitMinor(amountMinor, multipleBps);
+  return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
+};
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -394,6 +406,7 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
     const watched = watchlist.includes(item.id);
     const open = openId === item.id;
     const TypeIcon = TYPE_ICON[item.musicType];
+    const minimum = investableFloor(item.minimumInvestmentMinor);
     return <article className={`mr-card${item.fundable ? " is-fundable" : " is-reference"}${open ? " is-open" : ""}`} key={item.id}>
       <div className="mr-card-media">
         <img src={media || STAGE_HERO_ART} alt="" loading="lazy" />
@@ -448,9 +461,13 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
           {item.highlights.length > 0 && <div className="mr-tags">{item.highlights.slice(0, 5).map((value) => <span className="mr-chip" key={value}>{value}</span>)}</div>}
         </div>}
       </div>
+      <div className="mr-econ">
+        <span>You can invest from <b>{fmtMinor(minimum)}</b></span>
+        <span>Projected profit on {fmtMinor(minimum)} <b className="mr-profit">{fmtProfit(minimum, item.expectedMultipleBps)}</b></span>
+      </div>
       <div className="mr-card-foot">
         <button type="button" className="mr-link" onClick={() => setOpenId(open ? null : item.id)} aria-expanded={open}>{open ? "Hide details" : "View details"} <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none" }}/></button>
-        <button type="button" className="mr-btn mr-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.minimumInvestmentMinor || 0, 100_000))}>
+        <button type="button" className="mr-btn mr-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, minimum)}>
           <Coins size={14}/> Invest now
         </button>
       </div>

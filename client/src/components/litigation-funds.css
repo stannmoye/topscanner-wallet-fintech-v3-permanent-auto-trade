@@ -279,6 +279,9 @@
 .lf-unfundable { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--lf-gold) 55%, var(--lf-line)); font-size: 0.78rem; color: var(--lf-gold); }
 
 .lf-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lf-econ { display: grid; gap: 3px; margin-top: 10px; font-size: 0.72rem; color: var(--lf-parchment); opacity: 0.85; }
+.lf-econ b { color: #fff; }
+.lf-profit { color: var(--lf-win); }
 
 .lf-milestones { display: flex; flex-wrap: wrap; gap: 6px; }
 .lf-milestone { font-size: 0.66rem; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--lf-line); color: var(--arb-color-text-muted); }

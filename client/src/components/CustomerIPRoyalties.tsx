@@ -153,6 +153,16 @@ function fmtMultiple(bps: number | null | undefined) {
   return `${(Number(bps) / 10_000).toFixed(2)}x`;
 }
 
+/** Default investable floor when a right publishes no explicit minimum (USD 1,000 in minor units). */
+const MIN_INVESTMENT_MINOR = 100_000;
+/** Profit implied by an amount at the expected multiple (integer basis points). */
+const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
+  multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
+const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) => {
+  const profit = profitMinor(amountMinor, multipleBps);
+  return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
+};
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -618,6 +628,10 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
                 <button type="button" className={`ipr-star${watched ? " is-on" : ""}`} onClick={() => toggleWatch(item.id)} aria-pressed={watched} title={watched ? "Remove from watchlist" : "Add to watchlist"}><Star size={15}/></button>
                 <button type="button" className={`ipr-star${comparing ? " is-on" : ""}`} onClick={() => toggleCompare(item.id)} aria-pressed={comparing} title={comparing ? "Remove from compare" : "Add to compare (max 3)"}><Layers size={15}/></button>
               </div>
+              <div className="ipr-econ">
+                <span>You can invest from <b>{fmtMinor(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR))}</b></span>
+                <span>Projected profit <b className="ipr-profit">{fmtProfit(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR), item.expectedMultipleBps)}</b></span>
+              </div>
               <button className="ipr-btn primary" onClick={() => openPurchase({ type: "RIGHT", id: item.id, name: item.rightName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this right <ChevronRight size={14}/></button>
             </div>
           </article>;
@@ -672,6 +686,10 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
               </div>}
             </div>
             <div className="ipr-entry-aside">
+              <div className="ipr-econ">
+                <span>You can invest from <b>{fmtMinor(Math.max(portfolio.unitPriceMinor, MIN_INVESTMENT_MINOR))}</b></span>
+                <span>Projected profit <b className="ipr-profit">{fmtProfit(Math.max(portfolio.unitPriceMinor, MIN_INVESTMENT_MINOR), portfolio.expectedMultipleBps)}</b></span>
+              </div>
               <button className="ipr-btn primary" onClick={() => openPurchase({ type: "PORTFOLIO", id: portfolio.id, name: portfolio.name, expectedMultipleBps: portfolio.expectedMultipleBps }, Math.max(portfolio.unitPriceMinor, 100_000))}>Fund this portfolio <ChevronRight size={14}/></button>
             </div>
           </article>;
