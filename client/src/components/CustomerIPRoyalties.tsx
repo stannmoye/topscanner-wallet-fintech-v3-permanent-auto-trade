@@ -163,14 +163,17 @@ function loadWatchlist(): string[] {
 type PurchaseTarget = { type: "RIGHT" | "PORTFOLIO"; id: string; name: string; expectedMultipleBps: number | null };
 
 /**
- * Customer desk for administrator-published IP-royalty opportunities. Public IP
- * registers publish ownership, not royalty economics, so a right only becomes
- * fundable when an administrator publishes sourced economics for it (the
- * DISCOVERY layer is cited but never synthesised). Commitments settle in USD and
- * may be funded from the settlement wallet, any single wallet, or all wallets
- * combined through live FX — the same internal-ledger cross-wallet engine as the
- * rest of the platform. Principal is held; royalties are credited pro-rata as
- * distributions are recorded and the principal is returned at completion.
+ * Customer desk for IP-royalty opportunities. Every right cited on the desk is
+ * fundable without an administrator dossier — the gate is simply that the right
+ * exists on the desk. Public IP registers publish ownership, not royalty
+ * economics, so a published dossier only *enriches* a right with sourced
+ * economics (royalty basis and rate, cadence, term, modelled scenarios); its
+ * absence never blocks a commitment, it just leaves the repayment multiple
+ * unfixed. Commitments settle in USD and may be funded from the settlement
+ * wallet, any single wallet, or all wallets combined through live FX — the same
+ * internal-ledger cross-wallet engine as the rest of the platform. Principal is
+ * held; royalties are credited pro-rata as distributions are recorded and the
+ * principal is returned at completion.
  */
 export function CustomerIPRoyalties({ push }: { push: (message: string) => void }) {
   const market = trpc.customer.ipRoyalties.market.useQuery(undefined, {
@@ -236,8 +239,8 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
   const storeWarning = String((market.data as any)?.storeWarning || "");
 
   // The discovery layer cites public IP registers but publishes no royalty
-  // economics, so it contributes no fundable rights. When the account service is
-  // unreachable we still surface those cited sources directly from the shared
+  // economics; an administrator dossier adds those. When the account service is
+  // unreachable we still surface the cited sources directly from the shared
   // module so the desk explains itself; nothing is ever fabricated.
   const [fallbackSources, setFallbackSources] = useState<IpRoyaltiesSource[] | null>(null);
   useEffect(() => {
@@ -376,7 +379,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
         <div className="ipr-masthead-lead">
           <span className="eyebrow">IP Royalties · Licensing capital</span>
           <h1 className="ipr-title">Fund licensed intellectual property — paid as royalties are collected.</h1>
-          <p className="ipr-lede">Every entry below is an administrator-reviewed IP right (or a portfolio of rights) with its royalty economics sourced and dated — the licensor, the royalty basis and rate, the collection cadence, the term and the modelled distribution scenarios. Public IP registers publish ownership but never royalty rates, so nothing here is invented: an entry only appears once its economics are published. Commitments settle in {settlement}, draw from any wallet you hold or from all wallets combined at the live rate, and the principal is held while royalties are collected.</p>
+          <p className="ipr-lede">Every entry below is an IP right (or a portfolio of rights) cited from a public register, and every one of them is open for funding. Public registers publish ownership but never royalty rates, so nothing here is invented: an administrator-reviewed dossier may enrich a right with sourced economics — the licensor, the royalty basis and rate, the collection cadence, the term and the modelled distribution scenarios — but a right is fundable whether or not that dossier has been published yet. Commitments settle in {settlement}, draw from any wallet you hold or from all wallets combined at the live rate, and the principal is held while royalties are collected.</p>
         </div>
         <div className="ipr-masthead-side">
           <div className="ipr-sources">
@@ -390,7 +393,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
       </div>
       <div className="ipr-figures">
         <div className="ipr-figure"><b>{rights.length}</b><span>Rights published</span></div>
-        <div className="ipr-figure"><b>{modelledRights.length}</b><span>Fundable now</span></div>
+        <div className="ipr-figure"><b>{modelledRights.length}</b><span>With dated economics</span></div>
         <div className="ipr-figure"><b>{fmtMinor(summary.committedMinor)}</b><span>Your committed</span></div>
         <div className="ipr-figure"><b>{fmtMinor(summary.distributedMinor)}</b><span>Distributions credited</span></div>
       </div>
@@ -480,7 +483,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
       </div>
 
       {market.isLoading && !rights.length && <div className="ipr-schedule">{Array.from({ length: 6 }).map((_, index) => <div className="ipr-entry" key={index}><span className="ipr-entry-index">··</span><div className="ipr-entry-main"><div className="ipr-entry-sub"><span className="ipr-spinner" /> Loading published economics…</div></div></div>)}</div>}
-      {!market.isLoading && !rights.length && <div className="ipr-empty"><CircleHelp size={16}/> No IP rights are published for funding right now. Public IP registers do not publish royalty economics, so a right appears here only once an administrator publishes its sourced royalty terms. Check back soon.</div>}
+      {!market.isLoading && !rights.length && <div className="ipr-empty"><CircleHelp size={16}/> No IP rights are on the desk right now. Every cited right on the desk is open for funding; check back soon.</div>}
       {rights.length > 0 && !filtered.length && <div className="ipr-empty"><CircleHelp size={16}/> No rights match the current filters. Clear the search or widen the filters.</div>}
 
       {filtered.length > 0 && <div className="ipr-schedule">
@@ -490,7 +493,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
           const open = openId === item.id;
           const rank = (currentPage - 1) * pageSize + index + 1;
           const TypeIcon = RIGHT_TYPE_ICON[item.rightType];
-          return <article className={`ipr-entry${item.fundable ? " is-fundable" : ""}${open ? " is-open" : ""}`} key={item.id}>
+          return <article className={`ipr-entry is-fundable${open ? " is-open" : ""}`} key={item.id}>
             <span className="ipr-entry-index">{String(rank).padStart(2, "0")}</span>
             <div className="ipr-entry-main">
               <div className="ipr-entry-title">
@@ -515,7 +518,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
                   : <span>Target <b>not published</b></span>}
               </div>
 
-              {!item.fundable && <div className="ipr-unfundable"><AlertTriangle size={13}/> Economics not yet published — this right is cited but not fundable. A right becomes fundable only once an administrator publishes its sourced royalty terms, target and scenarios.</div>}
+              {!item.fundable && <div className="ipr-unfundable"><AlertTriangle size={13}/> Economics not yet published — you can still fund this right. It is a real, cited record on the desk; only the sourced royalty basis, cadence and modelled scenarios are pending. A right becomes fundable only once an administrator publishes its sourced royalty terms, so until then the repayment multiple is not yet fixed. Your commitment is held while royalties are collected.</div>}
 
               {open && <div className="ipr-dossier">
                 <div className="ipr-dossier-grid">
@@ -571,9 +574,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
                 <button type="button" className={`ipr-star${watched ? " is-on" : ""}`} onClick={() => toggleWatch(item.id)} aria-pressed={watched} title={watched ? "Remove from watchlist" : "Add to watchlist"}><Star size={15}/></button>
                 <button type="button" className={`ipr-star${comparing ? " is-on" : ""}`} onClick={() => toggleCompare(item.id)} aria-pressed={comparing} title={comparing ? "Remove from compare" : "Add to compare (max 3)"}><Layers size={15}/></button>
               </div>
-              {item.fundable
-                ? <button className="ipr-btn primary" onClick={() => openPurchase({ type: "RIGHT", id: item.id, name: item.rightName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this right <ChevronRight size={14}/></button>
-                : <button className="ipr-btn" disabled>Not open for funding</button>}
+              <button className="ipr-btn primary" onClick={() => openPurchase({ type: "RIGHT", id: item.id, name: item.rightName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this right <ChevronRight size={14}/></button>
             </div>
           </article>;
         })}
@@ -740,7 +741,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
     <div id="ipr-education" className="ipr-notice">
       <ShieldCheck size={16}/>
       <div>
-        <strong>How the IP Royalties desk works.</strong> This desk spans three sectors — {sectorLabel("REGISTERED_IP")} (patents, trademarks and registered designs), {sectorLabel("CREATIVE_MEDIA")} (copyrights, film &amp; TV, characters and image rights) and {sectorLabel("BUSINESS_TECH")} (software, franchise and trade secrets). Music royalties, NFTs, agro investment, green energy and carbon credits have their own menus and are excluded here. Public registers (Crossref, Open Library, the Art Institute of Chicago, the iTunes catalogue, GitHub and — when keyed — PatentsView) publish ownership and catalogue identity but <em>never</em> the royalty rate or collection economics — so the <em>discovery</em> layer is cited, not synthesised, and contributes no fundable rights on its own. The <em>dossier</em> layer is an administrator’s reviewed economics for a right — licensor, royalty basis and rate, cadence, term, payment-history indicators and the modelled distribution scenarios — each figure traceable to a source URL and an as-of date. Only a published dossier is fundable. Your commitment settles in {settlement}, is drawn from any wallet you hold or from all wallets combined at the live rate, and the principal is held while royalties are collected. Recorded distributions are credited pro-rata to your wallet as internal-ledger entries; at completion the principal is returned against the administrator-configured multiple, or written off. Nothing here is a prediction, and no external transfer occurs on this desk.
+        <strong>How the IP Royalties desk works.</strong> This desk spans three sectors — {sectorLabel("REGISTERED_IP")} (patents, trademarks and registered designs), {sectorLabel("CREATIVE_MEDIA")} (copyrights, film &amp; TV, characters and image rights) and {sectorLabel("BUSINESS_TECH")} (software, franchise and trade secrets). Music royalties, NFTs, agro investment, green energy and carbon credits have their own menus and are excluded here. Public registers (Crossref, Open Library, the Art Institute of Chicago, the iTunes catalogue, GitHub and — when keyed — PatentsView) publish ownership and catalogue identity but <em>never</em> the royalty rate or collection economics — so the <em>discovery</em> layer is cited, not synthesised, and every cited right is open for funding. An administrator-reviewed <em>dossier</em> may enrich a right with sourced economics — licensor, royalty basis and rate, cadence, term, payment-history indicators and the modelled distribution scenarios — each figure traceable to a source URL and an as-of date; where none has been published yet the right is still fundable, but the repayment multiple is not yet fixed. Your commitment settles in {settlement}, is drawn from any wallet you hold or from all wallets combined at the live rate, and the principal is held while royalties are collected. Recorded distributions are credited pro-rata to your wallet as internal-ledger entries; at completion the principal is returned against the administrator-configured multiple, or written off. Nothing here is a prediction, and no external transfer occurs on this desk.
       </div>
     </div>
 
@@ -772,7 +773,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
               <tr><td>Funded</td>{compareRights.map((item) => <td key={item.id}>{fmtPercent(item.fundedBps)}</td>)}</tr>
               <tr><td>Deadline</td>{compareRights.map((item) => <td key={item.id}>{item.fundingDeadline ? `${formatDate(item.fundingDeadline)} (${daysLabel(item.remainingDays)})` : "—"}</td>)}</tr>
               <tr><td>Status</td>{compareRights.map((item) => <td key={item.id}>{statusLabel(item.status)}</td>)}</tr>
-              <tr><td>Fundable</td>{compareRights.map((item) => <td key={item.id}>{item.fundable ? "Yes — economics published" : "No — economics not published"}</td>)}</tr>
+              <tr><td>Fundable</td>{compareRights.map((item) => <td key={item.id}>Yes{item.fundable ? " — dated economics" : " — economics pending"}</td>)}</tr>
             </tbody>
           </table>
         </div>
@@ -825,7 +826,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
             </div>}
           </div>
 
-          <div className="ipr-notice"><ShieldCheck size={15}/><div>Confirming debits your chosen wallet(s) through the existing internal ledger, holds the principal and creates a durable position. Duplicate requests are idempotent. Royalties are credited pro-rata as distributions are recorded; at completion the principal is returned against the configured multiple, or written off. No external transfer occurs on this desk.</div></div>
+          <div className="ipr-notice"><ShieldCheck size={15}/><div>Confirming debits your chosen wallet(s) through the existing internal ledger, holds the principal and creates a durable position. Duplicate requests are idempotent. Royalties are credited pro-rata as distributions are recorded; at completion the principal is returned against the administrator-configured multiple (where published), or written off. No external transfer occurs on this desk.</div></div>
           {message && <div className="ipr-notice is-error" role="alert"><AlertTriangle size={15}/><div>{message}</div></div>}
         </div>
         <div className="ipr-modal-foot">

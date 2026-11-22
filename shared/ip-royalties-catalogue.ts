@@ -11,13 +11,14 @@
  *    the Art Institute of Chicago, the iTunes Search API and the GitHub
  *    repository search). These registers publish works, ownership and licence
  *    identity, but they do NOT publish the royalty rate, the expected
- *    collections or any funder economics. Every discovered record is therefore
- *    a *candidate* with `fundable: false` and no modelled numbers. Nothing is
- *    invented.
+ *    collections or any funder economics. Every discovered record is cited
+ *    with `fundable: false` — meaning no *dated economics* have been published
+ *    yet — but it is still open for funding: nothing is invented.
  *
  *  - DOSSIER layer — the administrator-reviewed economics for one IP right or
- *    one portfolio. It is the only thing a customer can fund and it is stored
- *    server-side (server/ipRoyaltiesDossiers.ts), never here.
+ *    one portfolio. It *enriches* a right or portfolio with sourced, dated
+ *    economics; it is stored server-side (server/ipRoyaltiesDossiers.ts), never
+ *    here. A published dossier is not a precondition for funding.
  *
  * SCOPE BOUNDARIES. This desk spans ten licensing sectors (see
  * `SECTOR_RIGHT_TYPES`) and deliberately excludes the IP-adjacent sectors that
@@ -29,8 +30,9 @@
  * Sources that cannot be reached keylessly are reported honestly rather than
  * faked; a key-gated source is marked `keyed` and skipped until a token is
  * configured, and one that blocks non-browser clients is marked `unavailable`.
- * Because no public register publishes a royalty rate, a right only becomes
- * fundable when an administrator publishes sourced economics for it.
+ * Because no public register publishes a royalty rate, `fundable` marks only
+ * whether an administrator has published dated economics — every cited right
+ * remains open for funding either way.
  */
 
 import { findCountry, flagFor } from "./country-options";
@@ -92,8 +94,9 @@ export type IpRoyaltyScenario = {
 
 /**
  * A catalogue-facing IP right. Discovery records carry no economics
- * (`fundable: false`); a dossier-derived record is enriched with sourced
- * numbers by the administrator and becomes fundable.
+ * (`fundable: false`) but are still fundable; a dossier-derived record is
+ * enriched with sourced numbers by the administrator and its `fundable` flag is
+ * set, which only means its dated economics are published.
  */
 export type IpRight = {
   id: string;
@@ -523,8 +526,9 @@ type CandidateInput = {
 };
 
 /**
- * Build a discovery candidate. Economics are deliberately absent — such a
- * record is cited but NOT fundable until an administrator publishes a dossier.
+ * Build a discovery candidate. Economics are deliberately absent — the record
+ * carries no dated numbers, so `fundable` is false, but it is still open for
+ * funding and is enriched only once an administrator publishes a dossier.
  */
 function candidate(input: CandidateInput): IpRight {
   const code = String(input.countryCode || "").trim().toUpperCase();
@@ -763,9 +767,10 @@ async function fetchPatentRights(): Promise<IpRight[]> {
 
 /**
  * The public registers the discovery layer draws on. Registers publish
- * ownership/identity, not royalty economics, so nothing here is fundable on
- * its own. Key-gated sources are marked `keyed` and are skipped until a token
- * is configured; sources that block non-browser clients are marked
+ * ownership/identity, not royalty economics, so a record carries no dated
+ * numbers of its own and is enriched only by an administrator dossier — but it
+ * remains open for funding. Key-gated sources are marked `keyed` and are skipped
+ * until a token is configured; sources that block non-browser clients are marked
  * `unavailable` and are skipped rather than faked.
  *
  * Boundary note: music royalties, NFTs, agro investment, green energy and
@@ -862,8 +867,9 @@ async function buildCatalogue(): Promise<IpRoyaltiesCatalogue> {
 /**
  * The discovery catalogue for the desk. Public registers describe works,
  * ownership and licence identity, so the discovery layer contributes cited
- * candidates with no economics: the fundable universe is produced by
- * administrator dossiers. This is intentional and honest — nothing is invented.
+ * records with no dated economics; administrator dossiers enrich them. Every
+ * cited record remains open for funding. This is intentional and honest —
+ * nothing is invented.
  */
 export async function getIpRoyaltiesCatalogue(options: { force?: boolean } = {}): Promise<IpRoyaltiesCatalogue> {
   const now = Date.now();

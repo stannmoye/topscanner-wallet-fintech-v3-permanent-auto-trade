@@ -33,9 +33,9 @@ type Db = mysql.PoolConnection;
  *
  * The DISCOVERY layer (shared/ip-royalties-catalogue.ts) surfaces real, cited
  * public IP registers; public registers publish ownership, not royalty
- * economics, so discovery contributes no fundable rights. A DOSSIER is the
- * administrator's reviewed, sourced economics for one IP right and is the only
- * thing a customer can fund. Nothing here is invented: an administrator must
+ * economics, so a discovered right carries no dated numbers of its own but is
+ * still open for funding. A DOSSIER enriches a right with the administrator's
+ * reviewed, sourced economics. Nothing here is invented: an administrator must
  * supply the royalty basis, the term, the modelled distribution scenarios and a
  * source URL with an as-of date.
  */

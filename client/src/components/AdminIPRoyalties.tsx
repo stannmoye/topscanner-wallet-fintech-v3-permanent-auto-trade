@@ -98,13 +98,14 @@ const emptyPortfolio = (): PortfolioForm => ({
 });
 
 /**
- * Administrator console for the IP Royalties desk. Public IP registers publish
- * ownership, not royalty economics, so the discovery layer contributes no
- * fundable rights; an administrator reviews a right and publishes the sourced
- * economics (basis, term, modelled distribution scenarios) as a DOSSIER, which
- * is the only fundable entity. The console also pools rights into PORTFOLIOS,
- * records recurring distributions against funded instruments, and settles or
- * writes off funded rights and portfolios directly.
+ * Administrator console for the IP Royalties desk. Every right cited on the desk
+ * is fundable without a dossier — the gate is simply that the right exists.
+ * Public IP registers publish ownership, not royalty economics, so an
+ * administrator reviews a right and publishes the sourced economics (basis,
+ * term, modelled distribution scenarios) as a DOSSIER, which *enriches* the
+ * right with fixed economics but is not required to fund it. The console also
+ * pools rights into PORTFOLIOS, records recurring distributions against funded
+ * instruments, and settles or writes off funded rights and portfolios directly.
  */
 export function AdminIPRoyalties() {
   const utils = trpc.useUtils();
@@ -407,7 +408,7 @@ export function AdminIPRoyalties() {
         <div className="ipr-masthead-lead">
           <span className="eyebrow">IP royalties · Dossier publishing</span>
           <h1 className="ipr-title">IP Royalties console</h1>
-          <p className="ipr-lede">Review a right and publish its sourced royalty economics — basis, rate, term, licensees, the modelled distribution scenarios and the funding target — as a dossier. Public IP registers publish ownership, not royalty economics, so discovery contributes no fundable rights; a published dossier is the only thing a customer can fund. Pool rights into a portfolio, record recurring distributions, or settle a funded instrument here.</p>
+          <p className="ipr-lede">Review a right and publish its sourced royalty economics — basis, rate, term, licensees, the modelled distribution scenarios and the funding target — as a dossier. Every cited right is already fundable without a dossier; publishing one only enriches the right with fixed economics and a funding target. Pool rights into a portfolio, record recurring distributions, or settle a funded instrument here.</p>
         </div>
         <div className="ipr-masthead-side">
           <button className="ipr-btn ipr-btn-sm" type="button" onClick={() => { void dossiersQuery.refetch(); void portfoliosQuery.refetch(); void openInstrumentsQuery.refetch(); }} disabled={dossiersQuery.isFetching || portfoliosQuery.isFetching || openInstrumentsQuery.isFetching}>
@@ -748,7 +749,7 @@ export function AdminIPRoyalties() {
 
     <div className="ipr-notice">
       <ShieldCheck size={15}/>
-      <div>The discovery layer surfaces real, cited public IP registers grouped into the desk&apos;s three sectors — {sectorLabel("REGISTERED_IP")}, {sectorLabel("CREATIVE_MEDIA")} and {sectorLabel("BUSINESS_TECH")} — but public registers publish ownership rather than royalty economics, so discovery contributes no fundable rights. Music royalties, NFTs, agro investment, green energy and carbon credits belong to their own menus and are excluded here. This console writes administrator dossiers and portfolios, records distributions and settles instruments to the platform database. Every change is audited, publishing economics requires a funding target and a cited source URL with scenarios that sum to 100%, and no royalty figure is ever invented here.</div>
+      <div>The discovery layer surfaces real, cited public IP registers grouped into the desk&apos;s three sectors — {sectorLabel("REGISTERED_IP")}, {sectorLabel("CREATIVE_MEDIA")} and {sectorLabel("BUSINESS_TECH")} — and every cited right is open for funding. Public registers publish ownership rather than royalty economics, so a discovered right carries no dated numbers of its own; a dossier only enriches it. Music royalties, NFTs, agro investment, green energy and carbon credits belong to their own menus and are excluded here. This console writes administrator dossiers and portfolios, records distributions and settles instruments to the platform database. Every change is audited, publishing economics requires a funding target and a cited source URL with scenarios that sum to 100%, and no royalty figure is ever invented here.</div>
     </div>
   </div>;
 }

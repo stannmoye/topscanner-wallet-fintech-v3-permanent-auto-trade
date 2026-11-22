@@ -448,15 +448,17 @@ type ResolvedInstrument = {
 };
 
 /**
- * Resolve the instrument a customer is funding. Unlike the litigation desk,
- * public IP registers publish no royalty economics, so only an
- * administrator-published dossier (enabled) or portfolio is fundable. Nothing
- * about the economics is taken from the client.
+ * Resolve the instrument a customer is funding. Every right published on the
+ * desk is fundable without an administrator dossier — the gate is simply that
+ * the right exists on the desk. An administrator-published dossier, when
+ * present, only enriches the right with sourced economics (a fixed repayment
+ * multiple); its absence never blocks a commitment. Nothing about the economics
+ * is ever taken from the client.
  */
 async function resolveInstrument(instrumentType: IpRoyaltyInstrumentType, instrumentId: string): Promise<ResolvedInstrument> {
   if (instrumentType === "RIGHT") {
     const dossier = await findEnabledAdminIpRoyaltyDossier(instrumentId);
-    if (dossier && dossier.fundable) {
+    if (dossier) {
       return {
         instrumentType, instrumentId: dossier.id, instrumentName: dossier.rightName, rightType: dossier.rightType,
         jurisdiction: dossier.jurisdiction, countryCode: dossier.countryCode, status: dossier.status,
@@ -464,14 +466,14 @@ async function resolveInstrument(instrumentType: IpRoyaltyInstrumentType, instru
       };
     }
     const live = await findIpRight(instrumentId);
-    if (live && live.fundable) {
+    if (live) {
       return {
         instrumentType, instrumentId: live.id, instrumentName: live.rightName, rightType: live.rightType,
         jurisdiction: live.jurisdiction, countryCode: live.countryCode, status: live.status,
         expectedMultipleBps: live.expectedMultipleBps, unitPriceMinor: null, source: live.source, asOf: live.asOf,
       };
     }
-    throw new Error("This right is not currently open for funding on the IP Royalties desk. Refresh and try again.");
+    throw new Error("This right is not currently listed on the IP Royalties desk. Refresh and try again.");
   }
   const portfolio = await findEnabledAdminIpRoyaltyPortfolio(instrumentId);
   if (!portfolio || !portfolio.enabled) throw new Error("This portfolio is not currently open on the IP Royalties desk. Refresh and try again.");
