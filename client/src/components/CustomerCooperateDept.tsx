@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { visibilityAwareRefetchInterval } from "@/visibility-aware-polling";
 import {
-  AlertTriangle, ArrowUpRight, Building2, CalendarClock, Check, ChevronLeft, ChevronRight, CircleHelp, Download,
-  Factory, Filter, Globe2, Landmark, Layers, MapPin, RefreshCw, Scale, ShieldCheck, Siren, Star, TrendingUp,
+  AlertTriangle, ArrowUpRight, Building2, CalendarClock, Check, ChevronLeft, ChevronRight, CircleHelp, Clock, Download,
+  Factory, Filter, Globe2, Landmark, Layers, MapPin, RefreshCw, Scale, ShieldCheck, Siren, Sparkles, Star, TrendingUp,
   UserRound, Users, Wallet, X,
 } from "lucide-react";
 import {
@@ -12,6 +12,7 @@ import {
   type CooperateDeptCompany,
   type DistressSeverity,
 } from "@shared/cooperate-dept-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./cooperate-dept.css";
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
@@ -60,6 +61,64 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/**
+ * The auto-assigned economic profile the server merges onto each company
+ * (investable amount, profit, term, presentation currency, platform fee and any
+ * occasional settlement delay). Absent on the raw public catalogue, so every
+ * consumer must tolerate a null and fall back to the register-only view.
+ */
+type EconomicsView = {
+  econ: DeskEconomics;
+  currency: string;
+  scale: number;
+  symbol: string;
+  ticketMinMinor: number;
+  fundingTargetMinor: number;
+  profitBps: number;
+  termDays: number;
+  closeDate: string;
+  maturityDate: string;
+  platformFeeBps: number;
+  settlementDelayDays: number | null;
+};
+
+function economicsView(company: CooperateDeptCompany): EconomicsView | null {
+  const econ = company.economics ?? null;
+  if (!econ) return null;
+  return {
+    econ,
+    currency: econ.currency,
+    scale: econ.currencyScale,
+    symbol: econ.currencySymbol,
+    ticketMinMinor: econ.ticketMinMinor,
+    fundingTargetMinor: econ.fundingTargetMinor,
+    profitBps: econ.profitBps,
+    termDays: econ.termDays,
+    closeDate: econ.closeDate,
+    maturityDate: econ.maturityDate,
+    platformFeeBps: econ.platformFeeBps,
+    settlementDelayDays: econ.settlementDelayDays ?? null,
+  };
+}
+
+/** Format an amount held in the offer's own presentation currency and scale. */
+function fmtEcon(minor: number, currency: string, scale = 2) {
+  const code = String(currency || "USD").toUpperCase();
+  const digits = Math.min(Math.max(0, Math.round(Number.isFinite(scale) ? scale : 2)), 8);
+  const value = Number(minor || 0) / Math.pow(10, digits);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: code, maximumFractionDigits: digits }).format(value);
+  } catch {
+    return `${code} ${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  }
+}
+
+/** A basis-point rate as a trimmed percentage (2,500 bps → "25%"). */
+function fmtPercent(bps: number | null | undefined) {
+  if (bps === null || bps === undefined) return "—";
+  return `${(Number(bps) / 100).toFixed(Number(bps) % 100 === 0 ? 0 : 2)}%`;
 }
 
 function foundedLabel(company: CooperateDeptCompany) {
@@ -316,8 +375,13 @@ export function CustomerCooperateDept({ push }: { push: (message: string) => voi
     setMessage("");
     setBasis("SHARES");
     setFundingSource("COMBINED");
-    setAmount(Math.max(company.capitalAskMinor || 0, Math.max(available, 100_000)));
+    const ticketUsdMinor = company.economics ? currencyMinorToUsdMinor(company.economics.ticketMinMinor, company.economics.currency) : 0;
+    setAmount(Math.max(company.capitalAskMinor || 0, ticketUsdMinor, available, 100_000));
   };
+
+  // The offer details the customer reviewed, re-read for the purchase modal so an
+  // active commitment carries the same amount band, profit, term and fee.
+  const selectedView = selected ? economicsView(selected) : null;
 
   // Refresh the funding quote (conversion + affordability) as the amount or
   // funding wallet changes. Debounced so typing does not hammer the FX provider.
@@ -467,6 +531,7 @@ export function CustomerCooperateDept({ push }: { push: (message: string) => voi
         {pageRows.map((company) => {
           const watched = watchlist.includes(company.id);
           const comparing = compareIds.includes(company.id);
+          const view = economicsView(company);
           return <article className={`cd-card sev-${company.severity.toLowerCase()}`} key={company.id}>
             <div className="cd-card-top">
               <span className="cd-card-flag" aria-hidden="true">{company.flag}</span>
@@ -501,9 +566,24 @@ export function CustomerCooperateDept({ push }: { push: (message: string) => voi
             </div>
 
             <div className="cd-econ">
-              <span>You can invest from <b>{fmtMinor(Math.max(company.capitalAskMinor || 0, 100_000))}</b></span>
-              <span>Profit is fixed when the administrator settles the stake</span>
+              <span>You can invest from <b>{view ? fmtEcon(view.ticketMinMinor, view.currency, view.scale) : fmtMinor(Math.max(company.capitalAskMinor || 0, 100_000))}</b></span>
+              <span>{view ? `Profit ${fmtPercent(view.profitBps)} · ${view.termDays}-day term · platform fee ${fmtPercent(view.platformFeeBps)}` : "Profit is fixed when the administrator settles the stake"}</span>
             </div>
+            {view && <div className="cd-card-econ">
+              <div className="cd-card-econ-head"><Sparkles size={12}/> Investment offer</div>
+              <div className="cd-card-econ-items">
+                <div className="cd-econ-item"><span>Currency</span><b>{view.currency} {view.symbol}</b></div>
+                <div className="cd-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+                <div className="cd-econ-item"><span>Profit</span><b className="cd-econ-profit">{fmtPercent(view.profitBps)}</b></div>
+                <div className="cd-econ-item"><span>Term</span><b>{view.termDays} days</b></div>
+                <div className="cd-econ-item"><span>Platform fee</span><b>{fmtPercent(view.platformFeeBps)}</b></div>
+                <div className="cd-econ-item"><span>Closes</span><b>{formatDate(view.closeDate)}</b></div>
+                <div className="cd-econ-item"><span>Profit realised</span><b>{formatDate(view.maturityDate)}</b></div>
+                {view.settlementDelayDays
+                  ? <div className="cd-econ-item cd-econ-delay"><span>Payout delay</span><b>+{view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}</b></div>
+                  : <div className="cd-econ-item"><span>Payout</span><b className="cd-econ-ok">On time</b></div>}
+              </div>
+            </div>}
             <div className="cd-card-foot">
               <span className="cd-card-asof" title={company.sourceUrl || company.source}><MapPin size={11}/> {company.asOf} · {company.source}{company.verified ? " · desk-verified" : ""}</span>
               <button className="cd-buy" onClick={() => openPurchase(company)}>Review &amp; buy <ChevronRight size={14}/></button>
@@ -605,6 +685,23 @@ export function CustomerCooperateDept({ push }: { push: (message: string) => voi
           <div><span>Sectors</span><strong>{selected.sectors.length ? selected.sectors.join(", ") : "—"}</strong></div>
           <div><span>Capital sought</span><strong>{selected.capitalAskMinor ? fmtMinor(selected.capitalAskMinor) : "On request"}</strong></div>
         </div>
+
+        {selectedView && <div className="cd-econ-panel">
+          <div className="cd-econ-panel-head"><Sparkles size={13}/> Investment offer · {selectedView.settlementDelayDays ? "may settle late" : "on schedule"}</div>
+          <div className="cd-econ-panel-grid">
+            <div className="cd-econ-item"><span>Currency</span><b>{selectedView.currency} {selectedView.symbol}</b></div>
+            <div className="cd-econ-item"><span>Invest from</span><b>{fmtEcon(selectedView.ticketMinMinor, selectedView.currency, selectedView.scale)}</b></div>
+            <div className="cd-econ-item"><span>Funding target</span><b>{fmtEcon(selectedView.fundingTargetMinor, selectedView.currency, selectedView.scale)}</b></div>
+            <div className="cd-econ-item"><span>Profit</span><b className="cd-econ-profit">{fmtPercent(selectedView.profitBps)}</b></div>
+            <div className="cd-econ-item"><span>Term</span><b>{selectedView.termDays} days</b></div>
+            <div className="cd-econ-item"><span>Platform fee</span><b>{fmtPercent(selectedView.platformFeeBps)}</b></div>
+            <div className="cd-econ-item"><span>Closes</span><b>{formatDate(selectedView.closeDate)}</b></div>
+            <div className="cd-econ-item"><span>Profit realised</span><b>{formatDate(selectedView.maturityDate)}</b></div>
+          </div>
+          {selectedView.settlementDelayDays
+            ? <div className="cd-econ-delay"><Clock size={13}/> A system settlement delay of up to {selectedView.settlementDelayDays} day{selectedView.settlementDelayDays === 1 ? "" : "s"} applies to this opportunity, so the payout may arrive shortly after the realisation date.</div>
+            : <div className="cd-econ-ontime"><Check size={13}/> This opportunity settles on the realisation date.</div>}
+        </div>}
 
         {(selected.founderNames.length > 0 || selected.keyPeople.length > 0) && <div className="cd-modal-grid">
           <div><span>Founders</span><strong>{selected.founderNames.length ? selected.founderNames.join(", ") : "Not published"}</strong></div>

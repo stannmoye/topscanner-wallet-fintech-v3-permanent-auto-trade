@@ -41,6 +41,7 @@
  */
 
 import { flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 export type DistressSeverity = "CRITICAL" | "HIGH" | "ELEVATED" | "WATCH";
 
@@ -125,6 +126,13 @@ export type CooperateDeptCompany = {
   };
   /** True only for records an administrator has reviewed and published. */
   verified: boolean;
+  /**
+   * Auto-assigned economic profile: the investable amount band, profit, term,
+   * presentation currency, platform fee and any occasional settlement delay.
+   * Derived server-side and additive — an administrator can override it from
+   * the admin console without touching the company's published register data.
+   */
+  economics?: DeskEconomics | null;
 };
 
 export type CooperateDeptSource = {

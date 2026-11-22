@@ -1,3 +1,54 @@
+## 2026-11-23 (feat) — Desk economics engine rolled out to the Cooperate Dept desk (last desk)
+
+Seventh and final desk to carry the auto-assigned economic profile (after Agro, Carbon Credit, Music
+Royalties, IP Royalties, Treasury Bond and Litigation Funds). Every Cooperate Dept company now shows
+an investable amount (USD 500–1,000,000 equivalent), a 25%–38% profit, a 30–365 day term, a
+USD-dominant presentation currency, a 7%–10% platform fee and an occasional settlement-delay bolt-on —
+all overridable by an administrator. The shared engine/store are unchanged; this pass only wires the
+Cooperate Dept desk (desk key `"cooperate"`) into them. The desk still settles in USD; the profile is
+presentation only. This completes the roll-out the owner asked for ("we already have most implemented,
+remain the last one").
+
+- **Catalogue (`shared/cooperate-dept-catalogue.ts`).** `CooperateDeptCompany` gains an optional
+  `economics?: DeskEconomics | null`, imported **type-only** from `./investment-economics` so the file
+  stays environment-neutral (the contract test forbids `process.env` / `node:` so it also runs as the
+  browser fallback).
+- **Server (`server/cooperateDept.ts`).** New `COOPERATE_DEPT_DESK_KEY = "cooperate"`;
+  `getCooperateDeptDashboard()` batch-reads the profile via
+  `getDeskEconomicsMap(COOPERATE_DEPT_DESK_KEY, …)` (try/catch + empty-map fallback) and merges it
+  through a `withCooperateEconomics()` helper that only fills `economics` — the published register
+  data, source and as-of date are never touched, and the contract-tested
+  `const companies = [...adminCompanies, ...catalogue.companies].sort(compareCooperateDeptCompanies)`
+  line is preserved verbatim (the enriched array is a separate `companiesWithEconomics`), which is what
+  the dashboard now returns. A `getOrAssignCooperateEconomics()` helper assigns-and-persists on first
+  sight, failing soft to `null`, so newly fetched public-register companies are priced automatically.
+- **Customer desk (`client/src/components/CustomerCooperateDept.tsx`).** New `economicsView()` /
+  `fmtEcon()` / `fmtPercent()` and an `EconomicsView` type. Each company card gains an
+  `Investment offer` block (`cd-card-econ` / `cd-econ-item`, with `cd-econ-delay` for a delayed payout
+  or `cd-econ-ok` "On time"); the "Purchase" action seeds the amount from
+  `currencyMinorToUsdMinor(view.ticketMinMinor, view.currency)`; the purchase modal re-reads the
+  selected company's profile and carries the same `cd-econ-panel` (`cd-econ-delay` / `cd-econ-ontime`
+  note).
+- **CSS (`client/src/components/cooperate-dept.css`).** Added `.cd-card-econ`, `.cd-card-econ-head`,
+  `.cd-card-econ-items`, `.cd-econ-item`, `.cd-econ-item.cd-econ-delay`, `.cd-econ-ok`,
+  `.cd-econ-panel`, `.cd-econ-panel-head`, `.cd-econ-panel-grid`, `.cd-econ-delay`, `.cd-econ-ontime`
+  plus the admin-tab styles `.cd-admin-tabs` / `.cd-admin-tab` / `.cd-admin-note` / `.cd-econ-admin-row`
+  / `.cd-econ-admin-head` / `.cd-econ-admin-badge`, derived from the existing `--cd-*` / `--arb-color-*`
+  tokens.
+- **Admin console (`client/src/components/AdminCooperateDept.tsx`).** The page gains a two-tab rail
+  (**Companies** / **Economic profiles**); the new tab is an editable economics console over every
+  company (currency, minimum ticket + funding target with USD hints, profit % 25–38, term days,
+  platform fee % 7–10, close/realise dates, optional settlement delay) with **Save economic profile**
+  and **Re-roll auto profile**, wired to `deskEconomicsBatch` / `setDeskEconomics` /
+  `reassignDeskEconomics` for `desk: "cooperate"`.
+- **Test (`server/cooperate-dept.contract.test.ts`).** New case asserts the cooperate wiring (type-only
+  catalogue import + field, engine/store presence, server merge + key, customer panel classes, admin
+  tab, CSS). The full suite passes **206 files / 1677 tests** (+1).
+- Verification: `server/cooperate-dept.contract.test.ts` 13/13 passed; `pnpm check` (tsc --noEmit)
+  clean; `npx vitest run` 206 files / 1677 tests passed; `npm run build` (vite + esbuild) succeeded.
+- **Next:** none — all seven desks now carry the auto-assigned economic profile. Administrators can
+  review/override any value per opportunity from each desk's Economic profiles tab.
+
 ## 2026-11-23 (feat) — Desk economics engine rolled out to the Litigation Funds desk
 
 Sixth desk to carry the auto-assigned economic profile (after Agro, Carbon Credit, Music Royalties,

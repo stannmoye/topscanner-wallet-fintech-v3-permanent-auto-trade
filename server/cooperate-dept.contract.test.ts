@@ -10,6 +10,9 @@ const catalogue = readFileSync(new URL("../shared/cooperate-dept-catalogue.ts", 
 const serverStore = readFileSync(new URL("./cooperateDeptCompanies.ts", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./cooperateDept.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+const deskEconomics = readFileSync(new URL("./deskEconomics.ts", import.meta.url), "utf8");
+const investmentEconomics = readFileSync(new URL("../shared/investment-economics.ts", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../client/src/components/cooperate-dept.css", import.meta.url), "utf8");
 
 describe("Cooperate Dept distressed-company desk", () => {
   it("exposes one Finance destination that opens the dedicated publishing console", () => {
@@ -198,5 +201,45 @@ describe("Cooperate Dept distressed-company desk", () => {
     expect(serverRouters).toContain("deleteCooperateDeptCompany: adminProcedure.input(z.object({ companyId");
     expect(serverRouters).toContain("countdownDate: z.string().trim().regex(/^\\d{4}-\\d{2}-\\d{2}$/)");
     expect(serverRouters).toContain("capitalAskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional()");
+  });
+
+  it("auto-assigns an economic profile (amount, profit, term, currency, fee, delay) to every company", () => {
+    // The shared engine owns the bounds, the presentation currencies and the desk key.
+    expect(investmentEconomics).toContain('"cooperate"');
+    expect(investmentEconomics).toContain("export const ECONOMICS_BOUNDS");
+    expect(investmentEconomics).toContain("export const INVESTMENT_CURRENCIES");
+    expect(investmentEconomics).toContain("export function assignDeskEconomics(");
+    // The shared company type stays environment-neutral and carries the additive profile.
+    expect(catalogue).toContain('import type { DeskEconomics } from "./investment-economics"');
+    expect(catalogue).toContain("economics?: DeskEconomics | null;");
+    // The persistence layer stores the derived profile and honours administrator overrides.
+    expect(deskEconomics).toContain("desk_investment_economics");
+    expect(deskEconomics).toContain("export async function getOrAssignDeskEconomics(");
+    expect(deskEconomics).toContain("export async function getDeskEconomicsMap(");
+    // The desk server merges the profile into every served company.
+    expect(serverDesk).toContain('import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics"');
+    expect(serverDesk).toContain('const COOPERATE_DEPT_DESK_KEY = "cooperate" as const;');
+    expect(serverDesk).toContain("function withCooperateEconomics(");
+    expect(serverDesk).toContain("companies: companiesWithEconomics,");
+    // The customer card and purchase modal surface the profile.
+    expect(customerUi).toContain("function economicsView(");
+    expect(customerUi).toContain("cd-card-econ");
+    expect(customerUi).toContain("cd-econ-panel");
+    expect(customerUi).toContain("currencyMinorToUsdMinor");
+    expect(customerUi).toContain("settlementDelayDays");
+    // The admin console reviews and overrides the profile.
+    expect(adminUi).toContain("trpc.adminOperations.deskEconomicsBatch.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.setDeskEconomics.useMutation");
+    expect(adminUi).toContain("trpc.adminOperations.reassignDeskEconomics.useMutation");
+    expect(adminUi).toContain('{ desk: "cooperate", instrumentIds: economicsIds }');
+    expect(adminUi).toContain("ECONOMICS_BOUNDS");
+    expect(adminUi).toContain("INVESTMENT_CURRENCIES");
+    expect(adminUi).toContain("cd-econ-admin-row");
+    expect(adminUi).toContain("Re-roll auto profile");
+    // The extended display is styled.
+    expect(styles).toContain(".cd-card-econ");
+    expect(styles).toContain(".cd-econ-panel");
+    expect(styles).toContain(".cd-econ-delay");
+    expect(styles).toContain(".cd-econ-admin-row");
   });
 });

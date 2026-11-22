@@ -19,6 +19,8 @@ import {
   type FxRateSnapshot,
 } from "./modules/trading-wallet-fx";
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
+import type { DeskEconomics } from "@shared/investment-economics";
 
 type Db = mysql.PoolConnection;
 
@@ -61,6 +63,29 @@ const ADD_POSITIONS_COLUMNS_SQL = [
 const SETTLEMENT_CURRENCY = "USD";
 export const COOPERATE_DEPT_COMBINED_SOURCE = "COMBINED";
 const MAX_PURCHASE_MINOR = 100_000_000; // $1,000,000 ceiling per purchase
+
+/** The desk key this desk's auto-assigned economics are stored under. */
+const COOPERATE_DEPT_DESK_KEY = "cooperate" as const;
+
+/**
+ * Read one company's auto-assigned economic profile, assigning and persisting it
+ * on first sight. Fails soft: a storage problem still yields the deterministically
+ * derived profile so a card never loses its offer details.
+ */
+async function getOrAssignCooperateEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics(COOPERATE_DEPT_DESK_KEY, instrumentId);
+  } catch (error) {
+    console.error("[CooperateDept] Failed to assign economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
+
+/** Merge a company's economic profile without touching its published register data. */
+function withCooperateEconomics(company: CooperateDeptCompany, economics: DeskEconomics | null | undefined): CooperateDeptCompany {
+  if (!economics) return company;
+  return { ...company, economics };
+}
 
 type WalletRow = {
   id: number;
@@ -365,6 +390,19 @@ export async function getCooperateDeptDashboard(userId: number) {
   ]);
 
   const companies = [...adminCompanies, ...catalogue.companies].sort(compareCooperateDeptCompanies);
+
+  // Every company the desk shows carries an auto-assigned economic profile
+  // (investable amount, profit, term, currency, platform fee and any occasional
+  // settlement delay). It is read as one batch and merged additively; the
+  // published register data, source and observation date are never touched.
+  let economicsByCompany = new Map<string, DeskEconomics>();
+  try {
+    economicsByCompany = await getDeskEconomicsMap(COOPERATE_DEPT_DESK_KEY, companies.map((company) => company.id));
+  } catch (error) {
+    console.error("[CooperateDept] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const companiesWithEconomics = companies.map((company) => withCooperateEconomics(company, economicsByCompany.get(company.id)));
+
   const sources = adminCompanies.length
     ? [...catalogue.sources, {
         name: "Arbitrade desk — administrator published",
@@ -398,7 +436,7 @@ export async function getCooperateDeptDashboard(userId: number) {
   };
   const usd = balances.find((b) => b.currency === SETTLEMENT_CURRENCY);
   return {
-    companies,
+    companies: companiesWithEconomics,
     positions,
     balances,
     wallets: balances,
