@@ -76,6 +76,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "treasury-instruments", target: "treasuryInstruments", label: "Treasury Instruments", detail: "Create treasury-bond instruments and publish them to the customer desk", icon: Landmark },
     { id: "cooperate-dept-companies", target: "cooperateDeptCompanies", label: "Cooperate Dept", detail: "Publish distressed companies and start-ups that need investors to buy, recapitalise or take ownership", icon: Building2 },
     { id: "litigation-funds", target: "litigationFundDossiers", label: "Litigation Funds", detail: "Publish cited case dossiers and bundles with modelled outcome scenarios, milestones and funding targets", icon: Gavel },
+    { id: "ip-royalties", target: "ipRoyaltyDossiers", label: "IP Royalties", detail: "Publish sourced IP-right dossiers and portfolios with royalty basis, modelled distribution scenarios and funding targets", icon: Layers3 },
   ]},
   { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
     { id: "mining-overview", target: "miningOverview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [

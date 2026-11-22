@@ -1,3 +1,48 @@
+## 2026-11-22 — IP Royalties desk: three licensing sectors, scope boundaries, free-API discovery
+
+Refined the **Finance → IP Royalties** desk to the user's updated scope and made the
+sector/boundary taxonomy explicit in shared code, both UIs and the router.
+
+- **Scope (10 categories, 11 right types).** `shared/ip-royalties-catalogue.ts` now has
+  `IpRightType = PATENT | TRADEMARK | BRAND | COPYRIGHT | SOFTWARE | FILM_TV | CHARACTER |
+  IMAGE_LIKENESS | FRANCHISE | KNOW_HOW | DESIGN` (BRAND kept as the brand-licensing type),
+  matching the user's ten items.
+- **Three sectors (the suggested tabs).** `IpRoyaltySector = REGISTERED_IP | CREATIVE_MEDIA
+  | BUSINESS_TECH` with `SECTOR_RIGHT_TYPES`, `sectorForRightType`, `sectorLabel`,
+  `sectorDetail`, `IP_ROYALTY_SECTORS`. Registered IP = patents/trademarks/designs;
+  Creative & media = copyrights/film & TV/characters/image rights; Business & tech =
+  software/franchise/trade secrets.
+- **Boundaries (sister desks excluded).** `IpRoyaltyBoundary = MUSIC_ROYALTIES | NFT |
+  AGRO_INVESTMENT | GREEN_ENERGY | CARBON_CREDIT` with an ordered `BOUNDARY_PATTERNS`
+  matcher and `boundaryFor` / `isIpRoyaltyInScope` / `boundaryGuidance` /
+  `boundaryLabel`. Discovery is hard-filtered through `isIpRoyaltyInScope`, so a music /
+  NFT / agro / green-energy / carbon item can never appear or be funded here.
+- **Free, keyless discovery APIs only.** Crossref (books/articles), Open Library (books),
+  Art Institute of Chicago (artwork), the iTunes Search API (film, TV, software, ebooks)
+  and GitHub repository search (software). PatentsView stays key-gated
+  (`PATENTSVIEW_API_KEY`) and is skipped honestly when absent; WIPO Global Brand Database
+  and the US Copyright Office catalog are marked `unavailable` rather than faked. All
+  candidates carry no economics and are `fundable: false` — the DOSSIER layer is the only
+  fundable entity.
+- **Client UIs.** `CustomerIPRoyalties.tsx` gained a three-sector tab strip (with live
+  counts), a sector filter, a per-card sector badge and a "By sector" analytics card;
+  `AdminIPRoyalties.tsx` groups every right-type `<select>` by sector via a shared
+  `RightTypeOptions` component and shows the sector badge on dossier rows. Both education
+  notices now state the sectors and the excluded sister desks.
+- **Server validation.** The `rightType` Zod enums in `server/routers.ts`
+  (`ipRoyaltyDossierFieldsSchema`, `ipRoyaltyPortfolioFieldsSchema`) were widened to the
+  full 11-type set so FILM_TV / CHARACTER / IMAGE_LIKENESS etc. are accepted;
+  `server/ipRoyaltiesDossiers.ts` validates through the shared `IP_RIGHT_TYPES`.
+- **Tests.** `server/ip-royalties.contract.test.ts` updated for the new scope (12 tests):
+  free-API discovery, fundable:false candidates, the three sectors, the five boundaries and
+  both UIs' sector rendering. Also fixed the pre-existing litigation-funds and
+  cooperate-dept contract assertions that the earlier App.tsx placeholder exclusion change
+  (adding `ip-royalties`) had invalidated.
+- Verification: `pnpm check` clean; `pnpm test` (203 files / 1,624 passed / 36 skipped)
+  passes.
+- Next steps: optional — add a PatentsView key to light up the patents feed, and consider
+  a live trademark source if a keyless one becomes available.
+
 ## 2026-11-22 — Litigation Funds desk: cited case discovery + outcome-modelled dossiers, cross-wallet funding
 
 New customer desk under **Finance → Litigation Funds**, deliberately different from the

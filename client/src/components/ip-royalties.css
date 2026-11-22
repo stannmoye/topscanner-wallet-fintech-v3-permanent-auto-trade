@@ -1,0 +1,334 @@
+/* IP Royalties desk — licensing / royalty-stream visual identity.
+   Deliberately registry-like: deep ink surfaces, a violet rights accent and a
+   monospace licence feel, so the desk reads as a licensing schedule rather than
+   a market. Colours derive from the platform --arb-color-* tokens where possible. */
+
+.ipr-page {
+  --ipr-radius: 16px;
+  --ipr-ink: #0b1020;
+  --ipr-ink-raised: #141a33;
+  --ipr-line: color-mix(in srgb, var(--arb-color-border) 80%, transparent);
+  --ipr-card: color-mix(in srgb, var(--ipr-ink-raised) 88%, transparent);
+  --ipr-royalty: #7c5cff;
+  --ipr-royalty-deep: #4c1d95;
+  --ipr-gold: #c79a3a;
+  --ipr-settle: #3b82f6;
+  --ipr-win: #16a34a;
+  --ipr-lose: #dc2626;
+  --ipr-shadow: 0 26px 64px -38px rgba(6, 0, 18, 0.9);
+  display: grid;
+  gap: 22px;
+  color: var(--arb-color-text);
+}
+
+.ipr-page .eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--arb-color-text-muted);
+}
+
+.ipr-mono {
+  font-family: "SFMono-Regular", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+/* ------------------------------- Hero ------------------------------- */
+.ipr-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 26px 26px 22px;
+  border: 1px solid color-mix(in srgb, var(--ipr-royalty) 38%, var(--ipr-line));
+  background:
+    radial-gradient(120% 150% at 0% 0%, color-mix(in srgb, var(--ipr-royalty) 24%, transparent), transparent 54%),
+    radial-gradient(130% 150% at 100% 0%, color-mix(in srgb, var(--ipr-gold) 16%, transparent), transparent 55%),
+    linear-gradient(158deg, var(--ipr-ink-raised), var(--ipr-ink));
+  box-shadow: var(--ipr-shadow);
+  isolation: isolate;
+}
+
+.ipr-hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--ipr-royalty) 12%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ipr-royalty) 12%, transparent) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(140% 100% at 12% 0%, #000 8%, transparent 68%);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.ipr-hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.ipr-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(120deg, var(--ipr-royalty), var(--ipr-royalty-deep));
+  box-shadow: 0 10px 26px -12px rgba(124, 92, 255, 0.9);
+}
+
+.ipr-hero-title {
+  margin: 16px 0 6px;
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #f4f0ff;
+}
+
+.ipr-hero-sub {
+  margin: 0;
+  max-width: 62ch;
+  color: color-mix(in srgb, #f4f0ff 72%, transparent);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.ipr-hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ipr-stat {
+  display: grid;
+  gap: 2px;
+  min-width: 132px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ipr-royalty) 26%, transparent);
+  background: color-mix(in srgb, #000 34%, transparent);
+}
+
+.ipr-stat strong { font-size: 1.12rem; color: #f4f0ff; }
+.ipr-stat span { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, #f4f0ff 60%, transparent); }
+
+.ipr-source-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+.ipr-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  border: 1px solid var(--ipr-line);
+  background: color-mix(in srgb, #000 30%, transparent);
+  color: color-mix(in srgb, #f4f0ff 78%, transparent);
+}
+.ipr-source-chip.is-ok { border-color: color-mix(in srgb, var(--ipr-win) 55%, transparent); }
+.ipr-source-chip.is-keyed { border-color: color-mix(in srgb, var(--ipr-gold) 60%, transparent); }
+.ipr-source-chip.is-degraded { border-color: color-mix(in srgb, var(--ipr-gold) 60%, transparent); }
+.ipr-source-chip.is-unavailable { border-color: color-mix(in srgb, var(--ipr-lose) 55%, transparent); opacity: 0.8; }
+
+.ipr-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ipr-gold) 45%, var(--ipr-line));
+  background: color-mix(in srgb, var(--ipr-gold) 12%, transparent);
+  font-size: 0.82rem;
+}
+.ipr-notice.is-error { border-color: color-mix(in srgb, var(--ipr-lose) 55%, var(--ipr-line)); background: color-mix(in srgb, var(--ipr-lose) 12%, transparent); }
+.ipr-notice.is-success { border-color: color-mix(in srgb, var(--ipr-win) 55%, var(--ipr-line)); background: color-mix(in srgb, var(--ipr-win) 12%, transparent); }
+
+/* ------------------------------- Tabs ------------------------------- */
+.ipr-tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--ipr-line); padding-bottom: 2px; }
+.ipr-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border: 0; background: transparent; cursor: pointer;
+  color: var(--arb-color-text-muted); font-weight: 600; font-size: 0.84rem;
+  border-bottom: 2px solid transparent;
+}
+.ipr-tab.is-active { color: var(--arb-color-text); border-bottom-color: var(--ipr-royalty); }
+.ipr-tab-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; font-size: 0.68rem; background: color-mix(in srgb, var(--ipr-royalty) 24%, transparent); color: var(--arb-color-text); }
+
+/* ------------------------------ Toolbar ----------------------------- */
+.ipr-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
+.ipr-filters { display: flex; flex-wrap: wrap; gap: 10px; }
+.ipr-filter { display: grid; gap: 4px; }
+.ipr-filter label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--arb-color-text-muted); }
+.ipr-filter select, .ipr-filter input {
+  min-width: 140px; padding: 8px 10px; border-radius: 9px;
+  border: 1px solid var(--ipr-line); background: var(--arb-color-surface); color: var(--arb-color-text);
+}
+.ipr-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.ipr-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 14px; border-radius: 10px; cursor: pointer; font-weight: 600; font-size: 0.82rem;
+  border: 1px solid var(--ipr-line); background: color-mix(in srgb, var(--arb-color-surface) 90%, transparent); color: var(--arb-color-text);
+}
+.ipr-btn.primary { border-color: transparent; background: linear-gradient(120deg, var(--ipr-royalty), var(--ipr-royalty-deep)); color: #fff; }
+.ipr-btn.ghost { background: transparent; }
+.ipr-btn.danger { border-color: color-mix(in srgb, var(--ipr-lose) 55%, var(--ipr-line)); color: var(--ipr-lose); background: color-mix(in srgb, var(--ipr-lose) 10%, transparent); }
+.ipr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ipr-btn-sm { padding: 6px 10px; font-size: 0.76rem; }
+
+/* ------------------------------- Cards ------------------------------ */
+.ipr-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.ipr-card {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: var(--ipr-radius);
+  border: 1px solid var(--ipr-line);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ipr-royalty) 5%, transparent), transparent 26%),
+    var(--ipr-card);
+  box-shadow: var(--ipr-shadow);
+}
+.ipr-card::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 3px; border-radius: var(--ipr-radius) var(--ipr-radius) 0 0;
+  background: linear-gradient(90deg, var(--ipr-royalty), var(--ipr-gold));
+  opacity: 0.4;
+}
+.ipr-card.is-fundable::before { opacity: 0.9; }
+
+.ipr-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.ipr-card-title { font-weight: 750; font-size: 1rem; line-height: 1.3; }
+.ipr-card-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.76rem; color: var(--arb-color-text-muted); }
+
+.ipr-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.ipr-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 700;
+  border: 1px solid var(--ipr-line); background: color-mix(in srgb, var(--arb-color-surface) 80%, transparent);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.ipr-badge--sector { border-color: color-mix(in srgb, var(--arb-color-accent, var(--ipr-settle)) 55%, transparent); color: var(--arb-color-accent, var(--ipr-settle)); }
+.ipr-badge--type { border-color: color-mix(in srgb, var(--ipr-royalty) 60%, transparent); color: var(--ipr-royalty); }
+.ipr-badge--basis { border-color: color-mix(in srgb, var(--ipr-settle) 55%, transparent); color: var(--ipr-settle); }
+.ipr-badge--cadence { border-color: color-mix(in srgb, var(--ipr-gold) 55%, transparent); color: var(--ipr-gold); }
+.ipr-badge--status-funding { border-color: color-mix(in srgb, var(--ipr-gold) 60%, transparent); color: var(--ipr-gold); }
+.ipr-badge--status-active { border-color: color-mix(in srgb, var(--ipr-settle) 60%, transparent); color: var(--ipr-settle); }
+.ipr-badge--status-distributing { border-color: color-mix(in srgb, var(--ipr-royalty) 60%, transparent); color: var(--ipr-royalty); }
+.ipr-badge--status-completed { border-color: color-mix(in srgb, var(--ipr-win) 60%, transparent); color: var(--ipr-win); }
+.ipr-badge--status-withdrawn { border-color: var(--ipr-line); color: var(--arb-color-text-muted); }
+.ipr-badge--risk-prime { border-color: color-mix(in srgb, var(--ipr-win) 60%, transparent); color: var(--ipr-win); }
+.ipr-badge--risk-balanced { border-color: color-mix(in srgb, var(--ipr-settle) 60%, transparent); color: var(--ipr-settle); }
+.ipr-badge--risk-speculative { border-color: color-mix(in srgb, var(--ipr-gold) 60%, transparent); color: var(--ipr-gold); }
+.ipr-badge--risk-high_risk { border-color: color-mix(in srgb, var(--ipr-lose) 60%, transparent); color: var(--ipr-lose); }
+
+.ipr-history { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.74rem; color: var(--arb-color-text-muted); }
+.ipr-history-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700; font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  border: 1px solid color-mix(in srgb, var(--ipr-win) 55%, transparent); color: var(--ipr-win);
+  background: color-mix(in srgb, var(--ipr-win) 8%, transparent);
+}
+
+/* --------------------------- Analytics panel --------------------------- */
+.ipr-analytics { display: grid; gap: 16px; }
+.ipr-analytics-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.ipr-analytics-card {
+  border: 1px solid var(--ipr-line); border-radius: var(--ipr-radius); padding: 16px;
+  background: var(--ipr-card); display: grid; gap: 10px;
+}
+.ipr-analytics-card h3 { margin: 0; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arb-color-text-muted); }
+.ipr-bar-row { display: grid; grid-template-columns: minmax(96px, 40%) 1fr auto; gap: 8px; align-items: center; font-size: 0.78rem; }
+.ipr-bar-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--ipr-line) 70%, transparent); overflow: hidden; }
+.ipr-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--ipr-royalty), var(--ipr-gold)); }
+.ipr-analytics-split { display: flex; gap: 12px; flex-wrap: wrap; }
+.ipr-analytics-stat { display: grid; gap: 2px; }
+.ipr-analytics-stat b { font-size: 1.5rem; }
+.ipr-analytics-stat span { font-size: 0.72rem; color: var(--arb-color-text-muted); }
+
+.ipr-progress { display: grid; gap: 5px; }
+.ipr-progress-label { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--arb-color-text-muted); }
+.ipr-progress-bar { height: 8px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--ipr-ink) 70%, transparent); }
+.ipr-progress-bar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--ipr-royalty), var(--ipr-win)); }
+.ipr-countdown { font-size: 0.76rem; color: var(--arb-color-text-muted); }
+
+.ipr-scenarios { display: grid; gap: 6px; }
+.ipr-scenario { display: grid; grid-template-columns: minmax(72px, auto) 1fr; align-items: center; gap: 8px; font-size: 0.78rem; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--ipr-line); }
+.ipr-scenario--base { border-color: color-mix(in srgb, var(--ipr-settle) 45%, var(--ipr-line)); }
+.ipr-scenario--stressed { border-color: color-mix(in srgb, var(--ipr-gold) 45%, var(--ipr-line)); }
+.ipr-scenario--downside { border-color: color-mix(in srgb, var(--ipr-lose) 45%, var(--ipr-line)); }
+.ipr-scenario-head { font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
+.ipr-evalue { font-size: 0.8rem; }
+.ipr-unfundable { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--ipr-gold) 55%, var(--ipr-line)); font-size: 0.78rem; color: var(--ipr-gold); }
+
+.ipr-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.ipr-star { border: 0; background: transparent; cursor: pointer; color: var(--arb-color-text-muted); }
+.ipr-star.is-on { color: var(--ipr-gold); }
+
+/* ------------------------------ Tables ------------------------------ */
+.ipr-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.ipr-table th, .ipr-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--ipr-line); }
+.ipr-table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arb-color-text-muted); }
+
+.ipr-empty { display: grid; place-items: center; gap: 8px; padding: 42px 18px; text-align: center; color: var(--arb-color-text-muted); border: 1px dashed var(--ipr-line); border-radius: var(--ipr-radius); }
+
+/* ---------------------------- Pagination ---------------------------- */
+.ipr-pagination { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.ipr-page-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 9px; border: 1px solid var(--ipr-line); background: var(--arb-color-surface); color: var(--arb-color-text); cursor: pointer; }
+.ipr-page-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ------------------------------ Modals ------------------------------ */
+.ipr-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; background: rgba(8, 3, 18, 0.62); }
+.ipr-modal-card { width: min(720px, 100%); max-height: 88vh; overflow: auto; border-radius: 18px; border: 1px solid var(--ipr-line); background: var(--arb-color-surface-raised, var(--arb-color-surface)); box-shadow: var(--ipr-shadow); }
+.ipr-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--ipr-line); }
+.ipr-modal-body { padding: 18px; display: grid; gap: 14px; }
+.ipr-modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--ipr-line); }
+.ipr-field { display: grid; gap: 5px; }
+.ipr-field label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--arb-color-text-muted); }
+.ipr-field input, .ipr-field select, .ipr-field textarea { padding: 9px 11px; border-radius: 9px; border: 1px solid var(--ipr-line); background: var(--arb-color-surface); color: var(--arb-color-text); font: inherit; }
+.ipr-field small { font-size: 0.7rem; color: var(--arb-color-text-muted); }
+.ipr-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ipr-three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 620px) { .ipr-two, .ipr-three { grid-template-columns: 1fr; } }
+
+.ipr-funding { display: grid; gap: 10px; }
+.ipr-funding-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--ipr-line); cursor: pointer; background: transparent; color: var(--arb-color-text); text-align: left; }
+.ipr-funding-option.is-selected { border-color: color-mix(in srgb, var(--ipr-royalty) 55%, var(--ipr-line)); background: color-mix(in srgb, var(--ipr-royalty) 12%, transparent); }
+.ipr-funding-option span { display: grid; gap: 1px; }
+.ipr-funding-option small { font-size: 0.68rem; color: var(--arb-color-text-muted); }
+.ipr-quote { display: grid; gap: 6px; padding: 12px; border-radius: 12px; border: 1px solid var(--ipr-line); background: color-mix(in srgb, var(--ipr-ink) 40%, transparent); font-size: 0.82rem; }
+.ipr-quote-row { display: flex; justify-content: space-between; gap: 10px; }
+
+.ipr-section { display: grid; gap: 12px; }
+.ipr-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ipr-section-head p { margin: 4px 0 0; max-width: 78ch; font-size: 0.82rem; color: var(--arb-color-text-muted); }
+
+.ipr-alloc { display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.72rem; color: var(--arb-color-text-muted); }
+
+.ipr-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--arb-color-text-muted) 40%, transparent); border-top-color: var(--ipr-royalty); animation: ipr-spin 0.8s linear infinite; }
+@keyframes ipr-spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------- Admin ------------------------------ */
+.ipr-admin { display: grid; gap: 18px; }
+.ipr-admin-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.ipr-admin-form { display: grid; gap: 12px; padding: 18px; border-radius: var(--ipr-radius); border: 1px solid var(--ipr-line); background: var(--ipr-card); }
+.ipr-admin-list { display: grid; gap: 10px; }
+.ipr-admin-row { display: grid; gap: 8px; padding: 14px; border-radius: 12px; border: 1px solid var(--ipr-line); background: color-mix(in srgb, var(--ipr-ink) 30%, transparent); }
+.ipr-admin-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ipr-admin-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ipr-admin-actions select { padding: 6px 10px; border-radius: 9px; border: 1px solid var(--ipr-line); background: var(--arb-color-surface); color: var(--arb-color-text); }
+
+.ipr-checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+
+@media (prefers-reduced-motion: reduce) { .ipr-spinner { animation: none; } }

@@ -19,6 +19,8 @@ import { getCooperateDeptDashboard, purchaseCooperateDeptCompany, quoteCooperate
 import { createAdminCooperateDeptCompany, deleteAdminCooperateDeptCompany, listAdminCooperateDeptCompanies, setAdminCooperateDeptCompanyEnabled, updateAdminCooperateDeptCompany } from "./cooperateDeptCompanies";
 import { getLitigationFundsDashboard, listLitigationOpenCases, purchaseLitigationFund, quoteLitigationFundPurchase, recordLitigationOutcome, settleLitigationCase } from "./litigationFunds";
 import { createAdminLitigationBundle, createAdminLitigationDossier, deleteAdminLitigationBundle, deleteAdminLitigationDossier, listAdminLitigationBundles, listAdminLitigationDossiers, reachAdminLitigationMilestone, setAdminLitigationBundleEnabled, setAdminLitigationDossierEnabled, setAdminLitigationDossierStatus, updateAdminLitigationBundle, updateAdminLitigationDossier } from "./litigationFundDossiers";
+import { getIpRoyaltiesDashboard, listIpRoyaltyOpenInstruments, purchaseIpRoyalty, quoteIpRoyaltyPurchase, recordIpRoyaltyDistribution, settleIpRoyaltyInstrument } from "./ipRoyalties";
+import { createAdminIpRoyaltyDossier, createAdminIpRoyaltyPortfolio, deleteAdminIpRoyaltyDossier, deleteAdminIpRoyaltyPortfolio, listAdminIpRoyaltyDossiers, listAdminIpRoyaltyPortfolios, setAdminIpRoyaltyDossierEnabled, setAdminIpRoyaltyDossierStatus, setAdminIpRoyaltyPortfolioEnabled, updateAdminIpRoyaltyDossier, updateAdminIpRoyaltyPortfolio } from "./ipRoyaltiesDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
 import { confirmEmailVerification, requestEmailVerification } from "./emailAuth";
@@ -237,6 +239,79 @@ const litigationBundleFieldsSchema = {
 };
 const createLitigationBundleSchema = z.object(litigationBundleFieldsSchema);
 const updateLitigationBundleSchema = z.object({ bundleId: z.string().trim().min(2).max(80), ...litigationBundleFieldsSchema });
+
+// Administrator-authored IP Royalties dossiers and portfolios. Public IP
+// registers publish no royalty economics, so every displayed number is
+// administrator-supplied, validated server-side and cited. Payment-history and
+// distribution scenarios, when present, must be complete; scenarios must sum to 100%.
+const ipRoyaltyScenarioSchema = z.object({
+  label: z.string().trim().min(1).max(60),
+  probabilityBps: z.number().int().min(0).max(10000),
+  expectedAnnualDistributionMinor: z.number().int().min(0).max(100_000_000_000),
+  durationMonths: z.number().int().min(0).max(600),
+  funderMultipleBps: z.number().int().min(0).max(100_000),
+});
+const ipRoyaltyPaymentHistorySchema = z.object({
+  onTimeBps: z.number().int().min(0).max(10000),
+  averageCollectionDays: z.number().int().min(0).max(3650),
+  periodsObserved: z.number().int().min(0).max(10000),
+});
+const ipRoyaltyDossierFieldsSchema = {
+  rightName: z.string().trim().min(3).max(200),
+  rightType: z.enum(["PATENT", "TRADEMARK", "BRAND", "COPYRIGHT", "SOFTWARE", "FILM_TV", "CHARACTER", "IMAGE_LIKENESS", "FRANCHISE", "KNOW_HOW", "DESIGN"]),
+  licensor: z.string().trim().min(2).max(160),
+  licenseeSummary: z.string().trim().max(200).optional(),
+  assetClass: z.string().trim().max(120).optional(),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  jurisdiction: z.string().trim().max(120).optional(),
+  royaltyBasis: z.enum(["PERCENT_OF_NET_SALES", "PER_UNIT", "FIXED_FEE", "REVENUE_SHARE"]),
+  royaltyRateBps: z.number().int().min(0).max(10000).nullable().optional(),
+  perUnitMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  cadence: z.enum(["MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL"]),
+  termMonths: z.number().int().min(0).max(600).nullable().optional(),
+  minimumGuaranteeMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  licenseeCount: z.number().int().min(0).max(100_000).nullable().optional(),
+  topLicenseeConcentrationBps: z.number().int().min(0).max(10000).nullable().optional(),
+  paymentHistory: ipRoyaltyPaymentHistorySchema.nullable().optional(),
+  riskGrade: z.enum(["PRIME", "BALANCED", "SPECULATIVE", "HIGH_RISK"]).nullable().optional(),
+  capitalAtRiskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  expectedAnnualDistributionMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  expectedMultipleBps: z.number().int().min(0).max(100_000).nullable().optional(),
+  expectedDurationMonths: z.number().int().min(0).max(600).nullable().optional(),
+  fundingAskMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  fundingDeadline: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  status: z.enum(["FUNDING", "ACTIVE", "DISTRIBUTING", "COMPLETED", "WITHDRAWN"]).optional(),
+  problem: z.string().trim().min(8).max(4000),
+  highlights: z.array(z.string().trim().min(1).max(300)).max(12).optional(),
+  scenarios: z.array(ipRoyaltyScenarioSchema).max(4).optional(),
+  source: z.string().trim().max(160).optional(),
+  sourceUrl: z.string().trim().url().max(300).optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: z.string().trim().max(500).optional(),
+};
+const createIpRoyaltyDossierSchema = z.object(ipRoyaltyDossierFieldsSchema);
+const updateIpRoyaltyDossierSchema = z.object({ dossierId: z.string().trim().min(2).max(80), ...ipRoyaltyDossierFieldsSchema });
+const ipRoyaltyPortfolioFieldsSchema = {
+  name: z.string().trim().min(3).max(160),
+  rightType: z.enum(["PATENT", "TRADEMARK", "BRAND", "COPYRIGHT", "SOFTWARE", "FILM_TV", "CHARACTER", "IMAGE_LIKENESS", "FRANCHISE", "KNOW_HOW", "DESIGN"]),
+  jurisdiction: z.string().trim().min(2).max(120),
+  riskGrade: z.enum(["PRIME", "BALANCED", "SPECULATIVE", "HIGH_RISK"]),
+  targetMinor: z.number().int().min(1).max(100_000_000_000),
+  unitPriceMinor: z.number().int().min(1).max(100_000_000_000),
+  unitCount: z.number().int().min(1).max(1_000_000),
+  rightIds: z.array(z.string().trim().min(1).max(80)).min(1).max(50),
+  allocationBpsByRight: z.record(z.string(), z.number().int().min(0).max(10000)).optional(),
+  expectedMultipleBps: z.number().int().min(0).max(100_000),
+  expectedDurationMonths: z.number().int().min(0).max(600).nullable().optional(),
+  expectedAnnualDistributionMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  summary: z.string().trim().max(2000).optional(),
+  source: z.string().trim().max(160).optional(),
+  sourceUrl: z.string().trim().url().max(300).optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: z.string().trim().max(500).optional(),
+};
+const createIpRoyaltyPortfolioSchema = z.object(ipRoyaltyPortfolioFieldsSchema);
+const updateIpRoyaltyPortfolioSchema = z.object({ portfolioId: z.string().trim().min(2).max(80), ...ipRoyaltyPortfolioFieldsSchema });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -709,6 +784,33 @@ export const appRouter = router({
         return result;
       }),
     }),
+    ipRoyalties: router({
+      market: protectedProcedure.query(({ ctx }) => getIpRoyaltiesDashboard(ctx.user.id)),
+      fundingQuote: protectedProcedure.input(z.object({
+        amountMinor: z.number().int().min(0).max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+      })).query(({ ctx, input }) => quoteIpRoyaltyPurchase(ctx.user.id, input)),
+      purchase: protectedProcedure.input(z.object({
+        instrumentType: z.enum(["RIGHT", "PORTFOLIO"]),
+        instrumentId: z.string().min(2).max(80),
+        amountMinor: z.number().int().positive().max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(async ({ ctx, input }) => {
+        const result = await purchaseIpRoyalty(ctx.user.id, input);
+        await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
+          eventType: "INVESTMENT",
+          status: "COMPLETED",
+          title: "IP Royalties commitment recorded",
+          message: `${result.instrumentName} received a ${result.instrumentType === "RIGHT" ? "right-share" : "portfolio"} commitment of ${result.amountMinor} minor units of ${result.currency}, funded from ${result.fundingSource === "COMBINED" ? "combined wallets" : result.fundingSource} through the wallet ledger.`,
+          transactionCode: `ip-royalties:${result.positionCode}`,
+          amountMinor: result.amountMinor,
+          asset: result.currency,
+          metadata: { positionCode: result.positionCode, instrumentId: result.instrumentId, instrumentType: result.instrumentType, fundingSource: result.fundingSource },
+        });
+        return result;
+      }),
+    }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
       packages: protectedProcedure.query(({ ctx }) => mining.listCustomerMiningPackages(ctx.user.id)),
@@ -1133,6 +1235,42 @@ export const appRouter = router({
     }),
     setLitigationBundleEnabled: adminProcedure.input(z.object({ bundleId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminLitigationBundleEnabled(ctx.user!.id, input.bundleId, input.enabled)),
     deleteLitigationBundle: adminProcedure.input(z.object({ bundleId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminLitigationBundle(ctx.user!.id, input.bundleId)),
+    ipRoyaltyDossiers: adminProcedure.query(() => listAdminIpRoyaltyDossiers()),
+    createIpRoyaltyDossier: adminProcedure.input(createIpRoyaltyDossierSchema).mutation(({ ctx, input }) => createAdminIpRoyaltyDossier(ctx.user!.id, input)),
+    updateIpRoyaltyDossier: adminProcedure.input(updateIpRoyaltyDossierSchema).mutation(({ ctx, input }) => {
+      const { dossierId, ...fields } = input;
+      return updateAdminIpRoyaltyDossier(ctx.user!.id, dossierId, fields);
+    }),
+    setIpRoyaltyDossierEnabled: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminIpRoyaltyDossierEnabled(ctx.user!.id, input.dossierId, input.enabled)),
+    setIpRoyaltyDossierStatus: adminProcedure.input(z.object({
+      dossierId: z.string().trim().min(2).max(80),
+      status: z.enum(["FUNDING", "ACTIVE", "DISTRIBUTING", "COMPLETED", "WITHDRAWN"]),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => setAdminIpRoyaltyDossierStatus(ctx.user!.id, input.dossierId, input.status, input.reason)),
+    deleteIpRoyaltyDossier: adminProcedure.input(z.object({ dossierId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminIpRoyaltyDossier(ctx.user!.id, input.dossierId)),
+    ipRoyaltyPortfolios: adminProcedure.query(() => listAdminIpRoyaltyPortfolios()),
+    createIpRoyaltyPortfolio: adminProcedure.input(createIpRoyaltyPortfolioSchema).mutation(({ ctx, input }) => createAdminIpRoyaltyPortfolio(ctx.user!.id, input)),
+    updateIpRoyaltyPortfolio: adminProcedure.input(updateIpRoyaltyPortfolioSchema).mutation(({ ctx, input }) => {
+      const { portfolioId, ...fields } = input;
+      return updateAdminIpRoyaltyPortfolio(ctx.user!.id, portfolioId, fields);
+    }),
+    setIpRoyaltyPortfolioEnabled: adminProcedure.input(z.object({ portfolioId: z.string().trim().min(2).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminIpRoyaltyPortfolioEnabled(ctx.user!.id, input.portfolioId, input.enabled)),
+    deleteIpRoyaltyPortfolio: adminProcedure.input(z.object({ portfolioId: z.string().trim().min(2).max(80) })).mutation(({ ctx, input }) => deleteAdminIpRoyaltyPortfolio(ctx.user!.id, input.portfolioId)),
+    ipRoyaltyOpenInstruments: adminProcedure.query(() => listIpRoyaltyOpenInstruments()),
+    recordIpRoyaltyDistribution: adminProcedure.input(z.object({
+      instrumentType: z.enum(["RIGHT", "PORTFOLIO"]),
+      instrumentId: z.string().trim().min(2).max(80),
+      amountMinor: z.number().int().positive().max(100_000_000_000),
+      note: z.string().trim().max(400).optional(),
+      idempotencyKey: z.string().min(8).max(160),
+    })).mutation(({ ctx, input }) => recordIpRoyaltyDistribution(ctx.user!.id, input)),
+    settleIpRoyaltyInstrument: adminProcedure.input(z.object({
+      instrumentType: z.enum(["RIGHT", "PORTFOLIO"]),
+      instrumentId: z.string().trim().min(2).max(80),
+      outcome: z.enum(["BUYOUT", "RUNOFF_COMPLETE", "WRITE_OFF"]),
+      funderMultipleBps: z.number().int().min(0).max(100_000),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => settleIpRoyaltyInstrument(ctx.user!.id, input)),
     createCustomer: adminProcedure.input(z.object({ name: z.string().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200) })).mutation(({ input }) => createAdminCustomer(input)),
     updateCustomer: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), email: z.string().email() })).mutation(({ input }) => updateAdminCustomer(input)),
     deleteCustomer: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ input }) => {
