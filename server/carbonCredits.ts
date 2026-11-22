@@ -24,7 +24,7 @@ import {
   calculateCombinedAvailableTargetMinor,
   type FxRateSnapshot,
 } from "./modules/trading-wallet-fx";
-import { getFreshTradingFxRate, getWalletFundingPriorityForFunding } from "./db";
+import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 
 type Db = mysql.PoolConnection;
 
@@ -140,28 +140,46 @@ function usdUnitRate(scale: number): FxRateSnapshot {
   };
 }
 
-/** Lock or read every enabled, spendable wallet for a customer. */
+/**
+ * Lock or read every enabled, spendable wallet for a customer.
+ *
+ * The balances and the currency metadata are read separately and merged in
+ * code rather than with a SQL JOIN. `customer_balances` inherits the database
+ * default collation while `currency_registry` is pinned to utf8mb4_unicode_ci,
+ * so joining them on `currency=code` fails with "Illegal mix of collations" on
+ * databases whose default differs — the platform's own wallet reader reads them
+ * separately for the same reason.
+ */
 async function readWalletRows(conn: Db, userId: number, forUpdate = false): Promise<WalletRow[]> {
-  const [rows] = await conn.query<any[]>(
-    `SELECT b.id, b.currency, c.scale, c.assetType, c.externalCode, c.symbol, c.name currencyName,
-            COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor
-     FROM customer_balances b
-     INNER JOIN currency_registry c ON c.code=b.currency
-     WHERE b.userId=? AND c.enabled=true
-     ORDER BY b.currency${forUpdate ? " FOR UPDATE" : ""}`,
+  const [currencyRows] = await conn.query<any[]>(
+    `SELECT code, scale, assetType, externalCode, symbol, name currencyName
+     FROM currency_registry WHERE enabled=true ORDER BY id`,
+  );
+  const [balanceRows] = await conn.query<any[]>(
+    `SELECT id, currency, COALESCE(availableMinor,0) availableMinor, COALESCE(lockedMinor,0) lockedMinor
+     FROM customer_balances WHERE userId=? ORDER BY currency${forUpdate ? " FOR UPDATE" : ""}`,
     [userId],
   );
-  return rows.map((row) => ({
-    id: Number(row.id),
-    currency: String(row.currency).toUpperCase(),
-    scale: Number(row.scale || 0),
-    assetType: row.assetType,
-    externalCode: row.externalCode ? String(row.externalCode) : null,
-    symbol: row.symbol ? String(row.symbol) : null,
-    currencyName: row.currencyName ? String(row.currencyName) : null,
-    availableMinor: Number(row.availableMinor || 0),
-    lockedMinor: Number(row.lockedMinor || 0),
-  }));
+  const currencyByCode = new Map<string, any>();
+  for (const row of currencyRows) currencyByCode.set(String(row.code).toUpperCase(), row);
+  return balanceRows
+    .map((row) => {
+      const code = String(row.currency).toUpperCase();
+      const currency = currencyByCode.get(code);
+      if (!currency) return null; // balance for a currency no longer enabled
+      return {
+        id: Number(row.id),
+        currency: code,
+        scale: Number(currency.scale || 0),
+        assetType: currency.assetType,
+        externalCode: currency.externalCode ? String(currency.externalCode) : null,
+        symbol: currency.symbol ? String(currency.symbol) : null,
+        currencyName: currency.currencyName ? String(currency.currencyName) : null,
+        availableMinor: Number(row.availableMinor || 0),
+        lockedMinor: Number(row.lockedMinor || 0),
+      } as WalletRow;
+    })
+    .filter((wallet): wallet is WalletRow => wallet !== null);
 }
 
 async function loadWalletRates(wallets: WalletRow[]): Promise<Map<string, FxRateSnapshot | null>> {
@@ -255,20 +273,29 @@ async function readCarbonStore(userId: number): Promise<{ positions: any[]; bala
   await ensureCarbonCreditSchema();
   const failed: string[] = [];
 
-  // The customer's existing wallets are read first and on their own, so they
-  // always load even when the (separate) position store is unavailable.
+  // The customer's existing wallets are read first, through the platform's own
+  // wallet readers. They read `customer_balances` and `currency_registry`
+  // separately (never a cross-collation JOIN) so the desk shows exactly the
+  // same wallets as the rest of the portal, and they always load even when the
+  // (separate) position store is unavailable.
   let balances: any[] = [];
   try {
-    balances = await withConnection(async (conn) => {
-      const [rows] = await conn.query<any[]>(
-        `SELECT c.code currency, c.symbol, c.scale, c.name currencyName,
-                COALESCE(b.availableMinor,0) availableMinor, COALESCE(b.lockedMinor,0) lockedMinor,
-                COALESCE(b.promotionalMinor,0) promotionalMinor, COALESCE(b.earnedMinor,0) earnedMinor
-         FROM currency_registry c LEFT JOIN customer_balances b ON b.currency=c.code AND b.userId=?
-         WHERE c.enabled=true ORDER BY c.id`,
-        [userId],
-      );
-      return rows;
+    const [balanceRows, currencies] = await Promise.all([listBalances(userId), listCurrencies()]);
+    const currencyByCode = new Map(currencies.map((currency) => [String(currency.code).toUpperCase(), currency]));
+    balances = balanceRows.map((row) => {
+      const code = String(row.currency).toUpperCase();
+      const currency = currencyByCode.get(code);
+      return {
+        currency: code,
+        symbol: currency?.symbol ?? code,
+        scale: currency?.scale ?? 2,
+        name: currency?.name ?? code,
+        currencyName: currency?.name ?? code,
+        availableMinor: Number(row.availableMinor || 0),
+        lockedMinor: Number(row.lockedMinor || 0),
+        promotionalMinor: Number(row.promotionalMinor || 0),
+        earnedMinor: Number(row.earnedMinor || 0),
+      };
     });
   } catch (error) {
     console.error("[CarbonCredits] Failed to read wallet balances:", error instanceof Error ? error.message : "UnknownError");

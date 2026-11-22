@@ -112,12 +112,17 @@ describe("Carbon Credit desk", () => {
     expect(serverDossiers).toContain('"A modelled opportunity must cite its source URL so the economics can be verified"');
   });
 
-  it("reads the customer's existing wallets independently of the new position store", () => {
-    // The customer's wallets live in the platform's own customer_balances /
-    // currency_registry tables; the desk's own position table is separate. A
-    // problem reading the position store must not hide the existing wallets, so
-    // the two reads fail independently instead of behind one shared try/catch.
-    expect(serverDesk).toContain("FROM currency_registry c LEFT JOIN customer_balances b");
+  it("reads the customer's existing wallets without a cross-collation join", () => {
+    // customer_balances inherits the database-default collation while
+    // currency_registry is pinned to utf8mb4_unicode_ci, so a SQL JOIN on
+    // currency=code fails with "Illegal mix of collations". The desk reads the
+    // two separately — through the platform's own wallet readers — and merges in
+    // code, so the existing wallets always load (and never hide behind the
+    // desk's own position store).
+    expect(serverDesk).toContain("listBalances(userId)");
+    expect(serverDesk).toContain("listCurrencies()");
+    expect(serverDesk).not.toContain("JOIN currency_registry");
+    expect(serverDesk).not.toContain("LEFT JOIN customer_balances");
     expect(serverDesk).toContain("Failed to read wallet balances");
     expect(serverDesk).toContain("Failed to read position store");
     expect(serverDesk).toContain("could not be loaded right now. The live catalogue below is unaffected.");

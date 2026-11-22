@@ -1,3 +1,31 @@
+## 2026-11-23 (fix 2) — Carbon Credit desk: read the customer's wallets without a cross-collation join
+
+The desk then reported *"Your wallet balances could not be loaded right now."* — i.e. the wallet
+read itself was failing, independent of the position store.
+
+- **Root cause.** The desk's wallet SQL **joined** `customer_balances b` to `currency_registry c`
+  on `b.currency = c.code`. `customer_balances` was created without an explicit charset/collation
+  (it inherits the database default), while `currency_registry` is pinned to `utf8mb4_unicode_ci`
+  (drizzle/0008). On a database whose default differs (e.g. MySQL 8's `utf8mb4_0900_ai_ci`) the join
+  throws MySQL error 1267 — *Illegal mix of collations*. The platform's own wallet reader
+  (`listBalances`) never joins the two tables; it reads them separately and merges in code, which is
+  why the wallet page worked while the desk did not.
+- **Fix (`server/carbonCredits.ts`).** Removed both cross-collation joins:
+  - Dashboard balances now come from the platform's own `listBalances(userId)` + `listCurrencies()`
+    (the same readers the wallet page uses), merged into the desk's wallet shape.
+  - `readWalletRows` (the funding/locking path used by the quote and purchase) reads
+    `customer_balances` (with `FOR UPDATE`) and `currency_registry` separately and merges in code,
+    so purchases work on the same databases.
+  The two reads stay independent, so the existing wallets always load and the warning still names
+  only the part that actually failed.
+- **Test.** Updated `server/carbon-credit.contract.test.ts` to assert the desk uses
+  `listBalances`/`listCurrencies` and carries no `JOIN currency_registry` / `LEFT JOIN
+  customer_balances`.
+- **Note.** The identical join exists in the sibling desks (Agro, Music, IP, Litigation, Cooperate,
+  Treasury); they will fail the same way in the same database. Not changed here to keep this fix
+  scoped to the Carbon report — offer to apply the same reader there.
+- Verification: `pnpm check` clean; `pnpm test` 206 files / 1,669 passed / 36 skipped.
+
 ## 2026-11-23 (fix) — Carbon Credit desk: load the customer's existing wallets independently of the position store
 
 Fixed the Carbon Credit desk showing *"Your saved positions and wallet balances could not be
