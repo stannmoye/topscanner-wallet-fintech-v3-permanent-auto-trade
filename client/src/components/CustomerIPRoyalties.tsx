@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { visibilityAwareRefetchInterval } from "@/visibility-aware-polling";
 import {
-  AlertTriangle, ArrowUpRight, BadgeCheck, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
-  Download, Globe2, Layers, Layers3, RefreshCw, ShieldCheck, Star, TrendingUp, X,
+  AlertTriangle, ArrowUpRight, BadgeCheck, BookOpen, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
+  Code2, Copyright, Cpu, Download, FileBadge, Film, Globe2, Landmark, Layers, Layers3, Palette, PenTool, RefreshCw,
+  ScanFace, ShieldCheck, Sparkles, Star, Store, Tag, TrendingUp, X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   IP_RIGHT_TYPES,
@@ -36,6 +38,51 @@ import "./ip-royalties.css";
 const MARKET_POLL_INTERVAL_MS = 90_000;
 const WATCHLIST_KEY = "ip-royalties-watchlist";
 const PAGE_SIZES = [6, 12, 24];
+
+/** The desk's own editorial imagery. Prompts describe a restrained ink-on-paper
+ *  register so the art matches the desk's muted, theme-native palette. */
+const iprImage = (prompt: string, imageSize: string) =>
+  `https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=${encodeURIComponent(prompt)}&image_size=${imageSize}`;
+
+const LICENSE_REGISTER_ART = iprImage(
+  "Wide panoramic editorial illustration of a licensing register: a neatly stacked accordion of contracts, patent certificate sheets with embossed seals, a film clapperboard and a microchip drawn as fine monochrome line art in muted indigo ink on a calm warm-grey paper background, minimalist flat vector, generous negative space, understated, no text, no words, no letters",
+  "landscape_16_9",
+);
+
+const SECTOR_ART: Record<IpRoyaltySector, string> = {
+  REGISTERED_IP: iprImage(
+    "Minimalist flat editorial illustration of registered intellectual property: patent blueprint sheets, a circular trademark seal stamp and a certificate ribbon, fine monochrome line art in muted indigo ink on a warm-grey paper background, plenty of negative space, no text, no words",
+    "landscape_4_3",
+  ),
+  CREATIVE_MEDIA: iprImage(
+    "Minimalist flat editorial illustration of creative rights: a film reel and clapperboard, an open manuscript book and a small sparkle motif for characters, fine monochrome line art in muted indigo ink on a warm-grey paper background, plenty of negative space, no text, no words",
+    "landscape_4_3",
+  ),
+  BUSINESS_TECH: iprImage(
+    "Minimalist flat editorial illustration of business and technology rights: a microchip with circuit traces, connected network nodes and a simple handshake, fine monochrome line art in muted indigo ink on a warm-grey paper background, plenty of negative space, no text, no words",
+    "landscape_4_3",
+  ),
+};
+
+const SECTOR_ICON: Record<IpRoyaltySector, LucideIcon> = {
+  REGISTERED_IP: Landmark,
+  CREATIVE_MEDIA: Palette,
+  BUSINESS_TECH: Cpu,
+};
+
+const RIGHT_TYPE_ICON: Record<IpRightType, LucideIcon> = {
+  PATENT: FileBadge,
+  TRADEMARK: BadgeCheck,
+  BRAND: Tag,
+  COPYRIGHT: Copyright,
+  SOFTWARE: Code2,
+  FILM_TV: Film,
+  CHARACTER: Sparkles,
+  IMAGE_LIKENESS: ScanFace,
+  FRANCHISE: Store,
+  KNOW_HOW: BookOpen,
+  DESIGN: PenTool,
+};
 
 type WalletBalance = { currency: string; symbol?: string; scale: number; currencyName?: string; availableMinor: number; lockedMinor: number };
 
@@ -349,6 +396,17 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
       </div>
     </header>
 
+    <figure className="ipr-cover">
+      <img src={LICENSE_REGISTER_ART} alt="Licensing register cover art — contracts, certificates and rights marks" loading="lazy" />
+      <figcaption className="ipr-cover-caption">
+        <span className="eyebrow">One register · three sectors</span>
+        <strong>Registered IP, creative &amp; media, and business &amp; technology rights — sourced from cited public registers and funded as royalties are collected.</strong>
+        <span className="ipr-cover-tags">
+          {IP_ROYALTY_SECTORS.map((value) => { const Icon = SECTOR_ICON[value]; return <span key={value}><Icon size={12}/> {sectorLabel(value)}</span>; })}
+        </span>
+      </figcaption>
+    </figure>
+
     {market.isError && <div className="ipr-notice is-error" role="alert">
       <AlertTriangle size={16}/>
       <div><strong>The desk could not reach the account service.</strong> {market.error?.message || "Administrator-published royalties could not be loaded."} Retry to reconnect.</div>
@@ -370,14 +428,6 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
         </div>
 
         {tab === "rights" && <>
-          <div className="ipr-rail-group">
-            <span className="ipr-rail-label">Sector</span>
-            <button type="button" className={`ipr-rail-item${sector === "ALL" ? " is-active" : ""}`} onClick={() => setSector("ALL")}>All sectors <span className="ipr-rail-count">{rights.length}</span></button>
-            {IP_ROYALTY_SECTORS.map((value) => <button type="button" key={value} className={`ipr-rail-item${sector === value ? " is-active" : ""}`} onClick={() => setSector(value)}>
-              {sectorLabel(value)} <span className="ipr-rail-count">{rights.filter((item) => sectorForRightType(item.rightType) === value).length}</span>
-            </button>)}
-          </div>
-
           <div className="ipr-rail-group">
             <span className="ipr-rail-label">Refine</span>
             <div className="ipr-filters">
@@ -408,8 +458,25 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
         <div>
           <span className="eyebrow">{filtered.length} of {rights.length} rights · page {currentPage} of {pageCount}</span>
           <h2>Licensing schedule</h2>
-          <p>Sectors: <strong>{sectorLabel("REGISTERED_IP")}</strong> — {SECTOR_RIGHT_TYPES.REGISTERED_IP.map(rightTypeLabel).join(", ")}; <strong>{sectorLabel("CREATIVE_MEDIA")}</strong> — {SECTOR_RIGHT_TYPES.CREATIVE_MEDIA.map(rightTypeLabel).join(", ")}; <strong>{sectorLabel("BUSINESS_TECH")}</strong> — {SECTOR_RIGHT_TYPES.BUSINESS_TECH.map(rightTypeLabel).join(", ")}.</p>
+          <p>Each row is one published right — expand a row for its sourced royalty terms, modelled scenarios and register citation. Pick a sector below, then refine on the left.</p>
         </div>
+      </div>
+
+      <div className="ipr-sectors" aria-label="IP royalty sectors">
+        <button type="button" className={`ipr-sector-card${sector === "ALL" ? " is-active" : ""}`} aria-pressed={sector === "ALL"} onClick={() => setSector("ALL")}>
+          <span className="ipr-sector-media"><img src={LICENSE_REGISTER_ART} alt="" loading="lazy" /><Layers3 size={16} className="ipr-sector-glyph"/></span>
+          <span className="ipr-sector-body"><strong>All sectors</strong><small>The whole licensing register</small></span>
+          <span className="ipr-sector-count">{rights.length}</span>
+        </button>
+        {IP_ROYALTY_SECTORS.map((value) => {
+          const Icon = SECTOR_ICON[value];
+          const count = rights.filter((item) => sectorForRightType(item.rightType) === value).length;
+          return <button type="button" key={value} className={`ipr-sector-card${sector === value ? " is-active" : ""}`} aria-pressed={sector === value} onClick={() => setSector(value)}>
+            <span className="ipr-sector-media"><img src={SECTOR_ART[value]} alt="" loading="lazy" /><Icon size={16} className="ipr-sector-glyph"/></span>
+            <span className="ipr-sector-body"><strong>{sectorLabel(value)}</strong><small>{SECTOR_RIGHT_TYPES[value].map(rightTypeLabel).join(" · ")}</small></span>
+            <span className="ipr-sector-count">{count}</span>
+          </button>;
+        })}
       </div>
 
       {market.isLoading && !rights.length && <div className="ipr-schedule">{Array.from({ length: 6 }).map((_, index) => <div className="ipr-entry" key={index}><span className="ipr-entry-index">··</span><div className="ipr-entry-main"><div className="ipr-entry-sub"><span className="ipr-spinner" /> Loading published economics…</div></div></div>)}</div>}
@@ -422,10 +489,12 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
           const comparing = compareIds.includes(item.id);
           const open = openId === item.id;
           const rank = (currentPage - 1) * pageSize + index + 1;
+          const TypeIcon = RIGHT_TYPE_ICON[item.rightType];
           return <article className={`ipr-entry${item.fundable ? " is-fundable" : ""}${open ? " is-open" : ""}`} key={item.id}>
             <span className="ipr-entry-index">{String(rank).padStart(2, "0")}</span>
             <div className="ipr-entry-main">
               <div className="ipr-entry-title">
+                <span className="ipr-entry-mark" aria-hidden="true"><TypeIcon size={15}/></span>
                 <button type="button" className="ipr-entry-toggle" onClick={() => setOpenId(open ? null : item.id)} aria-expanded={open}>
                   <ChevronDown size={15} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms ease" }} /> {item.flag} {item.rightName}
                 </button>
