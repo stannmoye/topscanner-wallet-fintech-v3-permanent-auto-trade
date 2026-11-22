@@ -229,24 +229,33 @@ describe("Music Royalties desk", () => {
     expect(customerUi).toContain('className="mr-scenarios"');
   });
 
-  it("gives the new desk its own rich deep-blue and gold design identity", () => {
+  it("blends the desk into the portal theme instead of owning a fixed palette", () => {
     expect(customerUi).toContain('import "./music-royalties.css"');
     expect(adminUi).toContain('import "./music-royalties.css"');
-    // A deep, rich navy-blue base (never a light blue) with gold, white, red and green text.
-    expect(styles).toContain("--mr-navy-950: #04101f");
-    expect(styles).toContain("--mr-navy-900: #061733");
-    expect(styles).toContain("--mr-blue-700: #123c78");
-    expect(styles).toContain("--mr-gold: #d9a63d");
-    expect(styles).toContain("--mr-white: #f4f8ff");
-    expect(styles).toContain("--mr-red: #f2606a");
-    expect(styles).toContain("--mr-green: #3ec383");
-    // Blue headings, a gold investment button and its own spinner.
-    expect(styles).toContain("--mr-blue-heading");
+    // Surfaces, borders, text, headings, gold, red and green all derive from the
+    // active portal theme tokens so the desk blends with every theme (incl. light).
+    expect(styles).toContain("--mr-surface: var(--arb-color-surface)");
+    expect(styles).toContain("--mr-surface-2: var(--arb-color-surface-raised)");
+    expect(styles).toContain("--mr-white: var(--arb-color-text)");
+    expect(styles).toContain("--mr-muted: var(--arb-color-text-muted)");
+    expect(styles).toContain("--mr-blue-heading: var(--arb-color-info)");
+    expect(styles).toContain("--mr-gold: var(--arb-color-warning)");
+    expect(styles).toContain("--mr-red: var(--arb-color-danger)");
+    expect(styles).toContain("--mr-green: var(--arb-color-accent)");
+    expect(styles).toContain("color-mix(in srgb, var(--arb-color-border)");
+    // The page background is the theme canvas, not an opaque fixed navy island.
+    expect(styles).toContain("var(--arb-color-canvas)");
+    // The desk must not re-introduce its own fixed navy palette.
+    expect(styles).not.toContain("--mr-navy-950");
+    expect(styles).not.toContain("#04101f");
+    // Blue section headings, a gold investment button and its own spinner.
     expect(styles).toContain(".mr-section-head h2");
     expect(styles).toContain(".mr-title");
     expect(styles).toContain(".mr-btn--invest");
     expect(styles).toContain("@keyframes mr-spin");
     expect(styles).toContain(".mr-btn--danger");
+    // The gold investment button uses the theme's on-colour for contrast.
+    expect(styles).toContain("color: var(--arb-color-canvas)");
   });
 
   it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
