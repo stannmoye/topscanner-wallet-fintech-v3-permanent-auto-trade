@@ -26,6 +26,7 @@
  */
 
 import { flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 /** The kinds of agriculture opportunity the desk can carry. */
 export type AgroInvestmentType =
@@ -168,6 +169,14 @@ export type AgroOpportunity = {
   verified: boolean;
   /** True only when an administrator has published scenarios and a funding target. */
   fundable: boolean;
+  /**
+   * The opportunity's economic profile — its investable amount band, profit,
+   * term, close date and platform fee — auto-assigned from the shared
+   * desk-economics engine (server/deskEconomics.ts) on first sight and
+   * overridable by an administrator. Present on every opportunity the desk
+   * serves; absent only on a bare catalogue record.
+   */
+  economics?: DeskEconomics | null;
 };
 
 export type AgroInvestmentSource = {

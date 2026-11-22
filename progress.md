@@ -1,3 +1,66 @@
+## 2026-11-23 (feat) — Desk economics engine: auto-assigned amount, profit, term, currency, platform fee and settlement delay (Agro desk wired end-to-end)
+
+The platform owner asked every investment desk opportunity to carry a richer, more realistic economic
+profile even before an administrator hand-authors one: an investable amount from **USD 500 up to
+USD 1,000,000**, a profit of **25%–38%**, a close/realisation window of **30 days–1 year**, a
+**USD-dominant multi-currency** presentation (euro, sterling, Chinese yuan, Japanese yen, South
+African rand and other-country currencies), a **7%–10% platform fee** and an **occasional
+settlement-delay bolt-on** — so some opportunities look alike and some look different. Values are
+random for now but an administrator can override every one from the admin portal. This pass lands the
+shared engine and wires the **Agro Investment** desk end-to-end (the one desk the owner approved to
+start with); the other six desks reuse the same engine next.
+
+- **New shared engine (`shared/investment-economics.ts`, environment-neutral — server, admin and
+  browser fallback).** `DESK_KEYS` (the seven desks), a `USD`-dominant `INVESTMENT_CURRENCIES` set of
+  13 currencies, and `ECONOMICS_BOUNDS` (ticket `50_000`–`2_500_000` minor USD, funding target
+  `50_000`–`100_000_000`, profit `2_500`–`3_800` bps, term `30`–`365` days, platform fee `700`–`1_000`
+  bps, settlement-delay chance `3_500` bps). `assignDeskEconomics()` derives a profile deterministically
+  from `(desk, instrumentId, salt)` using an FNV-1a + mulberry32 PRNG and quantises amounts/profit/fee
+  onto "nice" steps so repeated values genuinely repeat; `CLOSE_WINDOW_DAYS` / `TERM_DAY_CHOICES`
+  make tenors recur. Helpers `currencyByCode`, `currencyMinorToUsdMinor`, `normalizeEconomicsOverride`
+  (the authoritative validator) and `economicsProfitMinor`/`economicsPayoutMinor`/`economicsFeeMinor`.
+- **New persistent store (`server/deskEconomics.ts`).** Additive `desk_investment_economics` table
+  (`CREATE TABLE IF NOT EXISTS`, `UNIQUE KEY (desk, instrumentId)`) outside Drizzle, matching the
+  litigation/agro/IP template, with a memoized `ensureDeskEconomicsSchema()` and `withConnection()`
+  helper. `getDeskEconomicsMap()` batch-reads and `INSERT IGNORE`s first-sight assignments (never
+  throws — a broken store degrades to in-memory derivation); `getOrAssignDeskEconomics()`,
+  `listDeskEconomics()` (admin), `setDeskEconomicsOverride()` (writes an `ADMIN` row via
+  `ON DUPLICATE KEY UPDATE`) and `reassignDeskEconomics()` (re-rolls an `AUTO` row only —
+  `if (existing.source === "ADMIN") return existing;`).
+- **Agro catalogue (`shared/agro-investment-catalogue.ts`).** `AgroOpportunity` gains an optional
+  `economics?: DeskEconomics | null`.
+- **Agro server (`server/agroInvestments.ts`).** `getAgroInvestmentDashboard()` merges each served
+  opportunity's profile via `getDeskEconomicsMap("agro", …)` + `withAgroEconomics()`; the purchase
+  resolver fills an unpublished `expectedMultipleBps` from `10_000 + economics.profitBps`. The profile
+  currency is presentation-only — the desk still settles in USD, so no local-currency amount is written
+  into USD-scoped settlement fields.
+- **Admin endpoints (`server/routers.ts`).** `deskKeySchema` (`z.enum` over the seven desks) and
+  `deskEconomicsOverrideSchema`, plus four `adminProcedure`s: `deskEconomics` (list),
+  `deskEconomicsBatch` (batch assign/read), `setDeskEconomics` (override) and `reassignDeskEconomics`
+  (re-roll).
+- **Customer desk (`client/src/components/CustomerAgroInvestment.tsx`).** `economicsView()` resolves
+  the profile into display values with sensible fallbacks; each card renders an `ag-econ-panel`
+  (Currency / Invest from / Funding target · Profit / Term / Platform fee · Investment closes / Profit
+  realised / Payout) and, when present, an `ag-econ-delay` note. The card footer, season-timeline rows
+  and the invest modal all show the extended figures (a modal `ag-econ-panel--modal` plus an
+  `ag-econ-note` clarifying the display currency vs USD settlement). `MIN_INVESTMENT_MINOR` moved to
+  `50_000` (USD 500) and `usdSeed()` seeds the invest form from a presentation-currency ticket minimum.
+- **Admin console (`client/src/components/AdminAgroInvestment.tsx`).** A new **Economics** tab lists
+  every opportunity's profile with editable currency (from `INVESTMENT_CURRENCIES`), minimum ticket and
+  funding target (with USD-equivalent hints via `currencyMinorToUsdMinor`), profit % (25–38), term days,
+  platform fee % (7–10), close/realise dates and an optional settlement delay, plus **Save economic
+  profile** and **Re-roll auto profile** actions.
+- **CSS (`client/src/components/agro-investment.css`).** Added `.ag-econ-panel` / `--modal`,
+  `.ag-econ-row` / `.ag-econ-item`, `.ag-econ-delay`, `.ag-econ-note`, `.ag-delay` and `.ag-chip--profit`,
+  all theme-token derived, with a responsive collapse.
+- **Test (`server/agro-investment.contract.test.ts`).** New case asserts the engine bounds/currencies,
+  the persistence table and its ADMIN-never-re-derived guarantee, the Agro server merge, the four admin
+  endpoints, the customer `ag-econ-panel`/`ag-econ-delay` and the admin Economics console.
+- Verification: `pnpm check` clean; `server/agro-investment.contract.test.ts` 16/16 passed;
+  `pnpm build:static` succeeded.
+- **Next:** roll the same shared engine to the other six desks (Treasury Bond, Litigation Funds,
+  IP Royalties, Music Royalties, Carbon Credit, Cooperate Dept).
+
 ## 2026-11-23 (fix 3) — Carbon Credit desk: invest straight from every card, with the amount and projected profit stated
 
 The desk showed no purchase/invest affordance until a project was first selected: the **Invest now**

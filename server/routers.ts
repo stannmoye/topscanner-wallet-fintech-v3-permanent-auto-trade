@@ -25,6 +25,7 @@ import { getMusicRoyaltiesDashboard, listMusicOpenInstruments, purchaseMusicOppo
 import { createAdminMusicDossier, deleteAdminMusicDossier, listAdminMusicDossiers, reachAdminMusicMilestone, setAdminMusicDossierEnabled, setAdminMusicDossierStatus, updateAdminMusicDossier } from "./musicRoyaltyDossiers";
 import { getAgroInvestmentDashboard, listAgroOpenInstruments, purchaseAgroOpportunity, quoteAgroPurchase, recordAgroDistribution, settleAgroInstrument } from "./agroInvestments";
 import { createAdminAgroDossier, deleteAdminAgroDossier, listAdminAgroDossiers, reachAdminAgroMilestone, setAdminAgroDossierEnabled, setAdminAgroDossierStatus, updateAdminAgroDossier } from "./agroInvestmentDossiers";
+import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsOverride } from "./deskEconomics";
 import { getCarbonInvestmentDashboard, listCarbonOpenInstruments, purchaseCarbonOpportunity, quoteCarbonPurchase, recordCarbonDistribution, settleCarbonInstrument } from "./carbonCredits";
 import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDossiers, reachAdminCarbonMilestone, setAdminCarbonDossierEnabled, setAdminCarbonDossierStatus, updateAdminCarbonDossier } from "./carbonCreditDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
@@ -426,6 +427,26 @@ const agroDossierFieldsSchema = {
 };
 const createAgroDossierSchema = z.object(agroDossierFieldsSchema);
 const updateAgroDossierSchema = z.object({ dossierId: z.string().trim().min(2).max(80), ...agroDossierFieldsSchema });
+
+// Administrator overrides for a desk opportunity's auto-assigned economics. The
+// desk is assigned deterministic values by default; every field here is optional
+// so an administrator can patch a single value from the admin portal. The zod
+// ranges are deliberately loose at the edges and the shared ECONOMICS_BOUNDS
+// validator is the single source of truth (it throws a readable reason for any
+// out-of-band value, including non-integer or unsupported currency).
+const DESK_KEY_VALUES = ["treasury", "litigation", "agro", "ipRoyalty", "music", "cooperate", "carbon"] as const;
+const deskKeySchema = z.enum(DESK_KEY_VALUES);
+const deskEconomicsOverrideSchema = {
+  currency: z.string().trim().min(3).max(8).optional(),
+  ticketMinMinor: z.number().int().min(1).max(100_000_000).optional(),
+  fundingTargetMinor: z.number().int().min(1).max(1_000_000_000_000).optional(),
+  profitBps: z.number().int().min(2_500).max(3_800).optional(),
+  termDays: z.number().int().min(30).max(365).optional(),
+  platformFeeBps: z.number().int().min(700).max(1_000).optional(),
+  settlementDelayDays: z.number().int().min(0).max(365).nullable().optional(),
+  closeDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  maturityDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+};
 
 // Administrator-authored Carbon Credit dossiers. Carbon-only: every displayed
 // economics field is administrator-supplied and validated server-side, evidence
@@ -1582,6 +1603,15 @@ export const appRouter = router({
       funderMultipleBps: z.number().int().min(0).max(1_000_000),
       reason: z.string().trim().max(500).optional(),
     })).mutation(({ ctx, input }) => settleAgroInstrument(ctx.user!.id, input)),
+    // Auto-assigned desk economics: list every stored profile, patch one from the
+    // admin portal, or re-roll an AUTO profile. An ADMIN row is never re-derived.
+    deskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema.optional() }).optional()).query(({ input }) => listDeskEconomics(input?.desk)),
+    deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds: z.array(z.string().trim().min(1).max(160)).max(500) })).query(async ({ input }) => [...(await getDeskEconomicsMap(input.desk, input.instrumentIds)).values()]),
+    setDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId: z.string().trim().min(1).max(160), ...deskEconomicsOverrideSchema })).mutation(({ ctx, input }) => {
+      const { desk, instrumentId, ...patch } = input;
+      return setDeskEconomicsOverride(desk, instrumentId, patch, ctx.user!.id);
+    }),
+    reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId: z.string().trim().min(1).max(160), salt: z.string().trim().min(1).max(40).optional() })).mutation(({ ctx, input }) => reassignDeskEconomics(input.desk, input.instrumentId, input.salt || `admin-${ctx.user!.id}-${Date.now()}`)),
     carbonDossiers: adminProcedure.query(() => listAdminCarbonDossiers()),
     createCarbonDossier: adminProcedure.input(createCarbonDossierSchema).mutation(({ ctx, input }) => createAdminCarbonDossier(ctx.user!.id, input)),
     updateCarbonDossier: adminProcedure.input(updateCarbonDossierSchema).mutation(({ ctx, input }) => {

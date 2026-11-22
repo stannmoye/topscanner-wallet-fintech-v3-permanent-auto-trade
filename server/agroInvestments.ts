@@ -10,6 +10,8 @@ import {
   type AgroOutcome,
   type AgroSector,
 } from "@shared/agro-investment-catalogue";
+import type { DeskEconomics } from "@shared/investment-economics";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
 import {
   applyAgroDossierOutcome,
   findAdminAgroDossier,
@@ -26,6 +28,16 @@ import {
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 
 type Db = mysql.PoolConnection;
+
+/** One opportunity's stored (or freshly assigned) Agro economics, tolerating a storage hiccup. */
+async function getOrAssignAgroEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics("agro", instrumentId);
+  } catch (error) {
+    console.error("[AgroInvestments] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
 
 /**
  * Additive, self-hosted storage for Agro Investment positions (kept outside
@@ -333,10 +345,32 @@ async function readAdminOpportunities(): Promise<AgroOpportunity[]> {
 }
 
 /**
+ * Merge an opportunity's auto-assigned economic profile into its record. The
+ * opportunity's own percentage always wins ("those that already have a
+ * percentage are left as they are"); everything else comes from the assigned
+ * profile. The USD settlement fields (minimum ticket, funding ask, deadline) are
+ * left untouched because the desk settles in USD — the assigned profile carries
+ * its own presentation currency for display only.
+ */
+function withAgroEconomics(item: AgroOpportunity, economics: DeskEconomics | undefined): AgroOpportunity {
+  if (!economics) return item;
+  const profitBps = item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined
+    ? item.expectedMultipleBps - 10_000
+    : economics.profitBps;
+  return {
+    ...item,
+    economics: { ...economics, profitBps },
+    expectedMultipleBps: item.expectedMultipleBps ?? 10_000 + economics.profitBps,
+  };
+}
+
+/**
  * Assemble the Agro Investment desk for one customer: administrator dossiers
  * merged with the live public discovery catalogue, that customer's positions,
  * wallet balances and a derived summary. Catalogue and storage reads run
- * independently so a failure in one still returns the rest.
+ * independently so a failure in one still returns the rest. Every opportunity
+ * carries an auto-assigned economic profile (amount band, profit, term, close
+ * date, currency and platform fee) that an administrator can override.
  */
 export async function getAgroInvestmentDashboard(userId: number) {
   const [catalogue, store, adminOpportunities] = await Promise.all([
@@ -345,7 +379,14 @@ export async function getAgroInvestmentDashboard(userId: number) {
     readAdminOpportunities(),
   ]);
 
-  const opportunities = [...adminOpportunities, ...catalogue.opportunities].sort(compareAgroOpportunities);
+  const baseOpportunities = [...adminOpportunities, ...catalogue.opportunities].sort(compareAgroOpportunities);
+  let economicsMap = new Map<string, DeskEconomics>();
+  try {
+    economicsMap = await getDeskEconomicsMap("agro", baseOpportunities.map((item) => item.id));
+  } catch (error) {
+    console.error("[AgroInvestments] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const opportunities = baseOpportunities.map((item) => withAgroEconomics(item, economicsMap.get(item.id)));
   const sources = adminOpportunities.length
     ? catalogue.sources
     : catalogue.sources;
@@ -480,11 +521,13 @@ type ResolvedInstrument = {
  * administrator-configured multiple.
  */
 async function resolveAgroInstrument(instrumentId: string): Promise<ResolvedInstrument> {
+  const economics = await getOrAssignAgroEconomics(instrumentId);
+  const resolvedMultiple = (published: number | null) => published ?? (economics ? 10_000 + economics.profitBps : null);
   const dossier = await findEnabledAdminAgroDossier(instrumentId);
   if (dossier) {
     return {
       instrumentId: dossier.id, instrumentName: dossier.title, agroType: dossier.agroType, sector: dossier.sector,
-      status: dossier.status, expectedMultipleBps: dossier.expectedMultipleBps, unitPriceMinor: dossier.unitPriceMinor,
+      status: dossier.status, expectedMultipleBps: resolvedMultiple(dossier.expectedMultipleBps), unitPriceMinor: dossier.unitPriceMinor,
       source: dossier.source, asOf: dossier.asOf,
     };
   }
@@ -492,7 +535,7 @@ async function resolveAgroInstrument(instrumentId: string): Promise<ResolvedInst
   if (discovery) {
     return {
       instrumentId: discovery.id, instrumentName: discovery.title, agroType: discovery.agroType, sector: discovery.sector,
-      status: discovery.status, expectedMultipleBps: discovery.expectedMultipleBps, unitPriceMinor: discovery.unitPriceMinor,
+      status: discovery.status, expectedMultipleBps: resolvedMultiple(discovery.expectedMultipleBps), unitPriceMinor: discovery.unitPriceMinor,
       source: discovery.source, asOf: discovery.asOf,
     };
   }

@@ -30,6 +30,7 @@ import {
   type AgroRiskGrade,
   type AgroSector,
 } from "@shared/agro-investment-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./agro-investment.css";
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
@@ -147,17 +148,54 @@ function fmtMultiple(bps: number | null | undefined) {
   return `${(Number(bps) / 10_000).toFixed(2)}x`;
 }
 
-/** Default investable floor when an opportunity publishes no explicit minimum (USD 1,000 in minor units). */
-const MIN_INVESTMENT_MINOR = 100_000;
+/** Default investable floor when an opportunity publishes no explicit minimum (USD 500 in minor units). */
+const MIN_INVESTMENT_MINOR = 50_000;
 /** The least a customer can place in an opportunity. */
 const investableFloor = (minimumMinor: number | null | undefined) => Math.max(Number(minimumMinor || 0), MIN_INVESTMENT_MINOR);
-/** Profit implied by an amount at the opportunity's expected multiple (integer basis points). */
-const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
-  multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
-const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) => {
-  const profit = profitMinor(amountMinor, multipleBps);
-  return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
-};
+/** A USD settlement-currency seed for the invest form from a presentation-currency ticket minimum. */
+const usdSeed = (ticketMinMinor: number | null | undefined, currency: string) =>
+  Math.max(MIN_INVESTMENT_MINOR, currencyMinorToUsdMinor(Number(ticketMinMinor || 0), currency) || 0);
+
+/**
+ * Resolve an opportunity's auto-assigned economic profile into display values:
+ * the investable amount band, the profit rate, the term and close date, the
+ * platform fee and the settlement-delay bolt-on. Missing pieces fall back to the
+ * opportunity's own published fields so an administrator figure is never masked.
+ */
+function economicsView(item: AgroOpportunity, settlement: string) {
+  const econ = item.economics ?? null;
+  const currency = econ?.currency || settlement;
+  const scale = econ?.currencyScale ?? 2;
+  const ticketMinMinor = econ?.ticketMinMinor ?? investableFloor(item.minimumInvestmentMinor);
+  const targetMinor = econ?.fundingTargetMinor ?? item.fundingAskMinor ?? null;
+  const profitBps = econ?.profitBps ?? (item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined ? item.expectedMultipleBps - 10_000 : null);
+  const termDays = econ?.termDays ?? null;
+  const closeDate = econ?.closeDate ?? item.fundingDeadline ?? null;
+  return {
+    econ,
+    currency,
+    scale,
+    ticketMinMinor,
+    targetMinor,
+    profitBps,
+    termDays,
+    closeDate,
+    realiseDate: econ?.maturityDate ?? (closeDate && termDays !== null ? addDaysIso(closeDate, termDays) : null),
+    platformFeeBps: econ?.platformFeeBps ?? null,
+    settlementDelayDays: econ?.settlementDelayDays ?? null,
+  };
+}
+
+/** Add a whole number of days to a YYYY-MM-DD date, returning the same format (or null on bad input). */
+function addDaysIso(value: string, days: number): string | null {
+  const base = new Date(value);
+  if (Number.isNaN(base.getTime())) return null;
+  base.setUTCDate(base.getUTCDate() + Number(days || 0));
+  return base.toISOString().slice(0, 10);
+}
+
+/** Format a minor-unit amount in the opportunity's own currency and scale. */
+const fmtEcon = (minor: number | null | undefined, currency: string, scale: number) => moneyMinor(Number(minor || 0), currency, scale);
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
@@ -203,7 +241,7 @@ function loadWatchlist(): string[] {
   } catch { return []; }
 }
 
-type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null };
+type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null; economics?: DeskEconomics | null };
 
 /**
  * Customer desk for Agro Investment. This desk is agriculture-only and every
@@ -355,7 +393,7 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
     setTarget(nextTarget);
     setMessage("");
     setFundingSource("COMBINED");
-    setAmount(Math.max(suggested, Math.max(available, 100_000)));
+    setAmount(Math.max(suggested, MIN_INVESTMENT_MINOR));
   };
 
   // Refresh the funding quote (conversion + affordability) as the amount or
@@ -416,7 +454,7 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
     const watched = watchlist.includes(item.id);
     const open = openId === item.id;
     const TypeIcon = TYPE_ICON[item.agroType];
-    const minimum = investableFloor(item.minimumInvestmentMinor);
+    const view = economicsView(item, settlement);
     return <article className={`ag-card${item.fundable ? " is-fundable" : " is-reference"}${open ? " is-open" : ""}`} key={item.id}>
       <div className="ag-card-media">
         <img src={media || FIELD_HERO_ART} alt="" loading="lazy" />
@@ -439,7 +477,9 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
         <div className="ag-facts">
           <span>Stage <b>{stageLabel(item.stage)}</b></span>
           <span>Territory <b>{item.territory}</b></span>
-          <span>Expected <b>{fmtMultiple(item.expectedMultipleBps)}</b></span>
+          <span>Profit <b className="ag-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : fmtMultiple(item.expectedMultipleBps)}</b></span>
+          <span>Term <b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></span>
+          <span>Closes <b>{formatDate(view.closeDate)}</b></span>
           {item.eventDate ? <span>Season <b>{formatDate(item.eventDate)}</b></span> : null}
         </div>
 
@@ -450,6 +490,25 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
               <div className="ag-countdown"><CalendarClock size={12}/> {daysLabel(item.remainingDays)}{item.fundingDeadline ? ` · closes ${formatDate(item.fundingDeadline)}` : ""}</div>
             </div>
           : <div className="ag-reference-note"><AlertTriangle size={13}/> Cited catalogue reference — the administrator has not yet published its funding economics, so it carries no funding target or modelled multiple. You can still invest now; the position settles on the administrator-configured multiple.</div>}
+
+        <div className="ag-econ-panel" aria-label="Economic profile">
+          <div className="ag-econ-row">
+            <div className="ag-econ-item"><span>Currency</span><b>{view.currency}</b></div>
+            <div className="ag-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+            <div className="ag-econ-item"><span>Funding target</span><b>{view.targetMinor !== null ? fmtEcon(view.targetMinor, view.currency, view.scale) : "—"}</b></div>
+          </div>
+          <div className="ag-econ-row">
+            <div className="ag-econ-item"><span>Profit at maturity</span><b className="ag-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b></div>
+            <div className="ag-econ-item"><span>Term</span><b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></div>
+            <div className="ag-econ-item"><span>Platform fee</span><b>{view.platformFeeBps !== null ? fmtPercent(view.platformFeeBps) : "—"}</b></div>
+          </div>
+          <div className="ag-econ-row">
+            <div className="ag-econ-item"><span>Investment closes</span><b>{formatDate(view.closeDate)}</b></div>
+            <div className="ag-econ-item"><span>Profit realised</span><b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b></div>
+            <div className="ag-econ-item"><span>Payout</span><b className={view.settlementDelayDays !== null ? "ag-delay" : "ag-ok"}>{view.settlementDelayDays !== null ? `up to +${view.settlementDelayDays}d delay` : "On schedule"}</b></div>
+          </div>
+          {view.settlementDelayDays !== null && <div className="ag-econ-delay"><CalendarClock size={12}/> Settlement for this opportunity is scheduled with a system-delay allowance of up to {view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}; the payout lands on the administrator's settlement run.</div>}
+        </div>
 
         {open && <div className="ag-dossier">
           <div className="ag-dossier-grid">
@@ -472,12 +531,13 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
         </div>}
       </div>
       <div className="ag-econ">
-        <span>You can invest from <b>{fmtMinor(minimum)}</b></span>
-        <span>Projected profit on {fmtMinor(minimum)} <b className="ag-profit">{fmtProfit(minimum, item.expectedMultipleBps)}</b></span>
+        <span>You can invest from <b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></span>
+        <span>Projected profit <b className="ag-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b>{view.profitBps !== null ? ` · ${fmtEcon(Math.round((view.ticketMinMinor * view.profitBps) / 10_000), view.currency, view.scale)} on the minimum` : ""}</span>
+        <span>Realises <b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b>{view.platformFeeBps !== null ? ` · platform fee ${fmtPercent(view.platformFeeBps)}` : ""}{view.settlementDelayDays !== null ? ` · +${view.settlementDelayDays}d payout delay` : ""}</span>
       </div>
       <div className="ag-card-foot">
         <button type="button" className="ag-link" onClick={() => setOpenId(open ? null : item.id)} aria-expanded={open}>{open ? "Hide details" : "View details"} <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none" }}/></button>
-        <button type="button" className="ag-btn ag-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, minimum)}>
+        <button type="button" className="ag-btn ag-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency))}>
           <Coins size={14}/> Invest now
         </button>
       </div>
@@ -636,7 +696,9 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
       <div className="ag-section-head"><div><span className="ag-eyebrow ag-eyebrow--gold">Season calendar</span><h2>Planting &amp; harvest windows and funding deadlines</h2><p>Crop, orchard, greenhouse and farmland opportunities with their season dates, alongside the funding deadline for each open opportunity. A deadline is never moved once an investment is committed.</p></div></div>
       {!fundable.length && <div className="ag-empty"><CalendarClock size={16}/> No open opportunities yet. The calendar fills as administrators publish agriculture opportunities with sourced economics.</div>}
       <div className="ag-calendar">
-        {fundable.slice().sort((a, b) => (a.eventDate || a.fundingDeadline || "9999").localeCompare(b.eventDate || b.fundingDeadline || "9999")).map((item, index) => <div className="ag-calendar-row" key={item.id}>
+        {fundable.slice().sort((a, b) => (a.eventDate || a.fundingDeadline || "9999").localeCompare(b.eventDate || b.fundingDeadline || "9999")).map((item, index) => {
+          const view = economicsView(item, settlement);
+          return <div className="ag-calendar-row" key={item.id}>
           <span className="ag-calendar-rank">{String(index + 1).padStart(2, "0")}</span>
           <div className="ag-calendar-main">
             <strong>{item.flag} {item.title}</strong>
@@ -644,10 +706,14 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
           </div>
           <div className="ag-calendar-dates">
             {item.eventDate ? <span className="ag-chip ag-chip--event"><CalendarClock size={11}/> Season {formatDate(item.eventDate)}</span> : null}
+            <span className="ag-chip">Closes {formatDate(view.closeDate)}</span>
+            <span className="ag-chip">Realises {view.realiseDate ? formatDate(view.realiseDate) : "—"}</span>
+            {view.profitBps !== null ? <span className="ag-chip ag-chip--profit">+{fmtPercent(view.profitBps)}</span> : null}
             <span className="ag-chip">{daysLabel(item.remainingDays)}</span>
           </div>
-          <button type="button" className="ag-btn ag-btn--invest ag-btn--sm" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.minimumInvestmentMinor || 0, 100_000))}><Coins size={13}/> Invest</button>
-        </div>)}
+          <button type="button" className="ag-btn ag-btn--invest ag-btn--sm" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency))}><Coins size={13}/> Invest</button>
+        </div>;
+        })}
       </div>
     </section>}
 
@@ -715,7 +781,30 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
         </div>
         <div className="ag-modal-body">
           <div className="ag-card-title">{target.name}</div>
-          <div className="ag-card-meta"><span>Funded through the wallet ledger</span><span>Expected {fmtMultiple(target.expectedMultipleBps)}</span></div>
+          <div className="ag-card-meta">
+            <span>Funded through the wallet ledger</span>
+            <span>Expected {fmtMultiple(target.expectedMultipleBps)}</span>
+            {target.economics && <span className="ag-profit">+{fmtPercent(target.economics.profitBps)} profit</span>}
+          </div>
+
+          {target.economics && <div className="ag-econ-panel ag-econ-panel--modal" aria-label="Economic profile">
+            <div className="ag-econ-row">
+              <div className="ag-econ-item"><span>Currency</span><b>{target.economics.currency}</b></div>
+              <div className="ag-econ-item"><span>Invest from</span><b>{fmtEcon(target.economics.ticketMinMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+              <div className="ag-econ-item"><span>Funding target</span><b>{fmtEcon(target.economics.fundingTargetMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+            </div>
+            <div className="ag-econ-row">
+              <div className="ag-econ-item"><span>Profit at maturity</span><b className="ag-profit">+{fmtPercent(target.economics.profitBps)}</b></div>
+              <div className="ag-econ-item"><span>Term</span><b>{target.economics.termDays} days</b></div>
+              <div className="ag-econ-item"><span>Platform fee</span><b>{fmtPercent(target.economics.platformFeeBps)}</b></div>
+            </div>
+            <div className="ag-econ-row">
+              <div className="ag-econ-item"><span>Investment closes</span><b>{formatDate(target.economics.closeDate)}</b></div>
+              <div className="ag-econ-item"><span>Profit realised</span><b>{formatDate(target.economics.maturityDate)}</b></div>
+              <div className="ag-econ-item"><span>Payout</span><b className={target.economics.settlementDelayDays !== null ? "ag-delay" : "ag-ok"}>{target.economics.settlementDelayDays !== null ? `up to +${target.economics.settlementDelayDays}d delay` : "On schedule"}</b></div>
+            </div>
+            <p className="ag-econ-note">Displayed in {target.economics.currency} for reference; your commitment settles in {settlement} through the wallet ledger at the live rate.</p>
+          </div>}
 
           <div className="ag-field">
             <label>Investment amount ({settlement})</label>
