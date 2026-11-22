@@ -14,8 +14,10 @@
  * opportunities, so the real, fundable instruments are published by an
  * administrator in the DOSSIER layer (server/agroInvestmentDossiers.ts). The
  * discovery layer here only surfaces cited public agriculture references (from
- * the keyless World Bank Open Data feed) as un-priced candidates so the desk is
- * never empty; it never invents funding economics.
+ * the keyless World Bank Open Data feed and the keyless Eurostat (ESTAT) open
+ * feed) as un-priced candidates so the desk is never empty; it never invents
+ * funding economics. Two independent providers are drained so a failure or
+ * network block at one still leaves the desk populated by the other.
  *
  * Nothing here is invented: public sources publish no revenue economics, an
  * expected multiple, a funding target or an investor revenue share, so those
@@ -198,10 +200,55 @@ const ISO3_TO_ISO2: Record<string, string> = {
 
 const WORLDBANK_INDICATORS: { code: string; name: string }[] = [
   { code: "AG.PRD.FOOD.XD", name: "Food production index" },
+  { code: "AG.PRD.CROP.XD", name: "Crop production index" },
   { code: "AG.YLD.CREL.KG", name: "Cereal yield (kg per hectare)" },
   { code: "AG.LND.AGRI.ZS", name: "Agricultural land (% of land area)" },
   { code: "NV.AGR.TOTL.ZS", name: "Agriculture value added (% of GDP)" },
 ];
+
+/* A second, independent keyless provider: the Eurostat (ESTAT) open feed. It is
+ * drained alongside the World Bank so that a failure or network block at either
+ * provider still leaves the desk populated by the other. Each dataset's filter
+ * reduces the multi-dimensional cube to one series per territory, and the
+ * latest published period per territory is read in code. */
+const EUROSTAT_BASE = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data";
+
+const EUROSTAT_DATASETS: {
+  dataset: string;
+  metric: string;
+  query: string;
+  unit: string;
+  agroType: AgroInvestmentType;
+  sector: AgroSector;
+}[] = [
+  {
+    dataset: "apro_cpsh1",
+    metric: "Cereals harvested production (EU standard humidity)",
+    query: "crops=C0000&strucpro=HPRD_HUMD_EU_THS_T",
+    unit: "thousand tonnes",
+    agroType: "ROW_CROP",
+    sector: "GRAINS",
+  },
+  {
+    dataset: "apro_mt_lscatl",
+    metric: "Live bovine animals (population)",
+    query: "animals=A2000",
+    unit: "thousand head",
+    agroType: "LIVESTOCK",
+    sector: "LIVESTOCK",
+  },
+  {
+    dataset: "agr_r_milkpr",
+    metric: "Production of cow's milk on farms",
+    query: "",
+    unit: "thousand tonnes",
+    agroType: "DAIRY",
+    sector: "DAIRY",
+  },
+];
+
+/** Eurostat's geo dimension mixes real territories with EU / euro-area aggregates. */
+const EUROSTAT_AGGREGATE_GEO = new Set(["EU", "EA"]);
 
 /* ------------------------------------------------------------------ *
  * Taxonomy — agriculture-only investment types
@@ -542,26 +589,139 @@ async function fetchWorldBankIndicator(indicator: { code: string; name: string }
   }
 }
 
+/**
+ * Drain one keyless Eurostat (ESTAT) agriculture dataset. JSON-stat encodes each
+ * observation at flat index Σ index_i × stride_i (stride_i = product of the sizes
+ * of the later dimensions); decoding that index yields the territory and period
+ * of every observation, from which the latest period per territory is kept.
+ */
+async function fetchEurostatDataset(dataset: (typeof EUROSTAT_DATASETS)[number]): Promise<AgroOpportunity[]> {
+  const query = dataset.query ? `&${dataset.query}` : "";
+  const url = `${EUROSTAT_BASE}/${dataset.dataset}?format=JSON&lang=EN${query}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Eurostat responded ${response.status}`);
+    const payload: any = await response.json();
+    const ids: string[] = Array.isArray(payload?.id) ? payload.id : [];
+    const sizes: number[] = Array.isArray(payload?.size) ? payload.size : [];
+    const values: Record<string, number> = payload?.value && typeof payload.value === "object" ? payload.value : {};
+    if (!ids.length || !sizes.length) return [];
+    const geoDim = ids.indexOf("geo");
+    if (geoDim < 0) return [];
+    const timeDim = ids.indexOf("time");
+    const strides = sizes.map((_, index) => sizes.slice(index + 1).reduce((product, size) => product * size, 1));
+    const geoIndex: Record<string, number> = payload?.dimension?.geo?.category?.index || {};
+    const geoLabels: Record<string, string> = payload?.dimension?.geo?.category?.label || {};
+    const timeIndex: Record<string, number> = payload?.dimension?.time?.category?.index || {};
+    const timeLabels: Record<string, string> = payload?.dimension?.time?.category?.label || {};
+    const geoCodes = Object.keys(geoIndex);
+    const timeCodes = Object.keys(timeIndex);
+
+    // One observation per territory: keep the latest time period published for each geo.
+    const byGeo = new Map<number, { value: number; period: string; timePosition: number }>();
+    for (const key of Object.keys(values)) {
+      const flat = Number(key);
+      const value = Number(values[key]);
+      if (!Number.isFinite(flat) || !Number.isFinite(value)) continue;
+      const geoPosition = Math.floor(flat / strides[geoDim]) % sizes[geoDim];
+      const timePosition = timeDim >= 0 ? Math.floor(flat / strides[timeDim]) % sizes[timeDim] : 0;
+      const existing = byGeo.get(geoPosition);
+      if (existing && existing.timePosition >= timePosition) continue;
+      const timeCode = timeCodes[timePosition] || "";
+      byGeo.set(geoPosition, { value, period: timeLabels[timeCode] || timeCode, timePosition });
+    }
+
+    const mapped: AgroOpportunity[] = [];
+    for (const [geoPosition, observation] of byGeo) {
+      const code = geoCodes[geoPosition];
+      if (!code || !/^[A-Z]{2}$/.test(code) || EUROSTAT_AGGREGATE_GEO.has(code)) continue;
+      const countryName = decodeEntities(String(geoLabels[code] || code)).trim();
+      const period = observation.period;
+      if (!countryName || !period) continue;
+      mapped.push({
+        id: `eurostat-${dataset.dataset}-${code}-${period}`,
+        title: `${dataset.metric} — ${countryName} (${period})`,
+        operator: "Eurostat (ESTAT)",
+        agroType: dataset.agroType,
+        sector: dataset.sector,
+        territory: countryName,
+        territoryBand: "NATIONAL",
+        countryCode: code,
+        country: countryName,
+        flag: flagFor(code),
+        offtaker: null,
+        description: `${countryName} — “${dataset.metric}” (${period}, ${dataset.unit}). A cited public agriculture reference surfaced from the Eurostat (ESTAT) open feed. No funding economics are published for discovery references.`,
+        dealType: null,
+        stage: "IN_PRODUCTION",
+        status: "ACTIVE",
+        riskGrade: null,
+        revenueSharesBps: null,
+        expectedMultipleBps: null,
+        expectedDurationMonths: null,
+        projectedRevenueMinor: null,
+        capitalAtRiskMinor: null,
+        fundingAskMinor: null,
+        committedMinor: 0,
+        fundedBps: 0,
+        minimumInvestmentMinor: null,
+        unitPriceMinor: null,
+        eventDate: `${period}-01-01`,
+        fundingDeadline: null,
+        remainingDays: null,
+        scenarios: [],
+        expectedValueMinor: null,
+        milestones: defaultAgroMilestones(),
+        highlights: [`Value: ${observation.value} ${dataset.unit}`],
+        source: "Eurostat (ESTAT)",
+        sourceUrl: `https://ec.europa.eu/eurostat/databrowser/view/${dataset.dataset}/default/table`,
+        asOf: `${period}-01-01`,
+        verified: false,
+        fundable: false,
+      });
+    }
+    return mapped;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let cache: { value: AgroInvestmentCatalogue; expiresAt: number } | null = null;
 let inflight: Promise<AgroInvestmentCatalogue> | null = null;
 
 async function buildCatalogue(): Promise<AgroInvestmentCatalogue> {
   const opportunities: AgroOpportunity[] = [];
   const seen = new Set<string>();
-  let discoveryOk = false;
-  for (const indicator of WORLDBANK_INDICATORS) {
-    try {
-      const items = await fetchWorldBankIndicator(indicator);
-      if (items.length) discoveryOk = true;
-      for (const item of items) {
+
+  // Drain both keyless providers concurrently so one slow or blocked feed never
+  // serialises the other, and a failure at either still leaves the desk populated.
+  const [worldBankResults, eurostatResults] = await Promise.all([
+    Promise.allSettled(WORLDBANK_INDICATORS.map((indicator) => fetchWorldBankIndicator(indicator))),
+    Promise.allSettled(EUROSTAT_DATASETS.map((dataset) => fetchEurostatDataset(dataset))),
+  ]);
+
+  const collect = (results: PromiseSettledResult<AgroOpportunity[]>[], label: string): number => {
+    let count = 0;
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error(`[AgroInvestments] ${label} discovery source failed:`, result.reason instanceof Error ? result.reason.message : "UnknownError");
+        continue;
+      }
+      for (const item of result.value) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
         opportunities.push(item);
+        count += 1;
       }
-    } catch (error) {
-      console.error("[AgroInvestments] Discovery source failed:", error instanceof Error ? error.message : "UnknownError");
     }
-  }
+    return count;
+  };
+
+  const worldBankCount = collect(worldBankResults, "World Bank");
+  const eurostatCount = collect(eurostatResults, "Eurostat");
+  const worldBankOk = worldBankCount > 0;
+  const eurostatOk = eurostatCount > 0;
 
   const sources: AgroInvestmentSource[] = [
     {
@@ -577,10 +737,20 @@ async function buildCatalogue(): Promise<AgroInvestmentCatalogue> {
       url: "https://data.worldbank.org",
       country: "XX",
       role: "catalogue",
-      status: discoveryOk ? "ok" : "degraded",
-      detail: discoveryOk
-        ? `${opportunities.length} cited public agriculture reference${opportunities.length === 1 ? "" : "s"} surfaced for context. References carry no funding economics.`
-        : "The public agriculture reference feed is unavailable right now; administrator-published opportunities are unaffected.",
+      status: worldBankOk ? "ok" : "degraded",
+      detail: worldBankOk
+        ? `${worldBankCount} cited public agriculture reference${worldBankCount === 1 ? "" : "s"} surfaced for context. References carry no funding economics.`
+        : "The World Bank public agriculture reference feed is unavailable right now; other cited sources and administrator-published opportunities are unaffected.",
+    },
+    {
+      name: "Eurostat (ESTAT)",
+      url: "https://ec.europa.eu/eurostat",
+      country: "EU",
+      role: "catalogue",
+      status: eurostatOk ? "ok" : "degraded",
+      detail: eurostatOk
+        ? `${eurostatCount} cited Eurostat agriculture reference${eurostatCount === 1 ? "" : "s"} surfaced across cereals, livestock and dairy. References carry no funding economics.`
+        : "The Eurostat public agriculture reference feed is unavailable right now; other cited sources and administrator-published opportunities are unaffected.",
     },
     {
       name: "Arbitrade agro desk — desk methodology",
@@ -696,6 +866,7 @@ export function __resetAgroInvestmentCacheForTest() {
 
 export const MONTHS_TO_MS = MONTH_MS;
 export const AGRO_WORLDBANK_INDICATORS = WORLDBANK_INDICATORS;
+export const AGRO_EUROSTAT_DATASETS = EUROSTAT_DATASETS;
 export const AGRO_DESK_CURRENCY = "USD";
 export function agroEnvKey(name: string): string {
   return envKey(name);

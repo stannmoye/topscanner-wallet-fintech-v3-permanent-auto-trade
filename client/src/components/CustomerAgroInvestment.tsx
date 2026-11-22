@@ -266,10 +266,11 @@ export function CustomerAgroInvestment({ push }: { push: (message: string) => vo
   };
   const storeWarning = String((market.data as any)?.storeWarning || "");
 
-  // The discovery layer cites the public World Bank feed but publishes no deal
-  // economics; an administrator dossier supplies those. When the account service
-  // is unreachable we still surface the cited sources directly from the shared
-  // module so the desk explains itself; nothing is ever fabricated.
+  // The discovery layer cites the public World Bank and Eurostat feeds but
+  // publishes no deal economics; an administrator dossier supplies those. When
+  // the account service is unreachable we still surface the cited sources
+  // directly from the shared module so the desk explains itself; nothing is
+  // ever fabricated.
   const [fallbackSources, setFallbackSources] = useState<AgroInvestmentSource[] | null>(null);
   useEffect(() => {
     if (market.isLoading || market.isFetching || market.data) return;

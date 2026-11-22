@@ -94,8 +94,15 @@ describe("Agro Investment desk", () => {
     expect(catalogue).toContain('export const AGRO_DESK_CURRENCY = "USD"');
     expect(catalogue).toContain("export type AgroInvestmentSource");
     expect(catalogue).toContain('status: "ok" | "degraded" | "unavailable"');
-    // Discovery drains only the free, keyless World Bank Open Data API; nothing is synthesized.
+    // Discovery drains two free, keyless public agriculture feeds; nothing is synthesized.
     expect(catalogue).toContain('const WORLDBANK_BASE = "https://api.worldbank.org/v2"');
+    expect(catalogue).toContain('const EUROSTAT_BASE = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"');
+    expect(catalogue).toContain('export const AGRO_EUROSTAT_DATASETS = EUROSTAT_DATASETS');
+    for (const dataset of ['"apro_cpsh1"', '"apro_mt_lscatl"', '"agr_r_milkpr"']) expect(catalogue).toContain(dataset);
+    // The two providers are drained concurrently and degrade independently, so a block
+    // at one still leaves the other's cited references on the desk.
+    expect(catalogue).toContain("Promise.allSettled");
+    expect(catalogue).toContain('name: "Eurostat (ESTAT)"');
     // Discovery contributes cited candidates only: every candidate is fundable:false.
     expect(catalogue).toContain("fundable: false");
     // The shared provider must stay environment-neutral so it also runs as the browser fallback.
