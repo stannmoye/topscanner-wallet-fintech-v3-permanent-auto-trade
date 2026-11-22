@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, BadgePercent, Check, Coins, Mic2, RefreshCw, ScrollText, ShieldCheck, Trash2,
+  AlertTriangle, BadgePercent, Check, Coins, Gauge, Mic2, RefreshCw, ScrollText, ShieldCheck, Trash2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS, flagFor } from "@shared/country-options";
+import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor } from "@shared/investment-economics";
 import {
   MUSIC_DOSSIER_STATUSES,
   MUSIC_GENRES,
@@ -84,6 +85,22 @@ const emptyDossier = (): DossierForm => ({
 type ScenarioForm = { outcome: string; label: string; probabilityPercent: string; grossRevenueUsd: string; durationMonths: string; funderMultiple: string };
 type MilestoneForm = { stage: string; label: string; releasePercent: string; status: string };
 
+/** Administrator-editable economic profile for one opportunity (major units / percent / whole days). */
+type EconForm = {
+  currency: string; ticketMin: string; fundingTarget: string; profitPercent: string;
+  termDays: string; platformFeePercent: string; settlementDelay: string; closeDate: string; maturityDate: string;
+};
+
+const econScale = (code: string) => currencyByCode(code)?.scale ?? 2;
+const toMinorScaled = (value: string, scale: number): number | null => (value.trim() === "" ? null : Math.round(Number(value) * Math.pow(10, scale)));
+const fromMinorScaled = (minor: number | null | undefined, scale: number): string =>
+  minor === null || minor === undefined ? "" : String(Number(minor) / Math.pow(10, scale));
+
+const emptyEcon = (): EconForm => ({
+  currency: "USD", ticketMin: "", fundingTarget: "", profitPercent: "",
+  termDays: "", platformFeePercent: "", settlementDelay: "", closeDate: "", maturityDate: "",
+});
+
 /**
  * Administrator console for the Music Royalties desk. This desk is music-only:
  * an administrator posts a new music opportunity — a show or concert, a festival,
@@ -101,7 +118,22 @@ export function AdminMusicRoyalties() {
   const dossiersQuery = trpc.adminOperations.musicDossiers.useQuery(undefined, { refetchInterval: 20000 });
   const openInstrumentsQuery = trpc.adminOperations.musicOpenInstruments.useQuery(undefined, { refetchInterval: 20000 });
 
-  const [tab, setTab] = useState<"dossiers" | "distributions" | "settle">("dossiers");
+  // Every opportunity the console knows about — published dossiers plus anything
+  // carrying open commitments — is a candidate for an auto-assigned economic
+  // profile the administrator can review and override.
+  const economicsIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const row of (dossiersQuery.data || []) as any[]) if (row?.dossierId) ids.add(String(row.dossierId));
+    for (const row of (openInstrumentsQuery.data || []) as any[]) if (row?.instrumentId) ids.add(String(row.instrumentId));
+    return [...ids];
+  }, [dossiersQuery.data, openInstrumentsQuery.data]);
+  const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
+    { desk: "music", instrumentIds: economicsIds },
+    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+  );
+
+  const [tab, setTab] = useState<"dossiers" | "distributions" | "settle" | "economics">("dossiers");
+  const [econForms, setEconForms] = useState<Record<string, EconForm>>({});
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
   const [distributionForms, setDistributionForms] = useState<Record<string, { amountUsd: string; note: string }>>({});
@@ -120,6 +152,7 @@ export function AdminMusicRoyalties() {
   const invalidate = () => {
     void utils.adminOperations.musicDossiers.invalidate();
     void utils.adminOperations.musicOpenInstruments.invalidate();
+    void utils.adminOperations.deskEconomicsBatch.invalidate();
     void utils.customer.musicRoyalties.market.invalidate();
   };
 
@@ -129,6 +162,15 @@ export function AdminMusicRoyalties() {
   const setStatus = trpc.adminOperations.setMusicDossierStatus.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `${row.title} status set to ${statusLabel(row.status)}.`); }, onError });
   const reachMilestone = trpc.adminOperations.reachMusicMilestone.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `${row.title} advanced to ${stageLabel(row.stage)}.`); }, onError });
   const deleteDossier = trpc.adminOperations.deleteMusicDossier.useMutation({ onSuccess: (result: any) => { invalidate(); report("success", `Deleted ${result.dossierId}.`); }, onError });
+
+  const saveEconomics = trpc.adminOperations.setDeskEconomics.useMutation({
+    onSuccess: (row: any) => { setEconForms((current) => { const next = { ...current }; delete next[row.instrumentId]; return next; }); invalidate(); report("success", `Economic profile saved for ${row.instrumentId}.`); },
+    onError,
+  });
+  const reassignEconomics = trpc.adminOperations.reassignDeskEconomics.useMutation({
+    onSuccess: (row: any) => { invalidate(); report("success", row.source === "ADMIN" ? `${row.instrumentId} keeps its administrator profile.` : `Re-rolled the auto profile for ${row.instrumentId}.`); },
+    onError,
+  });
 
   const recordDistribution = trpc.adminOperations.recordMusicDistribution.useMutation({
     onSuccess: (result: any) => {
@@ -299,6 +341,57 @@ export function AdminMusicRoyalties() {
   const liveCount = useMemo(() => dossierRows.filter((row) => ["SHOW_CONCERT", "FESTIVAL", "TOUR"].includes(row.musicType)).length, [dossierRows]);
   const openCommittedMinor = useMemo(() => openInstrumentRows.reduce((sum, row) => sum + Number(row.committedMinor || 0), 0), [openInstrumentRows]);
 
+  const econById = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const row of (economicsQuery.data || []) as any[]) map.set(String(row.instrumentId), row);
+    return map;
+  }, [economicsQuery.data]);
+  const econNameFor = (id: string) => {
+    const dossier = dossierRows.find((row) => String(row.dossierId) === id);
+    if (dossier) return `${dossier.flag ? `${dossier.flag} ` : ""}${dossier.title}`;
+    const instrument = openInstrumentRows.find((row) => String(row.instrumentId) === id);
+    return instrument?.instrumentName || id;
+  };
+  const econFormFor = (id: string): EconForm => {
+    const existing = econForms[id];
+    if (existing) return existing;
+    const profile = econById.get(id);
+    if (!profile) return emptyEcon();
+    const scale = econScale(profile.currency);
+    return {
+      currency: profile.currency,
+      ticketMin: fromMinorScaled(profile.ticketMinMinor, scale),
+      fundingTarget: fromMinorScaled(profile.fundingTargetMinor, scale),
+      profitPercent: fromBpsToPercent(profile.profitBps),
+      termDays: profile.termDays === null || profile.termDays === undefined ? "" : String(profile.termDays),
+      platformFeePercent: fromBpsToPercent(profile.platformFeeBps),
+      settlementDelay: profile.settlementDelayDays === null || profile.settlementDelayDays === undefined ? "" : String(profile.settlementDelayDays),
+      closeDate: profile.closeDate || "",
+      maturityDate: profile.maturityDate || "",
+    };
+  };
+  const setEconForm = (id: string, key: keyof EconForm, value: string) => setEconForms((current) => ({ ...current, [id]: { ...econFormFor(id), [key]: value } }));
+  const runSaveEconomics = (id: string) => {
+    const form = econFormFor(id);
+    const scale = econScale(form.currency);
+    const patch: any = { currency: form.currency };
+    const ticket = toMinorScaled(form.ticketMin, scale);
+    if (ticket !== null) patch.ticketMinMinor = ticket;
+    const target = toMinorScaled(form.fundingTarget, scale);
+    if (target !== null) patch.fundingTargetMinor = target;
+    if (form.profitPercent.trim()) patch.profitBps = toBpsFromPercent(form.profitPercent);
+    if (form.termDays.trim()) patch.termDays = Math.round(Number(form.termDays));
+    if (form.platformFeePercent.trim()) patch.platformFeeBps = toBpsFromPercent(form.platformFeePercent);
+    patch.settlementDelayDays = form.settlementDelay.trim() === "" ? null : Math.round(Number(form.settlementDelay));
+    if (form.closeDate.trim()) patch.closeDate = form.closeDate.trim();
+    if (form.maturityDate.trim()) patch.maturityDate = form.maturityDate.trim();
+    saveEconomics.mutate({ desk: "music", instrumentId: id, ...patch });
+  };
+  const runReassignEconomics = (id: string) => {
+    if (!window.confirm(`Re-roll the auto-assigned economic profile for ${id}? An administrator profile is not affected.`)) return;
+    reassignEconomics.mutate({ desk: "music", instrumentId: id, salt: `${Date.now()}-${Math.round(Math.random() * 1e6)}` });
+  };
+
   const distributionFormFor = (row: any) => distributionForms[row.instrumentId] || { amountUsd: "", note: "" };
   const setDistributionForm = (row: any, key: "amountUsd" | "note", value: string) => setDistributionForms((current) => ({ ...current, [row.instrumentId]: { ...(current[row.instrumentId] || { amountUsd: "", note: "" }), [key]: value } }));
   const runDistribution = (row: any) => {
@@ -350,6 +443,7 @@ export function AdminMusicRoyalties() {
       <button type="button" className={`mr-tab${tab === "dossiers" ? " is-active" : ""}`} onClick={() => setTab("dossiers")}><ScrollText size={14}/> Opportunities <span className="mr-tab-count">{dossierRows.length}</span></button>
       <button type="button" className={`mr-tab${tab === "distributions" ? " is-active" : ""}`} onClick={() => setTab("distributions")}><Coins size={14}/> Record distributions <span className="mr-tab-count">{openInstrumentRows.length}</span></button>
       <button type="button" className={`mr-tab${tab === "settle" ? " is-active" : ""}`} onClick={() => setTab("settle")}><BadgePercent size={14}/> Settle &amp; write off <span className="mr-tab-count">{openInstrumentRows.length}</span></button>
+      <button type="button" className={`mr-tab${tab === "economics" ? " is-active" : ""}`} onClick={() => setTab("economics")}><Gauge size={14}/> Economics <span className="mr-tab-count">{economicsIds.length}</span></button>
     </nav>
 
     {tab === "dossiers" && <div className="mr-admin">
@@ -582,6 +676,85 @@ export function AdminMusicRoyalties() {
             <div className="mr-admin-actions">
               <button className="mr-btn mr-btn--invest" type="button" disabled={settleInstrument.isPending} onClick={() => runSettle(row)}>
                 {settleInstrument.isPending ? "Settling…" : `Settle as ${outcomeLabel(form.outcome as any)} at ${form.outcome === "WRITE_OFF" ? "0.00x" : multiple(toBpsFromPercent(form.multiplePercent))}`} <Check size={14}/>
+              </button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {tab === "economics" && <div className="mr-admin">
+      <div className="mr-admin-list">
+        <div className="mr-section-head"><div><span className="mr-eyebrow mr-eyebrow--gold">Auto-assigned economics ({economicsIds.length})</span><h2>Amount, profit, term, currency &amp; platform fee</h2></div></div>
+        <div className="mr-notice">
+          <Gauge size={15}/>
+          <div>Every opportunity gets a deterministic economic profile the moment it appears on the customer desk — an investable amount from {money(ECONOMICS_BOUNDS.ticketMinMinorUsd)}, a {percent(ECONOMICS_BOUNDS.profitMinBps)}–{percent(ECONOMICS_BOUNDS.profitMaxBps)} profit, a term of {ECONOMICS_BOUNDS.termMinDays}–{ECONOMICS_BOUNDS.termMaxDays} days, a presentation currency and a {percent(ECONOMICS_BOUNDS.platformFeeMinBps)}–{percent(ECONOMICS_BOUNDS.platformFeeMaxBps)} platform fee. Override any value here; a saved profile is marked administrator-authored and is never re-rolled automatically.</div>
+        </div>
+        {!economicsIds.length && <div className="mr-empty"><Gauge size={16}/> No opportunities to profile yet. Publish an opportunity and its economic profile appears here.</div>}
+        {economicsIds.map((id) => {
+          const form = econFormFor(id);
+          const profile = econById.get(id);
+          const scale = econScale(form.currency);
+          const ticketMinor = toMinorScaled(form.ticketMin, scale);
+          const targetMinor = toMinorScaled(form.fundingTarget, scale);
+          return <div className="mr-admin-row" key={id}>
+            <div className="mr-admin-row-head">
+              <div><strong>{econNameFor(id)}</strong><div className="mr-card-meta"><span className="mr-mono">{id}</span></div></div>
+              <div className="mr-tags">
+                <span className="mr-chip">{profile?.source === "ADMIN" ? "Administrator profile" : "Auto-assigned"}</span>
+                {profile?.currency && <span className="mr-chip">{profile.currency}</span>}
+              </div>
+            </div>
+            <div className="mr-two">
+              <div className="mr-field"><label>Presentation currency</label>
+                <select value={form.currency} onChange={(e) => setEconForm(id, "currency", e.target.value)}>
+                  {INVESTMENT_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+                </select>
+                <small>USD is the dominant choice; the others are for display.</small>
+              </div>
+              <div className="mr-field"><label>Minimum ticket</label>
+                <input type="number" min="0" step="1" value={form.ticketMin} onChange={(e) => setEconForm(id, "ticketMin", e.target.value)}/>
+                <small>{ticketMinor !== null ? `${money(currencyMinorToUsdMinor(ticketMinor, form.currency))} USD equivalent · ${scale} decimal place${scale === 1 ? "" : "s"}` : `Enter the amount in ${form.currency}`}</small>
+              </div>
+            </div>
+            <div className="mr-two">
+              <div className="mr-field"><label>Funding target</label>
+                <input type="number" min="0" step="1" value={form.fundingTarget} onChange={(e) => setEconForm(id, "fundingTarget", e.target.value)}/>
+                <small>{targetMinor !== null ? `${money(currencyMinorToUsdMinor(targetMinor, form.currency))} USD equivalent` : "The capital target"}</small>
+              </div>
+              <div className="mr-field"><label>Profit (%)</label>
+                <input type="number" min="25" max="38" step="0.25" value={form.profitPercent} onChange={(e) => setEconForm(id, "profitPercent", e.target.value)}/>
+                <small>Between {percent(ECONOMICS_BOUNDS.profitMinBps)} and {percent(ECONOMICS_BOUNDS.profitMaxBps)}.</small>
+              </div>
+            </div>
+            <div className="mr-two">
+              <div className="mr-field"><label>Term (days)</label>
+                <input type="number" min="30" max="365" step="1" value={form.termDays} onChange={(e) => setEconForm(id, "termDays", e.target.value)}/>
+                <small>Days from funding close to realising the profit ({ECONOMICS_BOUNDS.termMinDays}–{ECONOMICS_BOUNDS.termMaxDays}).</small>
+              </div>
+              <div className="mr-field"><label>Platform fee (%)</label>
+                <input type="number" min="7" max="10" step="0.25" value={form.platformFeePercent} onChange={(e) => setEconForm(id, "platformFeePercent", e.target.value)}/>
+                <small>Between {percent(ECONOMICS_BOUNDS.platformFeeMinBps)} and {percent(ECONOMICS_BOUNDS.platformFeeMaxBps)}.</small>
+              </div>
+            </div>
+            <div className="mr-two">
+              <div className="mr-field"><label>Investment closes</label>
+                <input type="date" value={form.closeDate} onChange={(e) => setEconForm(id, "closeDate", e.target.value)}/>
+              </div>
+              <div className="mr-field"><label>Profit realised</label>
+                <input type="date" value={form.maturityDate} onChange={(e) => setEconForm(id, "maturityDate", e.target.value)}/>
+              </div>
+            </div>
+            <div className="mr-field"><label>System settlement delay (days — blank for none)</label>
+              <input type="number" min="0" max="365" step="1" value={form.settlementDelay} onChange={(e) => setEconForm(id, "settlementDelay", e.target.value)} placeholder="e.g. 5"/>
+              <small>A bolt-on delay applied to some opportunities only, so a delayed payout reads as a real exception.</small>
+            </div>
+            <div className="mr-admin-actions">
+              <button className="mr-btn mr-btn--invest" type="button" disabled={saveEconomics.isPending} onClick={() => runSaveEconomics(id)}>
+                {saveEconomics.isPending ? "Saving…" : "Save economic profile"} <Check size={14}/>
+              </button>
+              <button className="mr-btn mr-btn--ghost" type="button" disabled={reassignEconomics.isPending} onClick={() => runReassignEconomics(id)}>
+                <RefreshCw size={14}/> Re-roll auto profile
               </button>
             </div>
           </div>;

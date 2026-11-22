@@ -11,6 +11,8 @@ const catalogue = readFileSync(new URL("../shared/music-royalties-catalogue.ts",
 const serverDossiers = readFileSync(new URL("./musicRoyaltyDossiers.ts", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./musicRoyalties.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+const investmentEconomics = readFileSync(new URL("../shared/investment-economics.ts", import.meta.url), "utf8");
+const deskEconomics = readFileSync(new URL("./deskEconomics.ts", import.meta.url), "utf8");
 
 describe("Music Royalties desk", () => {
   it("exposes one Finance destination that opens the dedicated music console", () => {
@@ -296,5 +298,67 @@ describe("Music Royalties desk", () => {
     expect(serverRouters).toContain('musicType: z.enum(["SHOW_CONCERT", "FESTIVAL", "TOUR", "NEW_ARTIST", "NEW_ALBUM", "ENDORSEMENT_DEAL", "BRAND_LABEL", "MASTER_RIGHTS", "PUBLISHING_CATALOGUE", "SYNC_LICENSING", "MERCHANDISE", "MUSIC_VIDEO", "CATALOGUE_ACQUISITION", "ROYALTY_STREAM"])');
     expect(serverRouters).toContain("scenarios: z.array(musicScenarioSchema).max(3).nullable().optional()");
     expect(serverRouters).toContain("milestones: z.array(musicMilestoneSchema).max(10).nullable().optional()");
+  });
+
+  it("auto-assigns every opportunity a richer economic profile — amount, profit, term, currency, platform fee and an occasional settlement delay", () => {
+    // The shared, environment-neutral engine is the single source of the profile.
+    expect(investmentEconomics).toContain("export type DeskKey");
+    expect(investmentEconomics).toContain("export const DESK_KEYS");
+    expect(investmentEconomics).toContain("export const INVESTMENT_CURRENCIES");
+    expect(investmentEconomics).toContain("export function currencyMinorToUsdMinor(");
+    expect(investmentEconomics).toContain("export function currencyByCode(");
+    expect(investmentEconomics).toContain("export const ECONOMICS_BOUNDS");
+    expect(investmentEconomics).toContain("export function assignDeskEconomics(");
+    expect(investmentEconomics).toContain("settlementDelayDays");
+    expect(investmentEconomics).toContain("export function normalizeEconomicsOverride(");
+
+    // The desk derives and persists the profile additively, so a value survives a restart.
+    expect(deskEconomics).toContain('export const DESK_ECONOMICS_TABLE = "desk_investment_economics"');
+    expect(deskEconomics).toContain("export async function getOrAssignDeskEconomics(");
+    expect(deskEconomics).toContain("export async function getDeskEconomicsMap(");
+    expect(deskEconomics).toContain("export async function setDeskEconomicsOverride(");
+    expect(deskEconomics).toContain("export async function reassignDeskEconomics(");
+    // An administrator override is authoritative and is never re-derived.
+    expect(deskEconomics).toContain('if (existing.source === "ADMIN") return existing;');
+
+    // The catalogue carries the auto-assigned profile on every opportunity.
+    expect(catalogue).toContain("economics?: DeskEconomics");
+
+    // The Music dashboard merges the profile into every served opportunity, and the
+    // purchase path resolves an unpublished multiple from the same profile.
+    expect(serverDesk).toContain('import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics"');
+    expect(serverDesk).toContain('getDeskEconomicsMap("music"');
+    expect(serverDesk).toContain("function withMusicEconomics(");
+    expect(serverDesk).toContain("10_000 + economics.profitBps");
+
+    // The administrator can view and override the auto-assigned values.
+    expect(serverRouters).toContain("deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds");
+    expect(serverRouters).toContain("setDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+    expect(serverRouters).toContain("reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+
+    // The customer card and invest modal surface the extended profile.
+    expect(customerUi).toContain("function economicsView(");
+    expect(customerUi).toContain('className="mr-econ-panel"');
+    expect(customerUi).toContain("mr-econ-panel--modal");
+    expect(customerUi).toContain("mr-econ-delay");
+    expect(customerUi).toContain("currencyMinorToUsdMinor");
+    expect(customerUi).toContain("settlementDelayDays");
+
+    // The admin console gets an editable economics console with a re-roll.
+    expect(adminUi).toContain("trpc.adminOperations.deskEconomicsBatch.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.setDeskEconomics.useMutation");
+    expect(adminUi).toContain("trpc.adminOperations.reassignDeskEconomics.useMutation");
+    expect(adminUi).toContain('{ desk: "music", instrumentIds: economicsIds }');
+    expect(adminUi).toContain("const econFormFor = (id: string)");
+    expect(adminUi).toContain("Save economic profile");
+    expect(adminUi).toContain("Re-roll auto profile");
+    expect(adminUi).toContain("ECONOMICS_BOUNDS");
+    expect(adminUi).toContain("INVESTMENT_CURRENCIES");
+    expect(adminUi).toContain("currencyMinorToUsdMinor");
+
+    // The extended profile is styled consistently with the rest of the desk.
+    expect(styles).toContain(".mr-econ-panel");
+    expect(styles).toContain(".mr-econ-panel--modal");
+    expect(styles).toContain(".mr-econ-delay");
   });
 });

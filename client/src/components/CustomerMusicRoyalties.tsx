@@ -30,6 +30,7 @@ import {
   type MusicRiskGrade,
   type MusicRoyaltiesSource,
 } from "@shared/music-royalties-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./music-royalties.css";
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
@@ -138,17 +139,54 @@ function fmtMultiple(bps: number | null | undefined) {
   return `${(Number(bps) / 10_000).toFixed(2)}x`;
 }
 
-/** Default investable floor when an opportunity publishes no explicit minimum (USD 1,000 in minor units). */
-const MIN_INVESTMENT_MINOR = 100_000;
+/** Default investable floor when an opportunity publishes no explicit minimum (USD 500 in minor units). */
+const MIN_INVESTMENT_MINOR = 50_000;
 /** The least a customer can place in an opportunity. */
 const investableFloor = (minimumMinor: number | null | undefined) => Math.max(Number(minimumMinor || 0), MIN_INVESTMENT_MINOR);
-/** Profit implied by an amount at the opportunity's expected multiple (integer basis points). */
-const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
-  multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
-const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) => {
-  const profit = profitMinor(amountMinor, multipleBps);
-  return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
-};
+/** A USD settlement-currency seed for the invest form from a presentation-currency ticket minimum. */
+const usdSeed = (ticketMinMinor: number | null | undefined, currency: string) =>
+  Math.max(MIN_INVESTMENT_MINOR, currencyMinorToUsdMinor(Number(ticketMinMinor || 0), currency) || 0);
+
+/**
+ * Resolve an opportunity's auto-assigned economic profile into display values:
+ * the investable amount band, the profit rate, the term and close date, the
+ * platform fee and the settlement-delay bolt-on. Missing pieces fall back to the
+ * opportunity's own published fields so an administrator figure is never masked.
+ */
+function economicsView(item: MusicOpportunity, settlement: string) {
+  const econ = item.economics ?? null;
+  const currency = econ?.currency || settlement;
+  const scale = econ?.currencyScale ?? 2;
+  const ticketMinMinor = econ?.ticketMinMinor ?? investableFloor(item.minimumInvestmentMinor);
+  const targetMinor = econ?.fundingTargetMinor ?? item.fundingAskMinor ?? null;
+  const profitBps = econ?.profitBps ?? (item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined ? item.expectedMultipleBps - 10_000 : null);
+  const termDays = econ?.termDays ?? null;
+  const closeDate = econ?.closeDate ?? item.fundingDeadline ?? null;
+  return {
+    econ,
+    currency,
+    scale,
+    ticketMinMinor,
+    targetMinor,
+    profitBps,
+    termDays,
+    closeDate,
+    realiseDate: econ?.maturityDate ?? (closeDate && termDays !== null ? addDaysIso(closeDate, termDays) : null),
+    platformFeeBps: econ?.platformFeeBps ?? null,
+    settlementDelayDays: econ?.settlementDelayDays ?? null,
+  };
+}
+
+/** Add a whole number of days to a YYYY-MM-DD date, returning the same format (or null on bad input). */
+function addDaysIso(value: string, days: number): string | null {
+  const base = new Date(value);
+  if (Number.isNaN(base.getTime())) return null;
+  base.setUTCDate(base.getUTCDate() + Number(days || 0));
+  return base.toISOString().slice(0, 10);
+}
+
+/** Format a minor-unit amount in the opportunity's own currency and scale. */
+const fmtEcon = (minor: number | null | undefined, currency: string, scale: number) => moneyMinor(Number(minor || 0), currency, scale);
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
@@ -194,7 +232,7 @@ function loadWatchlist(): string[] {
   } catch { return []; }
 }
 
-type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null };
+type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null; economics?: DeskEconomics | null };
 
 /**
  * Customer desk for Music Royalties. This desk is music-only and every listed
@@ -345,7 +383,7 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
     setTarget(nextTarget);
     setMessage("");
     setFundingSource("COMBINED");
-    setAmount(Math.max(suggested, Math.max(available, 100_000)));
+    setAmount(Math.max(suggested, MIN_INVESTMENT_MINOR));
   };
 
   // Refresh the funding quote (conversion + affordability) as the amount or
@@ -406,7 +444,7 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
     const watched = watchlist.includes(item.id);
     const open = openId === item.id;
     const TypeIcon = TYPE_ICON[item.musicType];
-    const minimum = investableFloor(item.minimumInvestmentMinor);
+    const view = economicsView(item, settlement);
     return <article className={`mr-card${item.fundable ? " is-fundable" : " is-reference"}${open ? " is-open" : ""}`} key={item.id}>
       <div className="mr-card-media">
         <img src={media || STAGE_HERO_ART} alt="" loading="lazy" />
@@ -429,7 +467,9 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
         <div className="mr-facts">
           <span>Stage <b>{stageLabel(item.stage)}</b></span>
           <span>Territory <b>{item.territory}</b></span>
-          <span>Expected <b>{fmtMultiple(item.expectedMultipleBps)}</b></span>
+          <span>Profit <b className="mr-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : fmtMultiple(item.expectedMultipleBps)}</b></span>
+          <span>Term <b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></span>
+          <span>Closes <b>{formatDate(view.closeDate)}</b></span>
           {item.eventDate ? <span>Event <b>{formatDate(item.eventDate)}</b></span> : null}
         </div>
 
@@ -440,6 +480,25 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
               <div className="mr-countdown"><CalendarClock size={12}/> {daysLabel(item.remainingDays)}{item.fundingDeadline ? ` · closes ${formatDate(item.fundingDeadline)}` : ""}</div>
             </div>
           : <div className="mr-reference-note"><AlertTriangle size={13}/> Cited catalogue reference — the administrator has not yet published its funding economics, so it carries no funding target or modelled multiple. You can still invest now; the position settles on the administrator-configured multiple.</div>}
+
+        <div className="mr-econ-panel" aria-label="Economic profile">
+          <div className="mr-econ-row">
+            <div className="mr-econ-item"><span>Currency</span><b>{view.currency}</b></div>
+            <div className="mr-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+            <div className="mr-econ-item"><span>Funding target</span><b>{view.targetMinor !== null ? fmtEcon(view.targetMinor, view.currency, view.scale) : "—"}</b></div>
+          </div>
+          <div className="mr-econ-row">
+            <div className="mr-econ-item"><span>Profit at maturity</span><b className="mr-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b></div>
+            <div className="mr-econ-item"><span>Term</span><b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></div>
+            <div className="mr-econ-item"><span>Platform fee</span><b>{view.platformFeeBps !== null ? fmtPercent(view.platformFeeBps) : "—"}</b></div>
+          </div>
+          <div className="mr-econ-row">
+            <div className="mr-econ-item"><span>Investment closes</span><b>{formatDate(view.closeDate)}</b></div>
+            <div className="mr-econ-item"><span>Profit realised</span><b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b></div>
+            <div className="mr-econ-item"><span>Payout</span><b className={view.settlementDelayDays !== null ? "mr-delay" : "mr-ok"}>{view.settlementDelayDays !== null ? `up to +${view.settlementDelayDays}d delay` : "On schedule"}</b></div>
+          </div>
+          {view.settlementDelayDays !== null && <div className="mr-econ-delay"><CalendarClock size={12}/> Settlement for this opportunity is scheduled with a system-delay allowance of up to {view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}; the payout lands on the administrator's settlement run.</div>}
+        </div>
 
         {open && <div className="mr-dossier">
           <div className="mr-dossier-grid">
@@ -462,12 +521,13 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
         </div>}
       </div>
       <div className="mr-econ">
-        <span>You can invest from <b>{fmtMinor(minimum)}</b></span>
-        <span>Projected profit on {fmtMinor(minimum)} <b className="mr-profit">{fmtProfit(minimum, item.expectedMultipleBps)}</b></span>
+        <span>You can invest from <b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></span>
+        <span>Projected profit <b className="mr-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b>{view.profitBps !== null ? ` · ${fmtEcon(Math.round((view.ticketMinMinor * view.profitBps) / 10_000), view.currency, view.scale)} on the minimum` : ""}</span>
+        <span>Realises <b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b>{view.platformFeeBps !== null ? ` · platform fee ${fmtPercent(view.platformFeeBps)}` : ""}{view.settlementDelayDays !== null ? ` · +${view.settlementDelayDays}d payout delay` : ""}</span>
       </div>
       <div className="mr-card-foot">
         <button type="button" className="mr-link" onClick={() => setOpenId(open ? null : item.id)} aria-expanded={open}>{open ? "Hide details" : "View details"} <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none" }}/></button>
-        <button type="button" className="mr-btn mr-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, minimum)}>
+        <button type="button" className="mr-btn mr-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency))}>
           <Coins size={14}/> Invest now
         </button>
       </div>
@@ -626,7 +686,9 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
       <div className="mr-section-head"><div><span className="mr-eyebrow mr-eyebrow--gold">Calendar</span><h2>Event dates &amp; funding deadlines</h2><p>Shows, concerts, tours and releases with their event dates, alongside the funding deadline for each open opportunity. A deadline is never moved once an investment is committed.</p></div></div>
       {!fundable.length && <div className="mr-empty"><CalendarClock size={16}/> No open opportunities yet. The calendar fills as administrators publish music opportunities with sourced economics.</div>}
       <div className="mr-calendar">
-        {fundable.slice().sort((a, b) => (a.eventDate || a.fundingDeadline || "9999").localeCompare(b.eventDate || b.fundingDeadline || "9999")).map((item, index) => <div className="mr-calendar-row" key={item.id}>
+        {fundable.slice().sort((a, b) => (a.eventDate || a.fundingDeadline || "9999").localeCompare(b.eventDate || b.fundingDeadline || "9999")).map((item, index) => {
+          const view = economicsView(item, settlement);
+          return <div className="mr-calendar-row" key={item.id}>
           <span className="mr-calendar-rank">{String(index + 1).padStart(2, "0")}</span>
           <div className="mr-calendar-main">
             <strong>{item.flag} {item.title}</strong>
@@ -634,10 +696,14 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
           </div>
           <div className="mr-calendar-dates">
             {item.eventDate ? <span className="mr-chip mr-chip--event"><CalendarClock size={11}/> Event {formatDate(item.eventDate)}</span> : null}
+            <span className="mr-chip">Closes {formatDate(view.closeDate)}</span>
+            <span className="mr-chip">Realises {view.realiseDate ? formatDate(view.realiseDate) : "—"}</span>
+            {view.profitBps !== null ? <span className="mr-chip mr-chip--profit">+{fmtPercent(view.profitBps)}</span> : null}
             <span className="mr-chip">{daysLabel(item.remainingDays)}</span>
           </div>
-          <button type="button" className="mr-btn mr-btn--invest mr-btn--sm" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.minimumInvestmentMinor || 0, 100_000))}><Coins size={13}/> Invest</button>
-        </div>)}
+          <button type="button" className="mr-btn mr-btn--invest mr-btn--sm" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency))}><Coins size={13}/> Invest</button>
+        </div>;
+        })}
       </div>
     </section>}
 
@@ -705,7 +771,30 @@ export function CustomerMusicRoyalties({ push }: { push: (message: string) => vo
         </div>
         <div className="mr-modal-body">
           <div className="mr-card-title">{target.name}</div>
-          <div className="mr-card-meta"><span>Funded through the wallet ledger</span><span>Expected {fmtMultiple(target.expectedMultipleBps)}</span></div>
+          <div className="mr-card-meta">
+            <span>Funded through the wallet ledger</span>
+            <span>Expected {fmtMultiple(target.expectedMultipleBps)}</span>
+            {target.economics && <span className="mr-profit">+{fmtPercent(target.economics.profitBps)} profit</span>}
+          </div>
+
+          {target.economics && <div className="mr-econ-panel mr-econ-panel--modal" aria-label="Economic profile">
+            <div className="mr-econ-row">
+              <div className="mr-econ-item"><span>Currency</span><b>{target.economics.currency}</b></div>
+              <div className="mr-econ-item"><span>Invest from</span><b>{fmtEcon(target.economics.ticketMinMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+              <div className="mr-econ-item"><span>Funding target</span><b>{fmtEcon(target.economics.fundingTargetMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+            </div>
+            <div className="mr-econ-row">
+              <div className="mr-econ-item"><span>Profit at maturity</span><b className="mr-profit">+{fmtPercent(target.economics.profitBps)}</b></div>
+              <div className="mr-econ-item"><span>Term</span><b>{target.economics.termDays} days</b></div>
+              <div className="mr-econ-item"><span>Platform fee</span><b>{fmtPercent(target.economics.platformFeeBps)}</b></div>
+            </div>
+            <div className="mr-econ-row">
+              <div className="mr-econ-item"><span>Investment closes</span><b>{formatDate(target.economics.closeDate)}</b></div>
+              <div className="mr-econ-item"><span>Profit realised</span><b>{formatDate(target.economics.maturityDate)}</b></div>
+              <div className="mr-econ-item"><span>Payout</span><b className={target.economics.settlementDelayDays !== null ? "mr-delay" : "mr-ok"}>{target.economics.settlementDelayDays !== null ? `up to +${target.economics.settlementDelayDays}d delay` : "On schedule"}</b></div>
+            </div>
+            <p className="mr-econ-note">Displayed in {target.economics.currency} for reference; your commitment settles in {settlement} through the wallet ledger at the live rate.</p>
+          </div>}
 
           <div className="mr-field">
             <label>Investment amount ({settlement})</label>

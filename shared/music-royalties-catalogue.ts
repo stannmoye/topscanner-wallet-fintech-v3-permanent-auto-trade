@@ -24,6 +24,7 @@
  */
 
 import { flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 /** The kinds of music opportunity the desk can carry. At least twelve, per the desk brief. */
 export type MusicInvestmentType =
@@ -164,6 +165,13 @@ export type MusicOpportunity = {
   verified: boolean;
   /** True only when an administrator has published scenarios and a funding target. */
   fundable: boolean;
+  /**
+   * The auto-assigned (or administrator-overridden) economic profile the desk
+   * server attaches to every opportunity on the desk: the investable amount
+   * band, the profit rate, the term, a presentation currency and the platform
+   * fee. It is display-only — the desk still settles in USD.
+   */
+  economics?: DeskEconomics | null;
 };
 
 export type MusicRoyaltiesSource = {

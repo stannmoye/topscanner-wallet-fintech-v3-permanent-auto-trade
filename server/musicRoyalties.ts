@@ -10,6 +10,8 @@ import {
   type MusicOpportunity,
   type MusicOutcome,
 } from "@shared/music-royalties-catalogue";
+import type { DeskEconomics } from "@shared/investment-economics";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
 import {
   applyMusicDossierOutcome,
   findAdminMusicDossier,
@@ -26,6 +28,16 @@ import {
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 
 type Db = mysql.PoolConnection;
+
+/** One opportunity's stored (or freshly assigned) Music economics, tolerating a storage hiccup. */
+async function getOrAssignMusicEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics("music", instrumentId);
+  } catch (error) {
+    console.error("[MusicRoyalties] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
 
 /**
  * Additive, self-hosted storage for Music Royalties positions (kept outside
@@ -332,10 +344,32 @@ async function readAdminOpportunities(): Promise<MusicOpportunity[]> {
 }
 
 /**
+ * Merge an opportunity's auto-assigned economic profile into its record. The
+ * opportunity's own percentage always wins ("those that already have a
+ * percentage are left as they are"); everything else comes from the assigned
+ * profile. The USD settlement fields (minimum ticket, funding ask, deadline) are
+ * left untouched because the desk settles in USD — the assigned profile carries
+ * its own presentation currency for display only.
+ */
+function withMusicEconomics(item: MusicOpportunity, economics: DeskEconomics | undefined): MusicOpportunity {
+  if (!economics) return item;
+  const profitBps = item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined
+    ? item.expectedMultipleBps - 10_000
+    : economics.profitBps;
+  return {
+    ...item,
+    economics: { ...economics, profitBps },
+    expectedMultipleBps: item.expectedMultipleBps ?? 10_000 + economics.profitBps,
+  };
+}
+
+/**
  * Assemble the Music Royalties desk for one customer: administrator dossiers
  * merged with the live public discovery catalogue, that customer's positions,
  * wallet balances and a derived summary. Catalogue and storage reads run
- * independently so a failure in one still returns the rest.
+ * independently so a failure in one still returns the rest. Every opportunity
+ * carries an auto-assigned economic profile (amount band, profit, term, close
+ * date, currency and platform fee) that an administrator can override.
  */
 export async function getMusicRoyaltiesDashboard(userId: number) {
   const [catalogue, store, adminOpportunities] = await Promise.all([
@@ -344,7 +378,14 @@ export async function getMusicRoyaltiesDashboard(userId: number) {
     readAdminOpportunities(),
   ]);
 
-  const opportunities = [...adminOpportunities, ...catalogue.opportunities].sort(compareMusicOpportunities);
+  const baseOpportunities = [...adminOpportunities, ...catalogue.opportunities].sort(compareMusicOpportunities);
+  let economicsMap = new Map<string, DeskEconomics>();
+  try {
+    economicsMap = await getDeskEconomicsMap("music", baseOpportunities.map((item) => item.id));
+  } catch (error) {
+    console.error("[MusicRoyalties] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const opportunities = baseOpportunities.map((item) => withMusicEconomics(item, economicsMap.get(item.id)));
   const sources = adminOpportunities.length
     ? catalogue.sources
     : catalogue.sources;
@@ -479,11 +520,13 @@ type ResolvedInstrument = {
  * administrator-configured multiple.
  */
 async function resolveInstrument(instrumentId: string): Promise<ResolvedInstrument> {
+  const economics = await getOrAssignMusicEconomics(instrumentId);
+  const resolvedMultiple = (published: number | null) => published ?? (economics ? 10_000 + economics.profitBps : null);
   const dossier = await findEnabledAdminMusicDossier(instrumentId);
   if (dossier) {
     return {
       instrumentId: dossier.id, instrumentName: dossier.title, musicType: dossier.musicType, genre: dossier.genre,
-      status: dossier.status, expectedMultipleBps: dossier.expectedMultipleBps, unitPriceMinor: dossier.unitPriceMinor,
+      status: dossier.status, expectedMultipleBps: resolvedMultiple(dossier.expectedMultipleBps), unitPriceMinor: dossier.unitPriceMinor,
       source: dossier.source, asOf: dossier.asOf,
     };
   }
@@ -491,7 +534,7 @@ async function resolveInstrument(instrumentId: string): Promise<ResolvedInstrume
   if (discovery) {
     return {
       instrumentId: discovery.id, instrumentName: discovery.title, musicType: discovery.musicType, genre: discovery.genre,
-      status: discovery.status, expectedMultipleBps: discovery.expectedMultipleBps, unitPriceMinor: discovery.unitPriceMinor,
+      status: discovery.status, expectedMultipleBps: resolvedMultiple(discovery.expectedMultipleBps), unitPriceMinor: discovery.unitPriceMinor,
       source: discovery.source, asOf: discovery.asOf,
     };
   }

@@ -1,3 +1,37 @@
+## 2026-11-23 (feat) — Desk economics engine rolled out to the Music Royalties desk
+
+Third desk to carry the auto-assigned economic profile (after Agro and Carbon Credit). Every Music
+Royalties opportunity now shows an investable amount (USD 500–1,000,000 equivalent), a 25%–38% profit,
+a 30–365 day term, a USD-dominant presentation currency, a 7%–10% platform fee and an occasional
+settlement-delay bolt-on — all overridable by an administrator. The shared engine/store are unchanged;
+this pass only wires the Music desk into them.
+
+- **Catalogue (`shared/music-royalties-catalogue.ts`).** `MusicOpportunity` gains an optional
+  `economics?: DeskEconomics | null` (environment-neutral import from `./investment-economics`).
+- **Server (`server/musicRoyalties.ts`).** `getMusicRoyaltiesDashboard()` batch-reads the profile via
+  `getDeskEconomicsMap("music", …)` (try/catch + empty-map fallback) and merges it through a new
+  `withMusicEconomics()` helper that only fills `economics` + an unpublished `expectedMultipleBps`
+  (`10_000 + profitBps`); `resolveInstrument()` resolves an unpublished multiple from
+  `getOrAssignMusicEconomics("music", …)`. The USD settlement fields stay untouched.
+- **Customer desk (`client/src/components/CustomerMusicRoyalties.tsx`).** New `economicsView()` /
+  `addDaysIso()` / `usdSeed()` / `fmtEcon()`; `MIN_INVESTMENT_MINOR` moved to `50_000` (USD 500). The
+  card facts, `mr-econ-panel`, `mr-econ-delay` note, the rewired `mr-econ` footer, the calendar row
+  `mr-chip--profit` and the invest modal (`mr-econ-panel--modal` + `mr-econ-note`) all show the
+  extended profile; invest actions pass `economics: view.econ` and seed from `usdSeed(...)`.
+- **Admin console (`client/src/components/AdminMusicRoyalties.tsx`).** Tab union gains `"economics"`;
+  new **Economics** tab (editable currency, ticket + funding target with USD hints, profit % 25–38,
+  term days, platform fee % 7–10, close/realise dates, optional settlement delay) with **Save economic
+  profile** and **Re-roll auto profile**, wired to `deskEconomicsBatch` / `setDeskEconomics` /
+  `reassignDeskEconomics`.
+- **CSS (`client/src/components/music-royalties.css`).** Added `.mr-econ-panel` (+`--modal`),
+  `.mr-econ-row`, `.mr-econ-item`, `.mr-econ-delay`, `.mr-econ-note`, `.mr-delay`, `.mr-chip--profit`
+  and a 560px responsive collapse, derived from existing `--mr-*` tokens.
+- **Test (`server/music-royalties.contract.test.ts`).** New case asserts the Music wiring.
+- Verification: `pnpm check` clean; `server/music-royalties.contract.test.ts` 16/16 passed;
+  `pnpm build:static` succeeded.
+- **Next:** roll the same engine to the remaining four desks (Treasury Bond, Litigation Funds,
+  IP Royalties, Cooperate Dept).
+
 ## 2026-11-23 (feat) — Desk economics engine rolled out to the Carbon Credit desk
 
 Second desk to carry the auto-assigned economic profile (after Agro): every Carbon Credit
