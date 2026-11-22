@@ -640,7 +640,35 @@ function CustomerPersonalDetailsContent({push}:{push:(message:string)=>void}) {
     </section>
   </form>;
 }
-const STATEMENT_HERO_IMAGE = "https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=" + encodeURIComponent("premium financial accounting statement dashboard, deep navy and teal gradient panels, floating ledger charts, receipt and invoice documents, gold accent light lines, minimal 3D fintech render, dark cinematic interface, no text, no words, no letters, no numbers") + "&image_size=landscape_16_9";
+/** Portal hero imagery is shipped as self-contained inline SVG data URIs so the
+ *  mastheads never depend on an external image-generation service that can fail
+ *  in production and leave broken <img> elements. */
+const portalHeroArt = (body: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" preserveAspectRatio="xMidYMid slice">${body}</svg>`)}`;
+const STATEMENT_HERO_IMAGE = portalHeroArt(`
+  <defs>
+    <linearGradient id="stbg" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#0c2a3d"/><stop offset="0.6" stop-color="#0a2233"/><stop offset="1" stop-color="#07192a"/></linearGradient>
+    <linearGradient id="stteal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f8f8a"/><stop offset="1" stop-color="#146b6b"/></linearGradient>
+    <linearGradient id="stgold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0cd7e"/><stop offset="1" stop-color="#d9a63d"/></linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#stbg)"/>
+  <rect x="380" width="260" height="360" fill="url(#stteal)" fill-opacity="0.18"/>
+  <g stroke="#8fd6d0" stroke-opacity="0.07" stroke-width="1">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((i) => `<line x1="0" y1="${i * 26}" x2="640" y2="${i * 26}"/>`).join("")}</g>
+  <rect x="70" y="58" width="250" height="244" rx="14" fill="#0b2536" stroke="#2f8f8a" stroke-opacity="0.45"/>
+  <rect x="94" y="82" width="120" height="14" rx="4" fill="#8fd6d0" fill-opacity="0.55"/>
+  <g stroke="#8fd6d0" stroke-opacity="0.26" stroke-width="6" stroke-linecap="round">
+    <line x1="94" y1="124" x2="296" y2="124"/><line x1="94" y1="148" x2="262" y2="148"/><line x1="94" y1="172" x2="296" y2="172"/><line x1="94" y1="196" x2="230" y2="196"/>
+  </g>
+  <rect x="96" y="238" width="26" height="44" rx="4" fill="url(#stgold)"/>
+  <rect x="134" y="220" width="26" height="62" rx="4" fill="url(#stteal)"/>
+  <rect x="172" y="252" width="26" height="30" rx="4" fill="#8fd6d0" fill-opacity="0.5"/>
+  <rect x="210" y="210" width="26" height="72" rx="4" fill="url(#stgold)"/>
+  <rect x="248" y="234" width="26" height="48" rx="4" fill="url(#stteal)"/>
+  <circle cx="474" cy="122" r="66" fill="none" stroke="url(#stteal)" stroke-width="12" stroke-opacity="0.5"/>
+  <path d="M474 56 a66 66 0 0 1 57 33" fill="none" stroke="url(#stgold)" stroke-width="12" stroke-linecap="round"/>
+  <g stroke="url(#stgold)" stroke-opacity="0.85" stroke-width="3" stroke-linecap="round">
+    <line x1="380" y1="228" x2="600" y2="228"/><line x1="380" y1="256" x2="560" y2="256"/><line x1="380" y1="284" x2="600" y2="284"/>
+  </g>`);
 type CustomerStatementEntry = { id:number; entryType:string; currency:string; amountMinor:number; createdAt:string|Date };
 type CustomerStatementPeriod = "7d" | "30d" | "90d" | "year" | "all";
 const customerStatementPeriods: Array<{id:CustomerStatementPeriod;label:string}> = [
@@ -808,7 +836,27 @@ function CustomerStatementsCentre({push}:{push:(message:string)=>void}) {
     <div className="customer-statement-foot"><ShieldCheck size={14}/><span>Statement figures are read directly from the server wallet ledger and every amount reconciles to your balances. Download or print a copy for your records at any time.</span></div>
   </div>;
 }
-const PASSWORD_HERO_IMAGE = "https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=" + encodeURIComponent("cyber security password vault, glowing padlock and shield emblem, encrypted key, deep navy and teal gradient panels, gold accent light lines, minimal 3D fintech render, dark cinematic interface, no text, no words, no letters, no numbers") + "&image_size=landscape_16_9";
+const PASSWORD_HERO_IMAGE = portalHeroArt(`
+  <defs>
+    <linearGradient id="pwbg" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#0c2a3d"/><stop offset="0.6" stop-color="#0a2233"/><stop offset="1" stop-color="#07192a"/></linearGradient>
+    <linearGradient id="pwteal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f8f8a"/><stop offset="1" stop-color="#146b6b"/></linearGradient>
+    <linearGradient id="pwgold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0cd7e"/><stop offset="1" stop-color="#d9a63d"/></linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#pwbg)"/>
+  <rect width="260" height="360" fill="url(#pwteal)" fill-opacity="0.18"/>
+  <g stroke="#8fd6d0" stroke-opacity="0.07" stroke-width="1">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((i) => `<line x1="0" y1="${i * 26}" x2="640" y2="${i * 26}"/>`).join("")}</g>
+  <path d="M320 58 l106 41 v88 c0 63 -47 102 -106 120 -59 -18 -106 -57 -106 -120 v-88 Z" fill="#0b2536" stroke="url(#pwteal)" stroke-opacity="0.6" stroke-width="3"/>
+  <path d="M320 84 l80 31 v70 c0 48 -35 79 -80 94 -45 -15 -80 -46 -80 -94 v-70 Z" fill="none" stroke="#8fd6d0" stroke-opacity="0.22" stroke-width="2"/>
+  <rect x="288" y="170" width="64" height="56" rx="8" fill="url(#pwgold)"/>
+  <path d="M301 170 v-15 a19 19 0 0 1 38 0 v15" fill="none" stroke="url(#pwgold)" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="320" cy="194" r="7" fill="#0b2536"/>
+  <g stroke="url(#pwgold)" stroke-opacity="0.85" stroke-width="3" stroke-linecap="round">
+    <line x1="72" y1="122" x2="180" y2="122"/><line x1="72" y1="150" x2="150" y2="150"/><line x1="72" y1="178" x2="180" y2="178"/>
+  </g>
+  <g fill="none" stroke="#8fd6d0" stroke-opacity="0.5" stroke-width="3">
+    <circle cx="462" cy="258" r="16"/>
+    <path d="M478 258 h58 M524 258 v14 M506 258 v12"/>
+  </g>`);
 type CustomerPasswordRule = { id:string; label:string; test:(value:string)=>boolean };
 const customerPasswordRules: CustomerPasswordRule[] = [
   { id:"length", label:"At least 12 characters", test:value=>value.length>=12 },

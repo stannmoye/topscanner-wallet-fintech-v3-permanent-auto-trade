@@ -222,6 +222,20 @@ describe("IP Royalties licensing-capital desk", () => {
     expect(customerUi).toContain('className="ipr-scenarios"');
   });
 
+  it("ships the desk artwork as self-contained inline SVG so the images always load", () => {
+    // The register and sector imagery is embedded in the bundle as SVG data URIs,
+    // so it never depends on an authenticated external image service that fails
+    // in production and leaves broken <img> elements.
+    expect(customerUi).toContain("data:image/svg+xml");
+    expect(customerUi).toContain("const iprArt = (body: string)");
+    expect(customerUi).not.toContain("core-normal.trae.ai");
+    expect(customerUi).not.toContain("text_to_image");
+    // The portal statement and password mastheads are inline SVG too.
+    expect(app).toContain("const portalHeroArt = (body: string)");
+    expect(app).not.toContain("core-normal.trae.ai");
+    expect(app).not.toContain("text_to_image");
+  });
+
   it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
     expect(serverRouters).toContain("import { getIpRoyaltiesDashboard, listIpRoyaltyOpenInstruments, purchaseIpRoyalty, quoteIpRoyaltyPurchase, recordIpRoyaltyDistribution, settleIpRoyaltyInstrument } from \"./ipRoyalties\";");
     expect(serverRouters).toContain("ipRoyalties: router({");

@@ -39,29 +39,73 @@ const MARKET_POLL_INTERVAL_MS = 90_000;
 const WATCHLIST_KEY = "ip-royalties-watchlist";
 const PAGE_SIZES = [6, 12, 24];
 
-/** The desk's own editorial imagery. Prompts describe a restrained ink-on-paper
- *  register so the art matches the desk's muted, theme-native palette. */
-const iprImage = (prompt: string, imageSize: string) =>
-  `https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=${encodeURIComponent(prompt)}&image_size=${imageSize}`;
+/** The desk's own editorial imagery. It ships as self-contained inline SVG data
+ *  URIs — a restrained indigo-ink-on-paper register — so the art matches the
+ *  desk's theme-native palette and never depends on an external image service
+ *  that can fail in production and leave broken <img> elements. */
+const IPR_PAPER_BG = `<defs>
+  <linearGradient id="iprbg" x1="0" y1="0" x2="0.3" y2="1"><stop offset="0" stop-color="#f5f3ec"/><stop offset="1" stop-color="#e5e2d7"/></linearGradient>
+  <linearGradient id="iprseal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c9a24a"/><stop offset="1" stop-color="#a9822f"/></linearGradient>
+</defs>
+<rect width="400" height="260" fill="url(#iprbg)"/>
+<g stroke="#3a4675" stroke-opacity="0.06" stroke-width="1">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `<line x1="0" y1="${i * 26}" x2="400" y2="${i * 26}"/>`).join("")}</g>`;
 
-const LICENSE_REGISTER_ART = iprImage(
-  "Wide panoramic editorial illustration of a licensing register: a neatly stacked accordion of contracts, patent certificate sheets with embossed seals, a film clapperboard and a microchip drawn as fine monochrome line art in muted indigo ink on a calm warm-grey paper background, minimalist flat vector, generous negative space, understated, no text, no words, no letters",
-  "landscape_16_9",
-);
+const iprArt = (body: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid slice">${IPR_PAPER_BG}${body}</svg>`)}`;
+
+const LICENSE_REGISTER_ART = iprArt(`
+  <rect x="52" y="52" width="150" height="176" rx="6" fill="#ffffff" stroke="#3a4675" stroke-opacity="0.26"/>
+  <rect x="70" y="38" width="150" height="176" rx="6" fill="#fbfaf6" stroke="#3a4675" stroke-opacity="0.34"/>
+  <g stroke="#3a4675" stroke-opacity="0.4" stroke-width="4" stroke-linecap="round">
+    <line x1="92" y1="74" x2="200" y2="74"/><line x1="92" y1="92" x2="182" y2="92"/><line x1="92" y1="110" x2="200" y2="110"/><line x1="92" y1="128" x2="168" y2="128"/>
+  </g>
+  <rect x="92" y="152" width="22" height="44" fill="#3a4675" fill-opacity="0.16"/>
+  <rect x="120" y="164" width="22" height="32" fill="#3a4675" fill-opacity="0.28"/>
+  <rect x="148" y="140" width="22" height="56" fill="#3a4675" fill-opacity="0.22"/>
+  <circle cx="290" cy="106" r="42" fill="none" stroke="url(#iprseal)" stroke-width="5"/>
+  <circle cx="290" cy="106" r="32" fill="none" stroke="#a9822f" stroke-opacity="0.45" stroke-width="2"/>
+  <path d="M290 82 l6 13 14 2 -10 10 3 14 -13-7 -13 7 3-14 -10-10 14-2 Z" fill="url(#iprseal)"/>
+  <circle cx="290" cy="186" r="15" fill="none" stroke="#3a4675" stroke-opacity="0.45" stroke-width="4"/>
+  <line x1="290" y1="201" x2="290" y2="230" stroke="#3a4675" stroke-opacity="0.45" stroke-width="4" stroke-linecap="round"/>
+  <line x1="290" y1="216" x2="304" y2="216" stroke="#3a4675" stroke-opacity="0.45" stroke-width="4" stroke-linecap="round"/>
+`);
 
 const SECTOR_ART: Record<IpRoyaltySector, string> = {
-  REGISTERED_IP: iprImage(
-    "Minimalist flat editorial illustration of registered intellectual property: patent blueprint sheets, a circular trademark seal stamp and a certificate ribbon, fine monochrome line art in muted indigo ink on a warm-grey paper background, plenty of negative space, no text, no words",
-    "landscape_4_3",
-  ),
-  CREATIVE_MEDIA: iprImage(
-    "Minimalist flat editorial illustration of creative rights: a film reel and clapperboard, an open manuscript book and a small sparkle motif for characters, fine monochrome line art in muted indigo ink on a warm-grey paper background, plenty of negative space, no text, no words",
-    "landscape_4_3",
-  ),
-  BUSINESS_TECH: iprImage(
-    "Minimalist flat editorial illustration of business and technology rights: a microchip with circuit traces, connected network nodes and a simple handshake, fine monochrome line art in muted indigo ink on a warm-grey paper background, plenty of negative space, no text, no words",
-    "landscape_4_3",
-  ),
+  REGISTERED_IP: iprArt(`
+    <rect x="48" y="46" width="170" height="150" rx="6" fill="#ffffff" stroke="#3a4675" stroke-opacity="0.28"/>
+    <rect x="72" y="64" width="170" height="150" rx="6" fill="#fbfaf6" stroke="#3a4675" stroke-opacity="0.36"/>
+    <g stroke="#3a4675" stroke-opacity="0.3" stroke-width="3" stroke-linecap="round">
+      <line x1="94" y1="96" x2="220" y2="96"/><line x1="94" y1="116" x2="194" y2="116"/><line x1="94" y1="136" x2="220" y2="136"/>
+      <line x1="94" y1="156" x2="174" y2="156"/><line x1="94" y1="176" x2="214" y2="176"/>
+    </g>
+    <circle cx="292" cy="148" r="42" fill="none" stroke="url(#iprseal)" stroke-width="5"/>
+    <circle cx="292" cy="148" r="32" fill="none" stroke="#a9822f" stroke-opacity="0.45" stroke-width="2"/>
+    <path d="M292 122 l6 13 14 2 -10 10 3 14 -13-7 -13 7 3-14 -10-10 14-2 Z" fill="url(#iprseal)"/>
+    <path d="M302 208 l-6 24 14-8 14 8 -6-24" fill="#a9822f" fill-opacity="0.85"/>
+  `),
+  CREATIVE_MEDIA: iprArt(`
+    <circle cx="128" cy="120" r="60" fill="#fbfaf6" stroke="#3a4675" stroke-opacity="0.34" stroke-width="3"/>
+    <g fill="#3a4675" fill-opacity="0.22">${[0, 1, 2, 3, 4, 5].map((i) => { const a = (i / 6) * Math.PI * 2; return `<circle cx="${(128 + Math.cos(a) * 40).toFixed(1)}" cy="${(120 + Math.sin(a) * 40).toFixed(1)}" r="11"/>`; }).join("")}</g>
+    <circle cx="128" cy="120" r="10" fill="url(#iprseal)"/>
+    <rect x="228" y="70" width="120" height="86" rx="8" fill="#ffffff" stroke="#3a4675" stroke-opacity="0.34"/>
+    <path d="M228 70 l30 22 24-22 24 22 42-22" fill="none" stroke="#3a4675" stroke-opacity="0.5" stroke-width="3"/>
+    <g stroke="#3a4675" stroke-opacity="0.3" stroke-width="3" stroke-linecap="round"><line x1="246" y1="112" x2="330" y2="112"/><line x1="246" y1="132" x2="310" y2="132"/></g>
+    <rect x="128" y="198" width="170" height="18" rx="4" fill="#3a4675" fill-opacity="0.18"/>
+  `),
+  BUSINESS_TECH: iprArt(`
+    <rect x="66" y="70" width="120" height="120" rx="12" fill="#fbfaf6" stroke="#3a4675" stroke-opacity="0.34"/>
+    <rect x="94" y="98" width="64" height="64" rx="6" fill="#3a4675" fill-opacity="0.2"/>
+    <g stroke="#3a4675" stroke-opacity="0.45" stroke-width="3" stroke-linecap="round">
+      <line x1="66" y1="100" x2="48" y2="100"/><line x1="66" y1="130" x2="48" y2="130"/><line x1="66" y1="160" x2="48" y2="160"/>
+      <line x1="186" y1="100" x2="204" y2="100"/><line x1="186" y1="130" x2="204" y2="130"/><line x1="186" y1="160" x2="204" y2="160"/>
+      <line x1="96" y1="70" x2="96" y2="52"/><line x1="126" y1="70" x2="126" y2="52"/><line x1="156" y1="70" x2="156" y2="52"/>
+      <line x1="96" y1="190" x2="96" y2="208"/><line x1="126" y1="190" x2="126" y2="208"/><line x1="156" y1="190" x2="156" y2="208"/>
+    </g>
+    <g fill="none" stroke="url(#iprseal)" stroke-width="3">
+      <circle cx="288" cy="92" r="12"/><circle cx="334" cy="146" r="12"/><circle cx="288" cy="200" r="12"/>
+      <path d="M298 100 l26 38 M324 138 l-26 54"/>
+    </g>
+  `),
 };
 
 const SECTOR_ICON: Record<IpRoyaltySector, LucideIcon> = {
