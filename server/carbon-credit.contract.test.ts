@@ -11,6 +11,8 @@ const catalogue = readFileSync(new URL("../shared/carbon-credit-catalogue.ts", i
 const serverDossiers = readFileSync(new URL("./carbonCreditDossiers.ts", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./carbonCredits.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+const investmentEconomics = readFileSync(new URL("../shared/investment-economics.ts", import.meta.url), "utf8");
+const deskEconomics = readFileSync(new URL("./deskEconomics.ts", import.meta.url), "utf8");
 
 describe("Carbon Credit desk", () => {
   it("exposes one Finance destination that opens the dedicated carbon console", () => {
@@ -320,5 +322,80 @@ describe("Carbon Credit desk", () => {
     expect(serverRouters).toContain('creditType: z.enum(["REFORESTATION", "FOREST_CONSERVATION", "SOIL_CARBON", "BLUE_CARBON", "COOKSTOVES", "BIOCHAR", "DIRECT_AIR_CAPTURE", "BECCS", "ENHANCED_WEATHERING", "OCEAN_ALKALINITY", "RENEWABLE_ENERGY", "METHANE_CAPTURE", "WASTE_MANAGEMENT", "INDUSTRIAL_EFFICIENCY"])');
     expect(serverRouters).toContain("scenarios: z.array(carbonScenarioSchema).max(3).nullable().optional()");
     expect(serverRouters).toContain("milestones: z.array(carbonMilestoneSchema).max(10).nullable().optional()");
+  });
+
+  it("auto-assigns every opportunity a richer economic profile — amount, profit, term, currency, platform fee and an occasional settlement delay", () => {
+    // The shared, environment-neutral engine is the single source of the profile.
+    expect(investmentEconomics).toContain("export type DeskKey");
+    expect(investmentEconomics).toContain("export const DESK_KEYS");
+    expect(investmentEconomics).toContain("export const INVESTMENT_CURRENCIES");
+    // A USD-dominant multi-currency set: USD plus euro, sterling, Chinese yuan,
+    // Japanese yen, South African rand and other-country currencies.
+    for (const currency of ['{ code: "USD"', '{ code: "EUR"', '{ code: "GBP"', '{ code: "CNY"', '{ code: "JPY"', '{ code: "ZAR"']) {
+      expect(investmentEconomics).toContain(currency);
+    }
+    expect(investmentEconomics).toContain("export function currencyMinorToUsdMinor(");
+    expect(investmentEconomics).toContain("export function currencyByCode(");
+    // Every assignment participates in the published bounds: USD 500–1,000,000,
+    // a 25%–38% profit, a 30-day-to-1-year term and a 7%–10% platform fee.
+    expect(investmentEconomics).toContain("export const ECONOMICS_BOUNDS");
+    expect(investmentEconomics).toContain("ticketMinMinorUsd: 50_000");
+    expect(investmentEconomics).toContain("profitMinBps: 2_500");
+    expect(investmentEconomics).toContain("profitMaxBps: 3_800");
+    expect(investmentEconomics).toContain("termMinDays: 30");
+    expect(investmentEconomics).toContain("termMaxDays: 365");
+    expect(investmentEconomics).toContain("platformFeeMinBps: 700");
+    expect(investmentEconomics).toContain("platformFeeMaxBps: 1_000");
+    expect(investmentEconomics).toContain("export function assignDeskEconomics(");
+    expect(investmentEconomics).toContain("settlementDelayDays");
+    // The desk key the Carbon desk uses is a first-class member of the engine.
+    expect(investmentEconomics).toContain("carbon");
+
+    // The desk derives and persists the profile additively, so a value survives a restart.
+    expect(deskEconomics).toContain("export async function getOrAssignDeskEconomics(");
+    expect(deskEconomics).toContain("export async function getDeskEconomicsMap(");
+    // An administrator override is authoritative and is never re-derived.
+    expect(deskEconomics).toContain('if (existing.source === "ADMIN") return existing;');
+
+    // The Carbon catalogue carries the profile on every opportunity it serves.
+    expect(catalogue).toContain('import type { DeskEconomics } from "./investment-economics"');
+    expect(catalogue).toContain("economics?: DeskEconomics");
+
+    // The Carbon dashboard merges the profile into every served opportunity, and the
+    // purchase path resolves an unpublished multiple from the same profile.
+    expect(serverDesk).toContain('import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics"');
+    expect(serverDesk).toContain('getDeskEconomicsMap("carbon"');
+    expect(serverDesk).toContain("function withCarbonEconomics(");
+    expect(serverDesk).toContain("10_000 + economics.profitBps");
+
+    // The administrator can view and override the auto-assigned values.
+    expect(serverRouters).toContain('import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsOverride } from "./deskEconomics"');
+    expect(serverRouters).toContain("const deskKeySchema = z.enum(DESK_KEY_VALUES)");
+    expect(serverRouters).toContain("deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds");
+    expect(serverRouters).toContain("setDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+    expect(serverRouters).toContain("reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+
+    // The customer card, dossier and invest modal surface the extended profile.
+    expect(customerUi).toContain("function economicsView(");
+    expect(customerUi).toContain('className="cc-econ-panel"');
+    expect(customerUi).toContain("cc-econ-panel--modal");
+    expect(customerUi).toContain("cc-econ-delay");
+    expect(customerUi).toContain("currencyMinorToUsdMinor");
+    expect(customerUi).toContain("settlementDelayDays");
+
+    // The admin console gets an editable economics console with a re-roll.
+    expect(adminUi).toContain("trpc.adminOperations.deskEconomicsBatch.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.setDeskEconomics.useMutation");
+    expect(adminUi).toContain("trpc.adminOperations.reassignDeskEconomics.useMutation");
+    expect(adminUi).toContain("const econFormFor = (id: string)");
+    expect(adminUi).toContain("Save economic profile");
+    expect(adminUi).toContain("Re-roll auto profile");
+    expect(adminUi).toContain("ECONOMICS_BOUNDS");
+    expect(adminUi).toContain("INVESTMENT_CURRENCIES");
+
+    // The extended profile is styled consistently with the rest of the desk.
+    expect(styles).toContain(".cc-econ-panel");
+    expect(styles).toContain(".cc-econ-panel--modal");
+    expect(styles).toContain(".cc-econ-delay");
   });
 });

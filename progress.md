@@ -1,3 +1,38 @@
+## 2026-11-23 (feat) — Desk economics engine rolled out to the Carbon Credit desk
+
+Second desk to carry the auto-assigned economic profile (after Agro): every Carbon Credit
+opportunity now shows an investable amount (USD 500–1,000,000 equivalent), a 25%–38% profit, a
+30–365 day term, a USD-dominant presentation currency, a 7%–10% platform fee and an occasional
+settlement-delay bolt-on — all overridable by an administrator. The shared engine and store are
+unchanged; this pass only wires the Carbon desk into them.
+
+- **Catalogue (`shared/carbon-credit-catalogue.ts`).** `CarbonOpportunity` gains an optional
+  `economics?: DeskEconomics | null` (environment-neutral import from `./investment-economics`).
+- **Server (`server/carbonCredits.ts`).** `getCarbonInvestmentDashboard()` batch-reads the profile via
+  `getDeskEconomicsMap("carbon", …)` (try/catch + empty-map fallback) and merges it through a new
+  `withCarbonEconomics()` helper that only fills `economics` + an unpublished `expectedMultipleBps`
+  (`10_000 + profitBps`) — the USD settlement fields stay untouched because the desk settles in USD.
+  `resolveCarbonInstrument()` now resolves an unpublished multiple from `getOrAssignDeskEconomics("carbon", …)`.
+- **Customer desk (`client/src/components/CustomerCarbonCredit.tsx`).** New `economicsView()` /
+  `addDaysIso()` / `usdSeed()` / `fmtEcon()` helpers; `CARBON_MIN_INVESTMENT_MINOR` moved to `50_000`
+  (USD 500). The pin card, dossier and invest modal render a `cc-econ-panel` (Currency / Invest from /
+  Funding target · Profit / Term / Platform fee · Closes / Profit realised / Payout) with a conditional
+  `cc-econ-delay` note and a modal currency-vs-USD note; invest actions pass `economics: view.econ` and
+  seed the amount from `usdSeed(view.ticketMinMinor, view.currency)`.
+- **Admin console (`client/src/components/AdminCarbonCredit.tsx`).** New **Economics** tab (editable
+  currency, minimum ticket + funding target with USD hints, profit % 25–38, term days, platform fee %
+  7–10, close/realise dates and an optional settlement delay) with **Save economic profile** and
+  **Re-roll auto profile**, wired to `deskEconomicsBatch` / `setDeskEconomics` / `reassignDeskEconomics`.
+- **CSS (`client/src/components/carbon-credit.css`).** Added `.cc-econ-panel` (+`--modal`),
+  `.cc-econ-row`, `.cc-econ-item`, `.cc-econ-delay`, `.cc-econ-note`, `.cc-delay`, `.cc-chip--profit`,
+  derived from existing `--cc-*` tokens with a responsive collapse.
+- **Test (`server/carbon-credit.contract.test.ts`).** New case asserts the Carbon wiring (engine/store
+  reads, catalogue field, server merge, customer `cc-econ-panel`, admin Economics console).
+- Verification: `pnpm check` clean; `server/carbon-credit.contract.test.ts` 16/16 passed;
+  `pnpm build:static` succeeded.
+- **Next:** roll the same engine to the remaining five desks (Treasury Bond, Litigation Funds,
+  IP Royalties, Music Royalties, Cooperate Dept).
+
 ## 2026-11-23 (feat) — Desk economics engine: auto-assigned amount, profit, term, currency, platform fee and settlement delay (Agro desk wired end-to-end)
 
 The platform owner asked every investment desk opportunity to carry a richer, more realistic economic

@@ -11,6 +11,8 @@ import {
   type CarbonSector,
   type CarbonStandard,
 } from "@shared/carbon-credit-catalogue";
+import type { DeskEconomics } from "@shared/investment-economics";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
 import {
   applyCarbonDossierOutcome,
   findAdminCarbonDossier,
@@ -27,6 +29,16 @@ import {
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 
 type Db = mysql.PoolConnection;
+
+/** One opportunity's stored (or freshly assigned) Carbon economics, tolerating a storage hiccup. */
+async function getOrAssignCarbonEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics("carbon", instrumentId);
+  } catch (error) {
+    console.error("[CarbonCredits] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
 
 /**
  * Additive, self-hosted storage for Carbon Credit positions (kept outside
@@ -338,10 +350,32 @@ async function readAdminOpportunities(): Promise<CarbonOpportunity[]> {
 }
 
 /**
+ * Merge an opportunity's auto-assigned economic profile into its record. The
+ * opportunity's own percentage always wins ("those that already have a
+ * percentage are left as they are"); everything else comes from the assigned
+ * profile. The USD settlement fields (minimum ticket, funding ask, deadline) are
+ * left untouched because the desk settles in USD — the assigned profile carries
+ * its own presentation currency for display only.
+ */
+function withCarbonEconomics(item: CarbonOpportunity, economics: DeskEconomics | undefined): CarbonOpportunity {
+  if (!economics) return item;
+  const profitBps = item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined
+    ? item.expectedMultipleBps - 10_000
+    : economics.profitBps;
+  return {
+    ...item,
+    economics: { ...economics, profitBps },
+    expectedMultipleBps: item.expectedMultipleBps ?? 10_000 + economics.profitBps,
+  };
+}
+
+/**
  * Assemble the Carbon Credit desk for one customer: administrator dossiers
  * merged with the live public discovery catalogue, that customer's positions,
  * wallet balances and a derived summary. Catalogue and storage reads run
- * independently so a failure in one still returns the rest.
+ * independently so a failure in one still returns the rest. Every opportunity
+ * carries an auto-assigned economic profile (amount band, profit, term, close
+ * date, currency and platform fee) that an administrator can override.
  */
 export async function getCarbonInvestmentDashboard(userId: number) {
   const [catalogue, store, adminOpportunities] = await Promise.all([
@@ -350,7 +384,14 @@ export async function getCarbonInvestmentDashboard(userId: number) {
     readAdminOpportunities(),
   ]);
 
-  const opportunities = [...adminOpportunities, ...catalogue.opportunities].sort(compareCarbonOpportunities);
+  const baseOpportunities = [...adminOpportunities, ...catalogue.opportunities].sort(compareCarbonOpportunities);
+  let economicsMap = new Map<string, DeskEconomics>();
+  try {
+    economicsMap = await getDeskEconomicsMap("carbon", baseOpportunities.map((item) => item.id));
+  } catch (error) {
+    console.error("[CarbonCredits] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const opportunities = baseOpportunities.map((item) => withCarbonEconomics(item, economicsMap.get(item.id)));
   const sources = adminOpportunities.length
     ? catalogue.sources.map((source) => (source.role === "opportunities"
         ? { ...source, detail: `${adminOpportunities.length} administrator-published opportunity${adminOpportunities.length === 1 ? "" : "ies"} live on the desk with sourced economics.` }
@@ -483,11 +524,13 @@ type ResolvedInstrument = {
  * administrator-configured multiple.
  */
 async function resolveCarbonInstrument(instrumentId: string): Promise<ResolvedInstrument> {
+  const economics = await getOrAssignCarbonEconomics(instrumentId);
+  const resolvedMultiple = (published: number | null) => published ?? (economics ? 10_000 + economics.profitBps : null);
   const dossier = await findEnabledAdminCarbonDossier(instrumentId);
   if (dossier) {
     return {
       instrumentId: dossier.id, instrumentName: dossier.title, creditType: dossier.creditType, sector: dossier.sector,
-      standard: dossier.standard, status: dossier.status, expectedMultipleBps: dossier.expectedMultipleBps, unitPriceMinor: dossier.unitPriceMinor,
+      standard: dossier.standard, status: dossier.status, expectedMultipleBps: resolvedMultiple(dossier.expectedMultipleBps), unitPriceMinor: dossier.unitPriceMinor,
       source: dossier.source, asOf: dossier.asOf,
     };
   }
@@ -495,7 +538,7 @@ async function resolveCarbonInstrument(instrumentId: string): Promise<ResolvedIn
   if (discovery) {
     return {
       instrumentId: discovery.id, instrumentName: discovery.title, creditType: discovery.creditType, sector: discovery.sector,
-      standard: discovery.standard, status: discovery.status, expectedMultipleBps: discovery.expectedMultipleBps, unitPriceMinor: discovery.unitPriceMinor,
+      standard: discovery.standard, status: discovery.status, expectedMultipleBps: resolvedMultiple(discovery.expectedMultipleBps), unitPriceMinor: discovery.unitPriceMinor,
       source: discovery.source, asOf: discovery.asOf,
     };
   }

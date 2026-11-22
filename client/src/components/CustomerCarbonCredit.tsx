@@ -35,6 +35,7 @@ import {
   type CarbonRegion,
   type CarbonSector,
 } from "@shared/carbon-credit-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./carbon-credit.css";
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
@@ -97,10 +98,13 @@ const fmtMinor = (minor: number | null | undefined, currency = "USD") => moneyMi
 const fmtPercent = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 100).toFixed(Number(bps) % 100 === 0 ? 0 : 1)}%`);
 const fmtMultiple = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 10_000).toFixed(2)}x`);
 const fmtTonnes = (tonnes: number | null | undefined) => (tonnes === null || tonnes === undefined ? "—" : `${Number(tonnes).toLocaleString(undefined, { maximumFractionDigits: 0 })} tCO₂e`);
-/** Default investable floor when an opportunity publishes no explicit minimum (USD 1,000 in minor units). */
-const CARBON_MIN_INVESTMENT_MINOR = 100_000;
+/** Default investable floor when an opportunity publishes no explicit minimum (USD 500 in minor units). */
+const CARBON_MIN_INVESTMENT_MINOR = 50_000;
 /** The amount a customer may start from on a given opportunity. */
 const investableFloor = (opportunity: Pick<CarbonOpportunity, "minimumInvestmentMinor">) => Math.max(opportunity.minimumInvestmentMinor || 0, CARBON_MIN_INVESTMENT_MINOR);
+/** A USD settlement-currency seed for the invest form from a presentation-currency ticket minimum. */
+const usdSeed = (ticketMinMinor: number | null | undefined, currency: string) =>
+  Math.max(CARBON_MIN_INVESTMENT_MINOR, currencyMinorToUsdMinor(Number(ticketMinMinor || 0), currency) || 0);
 /** Profit implied by an amount at the opportunity's expected multiple (integer basis points). */
 const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
   multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
@@ -111,6 +115,44 @@ const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number |
   const profit = profitMinor(amountMinor, multipleBps);
   return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
 };
+/**
+ * Resolve an opportunity's auto-assigned economic profile into display values:
+ * the investable amount band, the profit rate, the term and close date, the
+ * platform fee and the settlement-delay bolt-on. Missing pieces fall back to the
+ * opportunity's own published fields so an administrator figure is never masked.
+ */
+function economicsView(item: CarbonOpportunity, settlement: string) {
+  const econ = item.economics ?? null;
+  const currency = econ?.currency || settlement;
+  const scale = econ?.currencyScale ?? 2;
+  const ticketMinMinor = econ?.ticketMinMinor ?? investableFloor(item);
+  const targetMinor = econ?.fundingTargetMinor ?? item.fundingAskMinor ?? null;
+  const profitBps = econ?.profitBps ?? (item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined ? item.expectedMultipleBps - 10_000 : null);
+  const termDays = econ?.termDays ?? null;
+  const closeDate = econ?.closeDate ?? item.fundingDeadline ?? null;
+  return {
+    econ,
+    currency,
+    scale,
+    ticketMinMinor,
+    targetMinor,
+    profitBps,
+    termDays,
+    closeDate,
+    realiseDate: econ?.maturityDate ?? (closeDate && termDays !== null ? addDaysIso(closeDate, termDays) : null),
+    platformFeeBps: econ?.platformFeeBps ?? null,
+    settlementDelayDays: econ?.settlementDelayDays ?? null,
+  };
+}
+/** Add a whole number of days to a YYYY-MM-DD date, returning the same format (or null on bad input). */
+function addDaysIso(value: string, days: number): string | null {
+  const base = new Date(value);
+  if (Number.isNaN(base.getTime())) return null;
+  base.setUTCDate(base.getUTCDate() + Number(days || 0));
+  return base.toISOString().slice(0, 10);
+}
+/** Format a minor-unit amount in the opportunity's own currency and scale. */
+const fmtEcon = (minor: number | null | undefined, currency: string, scale: number) => moneyMinor(Number(minor || 0), currency, scale);
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -144,7 +186,7 @@ function loadWatchlist(): string[] {
     return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
   } catch { return []; }
 }
-type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null };
+type PurchaseTarget = { id: string; name: string; expectedMultipleBps: number | null; economics?: DeskEconomics | null };
 
 /**
  * Carbon Credit desk — an ATLAS workspace.
@@ -306,7 +348,7 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
     setTarget(nextTarget);
     setMessage("");
     setFundingSource("COMBINED");
-    setAmount(Math.max(suggested, Math.max(available, 100_000)));
+    setAmount(Math.max(suggested, CARBON_MIN_INVESTMENT_MINOR));
   };
 
   // Refresh the funding quote (conversion + affordability) as the amount or
@@ -365,6 +407,7 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
     const verified = item.verificationStatus === "VERIFIED";
     const watched = watchlist.includes(item.id);
     const minimum = investableFloor(item);
+    const view = economicsView(item, settlement);
     return <div className={`cc-pin-card${selectedId === item.id ? " is-active" : ""}`} key={item.id} role="button" tabIndex={0} onClick={() => setSelectedId(item.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(item.id); } }}>
       <div className="cc-pin-card-top">
         <span className="cc-pin-glyph"><TypeIcon size={15}/></span>
@@ -389,12 +432,30 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
         <span>You can invest from <b>{fmtMinor(minimum)}</b></span>
         <span>Projected profit on {fmtMinor(minimum)} <b className="cc-profit">{fmtProfit(minimum, item.expectedMultipleBps)}</b></span>
       </div>
+      <div className="cc-econ-panel" aria-label="Economic profile">
+        <div className="cc-econ-row">
+          <div className="cc-econ-item"><span>Currency</span><b>{view.currency}</b></div>
+          <div className="cc-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+          <div className="cc-econ-item"><span>Funding target</span><b>{view.targetMinor !== null ? fmtEcon(view.targetMinor, view.currency, view.scale) : "—"}</b></div>
+        </div>
+        <div className="cc-econ-row">
+          <div className="cc-econ-item"><span>Profit at maturity</span><b className="cc-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b></div>
+          <div className="cc-econ-item"><span>Term</span><b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></div>
+          <div className="cc-econ-item"><span>Platform fee</span><b>{view.platformFeeBps !== null ? fmtPercent(view.platformFeeBps) : "—"}</b></div>
+        </div>
+        <div className="cc-econ-row">
+          <div className="cc-econ-item"><span>Investment closes</span><b>{formatDate(view.closeDate)}</b></div>
+          <div className="cc-econ-item"><span>Profit realised</span><b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b></div>
+          <div className="cc-econ-item"><span>Payout</span><b className={view.settlementDelayDays !== null ? "cc-delay" : "cc-ok"}>{view.settlementDelayDays !== null ? `up to +${view.settlementDelayDays}d delay` : "On schedule"}</b></div>
+        </div>
+        {view.settlementDelayDays !== null && <div className="cc-econ-delay"><CalendarClock size={12}/> Settlement for this opportunity is scheduled with a system-delay allowance of up to {view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}; the payout lands on the administrator's settlement run.</div>}
+      </div>
       {item.fundable && <div className="cc-progress">
         <div className="cc-progress-label"><span>Funding progress</span><span>{fmtPercent(item.fundedBps)} of {fmtMinor(item.fundingAskMinor ?? 0)}</span></div>
         <div className="cc-progress-bar"><i style={{ width: `${Math.max(0, Math.min(100, Math.round(item.fundedBps / 100)))}%` }} /></div>
       </div>}
       <div className="cc-pin-card-invest">
-        <button type="button" className="cc-btn cc-btn--invest" onClick={(event) => { event.stopPropagation(); openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, minimum); }}><Coins size={14}/> Invest now</button>
+        <button type="button" className="cc-btn cc-btn--invest" onClick={(event) => { event.stopPropagation(); openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency)); }}><Coins size={14}/> Invest now</button>
       </div>
     </div>;
   };
@@ -402,6 +463,7 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
   const renderDossier = (item: CarbonOpportunity) => {
     const TypeIcon = TYPE_ICON[item.creditType];
     const verified = item.verificationStatus === "VERIFIED";
+    const view = economicsView(item, settlement);
     return <aside className="cc-dossier-drawer" aria-label="Project dossier">
       <div className="cc-dossier-head">
         <div>
@@ -428,6 +490,24 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
         <div className="cc-dossier-stat"><span>Projected profit at minimum</span><b className="cc-profit">{fmtProfit(investableFloor(item), item.expectedMultipleBps)}</b></div>
         <div className="cc-dossier-stat"><span>Stage</span><b>{carbonStageLabel(item.stage)}</b></div>
       </div>
+      <div className="cc-econ-panel" aria-label="Economic profile">
+        <div className="cc-econ-row">
+          <div className="cc-econ-item"><span>Currency</span><b>{view.currency}</b></div>
+          <div className="cc-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+          <div className="cc-econ-item"><span>Funding target</span><b>{view.targetMinor !== null ? fmtEcon(view.targetMinor, view.currency, view.scale) : "—"}</b></div>
+        </div>
+        <div className="cc-econ-row">
+          <div className="cc-econ-item"><span>Profit at maturity</span><b className="cc-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b></div>
+          <div className="cc-econ-item"><span>Term</span><b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></div>
+          <div className="cc-econ-item"><span>Platform fee</span><b>{view.platformFeeBps !== null ? fmtPercent(view.platformFeeBps) : "—"}</b></div>
+        </div>
+        <div className="cc-econ-row">
+          <div className="cc-econ-item"><span>Investment closes</span><b>{formatDate(view.closeDate)}</b></div>
+          <div className="cc-econ-item"><span>Profit realised</span><b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b></div>
+          <div className="cc-econ-item"><span>Payout</span><b className={view.settlementDelayDays !== null ? "cc-delay" : "cc-ok"}>{view.settlementDelayDays !== null ? `up to +${view.settlementDelayDays}d delay` : "On schedule"}</b></div>
+        </div>
+        {view.settlementDelayDays !== null && <div className="cc-econ-delay"><CalendarClock size={12}/> Settlement for this opportunity is scheduled with a system-delay allowance of up to {view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}; the payout lands on the administrator's settlement run.</div>}
+      </div>
       {item.fundable
         ? <div className="cc-progress">
             <div className="cc-progress-label"><span>Funding progress</span><span>{fmtPercent(item.fundedBps)} of {fmtMinor(item.fundingAskMinor ?? 0)}</span></div>
@@ -451,7 +531,7 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
       {item.highlights.length > 0 && <div className="cc-dossier-tags">{item.highlights.slice(0, 5).map((value) => <span className="cc-chip" key={value}>{value}</span>)}</div>}
 
       <div className="cc-admin-actions">
-        <button type="button" className="cc-btn cc-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps }, investableFloor(item))}><Coins size={14}/> Invest now from {fmtMinor(investableFloor(item))}</button>
+        <button type="button" className="cc-btn cc-btn--invest" onClick={() => openPurchase({ id: item.id, name: item.title, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency))}><Coins size={14}/> Invest now from {fmtMinor(investableFloor(item))}</button>
         <button type="button" className={`cc-btn cc-btn--ghost cc-btn--sm`} onClick={() => toggleWatch(item.id)}><Star size={13} fill={watchlist.includes(item.id) ? "currentColor" : "none"}/> {watchlist.includes(item.id) ? "Watching" : "Watch"}</button>
       </div>
     </aside>;
@@ -673,7 +753,30 @@ export function CustomerCarbonCredit({ push }: { push: (message: string) => void
         </div>
         <div className="cc-modal-body">
           <div className="cc-card-title" style={{ fontWeight: 700 }}>{target.name}</div>
-          <div className="cc-card-meta"><span>Funded through the wallet ledger</span><span>Expected {fmtMultiple(target.expectedMultipleBps)}</span></div>
+          <div className="cc-card-meta">
+            <span>Funded through the wallet ledger</span>
+            <span>Expected {fmtMultiple(target.expectedMultipleBps)}</span>
+            {target.economics && <span className="cc-profit">+{fmtPercent(target.economics.profitBps)} profit</span>}
+          </div>
+
+          {target.economics && <div className="cc-econ-panel cc-econ-panel--modal" aria-label="Economic profile">
+            <div className="cc-econ-row">
+              <div className="cc-econ-item"><span>Currency</span><b>{target.economics.currency}</b></div>
+              <div className="cc-econ-item"><span>Invest from</span><b>{fmtEcon(target.economics.ticketMinMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+              <div className="cc-econ-item"><span>Funding target</span><b>{fmtEcon(target.economics.fundingTargetMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+            </div>
+            <div className="cc-econ-row">
+              <div className="cc-econ-item"><span>Profit at maturity</span><b className="cc-profit">+{fmtPercent(target.economics.profitBps)}</b></div>
+              <div className="cc-econ-item"><span>Term</span><b>{target.economics.termDays} days</b></div>
+              <div className="cc-econ-item"><span>Platform fee</span><b>{fmtPercent(target.economics.platformFeeBps)}</b></div>
+            </div>
+            <div className="cc-econ-row">
+              <div className="cc-econ-item"><span>Investment closes</span><b>{formatDate(target.economics.closeDate)}</b></div>
+              <div className="cc-econ-item"><span>Profit realised</span><b>{formatDate(target.economics.maturityDate)}</b></div>
+              <div className="cc-econ-item"><span>Payout</span><b className={target.economics.settlementDelayDays !== null ? "cc-delay" : "cc-ok"}>{target.economics.settlementDelayDays !== null ? `up to +${target.economics.settlementDelayDays}d delay` : "On schedule"}</b></div>
+            </div>
+            <p className="cc-econ-note">Displayed in {target.economics.currency} for reference; your commitment settles in {settlement} through the wallet ledger at the live rate.</p>
+          </div>}
 
           <div className="cc-field">
             <label>Investment amount ({settlement})</label>

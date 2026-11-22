@@ -316,11 +316,35 @@
 .cc-pin-card-invest { display: flex; gap: 8px; }
 .cc-pin-card-invest .cc-btn { flex: 1; }
 .cc-profit { color: var(--cc-verified); }
+.cc-delay { color: var(--cc-reference); }
 .cc-invest-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .cc-invest-figure { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--cc-line); background: var(--cc-well); display: grid; gap: 2px; }
 .cc-invest-figure span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--cc-muted); }
 .cc-invest-figure b { font-size: 0.9rem; }
 .cc-invest-figure--profit { border-color: var(--cc-verified-line); }
+
+/* ---------------------- Economic profile (auto-assigned) ---------------------- */
+.cc-econ-panel {
+  display: grid; gap: 8px; margin-top: 10px; padding: 12px; border-radius: var(--cc-radius);
+  border: 1px solid var(--cc-verified-line);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--arb-color-accent) 10%, transparent), color-mix(in srgb, var(--arb-color-warning) 6%, transparent)), var(--cc-well);
+}
+.cc-econ-panel--modal { margin: 10px 0 4px; }
+.cc-econ-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.cc-econ-item { display: grid; gap: 2px; min-width: 0; }
+.cc-econ-item > span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--cc-muted); }
+.cc-econ-item > b { font-size: 0.82rem; font-weight: 700; color: var(--cc-white); overflow-wrap: anywhere; }
+.cc-econ-delay {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px;
+  font-size: 0.7rem; line-height: 1.3;
+  color: var(--cc-reference);
+  background: color-mix(in srgb, var(--arb-color-warning) 12%, transparent);
+}
+.cc-econ-note { margin: 2px 0 0; font-size: 0.68rem; color: var(--cc-muted); }
+.cc-chip--profit { border-color: var(--cc-verified-line); color: var(--cc-verified); background: color-mix(in srgb, var(--arb-color-accent) 14%, transparent); }
+@media (max-width: 560px) {
+  .cc-econ-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 .cc-card-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.74rem; color: var(--cc-muted); align-items: center; }
 

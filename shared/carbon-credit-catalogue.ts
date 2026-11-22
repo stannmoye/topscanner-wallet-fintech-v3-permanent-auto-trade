@@ -32,6 +32,7 @@
  */
 
 import { flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 /** The kinds of carbon-credit project the desk can carry. */
 export type CarbonCreditType =
@@ -205,6 +206,14 @@ export type CarbonOpportunity = {
   fundable: boolean;
   /** VERIFIED for administrator instruments, REFERENCE for cited public references. */
   verificationStatus: CarbonVerificationStatus;
+  /**
+   * The opportunity's economic profile — its investable amount band, profit,
+   * term, close date and platform fee — auto-assigned from the shared
+   * desk-economics engine (server/deskEconomics.ts) on first sight and
+   * overridable by an administrator. Present on every opportunity the desk
+   * serves; absent only on a bare catalogue record.
+   */
+  economics?: DeskEconomics | null;
 };
 
 export type CarbonInvestmentSource = {
