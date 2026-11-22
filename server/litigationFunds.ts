@@ -26,6 +26,8 @@ import {
   type FxRateSnapshot,
 } from "./modules/trading-wallet-fx";
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
+import type { DeskEconomics } from "@shared/investment-economics";
 
 type Db = mysql.PoolConnection;
 
@@ -76,6 +78,29 @@ const CREATE_POSITIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS litigation_fund_p
 const SETTLEMENT_CURRENCY = "USD";
 export const LITIGATION_COMBINED_SOURCE = "COMBINED";
 const MAX_PURCHASE_MINOR = 100_000_000; // $1,000,000 ceiling per purchase
+
+/** The desk key this desk's auto-assigned economics are stored under. */
+const LITIGATION_DESK_KEY = "litigation" as const;
+
+/**
+ * Read one case's auto-assigned economic profile, assigning and persisting it on
+ * first sight. Fails soft: a storage problem still yields the deterministically
+ * derived profile so a card never loses its offer details.
+ */
+async function getOrAssignLitigationEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics(LITIGATION_DESK_KEY, instrumentId);
+  } catch (error) {
+    console.error("[LitigationFunds] Failed to assign economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
+
+/** Merge a case's economic profile without touching its published legal data. */
+function withLitigationEconomics(caseItem: LitigationCase, economics: DeskEconomics | null | undefined): LitigationCase {
+  if (!economics) return caseItem;
+  return { ...caseItem, economics };
+}
 
 export type LitigationInstrumentType = "CASE" | "BUNDLE";
 
@@ -359,6 +384,19 @@ export async function getLitigationFundsDashboard(userId: number) {
   ]);
 
   const cases = [...adminCases, ...catalogue.cases].sort(compareLitigationCases);
+
+  // Every case the desk shows carries an auto-assigned economic profile
+  // (investable amount, profit, term, currency, platform fee and any occasional
+  // settlement delay). It is read as one batch and merged additively; the
+  // published legal data, source and observation date are never touched.
+  let economicsByCase = new Map<string, DeskEconomics>();
+  try {
+    economicsByCase = await getDeskEconomicsMap(LITIGATION_DESK_KEY, cases.map((item) => item.id));
+  } catch (error) {
+    console.error("[LitigationFunds] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const casesWithEconomics = cases.map((item) => withLitigationEconomics(item, economicsByCase.get(item.id)));
+
   const sources = adminCases.length
     ? [...catalogue.sources, {
         name: "Arbitrade litigation desk — administrator published",
@@ -389,7 +427,7 @@ export async function getLitigationFundsDashboard(userId: number) {
   };
   const usd = balances.find((b) => b.currency === SETTLEMENT_CURRENCY);
   return {
-    cases,
+    cases: casesWithEconomics,
     bundles,
     positions,
     balances,

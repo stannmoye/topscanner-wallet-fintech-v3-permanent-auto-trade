@@ -10,6 +10,7 @@ const catalogue = readFileSync(new URL("../shared/litigation-funds-catalogue.ts"
 const serverDossiers = readFileSync(new URL("./litigationFundDossiers.ts", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./litigationFunds.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../client/src/components/litigation-funds.css", import.meta.url), "utf8");
 
 describe("Litigation Funds case-linked capital desk", () => {
   it("exposes one Finance destination that opens the dedicated dossier console", () => {
@@ -268,5 +269,48 @@ describe("Litigation Funds case-linked capital desk", () => {
     expect(serverRouters).toContain("deleteLitigationBundle: adminProcedure.input(z.object({ bundleId");
     expect(serverRouters).toContain("scenarios: z.array(litigationScenarioSchema).max(3).optional()");
     expect(serverRouters).toContain("milestones: z.array(litigationMilestoneSchema).max(10).optional()");
+  });
+
+  it("auto-assigns every case a richer economic profile — amount, profit, term, currency, platform fee and an occasional settlement delay", () => {
+    // The shared, environment-neutral engine stays the single source of the profile,
+    // and the catalogue carries it on every served case (type-only import keeps the
+    // catalogue free of node/process dependencies so it also runs as the browser fallback).
+    expect(catalogue).toContain('import type { DeskEconomics } from "./investment-economics"');
+    expect(catalogue).toContain("economics?: DeskEconomics");
+
+    // The litigation desk merges the profile into every served case, additively.
+    expect(serverDesk).toContain('import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics"');
+    expect(serverDesk).toContain('const LITIGATION_DESK_KEY = "litigation" as const;');
+    expect(serverDesk).toContain("function withLitigationEconomics(");
+    expect(serverDesk).toContain("getDeskEconomicsMap(LITIGATION_DESK_KEY");
+    expect(serverDesk).toContain("cases: casesWithEconomics");
+
+    // The administrator can view and override the auto-assigned values.
+    expect(serverRouters).toContain("deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds");
+
+    // The customer card and purchase modal surface the extended profile.
+    expect(customerUi).toContain("function economicsView(");
+    expect(customerUi).toContain('className="lf-card-econ"');
+    expect(customerUi).toContain('className="lf-econ-panel"');
+    expect(customerUi).toContain("lf-econ-delay");
+    expect(customerUi).toContain("currencyMinorToUsdMinor");
+    expect(customerUi).toContain("settlementDelayDays");
+
+    // The admin console gets an editable economics console with a re-roll.
+    expect(adminUi).toContain("trpc.adminOperations.deskEconomicsBatch.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.setDeskEconomics.useMutation");
+    expect(adminUi).toContain("trpc.adminOperations.reassignDeskEconomics.useMutation");
+    expect(adminUi).toContain('{ desk: "litigation", instrumentIds: economicsIds }');
+    expect(adminUi).toContain("const econFormFor = (id: string)");
+    expect(adminUi).toContain("Save economic profile");
+    expect(adminUi).toContain("Re-roll auto profile");
+    expect(adminUi).toContain("ECONOMICS_BOUNDS");
+    expect(adminUi).toContain("INVESTMENT_CURRENCIES");
+    expect(adminUi).toContain("currencyMinorToUsdMinor");
+
+    // The extended profile is styled consistently with the rest of the desk.
+    expect(styles).toContain(".lf-card-econ");
+    expect(styles).toContain(".lf-econ-panel");
+    expect(styles).toContain(".lf-econ-delay");
   });
 });

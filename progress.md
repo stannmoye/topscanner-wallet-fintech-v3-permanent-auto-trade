@@ -1,3 +1,49 @@
+## 2026-11-23 (feat) — Desk economics engine rolled out to the Litigation Funds desk
+
+Sixth desk to carry the auto-assigned economic profile (after Agro, Carbon Credit, Music Royalties,
+IP Royalties and Treasury Bond). Every litigation case now shows an investable amount (USD
+500–1,000,000 equivalent), a 25%–38% profit, a 30–365 day term, a USD-dominant presentation currency,
+a 7%–10% platform fee and an occasional settlement-delay bolt-on — all overridable by an
+administrator. The shared engine/store are unchanged; this pass only wires the Litigation Funds desk
+(desk key `"litigation"`) into them. The desk still settles in USD; the profile is presentation only.
+
+- **Catalogue (`shared/litigation-funds-catalogue.ts`).** `LitigationCase` gains an optional
+  `economics?: DeskEconomics | null`, imported **type-only** from `./investment-economics` so the
+  file stays environment-neutral (the contract test forbids `process.env` / `node:` so it also runs
+  as the browser fallback).
+- **Server (`server/litigationFunds.ts`).** New `LITIGATION_DESK_KEY = "litigation"`;
+  `getLitigationFundsDashboard()` batch-reads the profile via
+  `getDeskEconomicsMap(LITIGATION_DESK_KEY, …)` (try/catch + empty-map fallback) and merges it through
+  a `withLitigationEconomics()` helper that only fills `economics` — the published legal data, source
+  and as-of date are never touched, and the contract-tested
+  `const cases = [...adminCases, ...catalogue.cases].sort(compareLitigationCases)` line is preserved
+  verbatim (the enriched array is a separate `casesWithEconomics`), which is what the dashboard now
+  returns. A `getOrAssignLitigationEconomics()` helper assigns-and-persists on first sight, failing
+  soft to `null`.
+- **Customer desk (`client/src/components/CustomerLitigationFunds.tsx`).** New `economicsView()` /
+  `fmtEcon()` and an `EconomicsView` type. Each case card gains an `Investment offer` block
+  (`lf-card-econ` / `lf-econ-item`, with `lf-econ-delay` for a delayed payout or `lf-econ-ok`
+  "On time"); the "Fund this case" action seeds the amount from
+  `currencyMinorToUsdMinor(view.ticketMinMinor, view.currency)`; the purchase modal re-reads the
+  selected case's profile and carries the same `lf-econ-panel` (`lf-econ-delay` / `lf-econ-ontime`
+  note).
+- **CSS (`client/src/components/litigation-funds.css`).** Added `.lf-card-econ`, `.lf-card-econ-head`,
+  `.lf-card-econ-items`, `.lf-econ-item`, `.lf-econ-item.lf-econ-delay`, `.lf-econ-ok`,
+  `.lf-econ-panel`, `.lf-econ-panel-head`, `.lf-econ-panel-grid`, `.lf-econ-delay`, `.lf-econ-ontime`,
+  derived from the existing `--lf-*` / `--arb-color-*` tokens.
+- **Admin console (`client/src/components/AdminLitigationFunds.tsx`).** The `lf-tabs` rail gains an
+  **Economic profiles** tab (the union is now `"dossiers" | "bundles" | "settle" | "economics"`); it
+  is an editable economics console over the published dossiers (currency, minimum ticket + funding
+  target with USD hints, profit % 25–38, term days, platform fee % 7–10, close/realise dates,
+  optional settlement delay) with **Save economic profile** and **Re-roll auto profile**, wired to
+  `deskEconomicsBatch` / `setDeskEconomics` / `reassignDeskEconomics` for `desk: "litigation"`.
+- **Test (`server/litigation-funds.contract.test.ts`).** New case asserts the litigation wiring
+  (type-only catalogue import + field, server merge + key, router procedure, customer panel classes,
+  admin tab). The full suite passes 206 files / 1676 tests (+1).
+- Verification: `server/litigation-funds.contract.test.ts` 14/14 passed; `pnpm check` clean;
+  `pnpm build:static` succeeded.
+- **Next:** roll the same engine to the last remaining desk (Cooperate Dept).
+
 ## 2026-11-23 (feat) — Desk economics engine rolled out to the Treasury Bond desk
 
 Fifth desk to carry the auto-assigned economic profile (after Agro, Carbon Credit, Music Royalties

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { visibilityAwareRefetchInterval } from "@/visibility-aware-polling";
 import {
-  AlertTriangle, ArrowUpRight, CalendarClock, Check, ChevronLeft, ChevronRight, CircleHelp, Download,
-  Gavel, Globe2, Layers, RefreshCw, Scale, ShieldCheck, Star, TrendingUp, Wallet, X,
+  AlertTriangle, ArrowUpRight, CalendarClock, Check, ChevronLeft, ChevronRight, CircleHelp, Clock, Download,
+  Gavel, Globe2, Layers, RefreshCw, Scale, ShieldCheck, Sparkles, Star, TrendingUp, Wallet, X,
 } from "lucide-react";
 import {
   getLitigationFundsCatalogue,
@@ -20,6 +20,7 @@ import {
   type LitigationRiskGrade,
   type LitigationScenario,
 } from "@shared/litigation-funds-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./litigation-funds.css";
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
@@ -72,6 +73,58 @@ const fmtProfit = (amountMinor: number | null | undefined, multipleBps: number |
   const profit = profitMinor(amountMinor, multipleBps);
   return profit === null ? "—" : `${profit >= 0 ? "+" : ""}${fmtMinor(profit)}`;
 };
+
+/**
+ * The auto-assigned economic profile the server merges onto each case
+ * (investable amount, profit, term, presentation currency, platform fee and any
+ * occasional settlement delay). Absent on the raw public catalogue, so every
+ * consumer must tolerate a null and fall back to the published-only view.
+ */
+type EconomicsView = {
+  econ: DeskEconomics;
+  currency: string;
+  scale: number;
+  symbol: string;
+  ticketMinMinor: number;
+  fundingTargetMinor: number;
+  profitBps: number;
+  termDays: number;
+  closeDate: string;
+  maturityDate: string;
+  platformFeeBps: number;
+  settlementDelayDays: number | null;
+};
+
+function economicsView(caseItem: LitigationCase): EconomicsView | null {
+  const econ = caseItem.economics ?? null;
+  if (!econ) return null;
+  return {
+    econ,
+    currency: econ.currency,
+    scale: econ.currencyScale,
+    symbol: econ.currencySymbol,
+    ticketMinMinor: econ.ticketMinMinor,
+    fundingTargetMinor: econ.fundingTargetMinor,
+    profitBps: econ.profitBps,
+    termDays: econ.termDays,
+    closeDate: econ.closeDate,
+    maturityDate: econ.maturityDate,
+    platformFeeBps: econ.platformFeeBps,
+    settlementDelayDays: econ.settlementDelayDays ?? null,
+  };
+}
+
+/** Format an amount held in the offer's own presentation currency and scale. */
+function fmtEcon(minor: number, currency: string, scale = 2) {
+  const code = String(currency || "USD").toUpperCase();
+  const digits = Math.min(Math.max(0, Math.round(Number.isFinite(scale) ? scale : 2)), 8);
+  const value = Number(minor || 0) / Math.pow(10, digits);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: code, maximumFractionDigits: digits }).format(value);
+  } catch {
+    return `${code} ${value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  }
+}
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
@@ -275,6 +328,10 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
   const activeFilters = [country !== "ALL", claimType !== "ALL", caseClass !== "ALL", merit !== "ALL", stage !== "ALL", status !== "ALL", fundableOnly, watchlistOnly].filter(Boolean).length;
   const analytics = useMemo(() => buildLitigationAnalytics(cases), [cases]);
   const maxClassCount = Math.max(1, ...analytics.byClass.map((bucket) => bucket.count));
+  // The offer details the customer reviewed, re-read for the purchase modal so an
+  // active commitment carries the same amount band, profit, term and fee.
+  const selectedCase = target ? cases.find((item) => item.id === target.id) : undefined;
+  const selectedEconomics = selectedCase ? economicsView(selectedCase) : null;
 
   const toggleWatch = (id: string) => setWatchlist((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   const toggleCompare = (id: string) => setCompareIds((current) => current.includes(id) ? current.filter((value) => value !== id) : current.length >= 3 ? current : [...current, id]);
@@ -428,6 +485,7 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
         {pageRows.map((item) => {
           const watched = watchlist.includes(item.id);
           const comparing = compareIds.includes(item.id);
+          const view = economicsView(item);
           return <article className={`lf-card${item.fundable ? " is-fundable" : ""}`} key={item.id}>
             <div className="lf-card-head">
               <div>
@@ -492,9 +550,24 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
               <span>You can invest from <b>{fmtMinor(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR))}</b></span>
               <span>Projected profit <b className="lf-profit">{fmtProfit(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR), item.expectedMultipleBps)}</b></span>
             </div>
+            {view && <div className="lf-card-econ">
+              <div className="lf-card-econ-head"><Sparkles size={12}/> Investment offer</div>
+              <div className="lf-card-econ-items">
+                <div className="lf-econ-item"><span>Currency</span><b>{view.currency} {view.symbol}</b></div>
+                <div className="lf-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+                <div className="lf-econ-item"><span>Profit</span><b className="lf-profit">{fmtPercent(view.profitBps)}</b></div>
+                <div className="lf-econ-item"><span>Term</span><b>{view.termDays} days</b></div>
+                <div className="lf-econ-item"><span>Platform fee</span><b>{fmtPercent(view.platformFeeBps)}</b></div>
+                <div className="lf-econ-item"><span>Closes</span><b>{formatDate(view.closeDate)}</b></div>
+                <div className="lf-econ-item"><span>Profit realised</span><b>{formatDate(view.maturityDate)}</b></div>
+                {view.settlementDelayDays
+                  ? <div className="lf-econ-item lf-econ-delay"><span>Payout delay</span><b>+{view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}</b></div>
+                  : <div className="lf-econ-item"><span>Payout</span><b className="lf-econ-ok">On time</b></div>}
+              </div>
+            </div>}
             <div className="lf-card-actions" style={{ justifyContent: "space-between" }}>
               <span className="lf-card-meta" title={item.sourceUrl || item.source}><Scale size={11}/> {item.asOf} · {item.source}{item.verified ? " · desk-verified" : " · discovery"}</span>
-              <button className="lf-btn primary" onClick={() => openPurchase({ type: "CASE", id: item.id, name: item.caseName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this case <ChevronRight size={14}/></button>
+              <button className="lf-btn primary" onClick={() => openPurchase({ type: "CASE", id: item.id, name: item.caseName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR, view ? currencyMinorToUsdMinor(view.ticketMinMinor, view.currency) : 0))}>Fund this case <ChevronRight size={14}/></button>
             </div>
           </article>;
         })}
@@ -741,6 +814,23 @@ export function CustomerLitigationFunds({ push }: { push: (message: string) => v
         <div className="lf-modal-body">
           <div className="lf-card-title">{target.name}</div>
           <div className="lf-card-meta"><span>{target.type === "CASE" ? "Single-case share" : "Pro-rata bundle share"}</span><span>Expected {fmtMultiple(target.expectedMultipleBps)}</span></div>
+
+          {selectedEconomics && <div className="lf-econ-panel">
+            <div className="lf-econ-panel-head"><Sparkles size={13}/> Investment offer · {selectedEconomics.settlementDelayDays ? "may settle late" : "on schedule"}</div>
+            <div className="lf-econ-panel-grid">
+              <div className="lf-econ-item"><span>Currency</span><b>{selectedEconomics.currency} {selectedEconomics.symbol}</b></div>
+              <div className="lf-econ-item"><span>Invest from</span><b>{fmtEcon(selectedEconomics.ticketMinMinor, selectedEconomics.currency, selectedEconomics.scale)}</b></div>
+              <div className="lf-econ-item"><span>Funding target</span><b>{fmtEcon(selectedEconomics.fundingTargetMinor, selectedEconomics.currency, selectedEconomics.scale)}</b></div>
+              <div className="lf-econ-item"><span>Profit</span><b className="lf-profit">{fmtPercent(selectedEconomics.profitBps)}</b></div>
+              <div className="lf-econ-item"><span>Term</span><b>{selectedEconomics.termDays} days</b></div>
+              <div className="lf-econ-item"><span>Platform fee</span><b>{fmtPercent(selectedEconomics.platformFeeBps)}</b></div>
+              <div className="lf-econ-item"><span>Closes</span><b>{formatDate(selectedEconomics.closeDate)}</b></div>
+              <div className="lf-econ-item"><span>Profit realised</span><b>{formatDate(selectedEconomics.maturityDate)}</b></div>
+            </div>
+            {selectedEconomics.settlementDelayDays
+              ? <div className="lf-econ-delay"><Clock size={13}/> A system settlement delay of up to {selectedEconomics.settlementDelayDays} day{selectedEconomics.settlementDelayDays === 1 ? "" : "s"} applies to this opportunity, so the payout may arrive shortly after the realisation date.</div>
+              : <div className="lf-econ-ontime"><Check size={13}/> This opportunity settles on the realisation date.</div>}
+          </div>}
 
           <div className="lf-field">
             <label>Investment amount ({settlement})</label>

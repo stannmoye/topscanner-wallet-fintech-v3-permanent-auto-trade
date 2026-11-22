@@ -47,6 +47,7 @@
  */
 
 import { flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 export type LitigationStage =
   | "FILED"
@@ -191,6 +192,13 @@ export type LitigationCase = {
   /** True only when an administrator has published scenarios and a funding target. */
   fundable: boolean;
   highlights: string[];
+  /**
+   * Auto-assigned economic profile: the investable amount band, profit, term,
+   * presentation currency, platform fee and any occasional settlement delay.
+   * Derived server-side and additive — an administrator can override it from
+   * the admin console without touching the case's published legal data.
+   */
+  economics?: DeskEconomics | null;
 };
 
 export type LitigationBundle = {

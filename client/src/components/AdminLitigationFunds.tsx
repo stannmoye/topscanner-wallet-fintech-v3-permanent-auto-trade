@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, Check, Gavel, Layers, RefreshCw, Scale, ShieldCheck, Trash2,
+  AlertTriangle, Check, Gauge, Gavel, Layers, RefreshCw, Scale, ShieldCheck, Trash2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS, flagFor } from "@shared/country-options";
@@ -12,6 +12,7 @@ import {
   isInsolvency,
   type LitigationRiskGrade,
 } from "@shared/litigation-funds-catalogue";
+import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor } from "@shared/investment-economics";
 import "./litigation-funds.css";
 
 const STAGE_OPTIONS = ["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"];
@@ -54,6 +55,20 @@ const money = (minor: number | null | undefined) => {
 };
 const multiple = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 10_000).toFixed(2)}x`);
 const percent = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 100).toFixed(Number(bps) % 100 === 0 ? 0 : 1)}%`);
+
+/** Administrator-editable economic profile for one case (major units / percent / whole days). */
+type EconForm = {
+  currency: string; ticketMin: string; fundingTarget: string; profitPercent: string;
+  termDays: string; platformFeePercent: string; settlementDelay: string; closeDate: string; maturityDate: string;
+};
+const econScale = (code: string) => currencyByCode(code)?.scale ?? 2;
+const toMinorScaled = (value: string, scale: number): number | null => (value.trim() === "" ? null : Math.round(Number(value) * Math.pow(10, scale)));
+const fromMinorScaled = (minor: number | null | undefined, scale: number): string =>
+  minor === null || minor === undefined ? "" : String(Number(minor) / Math.pow(10, scale));
+const emptyEcon = (): EconForm => ({
+  currency: "USD", ticketMin: "", fundingTarget: "", profitPercent: "",
+  termDays: "", platformFeePercent: "", settlementDelay: "", closeDate: "", maturityDate: "",
+});
 
 type DossierForm = {
   caseName: string; claimant: string; defendant: string; claimType: string; countryCode: string; court: string; counsel: string;
@@ -103,10 +118,11 @@ export function AdminLitigationFunds() {
   const bundlesQuery = trpc.adminOperations.litigationBundles.useQuery(undefined, { refetchInterval: 20000 });
   const openCasesQuery = trpc.adminOperations.litigationOpenCases.useQuery(undefined, { refetchInterval: 20000 });
 
-  const [tab, setTab] = useState<"dossiers" | "bundles" | "settle">("dossiers");
+  const [tab, setTab] = useState<"dossiers" | "bundles" | "settle" | "economics">("dossiers");
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
   const [settleForms, setSettleForms] = useState<Record<string, { outcome: string; multiplePercent: string; reason: string }>>({});
+  const [econForms, setEconForms] = useState<Record<string, EconForm>>({});
 
   const [dossier, setDossier] = useState<DossierForm>(emptyDossier);
   const [editingDossierId, setEditingDossierId] = useState<string | null>(null);
@@ -364,6 +380,75 @@ export function AdminLitigationFunds() {
     settleCase.mutate({ instrumentId: row.instrumentId, outcome: form.outcome as any, funderMultipleBps, reason: form.reason.trim() || "Administrator settlement" });
   };
 
+  // Every administrator-published case dossier is a candidate for an
+  // auto-assigned economic profile the administrator can review and override.
+  const economicsIds = useMemo(
+    () => dossierRows.map((row: any) => String(row.dossierId)).filter(Boolean),
+    [dossierRows],
+  );
+  const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
+    { desk: "litigation", instrumentIds: economicsIds },
+    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+  );
+  const invalidateEconomics = () => {
+    void utils.adminOperations.deskEconomicsBatch.invalidate();
+    void utils.customer.litigationFunds.market.invalidate();
+  };
+  const saveEconomics = trpc.adminOperations.setDeskEconomics.useMutation({
+    onSuccess: (row: any) => { setEconForms((current) => { const next = { ...current }; delete next[row.instrumentId]; return next; }); invalidateEconomics(); report("success", `Economic profile saved for ${row.instrumentId}.`); },
+    onError,
+  });
+  const reassignEconomics = trpc.adminOperations.reassignDeskEconomics.useMutation({
+    onSuccess: (row: any) => { invalidateEconomics(); report("success", row.source === "ADMIN" ? `${row.instrumentId} keeps its administrator profile.` : `Re-rolled the auto profile for ${row.instrumentId}.`); },
+    onError,
+  });
+
+  const econById = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const row of (economicsQuery.data || []) as any[]) map.set(String(row.instrumentId), row);
+    return map;
+  }, [economicsQuery.data]);
+  const econFormFor = (id: string): EconForm => {
+    const existing = econForms[id];
+    if (existing) return existing;
+    const profile = econById.get(id);
+    if (!profile) return emptyEcon();
+    const scale = econScale(profile.currency);
+    return {
+      currency: profile.currency,
+      ticketMin: fromMinorScaled(profile.ticketMinMinor, scale),
+      fundingTarget: fromMinorScaled(profile.fundingTargetMinor, scale),
+      profitPercent: fromBpsToPercent(profile.profitBps),
+      termDays: profile.termDays === null || profile.termDays === undefined ? "" : String(profile.termDays),
+      platformFeePercent: fromBpsToPercent(profile.platformFeeBps),
+      settlementDelay: profile.settlementDelayDays === null || profile.settlementDelayDays === undefined ? "" : String(profile.settlementDelayDays),
+      closeDate: profile.closeDate || "",
+      maturityDate: profile.maturityDate || "",
+    };
+  };
+  const setEconForm = (id: string, key: keyof EconForm, value: string) => setEconForms((current) => ({ ...current, [id]: { ...econFormFor(id), [key]: value } }));
+  const econNameFor = (id: string) => dossierRows.find((row: any) => String(row.dossierId) === id)?.caseName || id;
+  const runSaveEconomics = (id: string) => {
+    const form = econFormFor(id);
+    const scale = econScale(form.currency);
+    const patch: any = { currency: form.currency };
+    const ticket = toMinorScaled(form.ticketMin, scale);
+    if (ticket !== null) patch.ticketMinMinor = ticket;
+    const target = toMinorScaled(form.fundingTarget, scale);
+    if (target !== null) patch.fundingTargetMinor = target;
+    if (form.profitPercent.trim()) patch.profitBps = toBpsFromPercent(form.profitPercent);
+    if (form.termDays.trim()) patch.termDays = Math.round(Number(form.termDays));
+    if (form.platformFeePercent.trim()) patch.platformFeeBps = toBpsFromPercent(form.platformFeePercent);
+    patch.settlementDelayDays = form.settlementDelay.trim() === "" ? null : Math.round(Number(form.settlementDelay));
+    if (form.closeDate.trim()) patch.closeDate = form.closeDate.trim();
+    if (form.maturityDate.trim()) patch.maturityDate = form.maturityDate.trim();
+    saveEconomics.mutate({ desk: "litigation", instrumentId: id, ...patch });
+  };
+  const runReassignEconomics = (id: string) => {
+    if (!window.confirm(`Re-roll the auto-assigned economic profile for ${id}? An administrator profile is not affected.`)) return;
+    reassignEconomics.mutate({ desk: "litigation", instrumentId: id, salt: `${Date.now()}-${Math.round(Math.random() * 1e6)}` });
+  };
+
   return <div className="arb-page portal-page lf-page">
     <div className="portal-page-top">
       <div>
@@ -384,6 +469,7 @@ export function AdminLitigationFunds() {
       <button type="button" className={`lf-tab${tab === "dossiers" ? " is-active" : ""}`} onClick={() => setTab("dossiers")}>Dossiers <span className="lf-tab-count">{dossierRows.length}</span></button>
       <button type="button" className={`lf-tab${tab === "bundles" ? " is-active" : ""}`} onClick={() => setTab("bundles")}>Bundles <span className="lf-tab-count">{bundleRows.length}</span></button>
       <button type="button" className={`lf-tab${tab === "settle" ? " is-active" : ""}`} onClick={() => setTab("settle")}>Settle open cases <span className="lf-tab-count">{openCaseRows.length}</span></button>
+      <button type="button" className={`lf-tab${tab === "economics" ? " is-active" : ""}`} onClick={() => setTab("economics")}>Economic profiles <span className="lf-tab-count">{economicsIds.length}</span></button>
     </nav>
 
     {tab === "dossiers" && <div className="lf-admin">
@@ -675,6 +761,84 @@ export function AdminLitigationFunds() {
               <button className="lf-btn primary" type="button" disabled={settleCase.isPending} onClick={() => runSettleCase(row)}>
                 {settleCase.isPending ? "Settling…" : `Settle as ${form.outcome} at ${form.outcome === "LOSE" ? "0.00x" : multiple(toBpsFromPercent(form.multiplePercent))}`} <Check size={14}/>
               </button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {tab === "economics" && <div className="lf-admin">
+      <div className="lf-admin-list">
+        <div className="lf-section-head"><div><span className="eyebrow">Auto-assigned economics ({economicsIds.length})</span><h2>Amount, profit, term, currency &amp; platform fee</h2></div></div>
+        <div className="lf-notice">
+          <Gauge size={15}/>
+          <div>Every case gets a deterministic economic profile the moment it appears on the customer desk — an investable amount from {money(ECONOMICS_BOUNDS.ticketMinMinorUsd)}, a {percent(ECONOMICS_BOUNDS.profitMinBps)}–{percent(ECONOMICS_BOUNDS.profitMaxBps)} profit, a term of {ECONOMICS_BOUNDS.termMinDays}–{ECONOMICS_BOUNDS.termMaxDays} days, a presentation currency and a {percent(ECONOMICS_BOUNDS.platformFeeMinBps)}–{percent(ECONOMICS_BOUNDS.platformFeeMaxBps)} platform fee. Override any value here; a saved profile is marked administrator-authored and is never re-rolled automatically.</div>
+        </div>
+        {!economicsIds.length && <div className="lf-empty"><Gauge size={16}/> No dossiers to profile yet. Publish a dossier above and its economic profile appears here.</div>}
+        {economicsIds.map((id) => {
+          const econForm = econFormFor(id);
+          const profile = econById.get(id);
+          const scale = econScale(econForm.currency);
+          const ticketMinor = toMinorScaled(econForm.ticketMin, scale);
+          const targetMinor = toMinorScaled(econForm.fundingTarget, scale);
+          return <div className="lf-admin-row" key={id}>
+            <div className="lf-admin-row-head">
+              <div>
+                <strong>{econNameFor(id)}</strong>
+                <div className="lf-card-meta"><span className="lf-mono">ID {id}</span></div>
+              </div>
+              <div className="lf-badges">
+                <span className="lf-badge">{profile?.source === "ADMIN" ? "Administrator profile" : "Auto-assigned"}</span>
+                {profile?.currency && <span className="lf-badge">{profile.currency}</span>}
+              </div>
+            </div>
+            <div className="lf-two">
+              <div className="lf-field"><label>Presentation currency</label>
+                <select value={econForm.currency} onChange={(e) => setEconForm(id, "currency", e.target.value)}>
+                  {INVESTMENT_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+                </select>
+                <small>USD is the dominant choice; the others are for display.</small>
+              </div>
+              <div className="lf-field"><label>Minimum ticket</label>
+                <input type="number" min="0" step="1" value={econForm.ticketMin} onChange={(e) => setEconForm(id, "ticketMin", e.target.value)} />
+                <small>{ticketMinor !== null ? `${money(currencyMinorToUsdMinor(ticketMinor, econForm.currency))} USD equivalent · ${scale} decimal place${scale === 1 ? "" : "s"}` : `Enter the amount in ${econForm.currency}`}</small>
+              </div>
+            </div>
+            <div className="lf-two">
+              <div className="lf-field"><label>Funding target</label>
+                <input type="number" min="0" step="1" value={econForm.fundingTarget} onChange={(e) => setEconForm(id, "fundingTarget", e.target.value)} />
+                <small>{targetMinor !== null ? `${money(currencyMinorToUsdMinor(targetMinor, econForm.currency))} USD equivalent` : "The capital target"}</small>
+              </div>
+              <div className="lf-field"><label>Profit (%)</label>
+                <input type="number" min="25" max="38" step="0.25" value={econForm.profitPercent} onChange={(e) => setEconForm(id, "profitPercent", e.target.value)} />
+                <small>Between {percent(ECONOMICS_BOUNDS.profitMinBps)} and {percent(ECONOMICS_BOUNDS.profitMaxBps)}.</small>
+              </div>
+            </div>
+            <div className="lf-two">
+              <div className="lf-field"><label>Term (days)</label>
+                <input type="number" min="30" max="365" step="1" value={econForm.termDays} onChange={(e) => setEconForm(id, "termDays", e.target.value)} />
+                <small>Days from funding close to realising the profit ({ECONOMICS_BOUNDS.termMinDays}–{ECONOMICS_BOUNDS.termMaxDays}).</small>
+              </div>
+              <div className="lf-field"><label>Platform fee (%)</label>
+                <input type="number" min="7" max="10" step="0.25" value={econForm.platformFeePercent} onChange={(e) => setEconForm(id, "platformFeePercent", e.target.value)} />
+                <small>Between {percent(ECONOMICS_BOUNDS.platformFeeMinBps)} and {percent(ECONOMICS_BOUNDS.platformFeeMaxBps)}.</small>
+              </div>
+            </div>
+            <div className="lf-two">
+              <div className="lf-field"><label>Investment closes</label>
+                <input type="date" value={econForm.closeDate} onChange={(e) => setEconForm(id, "closeDate", e.target.value)} />
+              </div>
+              <div className="lf-field"><label>Profit realised</label>
+                <input type="date" value={econForm.maturityDate} onChange={(e) => setEconForm(id, "maturityDate", e.target.value)} />
+              </div>
+            </div>
+            <div className="lf-field"><label>System settlement delay (days — blank for none)</label>
+              <input type="number" min="0" max="365" step="1" value={econForm.settlementDelay} onChange={(e) => setEconForm(id, "settlementDelay", e.target.value)} placeholder="e.g. 5" />
+              <small>A bolt-on delay applied to some cases only, so a delayed payout reads as a real exception.</small>
+            </div>
+            <div className="lf-admin-actions">
+              <button className="lf-btn primary" type="button" disabled={saveEconomics.isPending} onClick={() => runSaveEconomics(id)}>{saveEconomics.isPending ? "Saving…" : "Save economic profile"} <Check size={14}/></button>
+              <button className="lf-btn" type="button" disabled={reassignEconomics.isPending} onClick={() => runReassignEconomics(id)}><RefreshCw size={14}/> Re-roll auto profile</button>
             </div>
           </div>;
         })}
