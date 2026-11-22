@@ -258,6 +258,16 @@ describe("Music Royalties desk", () => {
     expect(styles).toContain("color: var(--arb-color-canvas)");
   });
 
+  it("ships the desk artwork as self-contained inline SVG so the images always load", () => {
+    // The stage and lane imagery is embedded in the bundle as SVG data URIs,
+    // so it never depends on an authenticated external image service that
+    // fails in production and leaves broken <img> elements.
+    expect(customerUi).toContain("data:image/svg+xml");
+    expect(customerUi).toContain("const mrArt = (body: string)");
+    expect(customerUi).not.toContain("core-normal.trae.ai");
+    expect(customerUi).not.toContain("text_to_image");
+  });
+
   it("exposes guarded customer and admin endpoints for the full lifecycle", () => {
     expect(serverRouters).toContain('import { getMusicRoyaltiesDashboard, listMusicOpenInstruments, purchaseMusicOpportunity, quoteMusicPurchase, recordMusicDistribution, settleMusicInstrument } from "./musicRoyalties";');
     expect(serverRouters).toContain("musicRoyalties: router({");

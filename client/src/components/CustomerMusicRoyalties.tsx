@@ -36,32 +36,62 @@ const MARKET_POLL_INTERVAL_MS = 90_000;
 const WATCHLIST_KEY = "music-royalties-watchlist";
 const PAGE_SIZES = [6, 12, 24];
 
-/** The desk's own stage-and-studio imagery, drawn in a deep-navy and gold palette. */
-const mrImage = (prompt: string, imageSize: string) =>
-  `https://core-normal.trae.ai/api/ide/v1/text_to_image?prompt=${encodeURIComponent(prompt)}&image_size=${imageSize}`;
+/* The desk's own stage-and-studio imagery, drawn as self-contained inline SVG
+   data URIs in a deep-navy and gold palette. Because it is embedded in the
+   bundle it always renders in the portal — the desk never depends on an external
+   image-generation service that needs authentication and fails in production. */
+const MR_ART_BG = `<defs>
+  <linearGradient id="mrbg" x1="0" y1="0" x2="0.25" y2="1"><stop offset="0" stop-color="#12356e"/><stop offset="0.55" stop-color="#0a2148"/><stop offset="1" stop-color="#061733"/></linearGradient>
+  <radialGradient id="mrglow" cx="0.5" cy="-0.05" r="1.1"><stop offset="0" stop-color="#d9a63d" stop-opacity="0.32"/><stop offset="1" stop-color="#d9a63d" stop-opacity="0"/></radialGradient>
+  <linearGradient id="mrgold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0cd7e"/><stop offset="1" stop-color="#d9a63d"/></linearGradient>
+</defs>
+<rect width="400" height="260" fill="url(#mrbg)"/>
+<rect width="400" height="260" fill="url(#mrglow)"/>
+<g stroke="#8fb6f4" stroke-opacity="0.08" stroke-width="1">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `<line x1="0" y1="${i * 26}" x2="400" y2="${i * 26}"/>`).join("")}</g>`;
 
-const STAGE_HERO_ART = mrImage(
-  "Sweeping wide concert stage at night seen from the pit: silhouetted crowd with raised hands, warm gold spotlights and deep navy-blue haze, a microphone stand centre stage, dramatic rich navy and gold palette, cinematic editorial illustration, minimalist, no text, no words, no letters",
-  "landscape_16_9",
-);
+const mrArt = (body: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid slice">${MR_ART_BG}${body}</svg>`)}`;
+
+const STAGE_HERO_ART = mrArt(`
+  <path d="M150 -10 L190 150 L60 150 Z" fill="#f0cd7e" fill-opacity="0.14"/>
+  <path d="M250 -10 L340 150 L200 150 Z" fill="#5b93f0" fill-opacity="0.16"/>
+  <line x1="200" y1="40" x2="200" y2="168" stroke="#f0cd7e" stroke-width="3" stroke-opacity="0.9"/>
+  <circle cx="200" cy="34" r="8" fill="url(#mrgold)"/>
+  <path d="M0 205 Q120 176 200 196 T400 190 L400 260 L0 260 Z" fill="#04101f" fill-opacity="0.92"/>
+  <g fill="#0a2148">${[40, 80, 120, 160, 200, 240, 280, 320, 360].map((x, i) => `<circle cx="${x}" cy="${212 + (i % 2) * 6}" r="14"/>`).join("")}</g>
+  <g fill="#f0cd7e" fill-opacity="0.85"><circle cx="150" cy="60" r="2"/><circle cx="250" cy="52" r="1.6"/><circle cx="205" cy="92" r="1.6"/><circle cx="120" cy="120" r="1.4"/><circle cx="290" cy="112" r="1.4"/></g>`);
 
 const TYPE_GROUP_ART: Record<string, string> = {
-  "Live & Events": mrImage(
-    "Minimalist flat editorial illustration of live music: a concert stage, ticket stub and festival flags, fine line art with deep navy-blue and warm gold accents on a rich dark-blue background, generous negative space, no text, no words",
-    "landscape_4_3",
-  ),
-  "Artists & Releases": mrImage(
-    "Minimalist flat editorial illustration of artists and releases: a vinyl record, a microphone and an open lyric notebook, fine line art with deep navy-blue and warm gold accents on a rich dark-blue background, generous negative space, no text, no words",
-    "landscape_4_3",
-  ),
-  "Rights & Catalogue": mrImage(
-    "Minimalist flat editorial illustration of music rights: a stack of masters and publishing contracts with a small gold seal, fine line art with deep navy-blue and warm gold accents on a rich dark-blue background, generous negative space, no text, no words",
-    "landscape_4_3",
-  ),
-  "Brands & Commercial": mrImage(
-    "Minimalist flat editorial illustration of music business: a sponsor rosette, a T-shirt and a clapperboard with a note, fine line art with deep navy-blue and warm gold accents on a rich dark-blue background, generous negative space, no text, no words",
-    "landscape_4_3",
-  ),
+  "Live & Events": mrArt(`
+    <path d="M0 46 Q100 74 200 46 T400 46" fill="none" stroke="#8fb6f4" stroke-opacity="0.5" stroke-width="2"/>
+    <g>${[60, 120, 180, 240, 300, 350].map((x, i) => `<path d="M${x} 46 L${x + 14} ${62 + (i % 2) * 6} L${x + 28} 46 Z" fill="${i % 2 ? "#d9a63d" : "#5b93f0"}" fill-opacity="0.85"/>`).join("")}</g>
+    <rect x="120" y="150" width="160" height="70" rx="10" fill="#0a2148" stroke="#d9a63d" stroke-opacity="0.6"/>
+    <line x1="200" y1="150" x2="200" y2="220" stroke="#8fb6f4" stroke-opacity="0.5" stroke-dasharray="5 5"/>
+    <circle cx="200" cy="185" r="10" fill="none" stroke="#f0cd7e" stroke-width="2"/>
+    <path d="M150 236 h100" stroke="#f0cd7e" stroke-width="3" stroke-linecap="round"/>`),
+  "Artists & Releases": mrArt(`
+    <circle cx="150" cy="128" r="74" fill="#04101f"/>
+    <circle cx="150" cy="128" r="74" fill="none" stroke="#8fb6f4" stroke-opacity="0.4" stroke-width="2"/>
+    <circle cx="150" cy="128" r="52" fill="none" stroke="#8fb6f4" stroke-opacity="0.25" stroke-width="1.5"/>
+    <circle cx="150" cy="128" r="30" fill="none" stroke="#8fb6f4" stroke-opacity="0.2" stroke-width="1.5"/>
+    <circle cx="150" cy="128" r="14" fill="url(#mrgold)"/>
+    <g stroke="#f0cd7e" stroke-width="3" stroke-linecap="round" stroke-opacity="0.9">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<line x1="${250 + i * 16}" y1="${128 - (6 + ((i * 7) % 18))}" x2="${250 + i * 16}" y2="${128 + (6 + ((i * 7) % 18))}"/>`).join("")}</g>`),
+  "Rights & Catalogue": mrArt(`
+    <rect x="96" y="60" width="150" height="150" rx="8" fill="#0a2148" stroke="#8fb6f4" stroke-opacity="0.35"/>
+    <rect x="116" y="40" width="150" height="150" rx="8" fill="#0e2a5a" stroke="#8fb6f4" stroke-opacity="0.4"/>
+    <g stroke="#8fb6f4" stroke-opacity="0.4" stroke-width="4" stroke-linecap="round">
+      <line x1="136" y1="78" x2="246" y2="78"/><line x1="136" y1="98" x2="226" y2="98"/><line x1="136" y1="118" x2="246" y2="118"/><line x1="136" y1="138" x2="206" y2="138"/>
+    </g>
+    <circle cx="252" cy="178" r="26" fill="url(#mrgold)"/>
+    <path d="M242 198 l-6 26 16-10 16 10 -6-26" fill="#d9a63d"/>
+    <path d="M244 178 l6 7 12-15" fill="none" stroke="#1a1204" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`),
+  "Brands & Commercial": mrArt(`
+    <path d="M118 96 l20 30 -20 30 34-10 10 32 20-34 34 10 -20-30 20-30 -34 10 -10-32 -20 34 Z" fill="#0e2a5a" stroke="#d9a63d" stroke-opacity="0.7" stroke-width="2"/>
+    <circle cx="150" cy="128" r="24" fill="none" stroke="#f0cd7e" stroke-width="2"/>
+    <path d="M140 118 l10-5 10 5 7 18 -9 4 -4-10 -4 10 -9-4 Z" fill="#5b93f0" fill-opacity="0.4" stroke="#8fb6f4" stroke-opacity="0.6"/>
+    <rect x="240" y="72" width="90" height="60" rx="6" fill="#0a2148" stroke="#8fb6f4" stroke-opacity="0.4"/>
+    <path d="M240 92 h90 M240 112 h90" stroke="#f0cd7e" stroke-opacity="0.8" stroke-width="3"/>
+    <path d="M240 72 l90 20" stroke="#f0cd7e" stroke-opacity="0.5" stroke-width="2"/>`),
 };
 
 const TYPE_ICON: Record<MusicInvestmentType, LucideIcon> = {
