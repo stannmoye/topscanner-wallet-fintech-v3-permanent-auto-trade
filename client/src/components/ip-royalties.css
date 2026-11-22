@@ -220,6 +220,28 @@
 .ipr-econ { display: grid; gap: 3px; justify-items: end; text-align: right; font-size: 0.72rem; color: var(--ipr-muted); }
 .ipr-econ b { color: var(--arb-color-text); }
 .ipr-profit { color: var(--ipr-positive); }
+.ipr-delay { color: var(--ipr-caution); }
+.ipr-ok { color: var(--ipr-positive); }
+
+/* ---------------------- Economic profile (auto-assigned) ---------------------- */
+.ipr-econ-panel {
+  display: grid; gap: 8px; margin-top: 10px; padding: 12px; border-radius: var(--ipr-radius);
+  border: 1px solid color-mix(in srgb, var(--ipr-accent) 32%, var(--ipr-line));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--ipr-accent) 10%, transparent), color-mix(in srgb, var(--ipr-caution) 6%, transparent)), var(--ipr-wash);
+}
+.ipr-econ-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ipr-econ-item { display: grid; gap: 2px; min-width: 0; }
+.ipr-econ-item > span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ipr-muted); }
+.ipr-econ-item > b { font-size: 0.82rem; font-weight: 700; color: var(--arb-color-text); overflow-wrap: anywhere; }
+.ipr-econ-delay {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px;
+  font-size: 0.7rem; line-height: 1.3;
+  color: var(--ipr-caution);
+  background: color-mix(in srgb, var(--ipr-caution) 12%, transparent);
+}
+@media (max-width: 560px) {
+  .ipr-econ-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 @media (max-width: 720px) {
   .ipr-entry { grid-template-columns: 30px minmax(0, 1fr); }

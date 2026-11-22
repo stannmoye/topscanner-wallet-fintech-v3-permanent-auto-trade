@@ -6,10 +6,13 @@ const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf
 const slideMenu = readFileSync(new URL("../client/src/components/CustomerSlideMenu.tsx", import.meta.url), "utf8");
 const adminUi = readFileSync(new URL("../client/src/components/AdminIPRoyalties.tsx", import.meta.url), "utf8");
 const customerUi = readFileSync(new URL("../client/src/components/CustomerIPRoyalties.tsx", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../client/src/components/ip-royalties.css", import.meta.url), "utf8");
 const catalogue = readFileSync(new URL("../shared/ip-royalties-catalogue.ts", import.meta.url), "utf8");
+const investmentEconomics = readFileSync(new URL("../shared/investment-economics.ts", import.meta.url), "utf8");
 const serverDossiers = readFileSync(new URL("./ipRoyaltiesDossiers.ts", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./ipRoyalties.ts", import.meta.url), "utf8");
 const serverRouters = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
+const deskEconomics = readFileSync(new URL("./deskEconomics.ts", import.meta.url), "utf8");
 
 describe("IP Royalties licensing-capital desk", () => {
   it("exposes one Finance destination that opens the dedicated dossier console", () => {
@@ -260,5 +263,65 @@ describe("IP Royalties licensing-capital desk", () => {
     expect(serverRouters).toContain("scenarios: z.array(ipRoyaltyScenarioSchema).max(4).optional()");
     expect(serverRouters).toContain("rightIds: z.array(z.string().trim().min(1).max(80)).min(1).max(50)");
     expect(serverRouters).toContain("allocationBpsByRight: z.record(z.string(), z.number().int().min(0).max(10000)).optional()");
+  });
+
+  it("auto-assigns every right a richer economic profile — amount, profit, term, currency, platform fee and an occasional settlement delay", () => {
+    // The shared, environment-neutral engine is the single source of the profile.
+    expect(investmentEconomics).toContain("export type DeskKey");
+    expect(investmentEconomics).toContain("export const DESK_KEYS");
+    expect(investmentEconomics).toContain("export const INVESTMENT_CURRENCIES");
+    expect(investmentEconomics).toContain("export function currencyMinorToUsdMinor(");
+    expect(investmentEconomics).toContain("export function currencyByCode(");
+    expect(investmentEconomics).toContain("export const ECONOMICS_BOUNDS");
+    expect(investmentEconomics).toContain("export function assignDeskEconomics(");
+    expect(investmentEconomics).toContain("settlementDelayDays");
+    expect(investmentEconomics).toContain("export function normalizeEconomicsOverride(");
+
+    // The desk derives and persists the profile additively, so a value survives a restart.
+    expect(deskEconomics).toContain('export const DESK_ECONOMICS_TABLE = "desk_investment_economics"');
+    expect(deskEconomics).toContain("export async function getOrAssignDeskEconomics(");
+    expect(deskEconomics).toContain("export async function getDeskEconomicsMap(");
+    expect(deskEconomics).toContain("export async function setDeskEconomicsOverride(");
+    expect(deskEconomics).toContain("export async function reassignDeskEconomics(");
+    // An administrator override is authoritative and is never re-derived.
+    expect(deskEconomics).toContain('if (existing.source === "ADMIN") return existing;');
+
+    // The catalogue carries the auto-assigned profile on every right.
+    expect(catalogue).toContain("economics?: DeskEconomics");
+
+    // The IP desk merges the profile into every served right, and the resolve path
+    // fixes an unpublished multiple from the same profile.
+    expect(serverDesk).toContain('import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics"');
+    expect(serverDesk).toContain('getDeskEconomicsMap("ipRoyalty"');
+    expect(serverDesk).toContain("function withIpRoyaltyEconomics(");
+    expect(serverDesk).toContain("10_000 + economics.profitBps");
+
+    // The administrator can view and override the auto-assigned values.
+    expect(serverRouters).toContain("deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds");
+    expect(serverRouters).toContain("setDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+    expect(serverRouters).toContain("reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId");
+
+    // The customer row and invest modal surface the extended profile.
+    expect(customerUi).toContain("function economicsView(");
+    expect(customerUi).toContain('className="ipr-econ-panel"');
+    expect(customerUi).toContain("ipr-econ-delay");
+    expect(customerUi).toContain("currencyMinorToUsdMinor");
+    expect(customerUi).toContain("settlementDelayDays");
+
+    // The admin console gets an editable economics console with a re-roll.
+    expect(adminUi).toContain("trpc.adminOperations.deskEconomicsBatch.useQuery");
+    expect(adminUi).toContain("trpc.adminOperations.setDeskEconomics.useMutation");
+    expect(adminUi).toContain("trpc.adminOperations.reassignDeskEconomics.useMutation");
+    expect(adminUi).toContain('{ desk: "ipRoyalty", instrumentIds: economicsIds }');
+    expect(adminUi).toContain("const econFormFor = (id: string)");
+    expect(adminUi).toContain("Save economic profile");
+    expect(adminUi).toContain("Re-roll auto profile");
+    expect(adminUi).toContain("ECONOMICS_BOUNDS");
+    expect(adminUi).toContain("INVESTMENT_CURRENCIES");
+    expect(adminUi).toContain("currencyMinorToUsdMinor");
+
+    // The extended profile is styled consistently with the rest of the desk.
+    expect(styles).toContain(".ipr-econ-panel");
+    expect(styles).toContain(".ipr-econ-delay");
   });
 });

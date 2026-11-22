@@ -24,6 +24,8 @@ import {
   IP_ROYALTY_DOSSIERS_TABLE,
   IP_ROYALTY_PORTFOLIOS_TABLE,
 } from "./ipRoyaltiesDossiers";
+import type { DeskEconomics } from "@shared/investment-economics";
+import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
 import {
   FxRateUnavailableError,
   planCrossWalletFunding,
@@ -33,6 +35,35 @@ import {
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 
 type Db = mysql.PoolConnection;
+
+/** One right's stored (or freshly assigned) IP-royalty economics, tolerating a storage hiccup. */
+async function getOrAssignIpRoyaltyEconomics(instrumentId: string): Promise<DeskEconomics | null> {
+  try {
+    return await getOrAssignDeskEconomics("ipRoyalty", instrumentId);
+  } catch (error) {
+    console.error("[IpRoyalties] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+    return null;
+  }
+}
+
+/**
+ * Overlay an opportunity's auto-assigned economic profile. The USD settlement
+ * fields (minimum ticket, funding ask, deadline) are left untouched because the
+ * desk settles in USD — the assigned profile carries its own presentation
+ * currency for display only. An administrator's published repayment multiple,
+ * when present, is never masked.
+ */
+function withIpRoyaltyEconomics(item: IpRight, economics: DeskEconomics | undefined): IpRight {
+  if (!economics) return item;
+  const profitBps = item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined
+    ? item.expectedMultipleBps - 10_000
+    : economics.profitBps;
+  return {
+    ...item,
+    economics: { ...economics, profitBps },
+    expectedMultipleBps: item.expectedMultipleBps ?? 10_000 + economics.profitBps,
+  };
+}
 
 /**
  * Additive, self-hosted storage for IP-royalty positions (kept outside Drizzle,
@@ -358,7 +389,14 @@ export async function getIpRoyaltiesDashboard(userId: number) {
     readAdminPortfolios(),
   ]);
 
-  const rights = [...adminRights, ...catalogue.rights].sort(compareIpRights);
+  const baseRights = [...adminRights, ...catalogue.rights].sort(compareIpRights);
+  let economicsMap = new Map<string, DeskEconomics>();
+  try {
+    economicsMap = await getDeskEconomicsMap("ipRoyalty", baseRights.map((item) => item.id));
+  } catch (error) {
+    console.error("[IpRoyalties] Failed to read desk economics:", error instanceof Error ? error.message : "UnknownError");
+  }
+  const rights = baseRights.map((item) => withIpRoyaltyEconomics(item, economicsMap.get(item.id)));
   const sources = adminRights.length
     ? [...catalogue.sources, {
         name: "Arbitrade IP royalties desk — administrator published",
@@ -500,13 +538,15 @@ type ResolvedInstrument = {
  * is ever taken from the client.
  */
 async function resolveInstrument(instrumentType: IpRoyaltyInstrumentType, instrumentId: string): Promise<ResolvedInstrument> {
+  const economics = await getOrAssignIpRoyaltyEconomics(instrumentId);
+  const resolvedMultiple = (published: number | null) => published ?? (economics ? 10_000 + economics.profitBps : null);
   if (instrumentType === "RIGHT") {
     const dossier = await findEnabledAdminIpRoyaltyDossier(instrumentId);
     if (dossier) {
       return {
         instrumentType, instrumentId: dossier.id, instrumentName: dossier.rightName, rightType: dossier.rightType,
         jurisdiction: dossier.jurisdiction, countryCode: dossier.countryCode, status: dossier.status,
-        expectedMultipleBps: dossier.expectedMultipleBps, unitPriceMinor: null, source: dossier.source, asOf: dossier.asOf,
+        expectedMultipleBps: resolvedMultiple(dossier.expectedMultipleBps), unitPriceMinor: null, source: dossier.source, asOf: dossier.asOf,
       };
     }
     const live = await findIpRight(instrumentId);
@@ -514,7 +554,7 @@ async function resolveInstrument(instrumentType: IpRoyaltyInstrumentType, instru
       return {
         instrumentType, instrumentId: live.id, instrumentName: live.rightName, rightType: live.rightType,
         jurisdiction: live.jurisdiction, countryCode: live.countryCode, status: live.status,
-        expectedMultipleBps: live.expectedMultipleBps, unitPriceMinor: null, source: live.source, asOf: live.asOf,
+        expectedMultipleBps: resolvedMultiple(live.expectedMultipleBps), unitPriceMinor: null, source: live.source, asOf: live.asOf,
       };
     }
     throw new Error("This right is not currently listed on the IP Royalties desk. Refresh and try again.");

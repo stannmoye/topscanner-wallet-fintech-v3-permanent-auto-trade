@@ -1,3 +1,41 @@
+## 2026-11-23 (feat) — Desk economics engine rolled out to the IP Royalties desk
+
+Fourth desk to carry the auto-assigned economic profile (after Agro, Carbon Credit and Music
+Royalties). Every IP right now shows an investable amount (USD 500–1,000,000 equivalent), a 25%–38%
+profit, a 30–365 day term, a USD-dominant presentation currency, a 7%–10% platform fee and an
+occasional settlement-delay bolt-on — all overridable by an administrator. The shared engine/store
+are unchanged; this pass only wires the IP Royalties desk (desk key `"ipRoyalty"`) into them.
+
+- **Catalogue (`shared/ip-royalties-catalogue.ts`).** `IpRight` gains an optional
+  `economics?: DeskEconomics | null` (environment-neutral import from `./investment-economics`).
+- **Server (`server/ipRoyalties.ts`).** `getIpRoyaltiesDashboard()` batch-reads the profile via
+  `getDeskEconomicsMap("ipRoyalty", …)` (try/catch + empty-map fallback) and merges it through a new
+  `withIpRoyaltyEconomics()` helper that only fills `economics` + an unpublished `expectedMultipleBps`
+  (`10_000 + profitBps`); `resolveInstrument()` resolves an unpublished multiple from
+  `getOrAssignIpRoyaltyEconomics("ipRoyalty", …)`. The USD settlement fields stay untouched because
+  the desk settles in USD.
+- **Customer desk (`client/src/components/CustomerIPRoyalties.tsx`).** New `economicsView()` /
+  `addDaysIso()` / `usdSeed()` / `fmtEcon()`; `MIN_INVESTMENT_MINOR` moved to `50_000` (USD 500).
+  The schedule-entry facts gain Profit/Term/Closes; the expanded dossier renders an `ipr-econ-panel`
+  (Currency / Invest from / Funding target · Profit / Term / Platform fee · Closes / Profit realised /
+  Payout) with a conditional `ipr-econ-delay` note; the entry aside `ipr-econ` shows invest-from,
+  projected profit on the minimum, realises date, platform fee and payout delay; the invest modal
+  carries the same `ipr-econ-panel`. Invest actions pass `economics: view.econ` and seed the amount
+  from `usdSeed(view.ticketMinMinor, view.currency)`.
+- **Admin console (`client/src/components/AdminIPRoyalties.tsx`).** Tab union gains `"economics"`;
+  new **Economic profiles** tab (editable currency, minimum ticket + funding target with USD hints,
+  profit % 25–38, term days, platform fee % 7–10, close/realise dates, optional settlement delay)
+  with **Save economic profile** and **Re-roll auto profile**, wired to `deskEconomicsBatch` /
+  `setDeskEconomics` / `reassignDeskEconomics` for `desk: "ipRoyalty"`.
+- **CSS (`client/src/components/ip-royalties.css`).** Added `.ipr-econ-panel`, `.ipr-econ-row`,
+  `.ipr-econ-item`, `.ipr-econ-delay`, `.ipr-delay`, `.ipr-ok` and a 560px responsive collapse,
+  derived from existing `--ipr-*` tokens.
+- **Test (`server/ip-royalties.contract.test.ts`).** New case asserts the IP wiring.
+- Verification: `pnpm check` clean; `server/ip-royalties.contract.test.ts` 14/14 passed;
+  `pnpm build:static` succeeded.
+- **Next:** roll the same engine to the remaining three desks (Treasury Bond, Litigation Funds,
+  Cooperate Dept).
+
 ## 2026-11-23 (feat) — Desk economics engine rolled out to the Music Royalties desk
 
 Third desk to carry the auto-assigned economic profile (after Agro and Carbon Credit). Every Music

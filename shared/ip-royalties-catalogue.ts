@@ -36,6 +36,7 @@
  */
 
 import { findCountry, flagFor } from "./country-options";
+import type { DeskEconomics } from "./investment-economics";
 
 export type IpRightType =
   | "PATENT"
@@ -140,6 +141,13 @@ export type IpRight = {
   source: string;
   sourceUrl: string | null;
   asOf: string;
+  /**
+   * The auto-assigned economic profile for this right (investable amount band,
+   * profit, term, close/maturity dates, presentation currency and platform fee).
+   * Attached server-side so both the customer desk and the discovery fallback can
+   * render it; absent until the server has assigned it.
+   */
+  economics?: DeskEconomics | null;
 };
 
 /** A pro-rata pool of several IP rights sold as one instrument. */

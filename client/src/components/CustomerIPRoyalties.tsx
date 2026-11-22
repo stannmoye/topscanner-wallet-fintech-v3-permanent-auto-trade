@@ -33,6 +33,7 @@ import {
   type IpRoyaltySector,
   type IpRoyaltiesSource,
 } from "@shared/ip-royalties-catalogue";
+import { currencyMinorToUsdMinor, type DeskEconomics } from "@shared/investment-economics";
 import "./ip-royalties.css";
 
 const MARKET_POLL_INTERVAL_MS = 90_000;
@@ -153,8 +154,55 @@ function fmtMultiple(bps: number | null | undefined) {
   return `${(Number(bps) / 10_000).toFixed(2)}x`;
 }
 
-/** Default investable floor when a right publishes no explicit minimum (USD 1,000 in minor units). */
-const MIN_INVESTMENT_MINOR = 100_000;
+/** Default investable floor when a right publishes no explicit minimum (USD 500 in minor units). */
+const MIN_INVESTMENT_MINOR = 50_000;
+/** The least a customer can place in an opportunity. */
+const investableFloor = (minimumMinor: number | null | undefined) => Math.max(Number(minimumMinor || 0), MIN_INVESTMENT_MINOR);
+/** A USD settlement-currency seed for the invest form from a presentation-currency ticket minimum. */
+const usdSeed = (ticketMinMinor: number | null | undefined, currency: string) =>
+  Math.max(MIN_INVESTMENT_MINOR, currencyMinorToUsdMinor(Number(ticketMinMinor || 0), currency) || 0);
+
+/**
+ * Resolve a right's auto-assigned economic profile into display values: the
+ * investable amount band, the profit rate, the term and close date, the platform
+ * fee and the settlement-delay bolt-on. Missing pieces fall back to the right's
+ * own published fields so an administrator figure is never masked.
+ */
+function economicsView(item: IpRight, settlement: string) {
+  const econ = item.economics ?? null;
+  const currency = econ?.currency || settlement;
+  const scale = econ?.currencyScale ?? 2;
+  const ticketMinMinor = econ?.ticketMinMinor ?? investableFloor(item.fundingAskMinor);
+  const targetMinor = econ?.fundingTargetMinor ?? item.fundingAskMinor ?? null;
+  const profitBps = econ?.profitBps ?? (item.expectedMultipleBps !== null && item.expectedMultipleBps !== undefined ? item.expectedMultipleBps - 10_000 : null);
+  const termDays = econ?.termDays ?? null;
+  const closeDate = econ?.closeDate ?? item.fundingDeadline ?? null;
+  return {
+    econ,
+    currency,
+    scale,
+    ticketMinMinor,
+    targetMinor,
+    profitBps,
+    termDays,
+    closeDate,
+    realiseDate: econ?.maturityDate ?? (closeDate && termDays !== null ? addDaysIso(closeDate, termDays) : null),
+    platformFeeBps: econ?.platformFeeBps ?? null,
+    settlementDelayDays: econ?.settlementDelayDays ?? null,
+  };
+}
+
+/** Add a whole number of days to a YYYY-MM-DD date, returning the same format (or null on bad input). */
+function addDaysIso(value: string, days: number): string | null {
+  const base = new Date(value);
+  if (Number.isNaN(base.getTime())) return null;
+  base.setUTCDate(base.getUTCDate() + Number(days || 0));
+  return base.toISOString().slice(0, 10);
+}
+
+/** Format a minor-unit amount in the right's own presentation currency and scale. */
+const fmtEcon = (minor: number | null | undefined, currency: string, scale: number) => moneyMinor(Number(minor || 0), currency, scale);
+
 /** Profit implied by an amount at the expected multiple (integer basis points). */
 const profitMinor = (amountMinor: number | null | undefined, multipleBps: number | null | undefined) =>
   multipleBps === null || multipleBps === undefined ? null : Math.round((Number(amountMinor || 0) * (Number(multipleBps) - 10_000)) / 10_000);
@@ -214,7 +262,7 @@ function loadWatchlist(): string[] {
   } catch { return []; }
 }
 
-type PurchaseTarget = { type: "RIGHT" | "PORTFOLIO"; id: string; name: string; expectedMultipleBps: number | null };
+type PurchaseTarget = { type: "RIGHT" | "PORTFOLIO"; id: string; name: string; expectedMultipleBps: number | null; economics?: DeskEconomics | null };
 
 /**
  * Customer desk for IP-royalty opportunities. Every right cited on the desk is
@@ -364,7 +412,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
     setTarget(nextTarget);
     setMessage("");
     setFundingSource("COMBINED");
-    setAmount(Math.max(suggested, Math.max(available, 100_000)));
+    setAmount(Math.max(suggested, Math.max(available, MIN_INVESTMENT_MINOR)));
   };
 
   // Refresh the funding quote (conversion + affordability) as the amount or
@@ -547,6 +595,7 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
           const open = openId === item.id;
           const rank = (currentPage - 1) * pageSize + index + 1;
           const TypeIcon = RIGHT_TYPE_ICON[item.rightType];
+          const view = economicsView(item, settlement);
           return <article className={`ipr-entry is-fundable${open ? " is-open" : ""}`} key={item.id}>
             <span className="ipr-entry-index">{String(rank).padStart(2, "0")}</span>
             <div className="ipr-entry-main">
@@ -565,8 +614,10 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
                 <span>Rate <b>{rateDescription(item)}</b></span>
                 <span>Basis <b>{basisLabel(item.royaltyBasis)}</b></span>
                 <span>Cadence <b>{cadenceLabel(item.cadence)}</b></span>
-                {item.termMonths ? <span>Term <b>{item.termMonths}mo</b></span> : null}
-                <span>Expected <b>{fmtMultiple(item.expectedMultipleBps)}</b></span>
+                {item.termMonths ? <span>Licence term <b>{item.termMonths}mo</b></span> : null}
+                <span>Profit <b className="ipr-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : fmtMultiple(item.expectedMultipleBps)}</b></span>
+                <span>Term <b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></span>
+                <span>Closes <b>{formatDate(view.closeDate)}</b></span>
                 {item.fundable
                   ? <span>Funded <b>{fmtPercent(item.fundedBps)}</b> of {fmtMinor(item.fundingAskMinor ?? 0)}</span>
                   : <span>Target <b>not published</b></span>}
@@ -592,6 +643,25 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
                     <h4>Source</h4>
                     <p title={item.sourceUrl || item.source}><ShieldCheck size={11}/> {item.asOf} · {item.source}</p>
                   </div>
+                </div>
+
+                <div className="ipr-econ-panel" aria-label="Economic profile">
+                  <div className="ipr-econ-row">
+                    <div className="ipr-econ-item"><span>Currency</span><b>{view.currency}</b></div>
+                    <div className="ipr-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
+                    <div className="ipr-econ-item"><span>Funding target</span><b>{view.targetMinor !== null ? fmtEcon(view.targetMinor, view.currency, view.scale) : "—"}</b></div>
+                  </div>
+                  <div className="ipr-econ-row">
+                    <div className="ipr-econ-item"><span>Profit at maturity</span><b className="ipr-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b></div>
+                    <div className="ipr-econ-item"><span>Term</span><b>{view.termDays !== null ? `${view.termDays} days` : "—"}</b></div>
+                    <div className="ipr-econ-item"><span>Platform fee</span><b>{view.platformFeeBps !== null ? fmtPercent(view.platformFeeBps) : "—"}</b></div>
+                  </div>
+                  <div className="ipr-econ-row">
+                    <div className="ipr-econ-item"><span>Investment closes</span><b>{formatDate(view.closeDate)}</b></div>
+                    <div className="ipr-econ-item"><span>Profit realised</span><b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b></div>
+                    <div className="ipr-econ-item"><span>Payout</span><b className={view.settlementDelayDays !== null ? "ipr-delay" : "ipr-ok"}>{view.settlementDelayDays !== null ? `up to +${view.settlementDelayDays}d delay` : "On schedule"}</b></div>
+                  </div>
+                  {view.settlementDelayDays !== null && <div className="ipr-econ-delay"><CalendarClock size={12}/> Settlement for this right is scheduled with a system-delay allowance of up to {view.settlementDelayDays} day{view.settlementDelayDays === 1 ? "" : "s"}; the payout lands on the administrator's settlement run.</div>}
                 </div>
 
                 {item.paymentHistory && <div className="ipr-history">
@@ -629,10 +699,11 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
                 <button type="button" className={`ipr-star${comparing ? " is-on" : ""}`} onClick={() => toggleCompare(item.id)} aria-pressed={comparing} title={comparing ? "Remove from compare" : "Add to compare (max 3)"}><Layers size={15}/></button>
               </div>
               <div className="ipr-econ">
-                <span>You can invest from <b>{fmtMinor(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR))}</b></span>
-                <span>Projected profit <b className="ipr-profit">{fmtProfit(Math.max(item.fundingAskMinor || 0, MIN_INVESTMENT_MINOR), item.expectedMultipleBps)}</b></span>
+                <span>You can invest from <b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></span>
+                <span>Projected profit <b className="ipr-profit">{view.profitBps !== null ? `+${fmtPercent(view.profitBps)}` : "—"}</b>{view.profitBps !== null ? ` · ${fmtEcon(Math.round((view.ticketMinMinor * view.profitBps) / 10_000), view.currency, view.scale)} on the minimum` : ""}</span>
+                <span>Realises <b>{view.realiseDate ? formatDate(view.realiseDate) : "—"}</b>{view.platformFeeBps !== null ? ` · platform fee ${fmtPercent(view.platformFeeBps)}` : ""}{view.settlementDelayDays !== null ? ` · +${view.settlementDelayDays}d payout delay` : ""}</span>
               </div>
-              <button className="ipr-btn primary" onClick={() => openPurchase({ type: "RIGHT", id: item.id, name: item.rightName, expectedMultipleBps: item.expectedMultipleBps }, Math.max(item.fundingAskMinor || 0, 100_000))}>Fund this right <ChevronRight size={14}/></button>
+              <button className="ipr-btn primary" onClick={() => openPurchase({ type: "RIGHT", id: item.id, name: item.rightName, expectedMultipleBps: item.expectedMultipleBps, economics: view.econ }, usdSeed(view.ticketMinMinor, view.currency))}>Fund this right <ChevronRight size={14}/></button>
             </div>
           </article>;
         })}
@@ -852,6 +923,24 @@ export function CustomerIPRoyalties({ push }: { push: (message: string) => void 
         <div className="ipr-modal-body">
           <div className="ipr-card-title">{target.name}</div>
           <div className="ipr-card-meta"><span>{target.type === "RIGHT" ? "Single-right share" : "Pro-rata portfolio share"}</span><span>Expected {fmtMultiple(target.expectedMultipleBps)}</span></div>
+
+          {target.economics && <div className="ipr-econ-panel" aria-label="Economic profile">
+            <div className="ipr-econ-row">
+              <div className="ipr-econ-item"><span>Currency</span><b>{target.economics.currency}</b></div>
+              <div className="ipr-econ-item"><span>Invest from</span><b>{fmtEcon(target.economics.ticketMinMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+              <div className="ipr-econ-item"><span>Funding target</span><b>{fmtEcon(target.economics.fundingTargetMinor, target.economics.currency, target.economics.currencyScale)}</b></div>
+            </div>
+            <div className="ipr-econ-row">
+              <div className="ipr-econ-item"><span>Profit at maturity</span><b className="ipr-profit">+{fmtPercent(target.economics.profitBps)}</b></div>
+              <div className="ipr-econ-item"><span>Term</span><b>{target.economics.termDays} days</b></div>
+              <div className="ipr-econ-item"><span>Platform fee</span><b>{fmtPercent(target.economics.platformFeeBps)}</b></div>
+            </div>
+            <div className="ipr-econ-row">
+              <div className="ipr-econ-item"><span>Investment closes</span><b>{formatDate(target.economics.closeDate)}</b></div>
+              <div className="ipr-econ-item"><span>Profit realised</span><b>{formatDate(target.economics.maturityDate)}</b></div>
+              <div className="ipr-econ-item"><span>Payout</span><b className={Number(target.economics.settlementDelayDays || 0) > 0 ? "ipr-delay" : "ipr-ok"}>{Number(target.economics.settlementDelayDays || 0) > 0 ? `up to +${target.economics.settlementDelayDays}d delay` : "On schedule"}</b></div>
+            </div>
+          </div>}
 
           <div className="ipr-field">
             <label>Investment amount ({settlement})</label>
