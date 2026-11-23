@@ -31,6 +31,19 @@ import { getCarbonInvestmentDashboard, listCarbonOpenInstruments, purchaseCarbon
 import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDossiers, reachAdminCarbonMilestone, setAdminCarbonDossierEnabled, setAdminCarbonDossierStatus, updateAdminCarbonDossier } from "./carbonCreditDossiers";
 import { getGreenEnergyInvestmentDashboard, listGreenEnergyOpenInstruments, purchaseGreenEnergyOpportunity, quoteGreenEnergyPurchase, recordGreenEnergyDistribution, settleGreenEnergyInstrument } from "./greenEnergy";
 import { createAdminGreenEnergyDossier, deleteAdminGreenEnergyDossier, listAdminGreenEnergyDossiers, reachAdminGreenEnergyMilestone, setAdminGreenEnergyDossierEnabled, setAdminGreenEnergyDossierStatus, updateAdminGreenEnergyDossier } from "./greenEnergyDossiers";
+import { disburseLendingLoan, fundLendingLoan, getLendingDesk, getLendingLoanView, listLendingLoanBids, listLendingLoansForSettlement, placeLendingBid, quoteLendingFunding, raiseLendingBid, settleLendingLoan, withdrawLendingBid } from "./lending";
+import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
+import {
+  LENDING_CONDITION_STATUSES,
+  LENDING_CONDITION_TYPES,
+  LENDING_LOAN_TYPES,
+  LENDING_OUTCOMES,
+  LENDING_REPAYMENT_FREQUENCIES,
+  LENDING_RISK_GRADES,
+  LENDING_SECTORS,
+  LENDING_STAGES,
+  LENDING_TERRITORY_BANDS,
+} from "@shared/lending-catalogue";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
 import { getOpportunityLifecycleSummary, runOpportunityRetention, updatePopupLifecycle, updatePopupDeliveryStatus } from "./opportunityLifecycle";
 import { confirmEmailVerification, requestEmailVerification } from "./emailAuth";
@@ -437,7 +450,7 @@ const updateAgroDossierSchema = z.object({ dossierId: z.string().trim().min(2).m
 // ranges are deliberately loose at the edges and the shared ECONOMICS_BOUNDS
 // validator is the single source of truth (it throws a readable reason for any
 // out-of-band value, including non-integer or unsupported currency).
-const DESK_KEY_VALUES = ["treasury", "litigation", "agro", "ipRoyalty", "music", "cooperate", "carbon", "greenEnergy"] as const;
+const DESK_KEY_VALUES = ["treasury", "litigation", "agro", "ipRoyalty", "music", "cooperate", "carbon", "greenEnergy", "lending"] as const;
 const deskKeySchema = z.enum(DESK_KEY_VALUES);
 const deskEconomicsOverrideSchema = {
   currency: z.string().trim().min(3).max(8).optional(),
@@ -564,6 +577,76 @@ const greenEnergyDossierFieldsSchema = {
 };
 const createGreenEnergyDossierSchema = z.object(greenEnergyDossierFieldsSchema);
 const updateGreenEnergyDossierSchema = z.object({ dossierId: z.string().trim().min(2).max(80), ...greenEnergyDossierFieldsSchema });
+
+// Administrator-authored Lending loans and lender reserves. Lending only: every
+// displayed field is administrator-supplied and validated server-side, the
+// auction window and disbursement conditions are administrator controlled, and
+// the lender reserve is the administrator's statement of a lender's capacity.
+// The live borrower auction itself lives in server/lending.ts.
+function lendingEnum<T extends string>(values: readonly T[]) {
+  return z.enum(values as unknown as [T, ...T[]]);
+}
+const lendingDisbursementConditionSchema = z.object({
+  type: lendingEnum(LENDING_CONDITION_TYPES),
+  label: z.string().trim().max(90).nullable().optional(),
+  required: z.boolean().optional(),
+  status: lendingEnum(LENDING_CONDITION_STATUSES).nullable().optional(),
+  detail: z.string().trim().max(240).nullable().optional(),
+  metAt: z.string().trim().max(40).nullable().optional(),
+});
+const lendingLoanFieldsSchema = {
+  title: z.string().trim().min(3).max(200),
+  borrower: z.string().trim().min(2).max(160),
+  loanType: lendingEnum(LENDING_LOAN_TYPES),
+  sector: lendingEnum(LENDING_SECTORS),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  territory: z.string().trim().max(120).nullable().optional(),
+  territoryBand: lendingEnum(LENDING_TERRITORY_BANDS).nullable().optional(),
+  purpose: z.string().trim().max(300).nullable().optional(),
+  description: z.string().trim().min(8).max(2000),
+  principalMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  currency: z.string().trim().min(3).max(12).nullable().optional(),
+  startingInterestBps: z.number().int().min(0).max(100_000).nullable().optional(),
+  minimumTenureMonths: z.number().int().min(0).max(600).nullable().optional(),
+  maximumTenureMonths: z.number().int().min(0).max(600).nullable().optional(),
+  repaymentFrequency: lendingEnum(LENDING_REPAYMENT_FREQUENCIES).nullable().optional(),
+  platformFeeBps: z.number().int().min(0).max(100_000).nullable().optional(),
+  riskGrade: lendingEnum(LENDING_RISK_GRADES).nullable().optional(),
+  collateral: z.string().trim().max(300).nullable().optional(),
+  highlights: z.array(z.string().trim().min(1).max(200)).max(12).nullable().optional(),
+  conditions: z.array(lendingDisbursementConditionSchema).max(15).nullable().optional(),
+  stage: lendingEnum(LENDING_STAGES),
+  auctionOpensAt: z.string().trim().max(40).nullable().optional(),
+  auctionClosesAt: z.string().trim().max(40).nullable().optional(),
+  reserveId: z.string().trim().max(80).nullable().optional(),
+  source: z.string().trim().max(160).nullable().optional(),
+  sourceUrl: z.string().trim().url().max(300).nullable().optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  reason: z.string().trim().max(500).nullable().optional(),
+};
+const createLendingLoanSchema = z.object(lendingLoanFieldsSchema);
+const updateLendingLoanSchema = z.object({ loanId: z.string().trim().min(1).max(80), ...lendingLoanFieldsSchema });
+
+const lenderReserveFieldsSchema = {
+  lender: z.string().trim().min(2).max(160),
+  capacityMinor: z.number().int().min(1).max(100_000_000_000),
+  currency: z.string().trim().min(3).max(12).nullable().optional(),
+  countryCode: z.string().trim().length(2).regex(/^[A-Za-z]{2}$/),
+  territory: z.string().trim().max(120).nullable().optional(),
+  minimumTicketMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  maximumTicketMinor: z.number().int().min(0).max(100_000_000_000).nullable().optional(),
+  minimumTenureMonths: z.number().int().min(0).max(600).nullable().optional(),
+  maximumTenureMonths: z.number().int().min(0).max(600).nullable().optional(),
+  startingInterestBps: z.number().int().min(0).max(100_000).nullable().optional(),
+  loanTypes: z.array(lendingEnum(LENDING_LOAN_TYPES)).max(14).nullable().optional(),
+  note: z.string().trim().max(300).nullable().optional(),
+  enabled: z.boolean().optional(),
+  source: z.string().trim().max(160).nullable().optional(),
+  asOf: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  reason: z.string().trim().max(500).nullable().optional(),
+};
+const createLenderReserveSchema = z.object(lenderReserveFieldsSchema);
+const updateLenderReserveSchema = z.object({ reserveId: z.string().trim().min(1).max(80), ...lenderReserveFieldsSchema });
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -1166,6 +1249,59 @@ export const appRouter = router({
         });
         return result;
       }),
+    }),
+    lending: router({
+      desk: protectedProcedure.query(({ ctx }) => getLendingDesk(ctx.user.id)),
+      loan: protectedProcedure.input(z.object({ loanId: z.string().trim().min(1).max(80) })).query(({ ctx, input }) => getLendingLoanView(ctx.user.id, input.loanId)),
+      fundingQuote: protectedProcedure.input(z.object({
+        loanId: z.string().trim().min(1).max(80),
+        amountMinor: z.number().int().min(0).max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+      })).query(({ ctx, input }) => quoteLendingFunding(ctx.user.id, input)),
+      fund: protectedProcedure.input(z.object({
+        loanId: z.string().trim().min(1).max(80),
+        amountMinor: z.number().int().positive().max(100_000_000),
+        fundingSource: z.string().trim().min(2).max(24).optional(),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(async ({ ctx, input }) => {
+        const result = await fundLendingLoan(ctx.user.id, input);
+        await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
+          eventType: "INVESTMENT",
+          status: "COMPLETED",
+          title: "Lending position opened",
+          message: `${result.loanTitle} received a lending commitment of ${result.amountMinor} minor units of ${result.currency}, funded from ${result.fundingSource === "COMBINED" ? "combined wallets" : result.fundingSource} through the wallet ledger.`,
+          transactionCode: `lending:${result.positionCode}`,
+          amountMinor: result.amountMinor,
+          asset: result.currency,
+          metadata: { positionCode: result.positionCode, loanId: result.loanId, expectedInterestBps: result.expectedInterestBps, fundingSource: result.fundingSource },
+        });
+        return result;
+      }),
+      placeBid: protectedProcedure.input(z.object({
+        loanId: z.string().trim().min(1).max(80),
+        bidInterestBps: z.number().int().positive().max(100_000),
+        amountMinor: z.number().int().positive().max(100_000_000),
+        tenureMonths: z.number().int().positive().max(600),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(async ({ ctx, input }) => {
+        const result = await placeLendingBid(ctx.user.id, input);
+        await recordTransactionConsoleEvent(ctx.user.id, ctx.req, {
+          eventType: "BID",
+          status: "PENDING",
+          title: "Lending bid placed",
+          message: `Your bid of ${result.bid.bidInterestBps} bps over ${result.bid.tenureMonths} months${result.isLeading ? " now leads the auction" : " was recorded"} with ${result.bidCount} live bid${result.bidCount === 1 ? "" : "s"}.`,
+          amountMinor: result.bid.amountMinor,
+          asset: "USD",
+          metadata: { bidId: result.bid.id, loanId: input.loanId, isLeading: result.isLeading, topBidBps: result.topBidBps },
+        });
+        return result;
+      }),
+      raiseBid: protectedProcedure.input(z.object({
+        bidId: z.string().trim().min(1).max(80),
+        bidInterestBps: z.number().int().positive().max(100_000),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(({ ctx, input }) => raiseLendingBid(ctx.user.id, input)),
+      withdrawBid: protectedProcedure.input(z.object({ bidId: z.string().trim().min(1).max(80) })).mutation(({ ctx, input }) => withdrawLendingBid(ctx.user.id, input.bidId)),
     }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
@@ -1795,6 +1931,60 @@ export const appRouter = router({
       funderMultipleBps: z.number().int().min(0).max(1_000_000),
       reason: z.string().trim().max(500).optional(),
     })).mutation(({ ctx, input }) => settleGreenEnergyInstrument(ctx.user!.id, input)),
+    // Lending desk administrator console. The administrator publishes each loan,
+    // controls the auction window (which is the server's authoritative countdown),
+    // sets the post-win disbursement conditions, records lender reserves, and then
+    // disburses and settles. All money movement stays in the internal ledger.
+    lendingLoans: adminProcedure.query(() => listAdminLendingLoans()),
+    createLendingLoan: adminProcedure.input(createLendingLoanSchema).mutation(({ ctx, input }) => createAdminLendingLoan(ctx.user!.id, input)),
+    updateLendingLoan: adminProcedure.input(updateLendingLoanSchema).mutation(({ ctx, input }) => {
+      const { loanId, ...fields } = input;
+      return updateAdminLendingLoan(ctx.user!.id, loanId, fields);
+    }),
+    setLendingLoanEnabled: adminProcedure.input(z.object({ loanId: z.string().trim().min(1).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminLendingLoanEnabled(ctx.user!.id, input.loanId, input.enabled)),
+    setLendingLoanStage: adminProcedure.input(z.object({ loanId: z.string().trim().min(1).max(80), stage: lendingEnum(LENDING_STAGES), reason: z.string().trim().max(500).optional() })).mutation(({ ctx, input }) => setAdminLendingLoanStage(ctx.user!.id, input.loanId, input.stage, input.reason)),
+    // Opens/closes bidding, or re-schedules it: the auction countdown and when the
+    // next auction starts are entirely administrator controlled.
+    setLendingLoanSchedule: adminProcedure.input(z.object({
+      loanId: z.string().trim().min(1).max(80),
+      auctionOpensAt: z.string().trim().max(40).nullable().optional(),
+      auctionClosesAt: z.string().trim().max(40).nullable().optional(),
+      stage: lendingEnum(LENDING_STAGES).nullable().optional(),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => setAdminLendingLoanSchedule(ctx.user!.id, input.loanId, input)),
+    setLendingConditions: adminProcedure.input(z.object({
+      loanId: z.string().trim().min(1).max(80),
+      conditions: z.array(lendingDisbursementConditionSchema).min(1).max(15),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => setAdminLendingConditions(ctx.user!.id, input.loanId, input.conditions, input.reason)),
+    meetLendingCondition: adminProcedure.input(z.object({
+      loanId: z.string().trim().min(1).max(80),
+      type: lendingEnum(LENDING_CONDITION_TYPES),
+      status: lendingEnum(LENDING_CONDITION_STATUSES).optional(),
+      reason: z.string().trim().max(500).optional(),
+    })).mutation(({ ctx, input }) => meetAdminLendingCondition(ctx.user!.id, input.loanId, input.type, input.status, input.reason)),
+    deleteLendingLoan: adminProcedure.input(z.object({ loanId: z.string().trim().min(1).max(80) })).mutation(({ ctx, input }) => deleteAdminLendingLoan(ctx.user!.id, input.loanId)),
+    lenderReserves: adminProcedure.query(() => listAdminLenderReserves()),
+    createLenderReserve: adminProcedure.input(createLenderReserveSchema).mutation(({ ctx, input }) => createAdminLenderReserve(ctx.user!.id, input)),
+    updateLenderReserve: adminProcedure.input(updateLenderReserveSchema).mutation(({ ctx, input }) => {
+      const { reserveId, ...fields } = input;
+      return updateAdminLenderReserve(ctx.user!.id, reserveId, fields);
+    }),
+    setLenderReserveEnabled: adminProcedure.input(z.object({ reserveId: z.string().trim().min(1).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminLenderReserveEnabled(ctx.user!.id, input.reserveId, input.enabled)),
+    deleteLenderReserve: adminProcedure.input(z.object({ reserveId: z.string().trim().min(1).max(80) })).mutation(({ ctx, input }) => deleteAdminLenderReserve(ctx.user!.id, input.reserveId)),
+    lendingLoansForSettlement: adminProcedure.query(() => listLendingLoansForSettlement()),
+    lendingLoanBids: adminProcedure.input(z.object({ loanId: z.string().trim().min(1).max(80) })).query(({ input }) => listLendingLoanBids(input.loanId)),
+    disburseLendingLoan: adminProcedure.input(z.object({
+      loanId: z.string().trim().min(1).max(80),
+      reason: z.string().trim().max(500).optional(),
+      idempotencyKey: z.string().min(8).max(160),
+    })).mutation(({ ctx, input }) => disburseLendingLoan(ctx.user!.id, input)),
+    settleLendingLoan: adminProcedure.input(z.object({
+      loanId: z.string().trim().min(1).max(80),
+      outcome: lendingEnum(LENDING_OUTCOMES),
+      reason: z.string().trim().max(500).optional(),
+      idempotencyKey: z.string().min(8).max(160),
+    })).mutation(({ ctx, input }) => settleLendingLoan(ctx.user!.id, input)),
     createCustomer: adminProcedure.input(z.object({ name: z.string().min(2).max(160), email: z.string().email(), password: z.string().min(10).max(200) })).mutation(({ input }) => createAdminCustomer(input)),
     updateCustomer: adminProcedure.input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), email: z.string().email() })).mutation(({ input }) => updateAdminCustomer(input)),
     deleteCustomer: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(async ({ input }) => {

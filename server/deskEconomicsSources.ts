@@ -7,6 +7,7 @@ import { getMusicRoyaltiesCatalogue } from "@shared/music-royalties-catalogue";
 import { getCooperateDeptCatalogue } from "@shared/cooperate-dept-catalogue";
 import { getCarbonInvestmentCatalogue } from "@shared/carbon-credit-catalogue";
 import { getGreenEnergyInvestmentCatalogue } from "@shared/green-energy-catalogue";
+import { getLendingCatalogue } from "@shared/lending-catalogue";
 import { listEnabledAdminTreasuryBondInstruments } from "./treasuryBondInstruments";
 import { listEnabledAdminLitigationDossiers } from "./litigationFundDossiers";
 import { listEnabledAdminAgroDossiers } from "./agroInvestmentDossiers";
@@ -15,6 +16,7 @@ import { listEnabledAdminMusicDossiers } from "./musicRoyaltyDossiers";
 import { listEnabledAdminCooperateDeptCompanies } from "./cooperateDeptCompanies";
 import { listEnabledAdminCarbonDossiers } from "./carbonCreditDossiers";
 import { listEnabledAdminGreenEnergyDossiers } from "./greenEnergyDossiers";
+import { listEnabledAdminLendingLoans } from "./lendingDossiers";
 import { getDeskEconomicsMap, listDeskEconomics } from "./deskEconomics";
 
 /** Collect the ids of one live list, tolerating a failed source. */
@@ -84,6 +86,12 @@ export async function listDeskSourceInstrumentIds(desk: DeskKey): Promise<string
       groups.push(
         await idsFrom("Green Energy administrator dossiers", listEnabledAdminGreenEnergyDossiers),
         await idsFrom("Green Energy catalogue", async () => (await getGreenEnergyInvestmentCatalogue()).opportunities),
+      );
+      break;
+    case "lending":
+      groups.push(
+        await idsFrom("Lending administrator loans", listEnabledAdminLendingLoans),
+        await idsFrom("Lending catalogue", async () => (await getLendingCatalogue()).loans),
       );
       break;
   }
