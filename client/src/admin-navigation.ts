@@ -14,6 +14,7 @@ import {
   Gauge,
   Gavel,
   Globe2,
+  HandCoins,
   History,
   Landmark,
   Layers3,
@@ -84,6 +85,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "agro-investment", target: "agroInvestmentDossiers", label: "Agro Investment", detail: "Publish agriculture-only opportunities in 14 types — row crops, orchard & vineyard, livestock, dairy, poultry, aquaculture, greenhouse, farmland, irrigation, machinery, storage & logistics, agri inputs, agritech and processing", icon: Sprout },
     { id: "carbon-credit", target: "carbonCreditDossiers", label: "Carbon Credit", detail: "Publish carbon-only opportunities in 14 types — reforestation, forest conservation, soil carbon, blue carbon, cookstoves, biochar, direct air capture, BECCS, enhanced weathering, ocean alkalinity, renewable energy, methane capture, waste management and industrial efficiency", icon: Globe2 },
     { id: "green-energy", target: "greenEnergyDossiers", label: "Green Energy", detail: "Publish green-energy opportunities in 14 types — solar PV, concentrated solar, onshore wind, offshore wind, hydropower, geothermal, tidal & wave, biomass & bioenergy, battery storage, green hydrogen, waste-to-energy, grid infrastructure, energy efficiency and EV charging", icon: Zap },
+    { id: "lending", target: "lendingDossiers", label: "Lending", detail: "Run the two-sided lending desk — publish loans with their amount, tenure range, starting interest and repayment terms, post each lender's reserve, control the live borrower auction countdown and disburse and settle", icon: HandCoins },
   ]},
   { id: "mining", label: "Crypto Mining", detail: "Dedicated mining control room: packages, engine speed, earnings, customer contracts and ledger", items: [
     { id: "mining-overview", target: "miningOverview", label: "Mining Overview", detail: "Live engine status, KPIs, price feeds and readiness", icon: Cpu, children: [

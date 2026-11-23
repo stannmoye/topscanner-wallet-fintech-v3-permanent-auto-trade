@@ -1,0 +1,345 @@
+/* Lending desk — a live-auction identity built on the portal theme.
+   This desk deliberately uses a DIFFERENT structure from the atlas, register and
+   card desks: a countdown clock is the primary object, a ranked leaderboard is
+   the primary list, and a two-sided split separates borrower bidding from lender
+   funding. Every surface, border and text tone derives from the platform
+   semantic tokens (--arb-color-*) so it blends with whichever portal theme is
+   active. The lending character comes from the theme's info token for the live
+   countdown, the accent token for the leading bid, the warning token for a
+   closing auction, and the danger token for write-offs. */
+
+.lend-page {
+  --lend-surface: var(--arb-color-surface);
+  --lend-surface-2: var(--arb-color-surface-raised);
+  --lend-line: color-mix(in srgb, var(--arb-color-border) 82%, transparent);
+  --lend-line-soft: color-mix(in srgb, var(--arb-color-border) 46%, transparent);
+  --lend-white: var(--arb-color-text);
+  --lend-muted: var(--arb-color-text-muted);
+  --lend-live: var(--arb-color-info);
+  --lend-lead: var(--arb-color-accent);
+  --lend-warn: var(--arb-color-warning);
+  --lend-red: var(--arb-color-danger);
+  --lend-tint-weak: color-mix(in srgb, var(--arb-color-text) 5%, transparent);
+  --lend-tint: color-mix(in srgb, var(--arb-color-text) 9%, transparent);
+  --lend-well: color-mix(in srgb, var(--arb-color-canvas) 58%, transparent);
+  --lend-radius: 14px;
+  --lend-radius-lg: 20px;
+  --lend-shadow: var(--arb-shadow-card);
+  display: grid;
+  gap: 20px;
+  padding: clamp(14px, 2vw, 22px);
+  border-radius: var(--lend-radius-lg);
+  border: 1px solid var(--lend-line);
+  color: var(--lend-white);
+  background:
+    radial-gradient(120% 80% at 0% 0%, color-mix(in srgb, var(--arb-color-info) 18%, transparent), transparent 55%),
+    radial-gradient(110% 90% at 100% 4%, color-mix(in srgb, var(--arb-color-accent) 12%, transparent), transparent 52%),
+    var(--arb-color-canvas);
+}
+
+.lend-page .eyebrow,
+.lend-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--lend-muted, var(--arb-color-text-muted));
+}
+
+.lend-mono, .lend-mono b, .lend-page b.lend-mono {
+  font-family: "SFMono-Regular", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes lend-spin { to { transform: rotate(360deg); } }
+@keyframes lend-pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes lend-tick { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes lend-pulse { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 0.12; transform: scale(1.9); } }
+@keyframes lend-drawer-in { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+
+.lend-page .spin { animation: lend-spin 0.8s linear infinite; }
+
+/* ------------------------------- Hero ------------------------------- */
+.lend-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  gap: 18px;
+  padding: 26px 26px 22px;
+  border-radius: var(--lend-radius-lg);
+  border: 1px solid color-mix(in srgb, var(--arb-color-info) 40%, var(--arb-color-border));
+  background:
+    radial-gradient(120% 140% at 4% 0%, color-mix(in srgb, var(--arb-color-info) 26%, transparent), transparent 58%),
+    radial-gradient(120% 150% at 100% 0%, color-mix(in srgb, var(--arb-color-accent) 16%, transparent), transparent 56%),
+    linear-gradient(158deg, var(--lend-surface-2), var(--lend-surface));
+  box-shadow: var(--lend-shadow);
+}
+.lend-hero-glow {
+  position: absolute; inset: -40% -10% auto auto; width: 46%; height: 160%; z-index: -1;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--arb-color-info) 30%, transparent), transparent);
+  opacity: 0.7; pointer-events: none;
+}
+.lend-masthead { display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; align-items: flex-start; }
+.lend-masthead-lead { flex: 1 1 460px; display: grid; gap: 8px; max-width: 760px; }
+.lend-title { margin: 0; font-size: clamp(1.3rem, 2.4vw, 1.9rem); line-height: 1.16; letter-spacing: -0.01em; }
+.lend-lede { margin: 0; color: var(--lend-muted); font-size: 0.92rem; line-height: 1.55; }
+.lend-masthead-side { display: grid; gap: 10px; justify-items: end; align-content: start; }
+.lend-live-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border-radius: 999px; font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid color-mix(in srgb, var(--arb-color-info) 45%, var(--arb-color-border));
+  background: color-mix(in srgb, var(--arb-color-info) 12%, transparent);
+  color: var(--lend-live);
+}
+.lend-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--lend-live); position: relative; }
+.lend-pulse::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; background: var(--lend-live); animation: lend-pulse 1.6s ease-in-out infinite; }
+.lend-sources { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.lend-source-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 600;
+  border: 1px solid var(--lend-line); background: var(--lend-tint-weak); color: var(--lend-muted);
+}
+.lend-source-chip.is-ok { color: var(--lend-lead); border-color: color-mix(in srgb, var(--arb-color-accent) 42%, var(--arb-color-border)); }
+.lend-source-chip.is-degraded, .lend-source-chip.is-unavailable { color: var(--lend-warn); border-color: color-mix(in srgb, var(--arb-color-warning) 40%, var(--arb-color-border)); }
+
+.lend-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.lend-figure {
+  display: grid; gap: 3px; padding: 13px 15px; border-radius: var(--lend-radius);
+  border: 1px solid var(--lend-line); background: var(--lend-well);
+}
+.lend-figure b { font-size: 1.3rem; }
+.lend-figure span { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--lend-muted); }
+.lend-figure--live b { color: var(--lend-live); }
+.lend-figure--lead b { color: var(--lend-lead); }
+.lend-figure--warn b { color: var(--lend-warn); }
+.lend-figure--red b { color: var(--lend-red); }
+
+.lend-banner {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 11px 14px; border-radius: var(--lend-radius);
+  border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak);
+  color: var(--lend-muted); font-size: 0.82rem; line-height: 1.5;
+}
+.lend-banner svg { flex: none; margin-top: 1px; color: var(--lend-live); }
+
+/* ------------------------------ Controls ---------------------------- */
+.lend-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.lend-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.lend-tab {
+  padding: 7px 13px; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+  border: 1px solid var(--lend-line); background: var(--lend-tint-weak); color: var(--lend-muted);
+  cursor: pointer;
+}
+.lend-tab.active { color: var(--lend-white); border-color: color-mix(in srgb, var(--arb-color-info) 55%, var(--arb-color-border)); background: color-mix(in srgb, var(--arb-color-info) 16%, transparent); }
+.lend-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lend-search {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-radius: 999px; border: 1px solid var(--lend-line); background: var(--lend-well);
+}
+.lend-search input { background: transparent; border: none; outline: none; color: var(--lend-white); font-size: 0.82rem; width: 170px; }
+.lend-select, .lend-input {
+  padding: 7px 10px; border-radius: 9px; font-size: 0.82rem;
+  border: 1px solid var(--lend-line); background: var(--lend-well); color: var(--lend-white); outline: none;
+}
+.lend-select:focus, .lend-input:focus { border-color: color-mix(in srgb, var(--arb-color-info) 55%, var(--arb-color-border)); }
+
+/* ------------------------------ Board ------------------------------- */
+.lend-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+.lend-loan-card {
+  display: grid; gap: 12px; padding: 16px;
+  border-radius: var(--lend-radius-lg); border: 1px solid var(--lend-line);
+  background: linear-gradient(160deg, var(--lend-surface-2), var(--lend-surface));
+  box-shadow: var(--lend-shadow);
+  animation: lend-pop 0.28s ease both;
+}
+.lend-loan-card.is-live { border-color: color-mix(in srgb, var(--arb-color-info) 42%, var(--arb-color-border)); }
+.lend-loan-card.is-soon { border-color: color-mix(in srgb, var(--arb-color-warning) 46%, var(--arb-color-border)); }
+.lend-loan-card.is-mine { box-shadow: 0 0 0 1px color-mix(in srgb, var(--arb-color-accent) 55%, transparent), var(--lend-shadow); }
+.lend-loan-head { display: flex; gap: 10px; justify-content: space-between; align-items: flex-start; }
+.lend-loan-title { margin: 0; font-size: 1.02rem; line-height: 1.25; }
+.lend-loan-sub { margin: 2px 0 0; font-size: 0.76rem; color: var(--lend-muted); }
+.lend-loan-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.lend-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 999px; font-size: 0.66rem; font-weight: 600;
+  border: 1px solid var(--lend-line); background: var(--lend-tint-weak); color: var(--lend-muted);
+}
+.lend-tag--live { color: var(--lend-live); border-color: color-mix(in srgb, var(--arb-color-info) 45%, var(--arb-color-border)); }
+.lend-tag--lead { color: var(--lend-lead); border-color: color-mix(in srgb, var(--arb-color-accent) 45%, var(--arb-color-border)); }
+.lend-tag--warn { color: var(--lend-warn); border-color: color-mix(in srgb, var(--arb-color-warning) 45%, var(--arb-color-border)); }
+.lend-tag--red { color: var(--lend-red); border-color: color-mix(in srgb, var(--arb-color-danger) 45%, var(--arb-color-border)); }
+
+/* --------------------------- Countdown clock ------------------------ */
+.lend-clock {
+  display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--lend-radius);
+  border: 1px solid var(--lend-line); background: var(--lend-well); text-align: center;
+}
+.lend-clock-digits { font-size: 1.5rem; font-weight: 700; letter-spacing: 0.04em; }
+.lend-clock-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--lend-muted); }
+.lend-clock--live { border-color: color-mix(in srgb, var(--arb-color-info) 44%, var(--arb-color-border)); }
+.lend-clock--live .lend-clock-digits { color: var(--lend-live); }
+.lend-clock--soon { border-color: color-mix(in srgb, var(--arb-color-warning) 52%, var(--arb-color-border)); background: color-mix(in srgb, var(--arb-color-warning) 10%, transparent); }
+.lend-clock--soon .lend-clock-digits { color: var(--lend-warn); animation: lend-tick 1s ease-in-out infinite; }
+.lend-clock--closed { opacity: 0.72; }
+.lend-clock--closed .lend-clock-digits { color: var(--lend-muted); }
+
+.lend-terms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lend-term { display: grid; gap: 1px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak); }
+.lend-term span { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--lend-muted); }
+.lend-term b { font-size: 0.9rem; }
+
+/* ----------------------------- Leaderboard -------------------------- */
+.lend-leader { display: grid; gap: 6px; }
+.lend-leader-head { display: flex; justify-content: space-between; align-items: center; }
+.lend-leader-head span { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--lend-muted); }
+.lend-leader-row {
+  display: grid; grid-template-columns: 26px 1fr auto auto; gap: 9px; align-items: center;
+  padding: 7px 9px; border-radius: 9px; border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak);
+  font-size: 0.82rem;
+}
+.lend-leader-row.is-top { border-color: color-mix(in srgb, var(--arb-color-accent) 50%, var(--arb-color-border)); background: color-mix(in srgb, var(--arb-color-accent) 10%, transparent); }
+.lend-leader-row.is-self { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--arb-color-info) 55%, transparent); }
+.lend-leader-rank { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-size: 0.7rem; font-weight: 700; background: var(--lend-tint); color: var(--lend-muted); }
+.lend-leader-row.is-top .lend-leader-rank { background: var(--lend-lead); color: var(--arb-color-canvas); }
+.lend-leader-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lend-leader-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lend-leader-self { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em; padding: 2px 6px; border-radius: 999px; background: color-mix(in srgb, var(--arb-color-info) 22%, transparent); color: var(--lend-live); }
+.lend-leader-amt { color: var(--lend-muted); font-size: 0.76rem; }
+.lend-leader-rate { font-weight: 700; color: var(--lend-lead); }
+.lend-leader-row.is-top .lend-leader-rate { color: var(--lend-lead); }
+.lend-leader-empty { padding: 10px; border-radius: 9px; border: 1px dashed var(--lend-line); text-align: center; color: var(--lend-muted); font-size: 0.78rem; }
+
+.lend-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lend-actions .primary-button, .lend-actions .secondary-button { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ------------------------------- Panels ----------------------------- */
+.lend-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.lend-panel {
+  display: grid; gap: 12px; padding: 16px; border-radius: var(--lend-radius-lg);
+  border: 1px solid var(--lend-line); background: var(--lend-surface);
+}
+.lend-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.lend-panel-head h2 { margin: 0; font-size: 1rem; }
+.lend-panel-head span { font-size: 0.74rem; color: var(--lend-muted); }
+
+.lend-reserves { display: grid; gap: 9px; }
+.lend-reserve-card {
+  display: grid; gap: 7px; padding: 12px; border-radius: var(--lend-radius);
+  border: 1px solid var(--lend-line-soft); background: var(--lend-well);
+}
+.lend-reserve-card header { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.lend-reserve-card strong { font-size: 0.9rem; }
+.lend-reserve-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; }
+.lend-reserve-metrics div { display: grid; gap: 1px; }
+.lend-reserve-metrics span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--lend-muted); }
+
+.lend-positions { display: grid; gap: 8px; }
+.lend-position-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+  padding: 11px 12px; border-radius: var(--lend-radius);
+  border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak);
+}
+.lend-position-row strong { display: block; font-size: 0.88rem; }
+.lend-position-row small { color: var(--lend-muted); font-size: 0.74rem; }
+.lend-position-side { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--lend-line); color: var(--lend-muted); }
+.lend-position-side.is-lender { color: var(--lend-lead); border-color: color-mix(in srgb, var(--arb-color-accent) 45%, var(--arb-color-border)); }
+.lend-position-side.is-borrower { color: var(--lend-live); border-color: color-mix(in srgb, var(--arb-color-info) 45%, var(--arb-color-border)); }
+
+.lend-empty {
+  display: grid; gap: 6px; justify-items: center; text-align: center;
+  padding: 26px 16px; border-radius: var(--lend-radius); border: 1px dashed var(--lend-line);
+  color: var(--lend-muted); font-size: 0.84rem;
+}
+.lend-empty strong { color: var(--lend-white); font-size: 0.95rem; }
+
+/* ------------------------------- Detail ----------------------------- */
+.lend-detail {
+  display: grid; gap: 14px; padding: 18px; border-radius: var(--lend-radius-lg);
+  border: 1px solid color-mix(in srgb, var(--arb-color-info) 38%, var(--arb-color-border));
+  background: linear-gradient(160deg, var(--lend-surface-2), var(--lend-surface));
+  animation: lend-drawer-in 0.24s ease both;
+}
+.lend-detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.lend-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.lend-detail-block { display: grid; gap: 7px; }
+.lend-detail-block > span { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--lend-muted); }
+.lend-conditions { display: grid; gap: 6px; }
+.lend-condition {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 9px;
+  border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak); font-size: 0.8rem;
+}
+.lend-condition.is-met { border-color: color-mix(in srgb, var(--arb-color-accent) 42%, var(--arb-color-border)); }
+.lend-condition.is-pending { color: var(--lend-muted); }
+.lend-condition-state { margin-left: auto; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; }
+
+/* ------------------------------- Modal ------------------------------ */
+.lend-modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: color-mix(in srgb, #000 62%, transparent); padding: 16px; }
+.lend-modal {
+  width: min(480px, 100%); display: grid; gap: 14px; padding: 22px;
+  border-radius: var(--lend-radius-lg); border: 1px solid var(--lend-line);
+  background: var(--lend-surface); box-shadow: var(--lend-shadow);
+  animation: lend-pop 0.2s ease both;
+}
+.lend-modal h2 { margin: 0; font-size: 1.15rem; }
+.lend-modal-kicker { display: inline-flex; align-items: center; gap: 7px; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--lend-live); }
+.lend-modal-note { font-size: 0.76rem; color: var(--lend-muted); line-height: 1.5; }
+.lend-modal-actions { display: flex; gap: 9px; justify-content: flex-end; }
+.lend-error { display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-radius: 9px; font-size: 0.8rem; background: color-mix(in srgb, var(--arb-color-danger) 14%, transparent); color: var(--lend-red); }
+
+/* --------------------------- Admin console -------------------------- */
+.lend-admin { display: grid; gap: 20px; }
+.lend-admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.lend-admin .lend-panel { gap: 14px; }
+.lend-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.lend-field { display: grid; gap: 4px; }
+.lend-field label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--lend-muted); }
+.lend-field input, .lend-field select, .lend-field textarea {
+  padding: 8px 10px; border-radius: 9px; font-size: 0.82rem;
+  border: 1px solid var(--lend-line); background: var(--lend-well); color: var(--lend-white); outline: none; width: 100%;
+}
+.lend-field textarea { min-height: 72px; resize: vertical; }
+.lend-field input:focus, .lend-field select:focus, .lend-field textarea:focus { border-color: color-mix(in srgb, var(--arb-color-info) 55%, var(--arb-color-border)); }
+.lend-field-wide { grid-column: 1 / -1; }
+
+.lend-table { display: grid; gap: 6px; }
+.lend-table-head { display: grid; gap: 8px; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--lend-muted); padding: 0 4px; }
+.lend-table-row { display: grid; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak); font-size: 0.82rem; }
+.lend-admin-loans .lend-table-head, .lend-admin-loans .lend-table-row { grid-template-columns: minmax(0, 2.1fr) 1fr 0.9fr 0.9fr 1.1fr; }
+.lend-admin-reserves .lend-table-head, .lend-admin-reserves .lend-table-row { grid-template-columns: minmax(0, 1.6fr) 1fr 0.8fr 0.9fr 100px; }
+.lend-table-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lend-row-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.lend-row-actions button { padding: 5px 9px; border-radius: 8px; font-size: 0.72rem; font-weight: 600; border: 1px solid var(--lend-line); background: var(--lend-tint-weak); color: var(--lend-white); cursor: pointer; }
+.lend-row-actions button:hover { border-color: color-mix(in srgb, var(--arb-color-info) 50%, var(--arb-color-border)); }
+.lend-row-actions button.danger { color: var(--lend-red); border-color: color-mix(in srgb, var(--arb-color-danger) 40%, var(--arb-color-border)); }
+
+.lend-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; font-size: 0.66rem; font-weight: 700; border: 1px solid var(--lend-line); color: var(--lend-muted); }
+.lend-badge--live { color: var(--lend-live); border-color: color-mix(in srgb, var(--arb-color-info) 45%, var(--arb-color-border)); }
+.lend-badge--lead { color: var(--lend-lead); border-color: color-mix(in srgb, var(--arb-color-accent) 45%, var(--arb-color-border)); }
+.lend-badge--warn { color: var(--lend-warn); border-color: color-mix(in srgb, var(--arb-color-warning) 45%, var(--arb-color-border)); }
+.lend-badge--red { color: var(--lend-red); border-color: color-mix(in srgb, var(--arb-color-danger) 45%, var(--arb-color-border)); }
+.lend-badge--off { opacity: 0.6; }
+
+.lend-conditions-editor { display: grid; gap: 8px; }
+.lend-condition-edit { display: grid; grid-template-columns: 1.3fr 1fr auto auto; gap: 8px; align-items: center; }
+
+/* ------------------------------ Responsive -------------------------- */
+@media (max-width: 720px) {
+  .lend-board { grid-template-columns: 1fr; }
+  .lend-admin-loans .lend-table-head, .lend-admin-loans .lend-table-row { grid-template-columns: 1fr 1fr; }
+  .lend-admin-reserves .lend-table-head, .lend-admin-reserves .lend-table-row { grid-template-columns: 1fr 1fr; }
+  .lend-table-head { display: none; }
+  .lend-row-actions { justify-content: flex-start; }
+  .lend-condition-edit { grid-template-columns: 1fr 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lend-page *, .lend-page *::before, .lend-page *::after { animation: none !important; transition: none !important; }
+}
+
+@media (forced-colors: active) {
+  .lend-loan-card, .lend-panel, .lend-clock, .lend-leader-row, .lend-modal { border: 1px solid CanvasText; }
+  .lend-pulse::after { display: none; }
+}

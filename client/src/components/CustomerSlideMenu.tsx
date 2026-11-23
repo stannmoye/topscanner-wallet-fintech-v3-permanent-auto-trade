@@ -3,7 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { createPortal } from "react-dom";
 import {
   Activity, ArrowDownUp, BarChart3, BookMarked, BookOpen, Building2, CircleHelp, Coins, FileText,
-  Globe2, Headphones, Home, Landmark, Layers3, Library, LockKeyhole, Map, Menu, Newspaper, Scale,
+  Globe2, HandCoins, Headphones, Home, Landmark, Layers3, Library, LockKeyhole, Map, Menu, Newspaper, Scale,
   Search, ShieldAlert, ShieldCheck, Smartphone, Sparkles, TrendingUp, WalletCards, X, Zap, type LucideIcon,
 } from "lucide-react";
 
@@ -56,6 +56,7 @@ const destinationGroups: CustomerDestinationGroup[] = [
       { label: "Agro Investment", detail: "Agricultural investment opportunities", target: "agro-investment", icon: TrendingUp },
       { label: "Carbon Credit", detail: "Carbon credit opportunities", target: "carbon-credit", icon: Globe2 },
       { label: "Green Energy", detail: "Green energy opportunities", target: "green-energy", icon: Zap },
+      { label: "Lending", detail: "Live borrower auction: bid the interest, win the loan", target: "lending", icon: HandCoins },
     ],
   },
   {
@@ -83,7 +84,7 @@ const destinations = destinationGroups.flatMap((group) => group.items);
 const topWorkspaceTargets = [
   "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
   "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
-  "carbon-credit", "green-energy", "support",
+  "carbon-credit", "green-energy", "lending", "support",
 ];
 const topWorkspaceDestinations = topWorkspaceTargets
   .map((target) => destinations.find((item) => item.target === target))
@@ -104,6 +105,7 @@ const mainPageSearchDestinations: CustomerDestination[] = [
   { label: "Agro Investment", detail: "Agricultural investment opportunities", target: "agro-investment", icon: FileText },
   { label: "Carbon Credit", detail: "Carbon credit opportunities", target: "carbon-credit", icon: FileText },
   { label: "Green Energy", detail: "Green energy opportunities", target: "green-energy", icon: FileText },
+  { label: "Lending", detail: "Live borrower auction: bid the interest, win the loan", target: "lending", icon: FileText },
 ];
 const menuTargets = new Set(destinations.map((item) => item.target));
 const mainPageOnlySearchDestinations = mainPageSearchDestinations.filter((item) => !menuTargets.has(item.target));
@@ -115,7 +117,7 @@ const primaryLabels: Record<string, string> = {
   "trusted-devices": "Trusted Devices",
   "crypto-mining": "Crypto Mining", "token-launch": "Token Launch", "treasury-bond": "Treasury Bond", "cooperate-dept": "Cooperate Dept",
   "litigation-funds": "Litigation Funds", "ip-royalties": "IP Royalties", "music-royalties": "Music Royalties", "agro-investment": "Agro Investment",
-  "carbon-credit": "Carbon Credit", "green-energy": "Green Energy",
+  "carbon-credit": "Carbon Credit", "green-energy": "Green Energy", "lending": "Lending",
 };
 
 function CustomerTopWorkspaceMenu({ section, onNavigate }: CustomerSlideMenuProps) {
