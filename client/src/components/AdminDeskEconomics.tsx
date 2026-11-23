@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { CalendarPlus, Check, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { CalendarPlus, Check, RefreshCw, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import {
   DESK_KEYS,
   ECONOMICS_BOUNDS,
@@ -67,6 +67,15 @@ export function AdminDeskEconomics() {
     onError: (error) => notify(`Bulk update failed: ${error.message}`, "error"),
   });
 
+  const sync = trpc.adminOperations.syncDeskEconomics.useMutation({
+    onSuccess: (data, variables) => {
+      utils.adminOperations.deskEconomics.invalidate({ desk: variables.desk });
+      setSelected([]);
+      notify(`Loaded ${data.length} ${data.length === 1 ? "offer" : "offers"} from ${deskLabel(variables.desk)}'s live source.`);
+    },
+    onError: (error) => notify(`Could not load from source: ${error.message}`, "error"),
+  });
+
   const toggle = (id: string) => setSelected((list) => (list.includes(id) ? list.filter((item) => item !== id) : [...list, id]));
   const toggleAllVisible = () => setSelected((list) => (allVisibleSelected
     ? list.filter((id) => !visibleIds.includes(id))
@@ -107,7 +116,7 @@ export function AdminDeskEconomics() {
       <div>
         <div className="eyebrow">Cross-desk economic profiles</div>
         <h1>Desk economics</h1>
-        <p>Load any desk's offers from the dropdown, then edit one or many at once. Amounts, interest, close deadlines and payout dates are all administrator-controlled and audited.</p>
+        <p>Load any desk's offers from the dropdown — or pull the latest from its live source — then edit one or many at once. Amounts, interest, close deadlines and payout dates are all administrator-controlled and audited.</p>
       </div>
     </div>
 
@@ -121,6 +130,12 @@ export function AdminDeskEconomics() {
         <label>Search offers
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter by offer id" />
         </label>
+        <div className="de-load-source">
+          <span>Live source</span>
+          <button className="secondary-button" type="button" disabled={sync.isPending} onClick={() => sync.mutate({ desk })}>
+            {sync.isPending ? "Loading…" : "Load live from source"} <RefreshCw size={14}/>
+          </button>
+        </div>
       </div>
 
       <div className="de-bulk-heading">
@@ -191,7 +206,7 @@ export function AdminDeskEconomics() {
         {!visible.length && <div className="empty-state">
           <CalendarPlus size={22}/>
           <strong>No stored offers for this desk yet.</strong>
-          <span>Offers appear here as soon as a customer loads that desk, or after an administrator publishes them.</span>
+          <span>Use Load live from source to pull the desk's current offers, or wait until a customer loads the desk.</span>
         </div>}
       </div>
       {filtered.length > visible.length && <p className="de-note">Showing {visible.length} of {filtered.length} matching offers. Narrow the search to reach the rest.</p>}

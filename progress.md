@@ -1,3 +1,31 @@
+## 2026-11-23 (feat) — "Load live from source" pulls each desk's current offers into the console
+
+Follow-up to the Desk Economics console: the edit table previously only showed offers already stored, which
+appear once a customer (or the automatic assignment) first touches a desk. Owner asked to *"add it also"* —
+a button that pulls fresh catalogue items in immediately. The console now has **Load live from source** next
+to the desk picker: it fetches that desk's current offers from the same live catalogue + enabled
+administrator records the customer dashboard merges, assigns and persists an economic profile for any that
+are missing (an existing `ADMIN` row is left untouched), and refreshes the table — no customer visit needed.
+
+- **New server module (`server/deskEconomicsSources.ts`).** `listDeskSourceInstrumentIds(desk)` gathers the
+  ids each desk actually serves, mirroring its dashboard exactly — treasury instruments, litigation cases,
+  agro opportunities, IP royalty rights (rights, not the non-economic portfolios), music opportunities,
+  Cooperate Dept companies and carbon opportunities, each unioned with that desk's enabled administrator
+  records. Every source read fails soft (`[DeskEconomicsSync] Failed to read …`) so one unreachable provider
+  never blanks the console. `syncDeskEconomicsFromSource(desk)` runs the ids through the existing
+  `getDeskEconomicsMap` (assign + persist) and returns `listDeskEconomics(desk)`.
+- **API (`server/routers.ts`).** New admin mutation `syncDeskEconomics({ desk })`; imports
+  `syncDeskEconomicsFromSource` from the new module.
+- **Console (`client/src/components/AdminDeskEconomics.tsx`).** A **Load live from source** button wired to
+  `syncDeskEconomics` that invalidates the desk query and reports how many offers were loaded; the desk
+  picker row, the intro copy and the empty state mention it. Styles for the new control live in
+  `client/src/components/desk-economics-admin.css`.
+- **Tests (`server/desk-economics-console.contract.test.ts`).** Added a case covering the button, the
+  endpoint, the seven catalogue getters, the soft-fail log and the read-back. Suite now
+  **207 files / 1684 tests** (+1).
+- Verification: `pnpm check` (tsc --noEmit) clean; `npx vitest run` 207 files / 1684 passed; `pnpm build`
+  succeeded.
+
 ## 2026-11-23 (feat) — One shared "Desk Economics" console that bulk-edits any desk's offers
 
 Owner request: *"Every desk console, but we will be able to select which of the menus to load their

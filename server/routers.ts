@@ -26,6 +26,7 @@ import { createAdminMusicDossier, deleteAdminMusicDossier, listAdminMusicDossier
 import { getAgroInvestmentDashboard, listAgroOpenInstruments, purchaseAgroOpportunity, quoteAgroPurchase, recordAgroDistribution, settleAgroInstrument } from "./agroInvestments";
 import { createAdminAgroDossier, deleteAdminAgroDossier, listAdminAgroDossiers, reachAdminAgroMilestone, setAdminAgroDossierEnabled, setAdminAgroDossierStatus, updateAdminAgroDossier } from "./agroInvestmentDossiers";
 import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsBulkOverride, setDeskEconomicsOverride } from "./deskEconomics";
+import { syncDeskEconomicsFromSource } from "./deskEconomicsSources";
 import { getCarbonInvestmentDashboard, listCarbonOpenInstruments, purchaseCarbonOpportunity, quoteCarbonPurchase, recordCarbonDistribution, settleCarbonInstrument } from "./carbonCredits";
 import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDossiers, reachAdminCarbonMilestone, setAdminCarbonDossierEnabled, setAdminCarbonDossierStatus, updateAdminCarbonDossier } from "./carbonCreditDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
@@ -1626,6 +1627,10 @@ export const appRouter = router({
       return setDeskEconomicsBulkOverride(desk, instrumentIds, patch, { amountUsdMinor, extendCloseMonths, extendMaturityMonths }, ctx.user!.id);
     }),
     reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId: z.string().trim().min(1).max(160), salt: z.string().trim().min(1).max(40).optional() })).mutation(({ ctx, input }) => reassignDeskEconomics(input.desk, input.instrumentId, input.salt || `admin-${ctx.user!.id}-${Date.now()}`)),
+    // "Load live from source": pull every offer the desk currently serves into the
+    // economics store (assigning and persisting the missing ones), then return the
+    // desk's full stored set for the console.
+    syncDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema })).mutation(({ input }) => syncDeskEconomicsFromSource(input.desk)),
     carbonDossiers: adminProcedure.query(() => listAdminCarbonDossiers()),
     createCarbonDossier: adminProcedure.input(createCarbonDossierSchema).mutation(({ ctx, input }) => createAdminCarbonDossier(ctx.user!.id, input)),
     updateCarbonDossier: adminProcedure.input(updateCarbonDossierSchema).mutation(({ ctx, input }) => {

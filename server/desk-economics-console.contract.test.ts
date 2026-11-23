@@ -6,6 +6,7 @@ const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf
 const consoleUi = readFileSync(new URL("../client/src/components/AdminDeskEconomics.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../client/src/components/desk-economics-admin.css", import.meta.url), "utf8");
 const serverDesk = readFileSync(new URL("./deskEconomics.ts", import.meta.url), "utf8");
+const serverSources = readFileSync(new URL("./deskEconomicsSources.ts", import.meta.url), "utf8");
 const routers = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const investmentEconomics = readFileSync(new URL("../shared/investment-economics.ts", import.meta.url), "utf8");
 
@@ -73,5 +74,33 @@ describe("Cross-desk economics bulk editor", () => {
   it("ships the shared helpers the console depends on", () => {
     expect(investmentEconomics).toContain("export function usdMinorToCurrencyMinor(");
     expect(investmentEconomics).toContain("export function addMonthsToIsoDate(");
+  });
+
+  it("loads each desk's live source so fresh catalogue items appear without a customer visit", () => {
+    // Console action + endpoint.
+    expect(consoleUi).toContain("trpc.adminOperations.syncDeskEconomics.useMutation");
+    expect(consoleUi).toContain("Load live from source");
+    expect(consoleUi).toContain("sync.mutate({ desk })");
+    expect(routers).toContain("syncDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema })).mutation(");
+    expect(routers).toContain('import { syncDeskEconomicsFromSource } from "./deskEconomicsSources"');
+
+    // The server gathers the same live catalogue + enabled administrator records
+    // that each customer dashboard merges, for every one of the seven desks.
+    expect(serverSources).toContain("export async function listDeskSourceInstrumentIds(");
+    expect(serverSources).toContain("export async function syncDeskEconomicsFromSource(");
+    expect(serverSources).toContain("getTreasuryBondCatalogue");
+    expect(serverSources).toContain("getLitigationFundsCatalogue");
+    expect(serverSources).toContain("getAgroInvestmentCatalogue");
+    expect(serverSources).toContain("getIpRoyaltiesCatalogue");
+    expect(serverSources).toContain("getMusicRoyaltiesCatalogue");
+    expect(serverSources).toContain("getCooperateDeptCatalogue");
+    expect(serverSources).toContain("getCarbonInvestmentCatalogue");
+    expect(serverSources).toContain("listEnabledAdminTreasuryBondInstruments");
+    expect(serverSources).toContain("listEnabledAdminCooperateDeptCompanies");
+    // A failed source fails soft instead of blanking the console.
+    expect(serverSources).toContain("[DeskEconomicsSync] Failed to read");
+    // The assigned profiles are read back through the same store the console lists.
+    expect(serverSources).toContain("await getDeskEconomicsMap(desk, ids)");
+    expect(serverSources).toContain("return listDeskEconomics(desk)");
   });
 });
