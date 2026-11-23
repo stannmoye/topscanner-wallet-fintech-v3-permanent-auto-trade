@@ -1283,9 +1283,11 @@ export function exampleLenderReserves(now: number = Date.now()): ExampleReserveI
 export type ExampleSeedResult = { loans: number; reserves: number; loanIds: string[]; reserveIds: string[] };
 
 /**
- * Publish the example auctions and lender reserves. Idempotent: an example whose
- * deterministic id is already on the desk is skipped, so it can be re-run safely
- * and never duplicates a row. Records one audit event for the whole seed.
+ * Publish the example auctions and lender reserves. Idempotent and refresh-safe:
+ * every example is keyed by its deterministic `example-` id, so a row that already
+ * exists is refreshed (and re-enabled) rather than duplicated, and a missing row is
+ * inserted. Real administrator rows are never touched. Records one audit event for
+ * the whole seed whenever any example changed.
  */
 export async function seedExampleLendingDesk(adminUserId: number | null): Promise<ExampleSeedResult> {
   await ensureLendingSchema();
@@ -1295,14 +1297,25 @@ export async function seedExampleLendingDesk(adminUserId: number | null): Promis
     for (const example of exampleLendingLoans()) {
       const loanId = `${LENDING_EXAMPLE_PREFIX}${example.exampleId}`;
       loanIds.push(loanId);
-      const [existing] = await conn.query<any[]>(`SELECT loanId FROM ${LENDING_LOANS_TABLE} WHERE loanId=? LIMIT 1`, [loanId]);
-      if (existing.length) continue;
       const normalized = normalizeLendingLoanInput(example);
-      await conn.execute(
-        `INSERT INTO ${LENDING_LOANS_TABLE} (${LOAN_INSERT_COLUMNS}) VALUES (${Array(33).fill("?").join(",")})`,
-        [loanId, ...loanInsertValues(normalized, adminUserId)],
-      );
-      loansCreated += 1;
+      const values = loanInsertValues(normalized, adminUserId);
+      const [existing] = await conn.query<any[]>(`SELECT loanId FROM ${LENDING_LOANS_TABLE} WHERE loanId=? LIMIT 1`, [loanId]);
+      if (existing.length) {
+        await conn.execute(
+          `UPDATE ${LENDING_LOANS_TABLE}
+             SET title=?,borrower=?,loanType=?,sector=?,territory=?,territoryBand=?,countryCode=?,country=?,flag=?,purpose=?,description=?,
+                 principalMinor=?,currency=?,startingInterestBps=?,minimumTenureMonths=?,maximumTenureMonths=?,repaymentFrequency=?,platformFeeBps=?,riskGrade=?,
+                 collateral=?,highlightsJson=?,conditionsJson=?,stage=?,auctionOpensAt=?,auctionClosesAt=?,reserveId=?,source=?,sourceUrl=?,asOf=?,enabled=1,updatedByUserId=?
+           WHERE loanId=?`,
+          [...values.slice(0, 29), adminUserId, loanId],
+        );
+      } else {
+        await conn.execute(
+          `INSERT INTO ${LENDING_LOANS_TABLE} (${LOAN_INSERT_COLUMNS}) VALUES (${Array(33).fill("?").join(",")})`,
+          [loanId, ...values],
+        );
+        loansCreated += 1;
+      }
     }
 
     const reserveIds: string[] = [];
@@ -1310,20 +1323,37 @@ export async function seedExampleLendingDesk(adminUserId: number | null): Promis
     for (const example of exampleLenderReserves()) {
       const reserveId = `${LENDING_EXAMPLE_PREFIX}${example.exampleId}`;
       reserveIds.push(reserveId);
-      const [existing] = await conn.query<any[]>(`SELECT reserveId FROM ${LENDING_RESERVES_TABLE} WHERE reserveId=? LIMIT 1`, [reserveId]);
-      if (existing.length) continue;
       const normalized = normalizeLenderReserveInput(example);
-      await conn.execute(
-        `INSERT INTO ${LENDING_RESERVES_TABLE} (${RESERVE_INSERT_COLUMNS}) VALUES (${Array(22).fill("?").join(",")})`,
-        [
-          reserveId, normalized.lender, normalized.capacityMinor, normalized.capacityMinor, 0, normalized.currency,
-          normalized.country.code, normalized.country.name, flagFor(normalized.country.code), normalized.territory,
-          normalized.minimumTicketMinor, normalized.maximumTicketMinor, normalized.minimumTenureMonths, normalized.maximumTenureMonths,
-          normalized.startingInterestBps, JSON.stringify(normalized.loanTypes), normalized.note, normalized.enabled ? 1 : 0,
-          normalized.source, normalized.asOf, adminUserId, adminUserId,
-        ],
-      );
-      reservesCreated += 1;
+      const reserveValues = [
+        normalized.lender, normalized.capacityMinor, normalized.capacityMinor, 0, normalized.currency,
+        normalized.country.code, normalized.country.name, flagFor(normalized.country.code), normalized.territory,
+        normalized.minimumTicketMinor, normalized.maximumTicketMinor, normalized.minimumTenureMonths, normalized.maximumTenureMonths,
+        normalized.startingInterestBps, JSON.stringify(normalized.loanTypes), normalized.note, normalized.enabled ? 1 : 0,
+        normalized.source, normalized.asOf, adminUserId, adminUserId,
+      ];
+      const [existing] = await conn.query<any[]>(`SELECT reserveId FROM ${LENDING_RESERVES_TABLE} WHERE reserveId=? LIMIT 1`, [reserveId]);
+      if (existing.length) {
+        await conn.execute(
+          `UPDATE ${LENDING_RESERVES_TABLE}
+             SET lender=?,capacityMinor=?,availableMinor=?,allocatedMinor=?,currency=?,countryCode=?,country=?,flag=?,territory=?,
+                 minimumTicketMinor=?,maximumTicketMinor=?,minimumTenureMonths=?,maximumTenureMonths=?,startingInterestBps=?,
+                 loanTypesJson=?,note=?,enabled=1,source=?,asOf=?,updatedByUserId=?
+           WHERE reserveId=?`,
+          [
+            normalized.lender, normalized.capacityMinor, normalized.capacityMinor, 0, normalized.currency,
+            normalized.country.code, normalized.country.name, flagFor(normalized.country.code), normalized.territory,
+            normalized.minimumTicketMinor, normalized.maximumTicketMinor, normalized.minimumTenureMonths, normalized.maximumTenureMonths,
+            normalized.startingInterestBps, JSON.stringify(normalized.loanTypes), normalized.note,
+            normalized.source, normalized.asOf, adminUserId, reserveId,
+          ],
+        );
+      } else {
+        await conn.execute(
+          `INSERT INTO ${LENDING_RESERVES_TABLE} (${RESERVE_INSERT_COLUMNS}) VALUES (${Array(22).fill("?").join(",")})`,
+          [reserveId, ...reserveValues],
+        );
+        reservesCreated += 1;
+      }
     }
 
     if (loansCreated || reservesCreated) {
@@ -1338,24 +1368,22 @@ export async function seedExampleLendingDesk(adminUserId: number | null): Promis
 let examplesReady: Promise<void> | null = null;
 
 /**
- * Publish the example auctions once, only when the desk has no loans at all, so a
- * fresh install shows a working board and a desk with real data is never touched.
+ * Ensure the demonstration auctions and lender reserves exist on the desk. This is
+ * intentionally unconditional: the seed only ever touches rows whose id starts with
+ * `example-`, so a desk with real administrator loans is never modified. The seed
+ * refreshes any pre-existing example row and re-enables it, so the six auctions are
+ * always visible after a rebuild.
  */
 export async function ensureExampleLendingDesk(): Promise<void> {
   if (examplesReady) return examplesReady;
   examplesReady = (async () => {
     try {
       if (!process.env.DATABASE_URL) return;
-      await ensureLendingSchema();
-      const count = await withConnection(async (conn) => {
-        const [rows] = await conn.query<any[]>(`SELECT COUNT(*) AS n FROM ${LENDING_LOANS_TABLE}`);
-        return Number(rows[0]?.n ?? 0);
-      });
-      if (count > 0) return;
       await seedExampleLendingDesk(null);
     } catch (error) {
       examplesReady = null;
-      console.error("[Lending] Failed to seed example auctions:", error instanceof Error ? error.message : "UnknownError");
+      const details = error instanceof Error ? { name: error.name, message: error.message } : { message: "UnknownError" };
+      console.error("[Lending] Failed to seed example auctions:", details);
     }
   })();
   return examplesReady;

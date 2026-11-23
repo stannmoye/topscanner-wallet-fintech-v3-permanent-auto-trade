@@ -1,3 +1,21 @@
+## 2026-11-23 (fix) — Lending example auctions now seed reliably on every rebuild
+
+Owner report: *"It still did not show, it's suppose to save to database the records, make it like that so when
+I rebuild it will show up."* Root cause: the desk only renders `enabled=1` loans, but `ensureExampleLendingDesk`
+gated the seed on `COUNT(*) > 0` (any row, including disabled/draft ones). A desk with any non-visible row skipped
+seeding entirely, and the seed only ran lazily on the first desk load — never on boot.
+
+- `seedExampleLendingDesk` is now **upsert-based**: each example is keyed by its deterministic `example-` id; an
+  existing row is refreshed and **re-enabled** (`enabled=1`), a missing row is inserted. Real administrator rows
+  are never touched because only `example-%` ids are matched.
+- `ensureExampleLendingDesk` no longer gates on an empty table — it always ensures the six auctions and four
+  reserves are present and visible. Errors now log `{ name, message }` instead of just a string.
+- The seed is now called **at server startup** in `server/_core/index.ts` (inside the `DATABASE_URL` block, next
+  to `ensureVisitorAnalyticsSchema`), so a rebuild populates the board before any customer visits it. The lazy
+  call in `getLendingDesk` remains as a fallback.
+- **Verification.** `pnpm check` clean; `pnpm vitest run server/lending.contract.test.ts` 16/16; `pnpm build`
+  exit 0 (`dist/index.js` contains the startup seed call).
+
 ## 2026-11-23 (feat) — Lending desk, increment 2: three customer features + six example auctions
 
 Owner request: *"Make it more advanced add like 3 more features that the customers can see and also add

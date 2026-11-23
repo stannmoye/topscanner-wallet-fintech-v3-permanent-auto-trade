@@ -35,6 +35,7 @@ import { runMiningWorkerCycle } from "../mining";
 import { ensureSessionSecret } from "../../installer/session-secret.mjs";
 import { isValidSettlementEvidenceStorageKey, settlementEvidenceStorageKey, validateSettlementEvidenceUpload } from "../settlement-evidence";
 import { normalizeVisitorKey, recordAnalyticsEvent, ensureVisitorAnalyticsSchema, VISITOR_COOKIE } from "../site-analytics";
+import { ensureExampleLendingDesk } from "../lendingDossiers";
 import { parse as parseCookieHeader } from "cookie";
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
@@ -473,6 +474,13 @@ async function startServer() {
     // the administrator dashboard works even when this process is started
     // directly from dist/index.js (which skips the external startup wrapper).
     await ensureVisitorAnalyticsSchema();
+    // Publish the six demonstration loan auctions and lender reserves on boot so
+    // the customer lending desk always has a working board after a rebuild. The
+    // seed only touches rows whose id starts with `example-`, so real loans are
+    // never modified.
+    void ensureExampleLendingDesk()
+      .then(() => console.log("[Lending] Example auctions ensured on startup"))
+      .catch(error => console.error("[Lending] Startup example seed failed:", error instanceof Error ? error.message : "UnknownError"));
     startEmailWorkers();
     startHeartbeatWorker();
     // Durable queue polling is cheap while idle (indexed lookup only), processes
