@@ -3,7 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { createPortal } from "react-dom";
 import {
   Activity, ArrowDownUp, BarChart3, BookMarked, BookOpen, Building2, CircleHelp, Coins, FileText,
-  Globe2, HandCoins, Headphones, Home, Landmark, Layers3, Library, LockKeyhole, Map, Menu, Newspaper, Scale,
+  Globe2, HandCoins, Home, Landmark, Layers3, Library, LockKeyhole, Map, Menu, Newspaper, Scale,
   Search, ShieldAlert, ShieldCheck, Smartphone, Sparkles, TrendingUp, WalletCards, X, Zap, type LucideIcon,
 } from "lucide-react";
 
@@ -26,7 +26,6 @@ const destinationGroups: CustomerDestinationGroup[] = [
       { label: "Stake & Earn", detail: "Yield and staking products", target: "yield", icon: Sparkles },
       { label: "Activity", detail: "Account activity and transactions", target: "activity", icon: Activity },
       { label: "Crypto Mining", detail: "Mining packages and activity", target: "crypto-mining", icon: Coins },
-      { label: "Support centre", detail: "Customer support and tickets", target: "support", icon: Headphones },
     ],
   },
   {
@@ -84,7 +83,7 @@ const destinations = destinationGroups.flatMap((group) => group.items);
 const topWorkspaceTargets = [
   "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
   "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
-  "carbon-credit", "green-energy", "lending", "support",
+  "carbon-credit", "green-energy", "lending",
 ];
 const topWorkspaceDestinations = topWorkspaceTargets
   .map((target) => destinations.find((item) => item.target === target))
@@ -96,7 +95,6 @@ const mainPageSearchDestinations: CustomerDestination[] = [
   { label: "Activity", detail: "Account activity and transactions", target: "activity", icon: Activity },
   { label: "Crypto Mining", detail: "Mining packages and activity", target: "crypto-mining", icon: Coins },
   { label: "Yield Strategies", detail: "Yield and staking products", target: "yield", icon: Sparkles },
-  { label: "Support", detail: "Customer support and tickets", target: "support", icon: Headphones },
   { label: "Treasury Bond", detail: "Treasury bond investment section", target: "treasury-bond", icon: FileText },
   { label: "Cooperate Dept", detail: "Corporate opportunities section", target: "cooperate-dept", icon: FileText },
   { label: "Litigation Funds", detail: "Litigation fund opportunities", target: "litigation-funds", icon: Scale },
@@ -126,9 +124,8 @@ function CustomerTopWorkspaceMenu({ section, onNavigate }: CustomerSlideMenuProp
     <nav className="customer-workspace-categories" aria-label="Primary workspace pages">
       {topWorkspaceDestinations.map((item) => {
         const Icon = item.icon;
-        const label = item.target === "support" ? "Support Centre" : item.label;
         return <button key={item.target} type="button" className={section === item.target ? "active" : ""} aria-current={section === item.target ? "page" : undefined} onClick={() => onNavigate(item.target)}>
-          <Icon size={15} /><span>{label}</span>
+          <Icon size={15} /><span>{item.label}</span>
         </button>;
       })}
     </nav>

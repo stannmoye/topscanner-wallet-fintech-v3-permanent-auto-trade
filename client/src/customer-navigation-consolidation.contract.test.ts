@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// The customer portal keeps a 13-destination quick strip and a complete
+// The customer portal keeps a 12-destination quick strip and a complete
 // searchable drawer so primary pages and additional resources remain reachable.
+// Support was retired from the customer nav when the Lending desk replaced it.
 
 const slideMenu = readFileSync(new URL("./components/CustomerSlideMenu.tsx", import.meta.url), "utf8");
 const layoutCss = readFileSync(new URL("./index.css", import.meta.url), "utf8");
@@ -15,7 +16,7 @@ const drawerTargets = new Set(
 // must be able to reach each one (the header bell/console/profile and the
 // dashboard quick actions remain as shortcuts, not as the only path).
 const requiredDestinations = [
-  "dashboard", "wallet", "opportunities", "yield", "activity", "crypto-mining", "support",
+  "dashboard", "wallet", "opportunities", "yield", "activity", "crypto-mining",
   "advanced", "intelligence", "account", "trusted-devices",
   "whitepaper", "token-launch", "tokenomics", "roadmap", "investment-research",
   "knowledge-base", "documentation", "faqs", "trading-guides",
@@ -25,12 +26,12 @@ const requiredDestinations = [
 ];
 
 describe("customer navigation", () => {
-  it("restores the primary workspace strip with all 13 destinations", () => {
+  it("restores the primary workspace strip with all 12 destinations", () => {
     expect(slideMenu).toContain('aria-label="Workspace and investments"');
     const primaryDestinations = [
       "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
       "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
-      "carbon-credit", "green-energy", "lending", "support",
+      "carbon-credit", "green-energy", "lending",
     ];
     const targetBlock = slideMenu.match(/const topWorkspaceTargets = \[([\s\S]*?)\];/);
     expect(targetBlock).not.toBeNull();

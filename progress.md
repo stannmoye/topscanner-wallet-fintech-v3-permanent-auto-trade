@@ -1,3 +1,22 @@
+## 2026-11-24 (chore) — Retire the customer Support nav entry (Lending replaced it)
+
+Owner request: *"We need to remove the support menu since we already replaced it with lending and push the previous
+with and this to main."* Confirmed scope via a scoping question: **customer nav entry only** — remove the customer
+Support menu destination, keep the Support page reachable from its existing links, and leave the admin Support
+Tickets desk untouched.
+
+- `client/src/components/CustomerSlideMenu.tsx`: removed the `Support centre` item from the Workspace group,
+  dropped `"support"` from `topWorkspaceTargets` (the quick strip is now **12 destinations**, ending
+  `…"green-energy", "lending"`), removed the `Support` item from `mainPageSearchDestinations`, removed the now-unused
+  `Headphones` import, and simplified `CustomerTopWorkspaceMenu` to render `item.label` directly (the
+  `target === "support" ? "Support Centre" : …` special-case is gone).
+- The Support **page** (`App.tsx` `section === "support"`) and the `DailyLimitAlert` upgrade link remain, so Support
+  is still reachable; the admin **Support Tickets** item in `client/src/admin-navigation.ts` is unchanged.
+- `client/src/customer-navigation-consolidation.contract.test.ts`: header comment and test title now say
+  **12 destinations**; `"support"` removed from `requiredDestinations` and `primaryDestinations` so the
+  `toEqual` assertion matches the shorter strip.
+- **Verification.** `pnpm check` clean; `pnpm test` 1717 passed / 36 skipped (216 files); `pnpm build` exit 0.
+
 ## 2026-11-23 (fix) — Lending example auctions now seed reliably on every rebuild
 
 Owner report: *"It still did not show, it's suppose to save to database the records, make it like that so when
