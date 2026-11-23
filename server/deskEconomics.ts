@@ -1,8 +1,11 @@
 import mysql from "mysql2/promise";
 import { mysqlConnectionOptions } from "./_core/mysql";
 import {
+  ECONOMICS_BOUNDS,
+  TERM_DAY_CHOICES,
   addMonthsToIsoDate,
   assignDeskEconomics,
+  economicsScatterFactor,
   normalizeEconomicsOverride,
   usdMinorToCurrencyMinor,
   currencyByCode,
@@ -246,7 +249,7 @@ export async function reassignDeskEconomics(desk: DeskKey, instrumentId: string,
   return setDeskEconomicsOverride(desk, instrumentId, derived, null).then((row) => ({ ...row, source: "AUTO" }));
 }
 
-/** The one-off date / amount shifts applied on top of a bulk field patch. */
+/** The one-off shifts applied on top of a bulk field patch. */
 export type DeskEconomicsBulkOptions = {
   /** One USD amount applied to every selected opportunity, converted into each row's currency. */
   amountUsdMinor?: number;
@@ -254,7 +257,41 @@ export type DeskEconomicsBulkOptions = {
   extendCloseMonths?: number;
   /** Whole calendar months added to every selected opportunity's payout (maturity) date. */
   extendMaturityMonths?: number;
+  /**
+   * A relative interest change in basis points applied to each opportunity's
+   * current rate (e.g. +200 = +2%). Because each row starts from its own rate the
+   * results differ naturally, so the whole selection moves without becoming
+   * identical. Clamped to the published profit bounds.
+   */
+  adjustProfitBps?: number;
+  /**
+   * A scatter span as a percentage (0–50). When set, each opportunity's amount,
+   * interest, fee and term are nudged by a deterministic per-row factor in
+   * `[1 − span, 1 + span]`, so a bulk edit lands varied rather than uniform. The
+   * amounts are re-quantised to a nice local step and the rates/term to their
+   * published steps.
+   */
+  variancePct?: number;
+  /** Seed for the scatter draw; omit for fresh variety on every call. */
+  seed?: string;
 };
+
+/** Snap a scattered rate onto its published step and clamp it to the published bounds. */
+function clampStepBps(value: number, lo: number, hi: number, step: number): number {
+  const snapped = Math.round((Number(value) || 0) / step) * step;
+  return Math.max(lo, Math.min(hi, snapped));
+}
+
+/** Snap a scattered term (days) onto the nearest published term choice inside the bounds. */
+function snapTermDays(value: number): number {
+  const bounds = ECONOMICS_BOUNDS;
+  const clamped = Math.max(bounds.termMinDays, Math.min(bounds.termMaxDays, Math.round(Number(value) || 0)));
+  let best = TERM_DAY_CHOICES[0] ?? bounds.termMinDays;
+  for (const choice of TERM_DAY_CHOICES) {
+    if (Math.abs(choice - clamped) < Math.abs(best - clamped)) best = choice;
+  }
+  return best;
+}
 
 /**
  * Apply one administrator edit to many opportunities in a single action — the
@@ -275,15 +312,43 @@ export async function setDeskEconomicsBulkOverride(
 ): Promise<DeskEconomics[]> {
   const ids = [...new Set(instrumentIds.map((id) => String(id).trim()).filter(Boolean))];
   const results: DeskEconomics[] = [];
+  const bounds = ECONOMICS_BOUNDS;
   const amountUsdMinor = Number(options.amountUsdMinor);
   const extendCloseMonths = Number(options.extendCloseMonths);
   const extendMaturityMonths = Number(options.extendMaturityMonths);
+  const adjustProfitBps = Number(options.adjustProfitBps);
+  const variancePct = Number(options.variancePct);
+  const scatterOn = Number.isFinite(variancePct) && variancePct > 0;
+  // One seed for the whole call: every row draws its own factor, so the scatter is
+  // varied row-to-row yet reproducible within the call when the caller passes one.
+  const seed = String(options.seed || "").trim() || `scatter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   for (const id of ids) {
     const current = await getOrAssignDeskEconomics(desk, id);
     const next: EconomicsOverrideInput = { ...patch };
+    const factor = scatterOn ? economicsScatterFactor(desk, id, seed, variancePct) : 1;
+
     if (Number.isFinite(amountUsdMinor) && amountUsdMinor > 0) {
-      next.fundingTargetMinor = usdMinorToCurrencyMinor(amountUsdMinor, current.currency);
+      const sizedUsd = scatterOn ? Math.max(1, Math.round(amountUsdMinor * factor)) : amountUsdMinor;
+      next.fundingTargetMinor = usdMinorToCurrencyMinor(sizedUsd, current.currency);
+    }
+    // Relative interest change: each row keeps its own base and simply moves, so a
+    // "+1% across the board" lands on different absolute rates.
+    if (Number.isFinite(adjustProfitBps) && adjustProfitBps !== 0) {
+      const base = Number(next.profitBps ?? current.profitBps);
+      next.profitBps = Math.min(bounds.profitMaxBps, Math.max(bounds.profitMinBps, Math.round(base + adjustProfitBps)));
+    }
+    // Scatter the explicit values (opt-in) so a bulk edit does not read as uniform.
+    if (scatterOn) {
+      if (next.profitBps !== undefined) {
+        next.profitBps = clampStepBps(next.profitBps * factor, bounds.profitMinBps, bounds.profitMaxBps, bounds.profitStepBps);
+      }
+      if (next.platformFeeBps !== undefined) {
+        next.platformFeeBps = clampStepBps(next.platformFeeBps * factor, bounds.platformFeeMinBps, bounds.platformFeeMaxBps, bounds.platformFeeStepBps);
+      }
+      if (next.termDays !== undefined) {
+        next.termDays = snapTermDays(next.termDays * factor);
+      }
     }
     if (Number.isFinite(extendCloseMonths) && extendCloseMonths > 0) {
       next.closeDate = addMonthsToIsoDate(current.closeDate, extendCloseMonths);
@@ -293,6 +358,32 @@ export async function setDeskEconomicsBulkOverride(
     }
     if (!Object.keys(next).length) { results.push(current); continue; }
     results.push(await setDeskEconomicsOverride(desk, id, next, adminUserId));
+  }
+  return results;
+}
+
+/**
+ * Re-derive a fresh AUTO profile for many opportunities at once — the console's
+ * "make them different again" action. It re-rolls the deterministic assignment
+ * from a fresh salt so every selected offer gets new, still-realistic numbers
+ * (some alike, some different), while an opportunity an administrator has already
+ * overridden is left untouched unless `includeAdmin` is explicitly set — a
+ * re-roll never silently discards a human decision.
+ */
+export async function reassignDeskEconomicsBulk(
+  desk: DeskKey,
+  instrumentIds: string[],
+  options: { salt?: string; includeAdmin?: boolean } = {},
+): Promise<DeskEconomics[]> {
+  const ids = [...new Set(instrumentIds.map((id) => String(id).trim()).filter(Boolean))];
+  const baseSalt = String(options.salt || "").trim() || `reroll-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const results: DeskEconomics[] = [];
+  for (const id of ids) {
+    const existing = await getOrAssignDeskEconomics(desk, id);
+    if (existing.source === "ADMIN" && !options.includeAdmin) { results.push(existing); continue; }
+    const derived = assignDeskEconomics({ desk, instrumentId: id, salt: `${baseSalt}:${id}` });
+    const row = await setDeskEconomicsOverride(desk, id, derived, null);
+    results.push({ ...row, source: "AUTO" });
   }
   return results;
 }

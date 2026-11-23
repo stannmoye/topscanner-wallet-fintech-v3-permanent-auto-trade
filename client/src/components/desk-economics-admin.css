@@ -113,12 +113,23 @@
   background: color-mix(in srgb, var(--arb-color-accent, #3b82f6) 8%, transparent);
 }
 
+.de-offer-cell {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .de-id {
+  display: block;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.de-offer-cell small {
+  opacity: 0.6;
 }
 
 .de-table-row small {

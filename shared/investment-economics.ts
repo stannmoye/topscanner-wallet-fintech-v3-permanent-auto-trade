@@ -417,3 +417,19 @@ export function effectiveProfitBps(
 ): number {
   return profitRateIsPublished(publishedRatePct) ? 0 : Number(economics.profitBps || 0);
 }
+
+/**
+ * A deterministic per-opportunity multiplier in `[1 − span, 1 + span]`, used to
+ * "scatter" a bulk edit so the selected offers end up varied rather than
+ * identical. `variancePct` is the span as a percentage (0–50; values outside the
+ * range are clamped). A zero span always returns exactly 1, so an opt-out never
+ * perturbs a value. The result depends only on the desk, the opportunity id and
+ * the caller's seed, so the same seed reproduces the same scatter while a fresh
+ * seed (or none) yields new variety.
+ */
+export function economicsScatterFactor(desk: DeskKey, instrumentId: string, seed: string, variancePct: number): number {
+  const span = Math.max(0, Math.min(50, Number(variancePct) || 0)) / 100;
+  if (span <= 0) return 1;
+  const rng = mulberry32(hash32(`${desk}|${instrumentId}|${seed}|scatter`));
+  return 1 + (rng() * 2 - 1) * span;
+}

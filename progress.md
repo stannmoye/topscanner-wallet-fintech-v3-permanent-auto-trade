@@ -1,3 +1,37 @@
+## 2026-11-23 (feat) — Edit every menu at once without making the values identical
+
+Owner request: *"Add more features that will enable the admin to update all the menus easily by saving time
+without making everything exactly the same — think of new features and ideas."* The shared Desk Economics
+console gains an **All desks** mode plus variance-aware bulk tools, so one fast action can sweep every
+menu while the results stay realistic and varied rather than uniform.
+
+- **"All desks" mode (`client/src/components/AdminDeskEconomics.tsx`).** The desk picker gains an
+  **All desks** option that loads every menu into one table (no `desk` arg to the existing query). Each row
+  is keyed `desk:instrumentId`, selection is grouped per desk (`groupSelection`) and a single bulk apply
+  fans out to one mutation per desk — so one action edits the whole platform. The row cell shows the desk
+  label only in this mode, and the search filters by offer id **or** desk.
+- **Relative interest nudge (`adjustProfitBps`).** *Nudge interest (± bps)* moves every selected rate by the
+  same ±basis-point amount (−2,000…+2,000) from each row's **own** base and clamps to the published
+  bounds — the selection shifts together without collapsing to one value.
+- **Opt-in ±scatter (`variancePct`).** *Scatter ± (%)* nudges each row's amount/interest/fee/term by a
+  deterministic per-row factor in `[1−span, 1+span]` (`economicsScatterFactor`, seeded per call) and
+  re-quantises to the published steps (`clampStepBps`, `snapTermDays`), so a bulk edit lands varied but
+  still nice-round and reproducible for a given seed.
+- **One-click re-roll (`reassignDeskEconomicsBulk`).** *Re-roll profiles* re-derives fresh automatic
+  numbers from a new salt for the selection; administrator-set rows are preserved unless `includeAdmin` is
+  explicitly passed — a re-roll never silently discards a human decision.
+- **Select all matching.** Selects every row the current filter matches (the table still renders a capped
+  200), so a large catalogue can be swept without scrolling.
+- **API (`server/routers.ts`).** `bulkSetDeskEconomics` takes optional `adjustProfitBps` (−2,000…2,000) and
+  `variancePct` (0–50) plus a `seed`; new `reassignDeskEconomicsBulk({ desk, instrumentIds, includeAdmin, salt })`.
+- **Store (`server/deskEconomics.ts`).** `DeskEconomicsBulkOptions` extended with `adjustProfitBps` /
+  `variancePct` / `seed`; `setDeskEconomicsBulkOverride` applies the nudge, scatters the explicit values and
+  re-quantises; new `reassignDeskEconomicsBulk` re-rolls AUTO rows only by default.
+- **Tests (`server/desk-economics-console.contract.test.ts` + the agro/carbon contract tests).** Updated the
+  assertions for the rewritten UI and added a case for every new feature; stale import assertions were fixed
+  after the router import grew. Suite now **207 files / 1685 tests** (+1).
+- Verification: `pnpm check` (tsc --noEmit) clean; `npx vitest run` 207 files / 1685 passed; `pnpm build` succeeded.
+
 ## 2026-11-23 (feat) — "Load live from source" pulls each desk's current offers into the console
 
 Follow-up to the Desk Economics console: the edit table previously only showed offers already stored, which

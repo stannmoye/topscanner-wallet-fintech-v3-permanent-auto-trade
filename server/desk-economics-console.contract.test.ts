@@ -28,16 +28,19 @@ describe("Cross-desk economics bulk editor", () => {
     // The console is desk-agnostic: one screen, a desk selector, driven by the
     // shared DeskKey list rather than seven duplicated components.
     expect(consoleUi).toContain("DESK_KEYS");
-    expect(consoleUi).toContain("setDesk(event.target.value as DeskKey)");
-    expect(consoleUi).toContain("trpc.adminOperations.deskEconomics.useQuery({ desk }");
-    expect(consoleUi).toContain("deskLabel(desk)");
+    expect(consoleUi).toContain("setDeskMode(event.target.value as DeskMode)");
+    expect(consoleUi).toContain("trpc.adminOperations.deskEconomics.useQuery(queryInput");
+    expect(consoleUi).toContain("deskLabel(deskMode)");
+    // "All desks" folds every menu into a single table for cross-menu editing.
+    expect(consoleUi).toContain('const ALL_DESKS = "all"');
+    expect(consoleUi).toContain("<option value={ALL_DESKS}>All desks</option>");
   });
 
   it("bulk- and single-edits the close deadline, payout date, amount and interest", () => {
     // Selecting (checkbox + highlighted row) is the one path for both single and
     // many edits: the same mutation is reused with a one-id list.
     expect(consoleUi).toContain("trpc.adminOperations.bulkSetDeskEconomics.useMutation");
-    expect(consoleUi).toContain("onClick={() => toggle(row.instrumentId)}");
+    expect(consoleUi).toContain("onClick={() => toggle(key)}");
     expect(consoleUi).toContain("is-selected");
     expect(consoleUi).toContain("Extend close by (months)");
     expect(consoleUi).toContain("Extend payout by (months)");
@@ -46,9 +49,11 @@ describe("Cross-desk economics bulk editor", () => {
     expect(consoleUi).toContain("extendCloseMonths: extendClose");
     expect(consoleUi).toContain("extendMaturityMonths: extendPayout");
     expect(consoleUi).toContain("amountUsdMinor: amountMinor");
-    expect(consoleUi).toContain("instrumentIds: selected");
+    // One edit fans out to each selected row's own desk, so a single action can
+    // span several menus when "All desks" is active.
+    expect(consoleUi).toContain("[...groups].map(([desk, instrumentIds]) => ({");
     // A single-row quick action reuses the same bulk mutation with one id.
-    expect(consoleUi).toContain("instrumentIds: [id]");
+    expect(consoleUi).toContain("instrumentIds: [row.instrumentId]");
     // The visible list is capped so a large catalogue stays responsive.
     expect(consoleUi).toContain("VISIBLE_CAP");
     expect(styles).toContain(".de-table-row.is-selected");
@@ -65,10 +70,44 @@ describe("Cross-desk economics bulk editor", () => {
     // as ADMIN and can never be re-derived by the automatic assignment.
     expect(serverDesk).toContain("await setDeskEconomicsOverride(desk, id, next, adminUserId)");
     // The USD amount is converted into each row's own presentation currency.
-    expect(serverDesk).toContain("usdMinorToCurrencyMinor(amountUsdMinor, current.currency)");
+    expect(serverDesk).toContain("usdMinorToCurrencyMinor(sizedUsd, current.currency)");
     // Deadlines shift by whole calendar months without drifting the day.
     expect(serverDesk).toContain("addMonthsToIsoDate(current.closeDate, extendCloseMonths)");
     expect(serverDesk).toContain("addMonthsToIsoDate(current.maturityDate, extendMaturityMonths)");
+  });
+
+  it("edits every menu in one action while keeping the values varied, not identical", () => {
+    // "All desks" folds the seven menus into a single table, loaded and edited
+    // together through one cross-menu bulk action.
+    expect(consoleUi).toContain('const ALL_DESKS = "all"');
+    expect(consoleUi).toContain("<option value={ALL_DESKS}>All desks</option>");
+    expect(consoleUi).toContain("DESK_KEYS.map((desk) => sync.mutateAsync({ desk }))");
+    expect(consoleUi).toContain("Select all matching");
+
+    // A relative interest nudge moves every selected rate by the same amount
+    // while each row keeps its own base, so the selection shifts without flattening.
+    expect(consoleUi).toContain("Nudge interest (± bps)");
+    expect(consoleUi).toContain("adjustProfitBps: adjust");
+    expect(routers).toContain("adjustProfitBps: z.number().int().min(-2_000).max(2_000).optional()");
+    expect(serverDesk).toContain("next.profitBps = Math.min(bounds.profitMaxBps, Math.max(bounds.profitMinBps, Math.round(base + adjustProfitBps)))");
+
+    // An opt-in ±scatter lands a bulk edit varied rather than uniform, re-quantised
+    // onto the published steps, and is deterministic per row for a given seed.
+    expect(consoleUi).toContain("Scatter ± (%)");
+    expect(consoleUi).toContain("variancePct: variance");
+    expect(routers).toContain("variancePct: z.number().min(0).max(50).optional()");
+    expect(serverDesk).toContain("const factor = scatterOn ? economicsScatterFactor(desk, id, seed, variancePct) : 1");
+    expect(serverDesk).toContain("function clampStepBps(");
+    expect(serverDesk).toContain("function snapTermDays(");
+    expect(investmentEconomics).toContain("export function economicsScatterFactor(");
+
+    // One-click re-roll of the automatic profiles; administrator-set values are
+    // kept unless the caller explicitly includes them.
+    expect(consoleUi).toContain("Re-roll profiles");
+    expect(consoleUi).toContain("trpc.adminOperations.reassignDeskEconomicsBulk.useMutation");
+    expect(routers).toContain("reassignDeskEconomicsBulk: adminProcedure.input(");
+    expect(serverDesk).toContain("export async function reassignDeskEconomicsBulk(");
+    expect(serverDesk).toContain('if (existing.source === "ADMIN" && !options.includeAdmin)');
   });
 
   it("ships the shared helpers the console depends on", () => {
@@ -80,7 +119,7 @@ describe("Cross-desk economics bulk editor", () => {
     // Console action + endpoint.
     expect(consoleUi).toContain("trpc.adminOperations.syncDeskEconomics.useMutation");
     expect(consoleUi).toContain("Load live from source");
-    expect(consoleUi).toContain("sync.mutate({ desk })");
+    expect(consoleUi).toContain("sync.mutateAsync({ desk: deskMode })");
     expect(routers).toContain("syncDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema })).mutation(");
     expect(routers).toContain('import { syncDeskEconomicsFromSource } from "./deskEconomicsSources"');
 

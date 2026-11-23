@@ -25,7 +25,7 @@ import { getMusicRoyaltiesDashboard, listMusicOpenInstruments, purchaseMusicOppo
 import { createAdminMusicDossier, deleteAdminMusicDossier, listAdminMusicDossiers, reachAdminMusicMilestone, setAdminMusicDossierEnabled, setAdminMusicDossierStatus, updateAdminMusicDossier } from "./musicRoyaltyDossiers";
 import { getAgroInvestmentDashboard, listAgroOpenInstruments, purchaseAgroOpportunity, quoteAgroPurchase, recordAgroDistribution, settleAgroInstrument } from "./agroInvestments";
 import { createAdminAgroDossier, deleteAdminAgroDossier, listAdminAgroDossiers, reachAdminAgroMilestone, setAdminAgroDossierEnabled, setAdminAgroDossierStatus, updateAdminAgroDossier } from "./agroInvestmentDossiers";
-import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsBulkOverride, setDeskEconomicsOverride } from "./deskEconomics";
+import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, reassignDeskEconomicsBulk, setDeskEconomicsBulkOverride, setDeskEconomicsOverride } from "./deskEconomics";
 import { syncDeskEconomicsFromSource } from "./deskEconomicsSources";
 import { getCarbonInvestmentDashboard, listCarbonOpenInstruments, purchaseCarbonOpportunity, quoteCarbonPurchase, recordCarbonDistribution, settleCarbonInstrument } from "./carbonCredits";
 import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDossiers, reachAdminCarbonMilestone, setAdminCarbonDossierEnabled, setAdminCarbonDossierStatus, updateAdminCarbonDossier } from "./carbonCreditDossiers";
@@ -1622,10 +1622,27 @@ export const appRouter = router({
       amountUsdMinor: z.number().int().min(1).max(1_000_000_000).optional(),
       extendCloseMonths: z.number().int().min(0).max(60).optional(),
       extendMaturityMonths: z.number().int().min(0).max(60).optional(),
+      adjustProfitBps: z.number().int().min(-2_000).max(2_000).optional(),
+      variancePct: z.number().min(0).max(50).optional(),
+      seed: z.string().trim().min(1).max(40).optional(),
     })).mutation(({ ctx, input }) => {
-      const { desk, instrumentIds, amountUsdMinor, extendCloseMonths, extendMaturityMonths, ...patch } = input;
-      return setDeskEconomicsBulkOverride(desk, instrumentIds, patch, { amountUsdMinor, extendCloseMonths, extendMaturityMonths }, ctx.user!.id);
+      const { desk, instrumentIds, amountUsdMinor, extendCloseMonths, extendMaturityMonths, adjustProfitBps, variancePct, seed, ...patch } = input;
+      return setDeskEconomicsBulkOverride(
+        desk,
+        instrumentIds,
+        patch,
+        { amountUsdMinor, extendCloseMonths, extendMaturityMonths, adjustProfitBps, variancePct, seed },
+        ctx.user!.id,
+      );
     }),
+    // Re-roll the automatic profile for many opportunities at once: fresh, varied,
+    // still-realistic numbers. Administrator overrides are kept unless explicitly included.
+    reassignDeskEconomicsBulk: adminProcedure.input(z.object({
+      desk: deskKeySchema,
+      instrumentIds: z.array(z.string().trim().min(1).max(160)).min(1).max(500),
+      includeAdmin: z.boolean().optional(),
+      salt: z.string().trim().min(1).max(40).optional(),
+    })).mutation(({ input }) => reassignDeskEconomicsBulk(input.desk, input.instrumentIds, { includeAdmin: input.includeAdmin, salt: input.salt })),
     reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId: z.string().trim().min(1).max(160), salt: z.string().trim().min(1).max(40).optional() })).mutation(({ ctx, input }) => reassignDeskEconomics(input.desk, input.instrumentId, input.salt || `admin-${ctx.user!.id}-${Date.now()}`)),
     // "Load live from source": pull every offer the desk currently serves into the
     // economics store (assigning and persisting the missing ones), then return the
