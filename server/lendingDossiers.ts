@@ -653,7 +653,7 @@ export function reserveRowToReserve(row: AdminLenderReserveRow): LenderReserve {
   };
 }
 
-async function recordAudit(conn: Db, actorUserId: number, action: string, entityType: string, entityId: string, reason: string | null | undefined, metadata: unknown) {
+async function recordAudit(conn: Db, actorUserId: number | null, action: string, entityType: string, entityId: string, reason: string | null | undefined, metadata: unknown) {
   await conn.execute(
     `INSERT INTO v5_audit_events (actorUserId,action,entityType,entityId,reason,reference,metadataJson) VALUES (?,?,?,?,?,?,?)`,
     [actorUserId, action, entityType, entityId, text(reason, 500) || null, `${entityType}:${entityId}`, JSON.stringify(metadata ?? {})],
@@ -713,7 +713,7 @@ export async function findEnabledAdminLendingLoan(loanId: string): Promise<Lendi
 const LOAN_INSERT_COLUMNS =
   "loanId,title,borrower,loanType,sector,territory,territoryBand,countryCode,country,flag,purpose,description,principalMinor,currency,startingInterestBps,minimumTenureMonths,maximumTenureMonths,repaymentFrequency,platformFeeBps,riskGrade,collateral,highlightsJson,conditionsJson,stage,auctionOpensAt,auctionClosesAt,reserveId,source,sourceUrl,asOf,enabled,createdByUserId,updatedByUserId";
 
-function loanInsertValues(normalized: ReturnType<typeof normalizeLendingLoanInput>, actor: number) {
+function loanInsertValues(normalized: ReturnType<typeof normalizeLendingLoanInput>, actor: number | null) {
   return [
     normalized.title, normalized.borrower, normalized.loanType, normalized.sector,
     normalized.territory, normalized.territoryBand, normalized.country.code, normalized.country.name, flagFor(normalized.country.code),
@@ -1042,4 +1042,321 @@ export async function deleteAdminLenderReserve(adminUserId: number, reserveId: s
     if (deleted) await recordAudit(conn, adminUserId, "lending_reserve_deleted", "lending_reserve", id, null, { reserveId: id });
     return { reserveId: id, deleted };
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * Example auctions — a visible, self-describing demonstration set
+ * ------------------------------------------------------------------ */
+
+/**
+ * Provenance stamped on every seeded example. It is deliberately distinct from a
+ * real administrator publication so a demonstration record can always be told
+ * apart from — and deleted without touching — genuine desk data.
+ */
+export const LENDING_EXAMPLE_SOURCE = "Example auction — published for demonstration";
+/** Every seeded loan/reserve id begins with this prefix, so examples are identifiable. */
+export const LENDING_EXAMPLE_PREFIX = "example-";
+
+/** The interest an example auction opens at, in basis points (illustrative only). */
+export type ExampleLoanInput = AdminLendingLoanInput & { exampleId: string };
+export type ExampleReserveInput = AdminLenderReserveInput & { exampleId: string };
+
+/**
+ * Six illustrative loan auctions across consumer, asset, business, trade, project
+ * and agricultural lending, in six countries, each with a live or scheduled
+ * auction window relative to `now` so the countdown, the leaderboard and the
+ * status filters are all exercised immediately after publishing. The amounts,
+ * rates and tenures are plainly illustrative demonstrations — an administrator
+ * replaces them with real terms from the admin console.
+ */
+export function exampleLendingLoans(now: number = Date.now()): ExampleLoanInput[] {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const DAY = 24 * HOUR;
+  const at = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+  const today = new Date(now).toISOString().slice(0, 10);
+  const base = { stage: "BIDDING" as LoanStage, currency: "USD", source: LENDING_EXAMPLE_SOURCE, asOf: today };
+  return [
+    {
+      ...base,
+      exampleId: "home-improvement-personal-us",
+      title: "Home improvement personal loan",
+      borrower: "Vetted retail borrower pool",
+      loanType: "PERSONAL",
+      sector: "CONSUMER",
+      countryCode: "US",
+      purpose: "Home improvement",
+      description: "A pooled personal loan for vetted US borrowers financing home improvements, repaid monthly over up to three years. Income and employment are verified before disbursement.",
+      principalMinor: 2_500_000,
+      startingInterestBps: 850,
+      minimumTenureMonths: 12,
+      maximumTenureMonths: 36,
+      repaymentFrequency: "MONTHLY",
+      platformFeeBps: 150,
+      riskGrade: "PRIME",
+      collateral: "Unsecured — income and employment verified",
+      highlights: ["Income verified", "Autopay collected monthly", "Opens at 8.50% p.a."],
+      auctionOpensAt: at(-2 * HOUR),
+      auctionClosesAt: at(3 * DAY),
+    },
+    {
+      ...base,
+      exampleId: "ev-fleet-auto-de",
+      title: "EV fleet auto loan",
+      borrower: "Logistics SME fleet programme",
+      loanType: "AUTO",
+      sector: "VEHICLE",
+      countryCode: "DE",
+      purpose: "Electric delivery fleet",
+      description: "Financing for twelve electric delivery vans for a German logistics SME, secured on the vehicles and repaid monthly. The countdown on this auction closes within the hour.",
+      principalMinor: 12_000_000,
+      startingInterestBps: 920,
+      minimumTenureMonths: 24,
+      maximumTenureMonths: 60,
+      repaymentFrequency: "MONTHLY",
+      platformFeeBps: 200,
+      riskGrade: "BALANCED",
+      collateral: "Vehicle charge plus fleet assignment over the SPV",
+      highlights: ["Asset-backed", "VAT recoverable", "Closing within the hour"],
+      auctionOpensAt: at(-3 * HOUR),
+      auctionClosesAt: at(45 * MINUTE),
+    },
+    {
+      ...base,
+      exampleId: "sme-working-capital-ng",
+      title: "SME working-capital facility",
+      borrower: "Manufacturing SME (Lagos)",
+      loanType: "BUSINESS_WORKING_CAPITAL",
+      sector: "BUSINESS",
+      countryCode: "NG",
+      purpose: "Raw materials and payroll",
+      description: "A revolving working-capital facility for a Lagos manufacturer to fund raw materials and payroll ahead of the seasonal order book. Bidding opens in two days.",
+      principalMinor: 4_500_000,
+      startingInterestBps: 1450,
+      minimumTenureMonths: 6,
+      maximumTenureMonths: 18,
+      repaymentFrequency: "MONTHLY",
+      platformFeeBps: 250,
+      riskGrade: "SPECULATIVE",
+      collateral: "Assignment of the debtor book",
+      highlights: ["Opens for bidding soon", "Debtor-book secured", "Rates from 14.50% p.a."],
+      auctionOpensAt: at(2 * DAY),
+      auctionClosesAt: at(9 * DAY),
+    },
+    {
+      ...base,
+      exampleId: "trade-finance-invoice-in",
+      title: "Trade-finance invoice factoring",
+      borrower: "Insured export receivable pool",
+      loanType: "INVOICE_FACTORING",
+      sector: "TRADE",
+      countryCode: "IN",
+      purpose: "Export receivables",
+      description: "Advances against a pool of insured export receivables from Indian suppliers, repaid as the invoices settle. A single bullet repayment at maturity.",
+      principalMinor: 9_000_000,
+      startingInterestBps: 1150,
+      minimumTenureMonths: 3,
+      maximumTenureMonths: 12,
+      repaymentFrequency: "BULLETIN",
+      platformFeeBps: 175,
+      riskGrade: "BALANCED",
+      collateral: "Insured trade receivables",
+      highlights: ["Bullet repayment", "Insured receivables", "Short tenor"],
+      auctionOpensAt: at(-30 * MINUTE),
+      auctionClosesAt: at(6 * HOUR),
+    },
+    {
+      ...base,
+      exampleId: "agri-equipment-ke",
+      title: "Agricultural equipment finance",
+      borrower: "Cooperative irrigation scheme",
+      loanType: "AGRICULTURAL",
+      sector: "AGRICULTURE",
+      countryCode: "KE",
+      purpose: "Irrigation and harvesting equipment",
+      description: "Equipment finance for a Kenyan farming cooperative purchasing irrigation and harvesting machinery, repaid quarterly against the harvest cycle.",
+      principalMinor: 3_200_000,
+      startingInterestBps: 1350,
+      minimumTenureMonths: 12,
+      maximumTenureMonths: 48,
+      repaymentFrequency: "QUARTERLY",
+      platformFeeBps: 225,
+      riskGrade: "SPECULATIVE",
+      collateral: "Equipment lien plus harvest off-take guarantee",
+      highlights: ["Quarterly repayment", "Harvest-linked", "Equipment secured"],
+      auctionOpensAt: at(-90 * MINUTE),
+      auctionClosesAt: at(2 * HOUR),
+    },
+    {
+      ...base,
+      exampleId: "infrastructure-bridge-gb",
+      title: "Infrastructure bridge loan",
+      borrower: "Regeneration project SPV",
+      loanType: "BRIDGE",
+      sector: "PROJECT",
+      countryCode: "GB",
+      purpose: "Pre-development bridging",
+      description: "A short bridge ahead of a UK regeneration project's senior facility, secured by a first charge over the site SPV and repaid from the refinancing.",
+      principalMinor: 40_000_000,
+      startingInterestBps: 1050,
+      minimumTenureMonths: 6,
+      maximumTenureMonths: 24,
+      repaymentFrequency: "MONTHLY",
+      platformFeeBps: 300,
+      riskGrade: "BALANCED",
+      collateral: "First charge over the site SPV",
+      highlights: ["First charge security", "Refinance exit", "Largest on the board"],
+      auctionOpensAt: at(-4 * HOUR),
+      auctionClosesAt: at(5 * DAY),
+    },
+  ];
+}
+
+/**
+ * Four illustrative lender reserves so the two-sided desk shows a funded board
+ * immediately. Each states how much a lender has reserved for borrowers, the
+ * ticket range and tenor it will fund and the lowest interest it will accept.
+ */
+export function exampleLenderReserves(now: number = Date.now()): ExampleReserveInput[] {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const base = { currency: "USD", source: LENDING_EXAMPLE_SOURCE, asOf: today };
+  return [
+    {
+      ...base,
+      exampleId: "meridian-capital-us",
+      lender: "Meridian Capital Partners",
+      capacityMinor: 200_000_000,
+      countryCode: "US",
+      minimumTicketMinor: 1_000_000,
+      maximumTicketMinor: 50_000_000,
+      minimumTenureMonths: 6,
+      maximumTenureMonths: 60,
+      startingInterestBps: 800,
+      loanTypes: [],
+      note: "Multi-strategy private credit mandate covering every consumer and SME loan type.",
+    },
+    {
+      ...base,
+      exampleId: "northwind-credit-gb",
+      lender: "Northwind Credit Union",
+      capacityMinor: 150_000_000,
+      countryCode: "GB",
+      minimumTicketMinor: 500_000,
+      maximumTicketMinor: 15_000_000,
+      minimumTenureMonths: 3,
+      maximumTenureMonths: 36,
+      startingInterestBps: 900,
+      loanTypes: ["PERSONAL", "AUTO", "BUSINESS_WORKING_CAPITAL"],
+      note: "Consumer and small-business lending across the United Kingdom.",
+    },
+    {
+      ...base,
+      exampleId: "sahel-development-ng",
+      lender: "Sahel Development Bank",
+      capacityMinor: 80_000_000,
+      countryCode: "NG",
+      minimumTicketMinor: 200_000,
+      maximumTicketMinor: 6_000_000,
+      minimumTenureMonths: 6,
+      maximumTenureMonths: 24,
+      startingInterestBps: 1400,
+      loanTypes: ["BUSINESS_WORKING_CAPITAL", "AGRICULTURAL", "TRADE_FINANCE"],
+      note: "Development finance for West African SMEs and agricultural cooperatives.",
+    },
+    {
+      ...base,
+      exampleId: "baltic-trade-de",
+      lender: "Baltic Trade Finance",
+      capacityMinor: 120_000_000,
+      countryCode: "DE",
+      minimumTicketMinor: 2_500_000,
+      maximumTicketMinor: 25_000_000,
+      minimumTenureMonths: 3,
+      maximumTenureMonths: 18,
+      startingInterestBps: 1100,
+      loanTypes: ["INVOICE_FACTORING", "TRADE_FINANCE", "PROJECT_FINANCE"],
+      note: "Short-tenor trade and receivables finance for European exporters.",
+    },
+  ];
+}
+
+export type ExampleSeedResult = { loans: number; reserves: number; loanIds: string[]; reserveIds: string[] };
+
+/**
+ * Publish the example auctions and lender reserves. Idempotent: an example whose
+ * deterministic id is already on the desk is skipped, so it can be re-run safely
+ * and never duplicates a row. Records one audit event for the whole seed.
+ */
+export async function seedExampleLendingDesk(adminUserId: number | null): Promise<ExampleSeedResult> {
+  await ensureLendingSchema();
+  return withConnection(async (conn) => {
+    const loanIds: string[] = [];
+    let loansCreated = 0;
+    for (const example of exampleLendingLoans()) {
+      const loanId = `${LENDING_EXAMPLE_PREFIX}${example.exampleId}`;
+      loanIds.push(loanId);
+      const [existing] = await conn.query<any[]>(`SELECT loanId FROM ${LENDING_LOANS_TABLE} WHERE loanId=? LIMIT 1`, [loanId]);
+      if (existing.length) continue;
+      const normalized = normalizeLendingLoanInput(example);
+      await conn.execute(
+        `INSERT INTO ${LENDING_LOANS_TABLE} (${LOAN_INSERT_COLUMNS}) VALUES (${Array(33).fill("?").join(",")})`,
+        [loanId, ...loanInsertValues(normalized, adminUserId)],
+      );
+      loansCreated += 1;
+    }
+
+    const reserveIds: string[] = [];
+    let reservesCreated = 0;
+    for (const example of exampleLenderReserves()) {
+      const reserveId = `${LENDING_EXAMPLE_PREFIX}${example.exampleId}`;
+      reserveIds.push(reserveId);
+      const [existing] = await conn.query<any[]>(`SELECT reserveId FROM ${LENDING_RESERVES_TABLE} WHERE reserveId=? LIMIT 1`, [reserveId]);
+      if (existing.length) continue;
+      const normalized = normalizeLenderReserveInput(example);
+      await conn.execute(
+        `INSERT INTO ${LENDING_RESERVES_TABLE} (${RESERVE_INSERT_COLUMNS}) VALUES (${Array(22).fill("?").join(",")})`,
+        [
+          reserveId, normalized.lender, normalized.capacityMinor, normalized.capacityMinor, 0, normalized.currency,
+          normalized.country.code, normalized.country.name, flagFor(normalized.country.code), normalized.territory,
+          normalized.minimumTicketMinor, normalized.maximumTicketMinor, normalized.minimumTenureMonths, normalized.maximumTenureMonths,
+          normalized.startingInterestBps, JSON.stringify(normalized.loanTypes), normalized.note, normalized.enabled ? 1 : 0,
+          normalized.source, normalized.asOf, adminUserId, adminUserId,
+        ],
+      );
+      reservesCreated += 1;
+    }
+
+    if (loansCreated || reservesCreated) {
+      await recordAudit(conn, adminUserId, "lending_examples_seeded", "lending_loan", "example", "Seed example lending auctions", {
+        loans: loansCreated, reserves: reservesCreated, loanIds, reserveIds,
+      });
+    }
+    return { loans: loansCreated, reserves: reservesCreated, loanIds, reserveIds };
+  });
+}
+
+let examplesReady: Promise<void> | null = null;
+
+/**
+ * Publish the example auctions once, only when the desk has no loans at all, so a
+ * fresh install shows a working board and a desk with real data is never touched.
+ */
+export async function ensureExampleLendingDesk(): Promise<void> {
+  if (examplesReady) return examplesReady;
+  examplesReady = (async () => {
+    try {
+      if (!process.env.DATABASE_URL) return;
+      await ensureLendingSchema();
+      const count = await withConnection(async (conn) => {
+        const [rows] = await conn.query<any[]>(`SELECT COUNT(*) AS n FROM ${LENDING_LOANS_TABLE}`);
+        return Number(rows[0]?.n ?? 0);
+      });
+      if (count > 0) return;
+      await seedExampleLendingDesk(null);
+    } catch (error) {
+      examplesReady = null;
+      console.error("[Lending] Failed to seed example auctions:", error instanceof Error ? error.message : "UnknownError");
+    }
+  })();
+  return examplesReady;
 }

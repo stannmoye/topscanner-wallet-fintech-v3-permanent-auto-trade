@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle, Banknote, Check, Clock, Coins, Gavel, Plus, RefreshCw, ScrollText,
-  ShieldCheck, Trash2, Trophy,
+  ShieldCheck, Sparkles, Trash2, Trophy,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS } from "@shared/country-options";
@@ -159,6 +159,13 @@ export function AdminLending() {
   const updateReserve = trpc.adminOperations.updateLenderReserve.useMutation({ onSuccess: (row: any) => { resetReserveForm(); invalidate(); report("success", `Updated lender reserve ${row.reserveId}.`); }, onError });
   const toggleReserve = trpc.adminOperations.setLenderReserveEnabled.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `${row.lender} reserve is now ${row.enabled ? "enabled" : "disabled"}.`); }, onError });
   const deleteReserve = trpc.adminOperations.deleteLenderReserve.useMutation({ onSuccess: (result: any) => { invalidate(); report("success", `Deleted ${result.reserveId}.`); }, onError });
+
+  // Publish the ready-made example auctions and lender reserves. Idempotent, so it
+  // is safe to press more than once: an example already on the desk is skipped.
+  const seedExamples = trpc.adminOperations.seedLendingExamples.useMutation({
+    onSuccess: (result: any) => { invalidate(); report("success", `Published ${result.loans} example auction(s) and ${result.reserves} lender reserve(s).`); },
+    onError,
+  });
 
   const disburse = trpc.adminOperations.disburseLendingLoan.useMutation({
     onSuccess: (result: any) => { invalidate(); report("success", `Disbursed “${result.loanId}” to ${result.winnerLabel}: ${money(result.principalMinor)} credited at ${percent(result.topBidBps)}.`); },
@@ -431,7 +438,15 @@ export function AdminLending() {
       </section>
 
       <section className="lend-panel lend-admin-loans">
-        <div className="lend-panel-head"><h2>Published loans</h2><span>{loans.length} total</span></div>
+        <div className="lend-panel-head">
+          <h2>Published loans</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span>{loans.length} total</span>
+            <button type="button" className="secondary-button" disabled={seedExamples.isPending} onClick={() => seedExamples.mutate()}>
+              <Sparkles size={13} /> {seedExamples.isPending ? "Publishing…" : "Publish examples"}
+            </button>
+          </div>
+        </div>
         <div className="lend-table">
           <div className="lend-table-head"><span>Loan</span><span>Stage</span><span>Amount</span><span>Starting</span><span>Actions</span></div>
           {loans.length === 0 && <div className="lend-empty"><strong>No loans yet</strong><span>Publish the first loan above.</span></div>}

@@ -32,7 +32,7 @@ import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDoss
 import { getGreenEnergyInvestmentDashboard, listGreenEnergyOpenInstruments, purchaseGreenEnergyOpportunity, quoteGreenEnergyPurchase, recordGreenEnergyDistribution, settleGreenEnergyInstrument } from "./greenEnergy";
 import { createAdminGreenEnergyDossier, deleteAdminGreenEnergyDossier, listAdminGreenEnergyDossiers, reachAdminGreenEnergyMilestone, setAdminGreenEnergyDossierEnabled, setAdminGreenEnergyDossierStatus, updateAdminGreenEnergyDossier } from "./greenEnergyDossiers";
 import { disburseLendingLoan, fundLendingLoan, getLendingDesk, getLendingLoanView, listLendingLoanBids, listLendingLoansForSettlement, placeLendingBid, quoteLendingFunding, raiseLendingBid, settleLendingLoan, withdrawLendingBid } from "./lending";
-import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
+import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, seedExampleLendingDesk, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
 import {
   LENDING_CONDITION_STATUSES,
   LENDING_CONDITION_TYPES,
@@ -1972,6 +1972,9 @@ export const appRouter = router({
     }),
     setLenderReserveEnabled: adminProcedure.input(z.object({ reserveId: z.string().trim().min(1).max(80), enabled: z.boolean() })).mutation(({ ctx, input }) => setAdminLenderReserveEnabled(ctx.user!.id, input.reserveId, input.enabled)),
     deleteLenderReserve: adminProcedure.input(z.object({ reserveId: z.string().trim().min(1).max(80) })).mutation(({ ctx, input }) => deleteAdminLenderReserve(ctx.user!.id, input.reserveId)),
+    // Publish the six example auctions and four lender reserves on demand. Idempotent:
+    // an example already on the desk is skipped, so it is safe to run repeatedly.
+    seedLendingExamples: adminProcedure.mutation(({ ctx }) => seedExampleLendingDesk(ctx.user!.id)),
     lendingLoansForSettlement: adminProcedure.query(() => listLendingLoansForSettlement()),
     lendingLoanBids: adminProcedure.input(z.object({ loanId: z.string().trim().min(1).max(80) })).query(({ input }) => listLendingLoanBids(input.loanId)),
     disburseLendingLoan: adminProcedure.input(z.object({

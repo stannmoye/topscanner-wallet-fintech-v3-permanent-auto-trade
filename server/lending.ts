@@ -18,6 +18,7 @@ import {
 } from "@shared/lending-catalogue";
 import {
   applyLendingLoanOutcome,
+  ensureExampleLendingDesk,
   findAdminLendingLoan,
   LENDING_LOANS_TABLE,
   listEnabledAdminLenderReserves,
@@ -594,6 +595,9 @@ async function readBalances(userId: number): Promise<any[]> {
  */
 export async function getLendingDesk(userId: number) {
   await ensureLendingDeskSchema();
+  // A fresh desk seeds its example auctions once, so customers always land on a
+  // working board. A desk with any real loan is never touched.
+  await ensureExampleLendingDesk();
   await resolveClosedLendingAuctions();
 
   const [adminLoans, reserves, positions, balances] = await Promise.all([
@@ -644,6 +648,7 @@ export async function getLendingDesk(userId: number) {
 /** One loan with its full live leaderboard, for the auction detail view. */
 export async function getLendingLoanView(userId: number, loanId: string): Promise<LendingLoanView | null> {
   await ensureLendingDeskSchema();
+  await ensureExampleLendingDesk();
   await resolveClosedLendingAuctions();
   const id = String(loanId || "").trim();
   if (!id) return null;
