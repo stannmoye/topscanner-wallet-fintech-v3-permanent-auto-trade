@@ -1,3 +1,29 @@
+## 2026-11-24 (fix) — Lending example auctions invisible: ISO-8601 string rejected by strict MySQL on a DATETIME column
+
+Owner report: *"check the site live see why it's not showing the various lending examples you added … if it's code
+error or something fix it."* Signed in to `https://stan.prod.page/customer` with the supplied customer credentials:
+`customer.lending.desk` returned `loans: []` / `reserves: []`, yet the deploy clearly carried the seed code
+(`adminOperations.seedLendingExamples` answered **403, not 404**) and the database was reachable (wallet balances and
+`greenEnergy.market` returned data). So the seed was failing silently, server-side.
+
+- **Root cause.** Reproduced the real seed against a local MariaDB 10.11: the first INSERT aborted with
+  `Error: Incorrect datetime value: '2026-11-23T…Z' for column lending_loans.auctionOpensAt` — **ERROR 1292 (22007)**
+  under the default `STRICT_TRANS_TABLES` sql_mode. mysql2 binds a JS `Date` as `YYYY-MM-DD HH:MM:SS.mmm`, but a raw
+  ISO-8601 string (`…T…Z`) is rejected by strict MySQL/MariaDB for a `DATETIME` column. The seed threw on its first
+  row, and `readAdminLoans`/`readReserves` swallow read errors to `[]`, so the desk rendered empty with no error.
+- **Fix (`server/lendingDossiers.ts`).** Added a `dbDateTime(value)` helper that parses an ISO-8601 string into a
+  `Date` for DATETIME binding (returns `null` when absent), and wrapped `auctionOpensAt`/`auctionClosesAt` at all
+  three write sites: the seed INSERT (`loanInsertValues`), the re-seed/update UPDATE, and the admin schedule writer
+  (`setAdminLendingLoanSchedule`). Reads already coerced via `new Date(row.…)`, so datetimes round-trip as ISO.
+- **New regression guard.** `server/lending-seed.integration.test.ts` (auto-skips unless `LENDING_TEST_DATABASE_URL`
+  is set, same pattern as `mining-store.mysql.integration.test.ts`) proves a clean seed writes 6 loans + 4 reserves
+  with ISO datetimes, that re-seeding is idempotent, and that the admin schedule writer persists an auction window.
+- **Verification.** `pnpm check` clean; `pnpm test` 1717 passed / 39 skipped (217 files); `pnpm build` exit 0.
+  Failure and fix both reproduced against a real MariaDB.
+
+Owner note: the six example auctions are runtime database rows seeded on boot, so they appear once this build is
+redeployed against the production database.
+
 ## 2026-11-24 (chore) — Retire the customer Support nav entry (Lending replaced it)
 
 Owner request: *"We need to remove the support menu since we already replaced it with lending and push the previous

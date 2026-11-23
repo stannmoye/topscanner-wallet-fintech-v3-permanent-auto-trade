@@ -368,6 +368,18 @@ function optionalIsoDateTime(value: unknown, label: string): string | null {
 }
 
 /**
+ * Convert an ISO-8601 datetime string to a `Date` for binding into a MySQL
+ * DATETIME column. mysql2 formats a `Date` as `YYYY-MM-DD HH:MM:SS.mmm`, but a
+ * raw ISO string such as `2026-11-23T16:54:39.596Z` is rejected by strict
+ * MySQL/MariaDB with "Incorrect datetime value". Returns null when absent.
+ */
+function dbDateTime(value: string | null): Date | null {
+  if (!value) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? new Date(at) : null;
+}
+
+/**
  * Validate an administrator's loan. Fails closed: an unknown loan type, sector
  * or stage, a bad country, a negative amount, an out-of-range interest, a tenure
  * range that runs backwards, or a close time before its open time all throw
@@ -721,7 +733,7 @@ function loanInsertValues(normalized: ReturnType<typeof normalizeLendingLoanInpu
     normalized.minimumTenureMonths, normalized.maximumTenureMonths, normalized.repaymentFrequency,
     normalized.platformFeeBps, normalized.riskGrade, normalized.collateral,
     JSON.stringify(normalized.highlights), JSON.stringify(normalized.conditions),
-    normalized.stage, normalized.auctionOpensAt, normalized.auctionClosesAt, normalized.reserveId,
+    normalized.stage, dbDateTime(normalized.auctionOpensAt), dbDateTime(normalized.auctionClosesAt), normalized.reserveId,
     normalized.source, normalized.sourceUrl, normalized.asOf, 1, actor, actor,
   ];
 }
@@ -769,7 +781,7 @@ export async function updateAdminLendingLoan(adminUserId: number, loanId: string
         normalized.minimumTenureMonths, normalized.maximumTenureMonths, normalized.repaymentFrequency,
         normalized.platformFeeBps, normalized.riskGrade, normalized.collateral,
         JSON.stringify(normalized.highlights), JSON.stringify(normalized.conditions),
-        normalized.stage, normalized.auctionOpensAt, normalized.auctionClosesAt, normalized.reserveId,
+        normalized.stage, dbDateTime(normalized.auctionOpensAt), dbDateTime(normalized.auctionClosesAt), normalized.reserveId,
         normalized.source, normalized.sourceUrl, normalized.asOf, adminUserId, id,
       ],
     );
@@ -832,7 +844,7 @@ export async function setAdminLendingLoanSchedule(
     const stage = input.stage ?? (existing[0].stage as LoanStage);
     await conn.execute(
       `UPDATE ${LENDING_LOANS_TABLE} SET auctionOpensAt=?, auctionClosesAt=?, stage=?, updatedByUserId=?, updatedAt=NOW(3) WHERE loanId=?`,
-      [opens, closes, stage, adminUserId, id],
+      [dbDateTime(opens), dbDateTime(closes), stage, adminUserId, id],
     );
     await recordAudit(conn, adminUserId, "lending_loan_schedule_set", "lending_loan", id, input.reason, { loanId: id, auctionOpensAt: opens, auctionClosesAt: closes, stage });
     const [rows] = await conn.query<any[]>(`SELECT * FROM ${LENDING_LOANS_TABLE} WHERE loanId=? LIMIT 1`, [id]);
