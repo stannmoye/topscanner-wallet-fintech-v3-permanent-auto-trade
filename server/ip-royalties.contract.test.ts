@@ -35,7 +35,7 @@ describe("IP Royalties licensing-capital desk", () => {
     expect(app).toContain('section==="ip-royalties"&&<Suspense');
     expect(app).toContain("<CustomerIPRoyalties push={push}/>");
     // The generic placeholder must explicitly exclude ip-royalties now.
-    expect(app).toContain('item.id!=="litigation-funds"&&item.id!=="cooperate-dept"&&item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit"&&item.id!=="green-energy")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="litigation-funds"&&item.id!=="cooperate-dept"&&item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit"&&item.id!=="green-energy"&&item.id!=="lending")&&<CustomerInvestmentCategory');
     // The customer menu reaches the desk through the shared slide menu.
     expect(slideMenu).toContain('target: "ip-royalties"');
 

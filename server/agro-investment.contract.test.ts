@@ -35,7 +35,7 @@ describe("Agro Investment desk", () => {
     expect(app).toContain('section==="agro-investment"&&<Suspense');
     expect(app).toContain("<CustomerAgroInvestment push={push}/>");
     // The generic placeholder must explicitly exclude agro-investment now.
-    expect(app).toContain('item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit"&&item.id!=="green-energy")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit"&&item.id!=="green-energy"&&item.id!=="lending")&&<CustomerInvestmentCategory');
     // The customer menu reaches the desk through the shared slide menu.
     expect(slideMenu).toContain('target: "agro-investment"');
 

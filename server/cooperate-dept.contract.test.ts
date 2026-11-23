@@ -36,7 +36,7 @@ describe("Cooperate Dept distressed-company desk", () => {
     expect(app).toContain("<CustomerCooperateDept push={push}/>");
     // The generic placeholder must explicitly exclude cooperate-dept now (along
     // with the other desks that have their own consoles, including ip-royalties).
-    expect(app).toContain('item.id!=="cooperate-dept"&&item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit"&&item.id!=="green-energy")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="cooperate-dept"&&item.id!=="ip-royalties"&&item.id!=="music-royalties"&&item.id!=="agro-investment"&&item.id!=="carbon-credit"&&item.id!=="green-energy"&&item.id!=="lending")&&<CustomerInvestmentCategory');
 
     expect(customerUi).toContain("trpc.customer.cooperateDept.market.useQuery");
     // Customers buy: the desk says "purchase", never "commit".

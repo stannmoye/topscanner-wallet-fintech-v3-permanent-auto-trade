@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// The customer portal keeps a 12-destination quick strip and a complete
+// The customer portal keeps a 13-destination quick strip and a complete
 // searchable drawer so primary pages and additional resources remain reachable.
 
 const slideMenu = readFileSync(new URL("./components/CustomerSlideMenu.tsx", import.meta.url), "utf8");
@@ -21,16 +21,16 @@ const requiredDestinations = [
   "knowledge-base", "documentation", "faqs", "trading-guides",
   "risk-disclosure", "legal-documents", "news-updates",
   "treasury-bond", "cooperate-dept", "litigation-funds", "ip-royalties",
-  "music-royalties", "agro-investment", "carbon-credit", "green-energy",
+  "music-royalties", "agro-investment", "carbon-credit", "green-energy", "lending",
 ];
 
 describe("customer navigation", () => {
-  it("restores the primary workspace strip with all 12 destinations", () => {
+  it("restores the primary workspace strip with all 13 destinations", () => {
     expect(slideMenu).toContain('aria-label="Workspace and investments"');
     const primaryDestinations = [
       "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
       "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
-      "carbon-credit", "green-energy", "support",
+      "carbon-credit", "green-energy", "lending", "support",
     ];
     const targetBlock = slideMenu.match(/const topWorkspaceTargets = \[([\s\S]*?)\];/);
     expect(targetBlock).not.toBeNull();

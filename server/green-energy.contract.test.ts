@@ -35,7 +35,7 @@ describe("Green Energy desk", () => {
     expect(app).toContain('section==="green-energy"&&<Suspense');
     expect(app).toContain("<CustomerGreenEnergy push={push}/>");
     // The generic placeholder must explicitly exclude green-energy now.
-    expect(app).toContain('item.id!=="green-energy")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="green-energy"&&item.id!=="lending")&&<CustomerInvestmentCategory');
     // The customer menu reaches the desk through the shared slide menu.
     expect(slideMenu).toContain('target: "green-energy"');
 
