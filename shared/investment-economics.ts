@@ -220,6 +220,30 @@ export function currencyMinorToUsdMinor(amountMinor: number, currencyCode: strin
   return Math.round(units * currency.usdPerUnit * 100);
 }
 
+/** Convert a USD minor amount into an opportunity's currency, rounded to a nice local step. */
+export function usdMinorToCurrencyMinor(usdMinor: number, currencyCode: string): number {
+  const currency = currencyByCode(currencyCode);
+  if (!currency) return Math.round(Number(usdMinor) || 0);
+  return usdMinorToCurrency(Number(usdMinor) || 0, currency);
+}
+
+/**
+ * Add whole calendar months to a YYYY-MM-DD date, clamping to the last valid day
+ * of the resulting month (e.g. 31 Jan + 1 month = 28/29 Feb). Used by the admin
+ * console to extend an offer's close or payout deadline without drifting the day.
+ * An unparseable input is returned unchanged.
+ */
+export function addMonthsToIsoDate(isoDate: string, months: number): string {
+  const text = String(isoDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(Date.parse(text))) return text;
+  const [year, month, day] = text.split("-").map((part) => Number(part));
+  const base = new Date(Date.UTC(year, month - 1, 1));
+  base.setUTCMonth(base.getUTCMonth() + Math.round(Number(months) || 0));
+  const lastDay = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0)).getUTCDate();
+  base.setUTCDate(Math.min(day, lastDay));
+  return toIsoDate(base);
+}
+
 export type AssignEconomicsInput = {
   desk: DeskKey;
   instrumentId: string;

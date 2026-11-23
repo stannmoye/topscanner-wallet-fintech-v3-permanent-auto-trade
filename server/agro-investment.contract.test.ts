@@ -363,7 +363,7 @@ describe("Agro Investment desk", () => {
     expect(serverDesk).toContain("10_000 + economics.profitBps");
 
     // The administrator can view and override the auto-assigned values.
-    expect(serverRouters).toContain('import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsOverride } from "./deskEconomics"');
+    expect(serverRouters).toContain('import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsBulkOverride, setDeskEconomicsOverride } from "./deskEconomics"');
     expect(serverRouters).toContain("const deskKeySchema = z.enum(DESK_KEY_VALUES)");
     expect(serverRouters).toContain("deskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema.optional() })");
     expect(serverRouters).toContain("deskEconomicsBatch: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentIds");

@@ -1,0 +1,167 @@
+/* Cross-desk economics console (Admin → Finance → Desk Economics).
+   Styles derive from the shared --arb-color-* tokens with safe fallbacks. */
+
+.de-bulk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.de-bulk-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.de-bulk-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--arb-color-border, #2a2f3a);
+  padding-top: 12px;
+}
+
+.de-bulk-heading > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.de-bulk-heading small {
+  opacity: 0.7;
+}
+
+.de-bulk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.de-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.de-bulk-hint {
+  opacity: 0.65;
+  font-size: 0.85rem;
+}
+
+.de-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--arb-color-border, #2a2f3a);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+
+.de-table-head,
+.de-table-row {
+  display: grid;
+  grid-template-columns: 34px minmax(170px, 2.2fr) 74px 1.5fr 0.9fr 0.7fr 0.7fr 1fr 1.25fr 0.9fr 1.1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 12px;
+  min-width: 1020px;
+}
+
+.de-table-head {
+  background: color-mix(in srgb, var(--arb-color-surface, #12151c) 82%, #ffffff 6%);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+.de-table-row {
+  border-top: 1px solid var(--arb-color-border, #2a2f3a);
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.de-table-row.is-selected {
+  background: color-mix(in srgb, var(--arb-color-accent, #3b82f6) 18%, transparent);
+}
+
+.de-table-row:hover {
+  background: color-mix(in srgb, var(--arb-color-accent, #3b82f6) 8%, transparent);
+}
+
+.de-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.de-table-row small {
+  display: block;
+  opacity: 0.65;
+  font-size: 0.74rem;
+}
+
+.de-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.de-badge {
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.de-badge.is-admin {
+  color: #a7f3d0;
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.de-badge.is-auto {
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.de-row-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.de-quick {
+  font-size: 0.76rem;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--arb-color-border, #2a2f3a);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.de-quick:hover:not(:disabled) {
+  border-color: var(--arb-color-accent, #3b82f6);
+}
+
+.de-quick:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.de-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.7;
+  font-size: 0.82rem;
+  margin-top: 10px;
+}

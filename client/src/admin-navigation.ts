@@ -75,6 +75,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "credit-adjustment", target: "credit", label: "Credit Adjustment", detail: "Auditable wallet credit action", icon: CircleDollarSign },
     { id: "debit-adjustment", target: "debit", label: "Debit Adjustment", detail: "Validated wallet debit action", icon: ReceiptText },
     { id: "currencies-assets", target: "currencies", label: "Currencies & Assets", detail: "Currency registry and valuation rates", icon: Coins },
+    { id: "desk-economics", target: "deskEconomics", label: "Desk Economics", detail: "Load any desk's offers and bulk-edit their amounts, interest, deadlines and payout dates", icon: SlidersHorizontal },
     { id: "treasury-instruments", target: "treasuryInstruments", label: "Treasury Instruments", detail: "Create treasury-bond instruments and publish them to the customer desk", icon: Landmark },
     { id: "cooperate-dept-companies", target: "cooperateDeptCompanies", label: "Cooperate Dept", detail: "Publish distressed companies and start-ups that need investors to buy, recapitalise or take ownership", icon: Building2 },
     { id: "litigation-funds", target: "litigationFundDossiers", label: "Litigation Funds", detail: "Publish cited case dossiers and bundles with modelled outcome scenarios, milestones and funding targets", icon: Gavel },

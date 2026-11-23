@@ -1,3 +1,50 @@
+## 2026-11-23 (feat) — One shared "Desk Economics" console that bulk-edits any desk's offers
+
+Owner request: *"Every desk console, but we will be able to select which of the menus to load their
+offers through drop-down select … the goal is to be able to bulk edit with multiple values without it
+wasting time since we have logs of catalogs"*, extending the earlier *"extend the deadline month and
+also when the payout will reach / when the offer closes, when profit realised, including their amount
+and interest … bulk editable or single editable … by highlighting the companies or selecting."*
+Rather than seven duplicated per-desk editors, there is now **one cross-desk console**: pick a desk
+from a drop-down to load that desk's stored offers, then edit one **or many at once** — set the funding
+amount, the interest/profit rate, or extend the close **and** payout dates by whole months. Selection
+(checkbox + highlighted row) is the single control for both single and bulk edits, and the live list is
+search-narrowed and capped so a large catalogue stays responsive.
+
+- **Shared helpers (`shared/investment-economics.ts`).** `usdMinorToCurrencyMinor(usdMinor, code)`
+  converts one USD amount into a row's own presentation currency; `addMonthsToIsoDate(isoDate, months)`
+  shifts a `YYYY-MM-DD` date by whole calendar months, clamping to the last valid day (no day drift).
+- **Server store (`server/deskEconomics.ts`).** New `DeskEconomicsBulkOptions` and
+  `setDeskEconomicsBulkOverride(desk, instrumentIds, patch, options, adminUserId)` apply one edit to
+  many rows in a single action: `patch` fields are written verbatim, the optional `amountUsdMinor` is
+  converted per row via `usdMinorToCurrencyMinor`, and the optional month counts shift each row's stored
+  close / payout dates via `addMonthsToIsoDate`. Every touched row goes through the existing
+  `setDeskEconomicsOverride`, so it is written as `ADMIN` and can never be re-derived by the automatic
+  assignment; rows with nothing to change are returned untouched.
+- **API (`server/routers.ts`).** New admin mutation `bulkSetDeskEconomics` (min 1 / max 500 ids) takes
+  the same override fields plus `amountUsdMinor` (1–1,000,000,000), `extendCloseMonths` and
+  `extendMaturityMonths` (0–60). It reuses the shared `deskKeySchema` and override schema, so bounds and
+  authorization match the single-row endpoint.
+- **Navigation (`client/src/admin-navigation.ts`).** One Finance destination,
+  `id: "desk-economics" → target: "deskEconomics"` ("Desk Economics").
+- **Console (`client/src/components/AdminDeskEconomics.tsx`, new).** Desk drop-down (driven by
+  `DESK_KEYS`), search filter, a bulk grid (amount / interest / extend-close / extend-payout) and an
+  offer table with select-all, per-row checkbox, row highlight and a one-click "Extend 1 mo" quick
+  action that reuses the same bulk mutation for a single row. Visible rows are capped (`VISIBLE_CAP`)
+  and the rest reached by search. Profit edits are validated against `ECONOMICS_BOUNDS` in the browser
+  and again server-side.
+- **Styles (`client/src/components/desk-economics-admin.css`, new).** Token-based layout with a
+  highlighted selected row (`.de-table-row.is-selected`) and admin/auto source badges.
+- **App wiring (`client/src/App.tsx`).** Lazy `AdminDeskEconomics` + `section==="deskEconomics"` render.
+- **Tests (`server/desk-economics-console.contract.test.ts`, new).** Asserts the nav destination + app
+  wiring, the desk drop-down, the bulk/single edit controls and shared mutation, the server bulk writer
+  and its ADMIN marking, and the new shared helpers. Also updated the exact import-line assertions in
+  `server/agro-investment.contract.test.ts` and `server/carbon-credit.contract.test.ts` for the new
+  `setDeskEconomicsBulkOverride` import. Suite now **207 files / 1683 tests** (+5), 7 files / 36 tests
+  skipped as before.
+- Verification: `pnpm check` (tsc --noEmit) clean; `npx vitest run` 207 files / 1683 passed;
+  `pnpm build` succeeded.
+
 ## 2026-11-23 (fix) — Treasury Bond: no new interest rate where the source already publishes one
 
 Owner follow-up to the desk-economics roll-out: *"There are some that the API already have interest

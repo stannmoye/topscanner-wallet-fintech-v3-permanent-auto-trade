@@ -1,8 +1,10 @@
 import mysql from "mysql2/promise";
 import { mysqlConnectionOptions } from "./_core/mysql";
 import {
+  addMonthsToIsoDate,
   assignDeskEconomics,
   normalizeEconomicsOverride,
+  usdMinorToCurrencyMinor,
   currencyByCode,
   type DeskEconomics,
   type DeskKey,
@@ -242,4 +244,55 @@ export async function reassignDeskEconomics(desk: DeskKey, instrumentId: string,
   const existing = await getOrAssignDeskEconomics(desk, instrumentId);
   if (existing.source === "ADMIN") return existing;
   return setDeskEconomicsOverride(desk, instrumentId, derived, null).then((row) => ({ ...row, source: "AUTO" }));
+}
+
+/** The one-off date / amount shifts applied on top of a bulk field patch. */
+export type DeskEconomicsBulkOptions = {
+  /** One USD amount applied to every selected opportunity, converted into each row's currency. */
+  amountUsdMinor?: number;
+  /** Whole calendar months added to every selected opportunity's funding-close date. */
+  extendCloseMonths?: number;
+  /** Whole calendar months added to every selected opportunity's payout (maturity) date. */
+  extendMaturityMonths?: number;
+};
+
+/**
+ * Apply one administrator edit to many opportunities in a single action — the
+ * bulk editor behind the admin Desk Economics console. Every field in `patch` is
+ * applied verbatim (in each opportunity's own units); the optional
+ * `amountUsdMinor` is converted into each opportunity's presentation currency,
+ * and the optional month counts shift the stored close / payout dates by whole
+ * calendar months without drifting the day. Each touched row is written as
+ * `ADMIN` so the auto-assignment can never overwrite the human decision. Rows
+ * with nothing to change are returned untouched.
+ */
+export async function setDeskEconomicsBulkOverride(
+  desk: DeskKey,
+  instrumentIds: string[],
+  patch: EconomicsOverrideInput,
+  options: DeskEconomicsBulkOptions = {},
+  adminUserId: number | null = null,
+): Promise<DeskEconomics[]> {
+  const ids = [...new Set(instrumentIds.map((id) => String(id).trim()).filter(Boolean))];
+  const results: DeskEconomics[] = [];
+  const amountUsdMinor = Number(options.amountUsdMinor);
+  const extendCloseMonths = Number(options.extendCloseMonths);
+  const extendMaturityMonths = Number(options.extendMaturityMonths);
+
+  for (const id of ids) {
+    const current = await getOrAssignDeskEconomics(desk, id);
+    const next: EconomicsOverrideInput = { ...patch };
+    if (Number.isFinite(amountUsdMinor) && amountUsdMinor > 0) {
+      next.fundingTargetMinor = usdMinorToCurrencyMinor(amountUsdMinor, current.currency);
+    }
+    if (Number.isFinite(extendCloseMonths) && extendCloseMonths > 0) {
+      next.closeDate = addMonthsToIsoDate(current.closeDate, extendCloseMonths);
+    }
+    if (Number.isFinite(extendMaturityMonths) && extendMaturityMonths > 0) {
+      next.maturityDate = addMonthsToIsoDate(current.maturityDate, extendMaturityMonths);
+    }
+    if (!Object.keys(next).length) { results.push(current); continue; }
+    results.push(await setDeskEconomicsOverride(desk, id, next, adminUserId));
+  }
+  return results;
 }

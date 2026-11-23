@@ -25,7 +25,7 @@ import { getMusicRoyaltiesDashboard, listMusicOpenInstruments, purchaseMusicOppo
 import { createAdminMusicDossier, deleteAdminMusicDossier, listAdminMusicDossiers, reachAdminMusicMilestone, setAdminMusicDossierEnabled, setAdminMusicDossierStatus, updateAdminMusicDossier } from "./musicRoyaltyDossiers";
 import { getAgroInvestmentDashboard, listAgroOpenInstruments, purchaseAgroOpportunity, quoteAgroPurchase, recordAgroDistribution, settleAgroInstrument } from "./agroInvestments";
 import { createAdminAgroDossier, deleteAdminAgroDossier, listAdminAgroDossiers, reachAdminAgroMilestone, setAdminAgroDossierEnabled, setAdminAgroDossierStatus, updateAdminAgroDossier } from "./agroInvestmentDossiers";
-import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsOverride } from "./deskEconomics";
+import { getDeskEconomicsMap, listDeskEconomics, reassignDeskEconomics, setDeskEconomicsBulkOverride, setDeskEconomicsOverride } from "./deskEconomics";
 import { getCarbonInvestmentDashboard, listCarbonOpenInstruments, purchaseCarbonOpportunity, quoteCarbonPurchase, recordCarbonDistribution, settleCarbonInstrument } from "./carbonCredits";
 import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDossiers, reachAdminCarbonMilestone, setAdminCarbonDossierEnabled, setAdminCarbonDossierStatus, updateAdminCarbonDossier } from "./carbonCreditDossiers";
 import { closeTransactionConsoleSession, listTransactionConsoleEvents, recordTransactionConsoleEvent, recordTransactionConsolePulse } from "./transactionConsole";
@@ -1610,6 +1610,20 @@ export const appRouter = router({
     setDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId: z.string().trim().min(1).max(160), ...deskEconomicsOverrideSchema })).mutation(({ ctx, input }) => {
       const { desk, instrumentId, ...patch } = input;
       return setDeskEconomicsOverride(desk, instrumentId, patch, ctx.user!.id);
+    }),
+    // Bulk edit many opportunities on one desk at once: the same override fields,
+    // plus one USD amount applied per row and whole-month shifts for the close and
+    // payout dates. Used by the admin Desk Economics console.
+    bulkSetDeskEconomics: adminProcedure.input(z.object({
+      desk: deskKeySchema,
+      instrumentIds: z.array(z.string().trim().min(1).max(160)).min(1).max(500),
+      ...deskEconomicsOverrideSchema,
+      amountUsdMinor: z.number().int().min(1).max(1_000_000_000).optional(),
+      extendCloseMonths: z.number().int().min(0).max(60).optional(),
+      extendMaturityMonths: z.number().int().min(0).max(60).optional(),
+    })).mutation(({ ctx, input }) => {
+      const { desk, instrumentIds, amountUsdMinor, extendCloseMonths, extendMaturityMonths, ...patch } = input;
+      return setDeskEconomicsBulkOverride(desk, instrumentIds, patch, { amountUsdMinor, extendCloseMonths, extendMaturityMonths }, ctx.user!.id);
     }),
     reassignDeskEconomics: adminProcedure.input(z.object({ desk: deskKeySchema, instrumentId: z.string().trim().min(1).max(160), salt: z.string().trim().min(1).max(40).optional() })).mutation(({ ctx, input }) => reassignDeskEconomics(input.desk, input.instrumentId, input.salt || `admin-${ctx.user!.id}-${Date.now()}`)),
     carbonDossiers: adminProcedure.query(() => listAdminCarbonDossiers()),
