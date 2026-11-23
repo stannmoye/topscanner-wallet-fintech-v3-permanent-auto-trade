@@ -325,6 +325,51 @@
 .lend-conditions-editor { display: grid; gap: 8px; }
 .lend-condition-edit { display: grid; grid-template-columns: 1.3fr 1fr auto auto; gap: 8px; align-items: center; }
 
+/* ---------------- Watchlist · live activity · reserve match --------- */
+.lend-loan-head-side { display: flex; align-items: center; gap: 6px; }
+.lend-star {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--lend-line); background: var(--lend-tint-weak); color: var(--lend-muted);
+}
+.lend-star:hover { color: var(--lend-lead); border-color: color-mix(in srgb, var(--arb-color-accent) 50%, var(--arb-color-border)); }
+.lend-star.is-on { color: var(--lend-lead); border-color: color-mix(in srgb, var(--arb-color-accent) 55%, var(--arb-color-border)); background: color-mix(in srgb, var(--arb-color-accent) 14%, transparent); }
+.lend-star--lg { width: 34px; height: 34px; }
+
+.lend-activity { display: grid; gap: 6px; }
+.lend-activity-row {
+  display: grid; grid-template-columns: 12px minmax(0, 1fr) auto auto auto; gap: 10px; align-items: center;
+  padding: 9px 11px; border-radius: 10px; border: 1px solid var(--lend-line-soft); background: var(--lend-tint-weak); font-size: 0.82rem;
+}
+.lend-activity-row.is-self { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--arb-color-info) 55%, transparent); }
+.lend-activity-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--lend-muted); }
+.lend-activity-dot.is-top { background: var(--lend-lead); }
+.lend-activity-body { display: grid; gap: 1px; min-width: 0; }
+.lend-activity-body strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lend-activity-body small { color: var(--lend-muted); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lend-activity-rate { font-weight: 700; color: var(--lend-lead); }
+.lend-activity-amt { color: var(--lend-muted); font-size: 0.76rem; }
+.lend-activity-time { color: var(--lend-muted); font-size: 0.72rem; white-space: nowrap; }
+
+.lend-match { display: grid; gap: 6px; }
+.lend-match-row {
+  display: grid; gap: 2px; padding: 8px 10px; border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--arb-color-accent) 32%, var(--arb-color-border));
+  background: color-mix(in srgb, var(--arb-color-accent) 8%, transparent);
+}
+.lend-match-row small { color: var(--lend-muted); font-size: 0.72rem; }
+
+.lend-dist-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.lend-dist { display: grid; gap: 6px; }
+.lend-dist-head { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--lend-muted); }
+.lend-dist-row { display: grid; grid-template-columns: minmax(76px, 1fr) 2fr auto; gap: 8px; align-items: center; font-size: 0.78rem; }
+.lend-dist-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lend-dist-track { height: 7px; border-radius: 999px; background: var(--lend-tint); overflow: hidden; }
+.lend-dist-fill { display: block; height: 100%; border-radius: 999px; background: var(--lend-lead); }
+.lend-dist-fill--live { background: var(--lend-live); }
+.lend-dist-count { color: var(--lend-muted); }
+.lend-dist-empty { color: var(--lend-muted); font-size: 0.78rem; }
+
 /* ------------------------------ Responsive -------------------------- */
 @media (max-width: 720px) {
   .lend-board { grid-template-columns: 1fr; }
@@ -333,6 +378,8 @@
   .lend-table-head { display: none; }
   .lend-row-actions { justify-content: flex-start; }
   .lend-condition-edit { grid-template-columns: 1fr 1fr; }
+  .lend-activity-row { grid-template-columns: 12px minmax(0, 1fr) auto auto; }
+  .lend-activity-time { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -342,4 +389,6 @@
 @media (forced-colors: active) {
   .lend-loan-card, .lend-panel, .lend-clock, .lend-leader-row, .lend-modal { border: 1px solid CanvasText; }
   .lend-pulse::after { display: none; }
+  .lend-star, .lend-match-row { border: 1px solid ButtonText; }
+  .lend-dist-track { border: 1px solid CanvasText; }
 }

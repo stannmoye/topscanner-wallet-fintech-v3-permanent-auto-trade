@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { visibilityAwareRefetchInterval } from "@/visibility-aware-polling";
 import {
-  AlertTriangle, ArrowLeft, BadgePercent, Banknote, Building2, Check, CircleHelp, Clock, Coins,
-  Gavel, Landmark, RefreshCw, Scale, Search, ShieldCheck, Sparkles, Timer, TrendingUp, Trophy, Users,
+  Activity, AlertTriangle, ArrowLeft, BadgePercent, Banknote, Building2, Check, CircleHelp, Coins,
+  Gavel, Landmark, RefreshCw, Scale, Search, ShieldCheck, Sparkles, Star, Timer, TrendingUp, Trophy, Users,
   WalletCards, X, Zap, type LucideIcon,
 } from "lucide-react";
 import {
@@ -24,6 +24,7 @@ import {
   monthlyInterestMinor,
   repaymentFrequencyLabel,
   yearlyInterestMinor,
+  type LenderReserve,
   type LendingBid,
   type LendingLoan,
   type LoanSector,
@@ -75,6 +76,64 @@ function clockLabel(seconds: number | null | undefined) {
 }
 const when = (iso: string | null | undefined) => { if (!iso) return "—"; const at = Date.parse(iso); return Number.isFinite(at) ? new Date(at).toLocaleString() : "—"; };
 
+// ---- Customer-visible feature 1: a followed-auction watchlist ---------------
+// The watchlist lives in the browser, so a customer's followed auctions survive
+// refreshes and sign-outs without a server round-trip.
+const WATCHLIST_STORAGE_KEY = "lending.watchlist.v1";
+function useWatchlist() {
+  const [ids, setIds] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(WATCHLIST_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((value) => typeof value === "string") : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(ids)); } catch { /* ignore */ }
+  }, [ids]);
+  const has = (id: string) => ids.includes(id);
+  const toggle = (id: string) => setIds((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]));
+  return { ids, has, toggle };
+}
+
+// ---- Customer-visible feature 2: a live desk activity feed ------------------
+// A short, human "3m ago" stamp for the live bid activity feed.
+function ago(iso: string | null | undefined) {
+  const at = Date.parse(String(iso ?? ""));
+  if (!Number.isFinite(at)) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+// ---- Customer-visible feature 3: lender-reserve match -----------------------
+/**
+ * Whether a published lender reserve could fund a given loan: the reserve is not
+ * fully allocated, it covers the loan type, it serves the loan's region, the
+ * principal sits inside its ticket range and the tenures overlap. Everything is
+ * derived from the administrator's published terms — nothing is invented.
+ */
+function reserveMatchesLoan(reserve: LenderReserve, loan: LendingLoan): boolean {
+  if (reserve.availableMinor <= 0) return false;
+  if (reserve.loanTypes.length && !reserve.loanTypes.includes(loan.loanType)) return false;
+  if (reserve.region !== loan.region) return false;
+  const principal = loan.principalMinor;
+  if (principal !== null) {
+    if (reserve.minimumTicketMinor !== null && principal < reserve.minimumTicketMinor) return false;
+    if (reserve.maximumTicketMinor !== null && principal > reserve.maximumTicketMinor) return false;
+  }
+  const minimum = loan.minimumTenureMonths;
+  const maximum = loan.maximumTenureMonths ?? minimum;
+  if (minimum !== null && reserve.maximumTenureMonths !== null && minimum > reserve.maximumTenureMonths) return false;
+  if (maximum !== null && reserve.minimumTenureMonths !== null && maximum < reserve.minimumTenureMonths) return false;
+  return true;
+}
+
 const TYPE_ICON: Record<LoanType, LucideIcon> = {
   PERSONAL: WalletCards, AUTO: Zap, MORTGAGE: Landmark, BUSINESS_WORKING_CAPITAL: Building2,
   SME_EXPANSION: TrendingUp, EQUIPMENT_FINANCE: Coins, INVOICE_FACTORING: BadgePercent,
@@ -94,7 +153,7 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
   const deskQuery = trpc.customer.lending.desk.useQuery(undefined, {
     refetchInterval: (query) => visibilityAwareRefetchInterval(MARKET_POLL_INTERVAL_MS, query.state.fetchFailureCount),
   });
-  const [tab, setTab] = useState<"auctions" | "bids" | "reserves" | "positions">("auctions");
+  const [tab, setTab] = useState<"auctions" | "watchlist" | "bids" | "activity" | "reserves" | "positions">("auctions");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"ALL" | LoanType>("ALL");
   const [sectorFilter, setSectorFilter] = useState<"ALL" | LoanSector>("ALL");
@@ -110,6 +169,27 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
   const settlementCurrency = desk?.settlementCurrency ?? "USD";
   const availableMinor = Number(desk?.availableMinor ?? 0);
   const analytics = useMemo(() => buildLendingAnalytics(loans), [loans]);
+
+  // ---- Watchlist (feature 1) ----------------------------------------------
+  const watchlist = useWatchlist();
+  const watchedLoans = useMemo(() => loans.filter((loan) => watchlist.ids.includes(loan.id)), [loans, watchlist.ids]);
+
+  // ---- Lender-reserve match (feature 3) -----------------------------------
+  // Which published reserves could fund each loan, so a customer sees the funding
+  // side of the desk, not just the bidding side.
+  const reserveMatchesByLoan = useMemo(() => {
+    const map = new Map<string, LenderReserve[]>();
+    for (const loan of loans) map.set(loan.id, reserves.filter((reserve) => reserveMatchesLoan(reserve, loan)));
+    return map;
+  }, [loans, reserves]);
+
+  // ---- Live desk activity feed (feature 2) --------------------------------
+  // The most recent bids across every auction, newest first, masked throughout.
+  const activity = useMemo(() => {
+    const rows: { id: string; loanId: string; loanTitle: string; bid: LendingBid; at: number }[] = [];
+    for (const loan of loans) for (const bid of loan.leaderboard) rows.push({ id: bid.id, loanId: loan.id, loanTitle: loan.title, bid, at: Date.parse(bid.updatedAt || bid.placedAt) || 0 });
+    return rows.sort((a, b) => b.at - a.at).slice(0, 12);
+  }, [loans]);
 
   // ---- Server-anchored countdown -----------------------------------------
   // The server sends the remaining seconds it computed at fetch time; we anchor
@@ -280,6 +360,13 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
   const loading = deskQuery.isLoading;
   const bidBusy = placeBid.isPending || raiseBid.isPending;
 
+  const renderLoanCard = (loan: DeskLoan) => (
+    <LoanCard key={loan.id} loan={loan} remaining={remainingOf(loan)} settlementCurrency={settlementCurrency}
+      watched={watchlist.has(loan.id)} onToggleWatch={() => watchlist.toggle(loan.id)}
+      matchCount={(reserveMatchesByLoan.get(loan.id) ?? []).length}
+      onSelect={() => setSelectedId(loan.id)} onBid={() => openBid(loan)} onFund={() => openFund(loan)} onWithdraw={doWithdraw} withdrawing={withdrawBid.isPending} />
+  );
+
   return <div className="lend-page portal-page arb-page">
     <div className="lend-hero">
       <div className="lend-hero-glow" aria-hidden="true" />
@@ -311,7 +398,9 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
     <div className="lend-toolbar">
       <div className="lend-tabs">
         <button className={`lend-tab${tab === "auctions" ? " active" : ""}`} onClick={() => setTab("auctions")}>Auctions ({loans.length})</button>
+        <button className={`lend-tab${tab === "watchlist" ? " active" : ""}`} onClick={() => setTab("watchlist")}>Watchlist ({watchedLoans.length})</button>
         <button className={`lend-tab${tab === "bids" ? " active" : ""}`} onClick={() => setTab("bids")}>My bids ({myBids.length})</button>
+        <button className={`lend-tab${tab === "activity" ? " active" : ""}`} onClick={() => setTab("activity")}>Activity ({activity.length})</button>
         <button className={`lend-tab${tab === "reserves" ? " active" : ""}`} onClick={() => setTab("reserves")}>Lender reserves ({reserves.length})</button>
         <button className={`lend-tab${tab === "positions" ? " active" : ""}`} onClick={() => setTab("positions")}>My positions ({positions.length})</button>
       </div>
@@ -343,18 +432,40 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
 
     {loading && <div className="lend-empty"><RefreshCw size={18} className="spin" /><strong>Loading the lending desk…</strong><span>Reading published loans, live auctions and your positions.</span></div>}
 
-    {!loading && selected && <DetailView loan={selected} remaining={remainingOf(selected)} onClose={() => setSelectedId(null)} onBid={() => openBid(selected)} onFund={() => openFund(selected)} onWithdraw={doWithdraw} withdrawing={withdrawBid.isPending} />}
+    {!loading && selected && <DetailView loan={selected} remaining={remainingOf(selected)}
+      reserves={reserveMatchesByLoan.get(selected.id) ?? []} watched={watchlist.has(selected.id)} onToggleWatch={() => watchlist.toggle(selected.id)}
+      onClose={() => setSelectedId(null)} onBid={() => openBid(selected)} onFund={() => openFund(selected)} onWithdraw={doWithdraw} withdrawing={withdrawBid.isPending} />}
 
     {!loading && tab === "auctions" && <div className="lend-board">
-      {filtered.map((loan) => <LoanCard key={loan.id} loan={loan} remaining={remainingOf(loan)} settlementCurrency={settlementCurrency}
-        onSelect={() => setSelectedId(loan.id)} onBid={() => openBid(loan)} onFund={() => openFund(loan)} onWithdraw={doWithdraw} withdrawing={withdrawBid.isPending} />)}
+      {filtered.map(renderLoanCard)}
       {!filtered.length && <div className="lend-empty"><Gavel size={20} /><strong>No loans match your filters.</strong><span>Try clearing the search, or check back when the administrator publishes the next auction.</span></div>}
     </div>}
 
+    {!loading && tab === "watchlist" && <div className="lend-board">
+      {watchedLoans.map(renderLoanCard)}
+      {!watchedLoans.length && <div className="lend-empty"><Star size={20} /><strong>Your watchlist is empty.</strong><span>Tap the star on any auction to follow it here — the countdown, the leaderboard and its reserve match stay one click away.</span></div>}
+    </div>}
+
     {!loading && tab === "bids" && <div className="lend-board">
-      {myBids.map((loan) => <LoanCard key={loan.id} loan={loan} remaining={remainingOf(loan)} settlementCurrency={settlementCurrency}
-        onSelect={() => setSelectedId(loan.id)} onBid={() => openBid(loan)} onFund={() => openFund(loan)} onWithdraw={doWithdraw} withdrawing={withdrawBid.isPending} />)}
+      {myBids.map(renderLoanCard)}
       {!myBids.length && <div className="lend-empty"><Trophy size={20} /><strong>You have no live bids.</strong><span>Open an auction and place a bid to compete for the allocation.</span></div>}
+    </div>}
+
+    {!loading && tab === "activity" && <div className="lend-panel">
+      <div className="lend-panel-head"><div><div className="eyebrow">Masked · newest first</div><h2>Live bid activity</h2></div><span>{activity.length} recent bid{activity.length === 1 ? "" : "s"} across the desk</span></div>
+      <div className="lend-activity">
+        {activity.map((row) => <div className={`lend-activity-row${row.bid.isSelf ? " is-self" : ""}`} key={row.id}>
+          <span className={`lend-activity-dot${row.bid.rank === 1 ? " is-top" : ""}`} aria-hidden="true" />
+          <div className="lend-activity-body">
+            <strong>{row.bid.borrowerLabel}{row.bid.isSelf ? " (you)" : ""}</strong>
+            <small>{row.loanTitle}</small>
+          </div>
+          <span className="lend-activity-rate lend-mono">{percent(row.bid.bidInterestBps)}</span>
+          <span className="lend-activity-amt lend-mono">{money(row.bid.amountMinor, settlementCurrency)} · {row.bid.tenureMonths}mo</span>
+          <span className="lend-activity-time">{ago(row.bid.updatedAt || row.bid.placedAt)}</span>
+        </div>)}
+        {!activity.length && <div className="lend-empty"><Activity size={20} /><strong>No bid activity yet.</strong><span>Every bid across the desk — placed, raised or leading — appears here newest first, masked throughout.</span></div>}
+      </div>
     </div>}
 
     {!loading && tab === "reserves" && <div className="lend-panel">
@@ -402,6 +513,26 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
         <div className="lend-figure"><span>Total principal on desk</span><b>{money(analytics.totalPrincipalMinor, settlementCurrency)}</b></div>
         <div className="lend-figure"><span>Sum of leading bids</span><b>{percent(analytics.totalTopBidBps)}</b></div>
         <div className="lend-figure"><span>Average leading bid</span><b>{analytics.totalLoans ? percent(Math.round(analytics.totalTopBidBps / analytics.totalLoans)) : "—"}</b></div>
+      </div>
+      <div className="lend-dist-grid">
+        <div className="lend-dist">
+          <span className="lend-dist-head">By sector</span>
+          {analytics.bySector.map((bucket) => <div className="lend-dist-row" key={bucket.key}>
+            <span className="lend-dist-label">{bucket.label}</span>
+            <span className="lend-dist-track"><span className="lend-dist-fill" style={{ width: `${analytics.totalLoans ? Math.round((bucket.count / analytics.totalLoans) * 100) : 0}%` }} /></span>
+            <span className="lend-dist-count lend-mono">{bucket.count}</span>
+          </div>)}
+          {!analytics.bySector.length && <span className="lend-dist-empty">No loans to summarise.</span>}
+        </div>
+        <div className="lend-dist">
+          <span className="lend-dist-head">By auction status</span>
+          {analytics.byAuctionStatus.map((bucket) => <div className="lend-dist-row" key={bucket.key}>
+            <span className="lend-dist-label">{bucket.label}</span>
+            <span className="lend-dist-track"><span className="lend-dist-fill lend-dist-fill--live" style={{ width: `${analytics.totalLoans ? Math.round((bucket.count / analytics.totalLoans) * 100) : 0}%` }} /></span>
+            <span className="lend-dist-count lend-mono">{bucket.count}</span>
+          </div>)}
+          {!analytics.byAuctionStatus.length && <span className="lend-dist-empty">No auctions to summarise.</span>}
+        </div>
       </div>
     </div>}
 
@@ -462,8 +593,8 @@ export function CustomerLending({ push, sound, soundSettings }: { push: (message
 }
 
 /* ------------------------------- Loan card ------------------------------- */
-function LoanCard({ loan, remaining, settlementCurrency, onSelect, onBid, onFund, onWithdraw, withdrawing }: {
-  loan: DeskLoan; remaining: number | null; settlementCurrency: string;
+function LoanCard({ loan, remaining, settlementCurrency, watched, matchCount, onToggleWatch, onSelect, onBid, onFund, onWithdraw, withdrawing }: {
+  loan: DeskLoan; remaining: number | null; settlementCurrency: string; watched: boolean; matchCount: number; onToggleWatch: () => void;
   onSelect: () => void; onBid: () => void; onFund: () => void; onWithdraw: (bidId: string) => void; withdrawing: boolean;
 }) {
   const Icon = TYPE_ICON[loan.loanType] ?? Gavel;
@@ -477,7 +608,10 @@ function LoanCard({ loan, remaining, settlementCurrency, onSelect, onBid, onFund
         <h3 className="lend-loan-title"><Icon size={15} style={{ verticalAlign: "-2px", marginRight: 6 }} />{loan.title}</h3>
         <p className="lend-loan-sub">{loan.flag} {loan.borrower} · {loanTypeLabel(loan.loanType)} · {loan.country}</p>
       </div>
-      <span className={`lend-tag ${soon ? "lend-tag--warn" : live ? "lend-tag--live" : ""}`}>{lendingAuctionStatusLabel(loan.auctionStatus)}</span>
+      <div className="lend-loan-head-side">
+        <button type="button" className={`lend-star${watched ? " is-on" : ""}`} onClick={onToggleWatch} aria-pressed={watched} aria-label={watched ? "Remove from watchlist" : "Add to watchlist"} title={watched ? "Remove from watchlist" : "Add to watchlist"}><Star size={14} /></button>
+        <span className={`lend-tag ${soon ? "lend-tag--warn" : live ? "lend-tag--live" : ""}`}>{lendingAuctionStatusLabel(loan.auctionStatus)}</span>
+      </div>
     </div>
     <div className="lend-loan-tags">
       <span className="lend-tag">{lendingSectorLabel(loan.sector)}</span>
@@ -485,6 +619,7 @@ function LoanCard({ loan, remaining, settlementCurrency, onSelect, onBid, onFund
       <span className="lend-tag">{lendingRegionLabel(loan.region)}</span>
       {loan.viewerIsLeading && <span className="lend-tag lend-tag--lead"><Trophy size={11} /> You lead</span>}
       {own && !loan.viewerIsLeading && <span className="lend-tag lend-tag--live">Your bid live</span>}
+      {matchCount > 0 && <span className="lend-tag lend-tag--lead"><Users size={11} /> {matchCount} reserve{matchCount === 1 ? "" : "s"} can fund</span>}
     </div>
     <div className={clockClass ? `lend-clock ${clockClass}` : "lend-clock"}>
       <span className="lend-clock-digits lend-mono">{live ? clockLabel(remaining) : lendingAuctionStatusLabel(loan.auctionStatus)}</span>
@@ -522,8 +657,9 @@ function LeaderRow({ bid, settlementCurrency }: { bid: LendingBid; settlementCur
 }
 
 /* ------------------------------- Detail view ------------------------------ */
-function DetailView({ loan, remaining, onClose, onBid, onFund, onWithdraw, withdrawing }: {
-  loan: DeskLoan; remaining: number | null; onClose: () => void; onBid: () => void; onFund: () => void;
+function DetailView({ loan, remaining, reserves, watched, onToggleWatch, onClose, onBid, onFund, onWithdraw, withdrawing }: {
+  loan: DeskLoan; remaining: number | null; reserves: LenderReserve[]; watched: boolean; onToggleWatch: () => void;
+  onClose: () => void; onBid: () => void; onFund: () => void;
   onWithdraw: (bidId: string) => void; withdrawing: boolean;
 }) {
   const live = loan.auctionStatus === "OPEN" || loan.auctionStatus === "CLOSING_SOON";
@@ -537,6 +673,7 @@ function DetailView({ loan, remaining, onClose, onBid, onFund, onWithdraw, withd
         <p className="lend-loan-sub">{loan.borrower} · {loanTypeLabel(loan.loanType)} — {loanTypeBlurb(loan.loanType)}</p>
       </div>
       <div className="lend-actions">
+        <button type="button" className={`lend-star lend-star--lg${watched ? " is-on" : ""}`} onClick={onToggleWatch} aria-pressed={watched} aria-label={watched ? "Remove from watchlist" : "Add to watchlist"} title={watched ? "Remove from watchlist" : "Add to watchlist"}><Star size={15} /></button>
         <button className="secondary-button" onClick={onClose}><ArrowLeft size={14} /> Back to board</button>
       </div>
     </div>
@@ -568,6 +705,15 @@ function DetailView({ loan, remaining, onClose, onBid, onFund, onWithdraw, withd
           {!loan.leaderboard.length && <div className="lend-leader-empty">No bids yet.</div>}
         </div>
         {loan.leadingBorrower && <p className="lend-loan-sub">Leading borrower: {loan.leadingBorrower}{loan.viewerIsLeading ? " (you)" : ""}</p>}
+      </div>
+      <div className="lend-detail-block">
+        <span>Reserves that can fund this loan · {reserves.length}</span>
+        <div className="lend-match">
+          {reserves.length ? reserves.map((reserve) => <div className="lend-match-row" key={reserve.id}>
+            <span>{reserve.flag} <strong>{reserve.lender}</strong></span>
+            <small>{money(reserve.availableMinor, reserve.currency)} available · from {percent(reserve.startingInterestBps)} · {tenureLabel(reserve.minimumTenureMonths, reserve.maximumTenureMonths)}</small>
+          </div>) : <div className="lend-leader-empty">No published reserve matches this loan&apos;s type, region, ticket size and tenure yet.</div>}
+        </div>
       </div>
       <div className="lend-detail-block">
         <span>Disbursement conditions</span>

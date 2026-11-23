@@ -118,8 +118,9 @@ describe("Lending desk", () => {
   });
 
   it("shows the live leaderboard, the countdown and the viewer's own position to every customer", () => {
-    // Four views: auctions, the viewer's bids, lender reserves and positions.
-    expect(customerUi).toContain('useState<"auctions" | "bids" | "reserves" | "positions">("auctions")');
+    // Six views: auctions, the followed-auction watchlist, the viewer's bids, the
+    // live activity feed, lender reserves and positions.
+    expect(customerUi).toContain('useState<"auctions" | "watchlist" | "bids" | "activity" | "reserves" | "positions">("auctions")');
     expect(customerUi).toContain("buildLendingAnalytics");
     // The countdown is a first-class, server-anchored clock.
     expect(customerUi).toContain("lend-clock-digits");
@@ -136,6 +137,52 @@ describe("Lending desk", () => {
     // The funding modal funds from a single wallet or the combined balance via FX.
     expect(customerUi).toContain("Combined balance");
     expect(customerUi).toContain("No partial funding: either the whole amount is debited or nothing is.");
+  });
+
+  it("gives customers a followed-auction watchlist, a live activity feed and a lender-reserve match", () => {
+    // Feature 1 — watchlist: a browser-persisted set of followed auctions.
+    expect(customerUi).toContain("useWatchlist");
+    expect(customerUi).toContain('"lending.watchlist.v1"');
+    expect(customerUi).toContain("window.localStorage.setItem");
+    expect(customerUi).toContain("onToggleWatch");
+    // Feature 2 — a live bid activity feed, newest first and masked throughout.
+    expect(customerUi).toContain("Live bid activity");
+    expect(customerUi).toContain("lend-activity-row");
+    expect(customerUi).toContain("Masked · newest first");
+    // Feature 3 — which published reserves could fund each loan.
+    expect(customerUi).toContain("reserveMatchesLoan");
+    expect(customerUi).toContain("Reserves that can fund this loan");
+    expect(customerUi).toContain("lend-match-row");
+    // The analytics panel now distributes the desk by sector and auction status.
+    expect(customerUi).toContain("By sector");
+    expect(customerUi).toContain("By auction status");
+    expect(customerUi).toContain("lend-dist-fill");
+    // The new surfaces are themed from the portal tokens with an accessible fallback.
+    expect(styles).toContain(".lend-star");
+    expect(styles).toContain(".lend-activity-row");
+    expect(styles).toContain(".lend-match-row");
+    expect(styles).toContain(".lend-dist-fill");
+  });
+
+  it("ships six example loan auctions as a visible, self-describing demonstration desk", () => {
+    expect(serverDossiers).toContain('export const LENDING_EXAMPLE_PREFIX = "example-"');
+    expect(serverDossiers).toContain("export function exampleLendingLoans(");
+    expect(serverDossiers).toContain("export function exampleLenderReserves(");
+    expect(serverDossiers).toContain("export async function seedExampleLendingDesk(");
+    expect(serverDossiers).toContain("export async function ensureExampleLendingDesk(");
+    // Six example auctions across consumer, asset, business, trade, agriculture and project lending.
+    for (const exampleId of [
+      "home-improvement-personal-us", "ev-fleet-auto-de", "sme-working-capital-ng",
+      "trade-finance-invoice-in", "agri-equipment-ke", "infrastructure-bridge-gb",
+    ]) expect(serverDossiers).toContain(exampleId);
+    // Example ids are deterministic and prefixed so a demonstration record is never
+    // confused with, or overwrites, an administrator's real publication.
+    expect(serverDossiers).toContain("${LENDING_EXAMPLE_PREFIX}${example.exampleId}");
+    // The desk seeds the examples once on a fresh board, so customers land on a working desk.
+    expect(serverDesk).toContain("ensureExampleLendingDesk()");
+    // The administrator can also publish the examples on demand.
+    expect(serverRouters).toContain("seedLendingExamples: adminProcedure.mutation(({ ctx }) => seedExampleLendingDesk(ctx.user!.id))");
+    expect(adminUi).toContain("trpc.adminOperations.seedLendingExamples.useMutation");
   });
 
   it("stores administrator loans and lender reserves additively with an audited lifecycle", () => {

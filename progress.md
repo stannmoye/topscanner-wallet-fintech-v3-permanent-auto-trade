@@ -1,3 +1,36 @@
+## 2026-11-23 (feat) — Lending desk, increment 2: three customer features + six example auctions
+
+Owner request: *"Make it more advanced add like 3 more features that the customers can see and also add
+example loan auctions so I can see add like 6."* Three new customer-visible surfaces were added to the
+existing two-sided Lending desk, and a self-describing demonstration set is now seeded so a fresh board is
+never empty.
+
+- **Feature 1 — followed-auction watchlist.** A sixth "Watchlist" view plus a star toggle on every loan
+  card and in the auction detail, persisted in the browser under `lending.watchlist.v1` (same pattern as
+  the treasury/agro desks). Followed auctions keep their countdown, leaderboard and reserve match one
+  click away. `useWatchlist` + `onToggleWatch` in `client/src/components/CustomerLending.tsx`.
+- **Feature 2 — live bid activity feed.** A new "Activity" tab that flattens the newest leaderboard rows
+  across every auction into a masked, newest-first timeline (bidder label, loan, rate, amount/tenure, "3m
+  ago"). `ago()` relative-time helper; `.lend-activity-row` styling.
+- **Feature 3 — lender-reserve match.** `reserveMatchesLoan` derives, purely from the administrator's
+  published terms, which lender reserves could fund each loan (type, region, ticket range, tenure overlap,
+  unallocated capacity). The match count shows as a card badge and the full list appears in the auction
+  detail ("Reserves that can fund this loan").
+- **Enriched desk analytics.** The analytics panel now adds "By sector" and "By auction status"
+  distribution bars on top of the existing totals, all from `buildLendingAnalytics`.
+- **Six example loan auctions (`server/lendingDossiers.ts`).** `exampleLendingLoans()` publishes six
+  illustrative auctions across consumer, asset, business, trade, agriculture and project lending (US, DE,
+  NG, IN, KE, GB) with live/scheduled countdown windows relative to `now`, plus `exampleLenderReserves()`
+  (four lenders: Meridian/US, Northwind/GB, Sahel/NG, Baltic/DE). Ids are deterministic and prefixed
+  `example-`, the provenance is stamped `LENDING_EXAMPLE_SOURCE`, and `seedExampleLendingDesk` is
+  idempotent (skips an id already on the desk). `ensureExampleLendingDesk` seeds once, only when the board
+  has zero loans, so a real desk is never touched; `getLendingDesk`/`getLendingLoanView` await it.
+  `adminOperations.seedLendingExamples` publishes the set on demand, wired to a "Publish examples" button
+  in the admin console.
+- **Verification.** `pnpm check` clean; `pnpm vitest run server/lending.contract.test.ts` 16/16; full suite
+  **209 passed | 7 skipped (216)** / **1717 passed | 36 skipped (1753)**; `pnpm build` exit 0.
+- **Commits.** `e0ccfa4` (example auctions + admin trigger), plus the customer-feature commit below.
+
 ## 2026-11-23 (feat) — New "Lending" desk: a two-sided borrower auction on the desk pattern
 
 Owner request: *"Next we will change the menu support right after this menu we just worked on to
