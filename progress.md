@@ -1,3 +1,100 @@
+## 2026-11-23 (feat) — New "Lending" desk: a two-sided borrower auction on the desk pattern
+
+Owner request: *"Next we will change the menu support right after this menu we just worked on to
+Lending … admin can post all current lenders post about how much they have reserve for borrowers …
+borrowers can bid on the interest … the borrower who wins the bid will be allocated the loan amount …
+they can also raise their bid to be on the top … a countdown time and when the count down time expires
+the customer who is on top wins the bid … admin should be able to post loan … when the loan will be
+opened for bidding … admin can also set conditions for customers to meet for loan to be disbursed after
+they win the bid … the loan amount, minimum and maximum tenure the lender is giving out, starting
+interest rate, how much they will pay monthly interest, how much they pay yearly interest, interest plus
+capital."* A ninth menu joins the eight existing desks (treasury, litigation, agro, ipRoyalty, music,
+cooperate, carbon, green-energy), built by mirroring the Green Energy desk layer for layer while adding
+the auction mechanic the owner described: a live, server-authoritative borrower **rate auction** with a
+public leaderboard, a countdown with sound, and a lender funding side.
+
+- **Catalogue (`shared/lending-catalogue.ts`, new, ~1,080 lines).** Environment-neutral (server + browser
+  fallback; no `process.env`, no `node:` imports). Fourteen lending-only types across consumer, asset,
+  business, trade, project and property lending — `PERSONAL`, `AUTO`, `MORTGAGE`,
+  `BUSINESS_WORKING_CAPITAL`, `SME_EXPANSION`, `EQUIPMENT_FINANCE`, `INVOICE_FACTORING`, `TRADE_FINANCE`,
+  `BRIDGE`, `PROJECT_FINANCE`, `STUDENT`, `MEDICAL`, `AGRICULTURAL`, `REAL_ESTATE` — with
+  `LENDING_LOAN_TYPE_GROUPS`, `classifyLoanType`, sectors, `LENDING_STAGES`, `LENDING_AUCTION_STATUSES`,
+  risk grades, outcomes, repayment frequencies, `LENDING_CONDITION_TYPES`/`STATUSES`, territory/value
+  bands, `LENDING_REGION_LIST`, `LENDING_CLOSING_SOON_SECONDS = 3600`, `LENDING_MIN_BID_STEP_BPS = 5`,
+  the integer money maths `monthlyInterestMinor` / `yearlyInterestMinor` / `interestPlusCapitalMinor`
+  (the owner's monthly/yearly/principal-plus-interest figures), the shared server-authoritative auction
+  helpers `lendingAuctionStatusFor` / `lendingBiddableFor` / `lendingRemainingSecondsFor` /
+  `lendingNextRequiredBps` / `rankLendingBids`, `defaultLendingDisbursementConditions`,
+  `getLendingCatalogue`, `findLendingLoan`, `buildLendingAnalytics`, `LENDING_WORLDBANK_INDICATORS`,
+  `LENDING_DESK_CURRENCY = "USD"`. Live discovery drains keyless World Bank lending/financial-inclusion
+  indicators worldwide via `Promise.allSettled`, marking drained rows `verificationStatus: "REFERENCE"`
+  until an administrator publishes them.
+- **Admin dossiers (`server/lendingDossiers.ts`, new, ~1,045 lines).** Additive `lending_loans` and
+  `lending_reserves` tables with the audited lifecycle `lending_loan_created/updated/enabled/disabled/
+  stage_changed/schedule_set/conditions_set/condition_met/deleted` and `lending_reserve_created/updated/
+  enabled/disabled/deleted`. Loans carry amount, min/max tenure, starting interest rate and the
+  auction window admin controls (*when the next auction starts*); reserves carry each lender's capacity
+  for borrowers (*how much they have reserve*); `setAdminLendingConditions` / `meetAdminLendingCondition`
+  implement the *conditions for the loan to be disbursed after they win the bid*.
+- **Customer desk (`server/lending.ts`, new, ~1,250 lines).** `lending_bids` and `lending_positions`
+  tables, `ensureLendingDeskSchema`, `placeLendingBid` / `raiseLendingBid` / `withdrawLendingBid` (bidding
+  is free and never moves a wallet), `resolveClosedLendingAuctions` (server-authoritative settlement of
+  the leader when the countdown ends), `getLendingDesk` / `getLendingLoanView` (masked identity with
+  `isSelf` rows for the public leaderboard), `quoteLendingFunding` / `fundLendingLoan` (the only wallet
+  movement), `disburseLendingLoan` / `settleLendingLoan` / `listLendingLoansForSettlement` /
+  `listLendingLoanBids`. Cross-wallet funding uses `trading-wallet-fx` `planCrossWalletFunding` +
+  `calculateCombinedAvailableTargetMinor` with `getFreshTradingFxRate` and
+  `getWalletFundingPriorityForFunding` (single wallet or combined balance, failing closed). Ledger types
+  `lending_funding` / `lending_disbursement` / `lending_repayment` / `lending_payout` / `lending_fx_debit`
+  / `lending_fx_credit`; audits `lending_loan_disbursed` / `lending_loan_settled`.
+- **Desk Economics integration (`server/deskEconomicsSources.ts`).** New `case "lending"` unions the
+  enabled administrator loans with the live catalogue ids.
+- **Automatic economics (`shared/investment-economics.ts`).** `DeskKey` / `DESK_KEYS` gain `"lending"`
+  and `DESK_LABELS.lending = "Lending"`, so lending offers receive the same deterministic auto-assigned
+  profiles.
+- **API (`server/routers.ts`).** Customer router `customer.lending.*` (`desk`, `loan`, `fundingQuote`,
+  `fund`, `placeBid`, `raiseBid`, `withdrawBid`); admin endpoints `adminOperations.lendingLoans` /
+  `lenderReserves` / `lendingLoansForSettlement` / `lendingLoanBids` / `createLendingLoan` /
+  `updateLendingLoan` / `setLendingLoanEnabled` / `setLendingLoanStage` / `setLendingLoanSchedule` /
+  `setLendingConditions` / `meetLendingCondition` / `deleteLendingLoan` / `createLenderReserve` /
+  `updateLenderReserve` / `setLenderReserveEnabled` / `deleteLenderReserve` / `disburseLendingLoan` /
+  `settleLendingLoan`, plus zod schemas (`lendingEnum`, `lendingDisbursementConditionSchema`,
+  `lendingLoanFieldsSchema`, `createLendingLoanSchema`, `updateLendingLoanSchema`,
+  `lenderReserveFieldsSchema`, `createLenderReserveSchema`, `updateLenderReserveSchema`).
+  `DESK_KEY_VALUES` gains `"lending"`.
+- **Admin UI (`client/src/components/AdminLending.tsx`, new).** Publish console: loan publisher with the
+  amount, tenure range, starting rate and auction schedule, the reserve console (*how much each lender
+  has reserved*), the disbursement condition editor, plus disbursement and settlement actions.
+- **Customer UI (`client/src/components/CustomerLending.tsx` + `lending.css` + `lending-auction-audio.ts`,
+  new).** Four tabs (`auctions` / `bids` / `reserves` / `positions`); the live leaderboard
+  (`lend-leader-row` / `lend-leader-rank`) showing *who bid and at what interest* with the viewer's own
+  position and nearest competitors, the countdown clock (`lend-clock-digits`) and a *raise your bid to
+  take the top spot* flow. The self-contained audio helper exposes
+  `LENDING_COUNTDOWN_WINDOW_SECONDS = 10`, `lendingCountdownCue`, `lendingCueSource` and
+  `createLendingAuctionAudio`, gated on the customer's sound toggle and admin volume. Theme-token CSS
+  (`--lend-surface: var(--arb-color-surface)` …) with `lend-` keyframes, `prefers-reduced-motion` and
+  `forced-colors` fallbacks; no hard-coded palette.
+- **Wiring.** `client/src/admin-navigation.ts` gains one Finance destination
+  (`id: "lending" → target: "lendingDossiers"`, "Lending", `HandCoins`); `client/src/App.tsx` lazy-loads
+  both components, renders `section==="lending"` (customer) / `section==="lendingDossiers"` (admin), adds
+  the `customerInvestmentNavigation` entry and `&&item.id!=="lending"` to the generic placeholder
+  exclusion chain; `client/src/components/CustomerSlideMenu.tsx` routes `lending` from the workspace strip
+  and the searchable drawer.
+- **Tests (`server/lending.contract.test.ts`, new, 14 cases).** Covers the navigation destination, the
+  live-desk placeholder replacement, the fourteen loan types, cited public data, integer interest maths
+  and the server-authoritative auction, the leaderboard/countdown/viewer position, the additive audited
+  lifecycle for loans and reserves, the audited wallet ledger with idempotency, single-or-combined
+  funding that fails closed, winner disbursement after conditions are met, the admin publisher/reserve/
+  condition console, the guarded customer + admin endpoints, the shared economics registry, and the
+  token-only theming. The eight prior desks' generic-placeholder exclusion chains were extended with
+  `&&item.id!=="lending"`, and `customer-navigation-consolidation.contract.test.ts` now expects the
+  13-destination workspace strip.
+- **Commits.** `e2ae5d3` (server + catalogue + economics + routers), `c705fe0` (client UI, CSS, audio,
+  navigation), `f34ab7f` (tests).
+- **Verification.** `pnpm check` (`tsc --noEmit`) clean; `pnpm test` all green — `Test Files 209 passed |
+  7 skipped (216)`, `Tests 1715 passed | 36 skipped (1751)`; `pnpm build` succeeds, emitting the
+  `CustomerLending`, `AdminLending`, `lending` and `lending.css` chunks.
+
 ## 2026-11-23 (feat) — New "Green Energy" desk, modelled on the Carbon Credit desk
 
 Owner request: *"Next we need to move to the next menu Green Energy … implement this well let it grab
