@@ -1,0 +1,430 @@
+/* Green Energy desk — an atlas-and-verification identity built on the portal
+   theme. This desk deliberately uses a DIFFERENT structure from the register,
+   lane-and-card and ledger desks: a region rail on the left, a map-style pin
+   canvas in the middle (pins coloured by verification status) and a slide-out
+   project dossier on the right. Every surface, border and text tone derives
+   from the platform semantic tokens (--arb-color-*) so it blends with whichever
+   portal theme is active. The green-energy character comes from a teal/cyan-led
+   heading (the theme's info token) with the theme's accent for verified pins and
+   the theme's warning token for cited references, and the danger token for
+   write-offs. */
+
+.ge-page {
+  --ge-surface: var(--arb-color-surface);
+  --ge-surface-2: var(--arb-color-surface-raised);
+  --ge-surface-3: color-mix(in srgb, var(--arb-color-surface-raised) 66%, var(--arb-color-info) 34%);
+  --ge-line: color-mix(in srgb, var(--arb-color-border) 82%, transparent);
+  --ge-line-soft: color-mix(in srgb, var(--arb-color-border) 46%, transparent);
+  --ge-verified-line: color-mix(in srgb, var(--arb-color-accent) 42%, var(--arb-color-border));
+  --ge-white: var(--arb-color-text);
+  --ge-muted: var(--arb-color-text-muted);
+  /* Teal-led headings, accent for verified, gold for references, red for losses. */
+  --ge-teal: var(--arb-color-info);
+  --ge-teal-soft: color-mix(in srgb, var(--arb-color-info) 68%, var(--arb-color-text));
+  --ge-verified: var(--arb-color-accent);
+  --ge-reference: var(--arb-color-warning);
+  --ge-red: var(--arb-color-danger);
+  --ge-tint-weak: color-mix(in srgb, var(--arb-color-text) 5%, transparent);
+  --ge-tint: color-mix(in srgb, var(--arb-color-text) 9%, transparent);
+  --ge-well: color-mix(in srgb, var(--arb-color-canvas) 58%, transparent);
+  --ge-radius: 14px;
+  --ge-radius-lg: 20px;
+  --ge-shadow: var(--arb-shadow-card);
+  display: grid;
+  gap: 20px;
+  padding: clamp(14px, 2vw, 22px);
+  border-radius: var(--ge-radius-lg);
+  border: 1px solid var(--ge-line);
+  color: var(--ge-white);
+  background:
+    radial-gradient(120% 80% at 0% 0%, color-mix(in srgb, var(--arb-color-info) 18%, transparent), transparent 55%),
+    radial-gradient(110% 90% at 100% 4%, color-mix(in srgb, var(--arb-color-accent) 12%, transparent), transparent 52%),
+    var(--arb-color-canvas);
+}
+
+.ge-page .eyebrow,
+.ge-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--ge-muted, var(--arb-color-text-muted));
+}
+
+.ge-eyebrow--teal { color: var(--ge-teal, var(--arb-color-info)); }
+
+@keyframes ge-spin { to { transform: rotate(360deg); } }
+@keyframes ge-pin-in { from { opacity: 0; transform: translateY(-6px) scale(0.7); } to { opacity: 1; transform: none; } }
+@keyframes ge-pin-pulse { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 0.15; transform: scale(1.9); } }
+@keyframes ge-drawer-in { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+
+.ge-page .spin { animation: ge-spin 0.8s linear infinite; }
+
+.ge-mono, .ge-mono b, .ge-page b.ge-mono {
+  font-family: "SFMono-Regular", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------- Hero ------------------------------- */
+.ge-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  gap: 18px;
+  padding: 26px 26px 22px;
+  border-radius: var(--ge-radius-lg);
+  border: 1px solid var(--ge-verified-line);
+  background:
+    radial-gradient(120% 140% at 4% 0%, color-mix(in srgb, var(--arb-color-info) 26%, transparent), transparent 58%),
+    radial-gradient(120% 150% at 100% 0%, color-mix(in srgb, var(--arb-color-accent) 16%, transparent), transparent 56%),
+    linear-gradient(158deg, var(--ge-surface-3), var(--ge-surface));
+  box-shadow: var(--ge-shadow);
+}
+
+.ge-hero-glow {
+  position: absolute;
+  inset: -40% -10% auto auto;
+  width: 46%;
+  height: 160%;
+  z-index: -1;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--arb-color-info) 30%, transparent), transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.ge-masthead { display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; align-items: flex-start; }
+.ge-masthead-lead { flex: 1 1 460px; display: grid; gap: 8px; max-width: 760px; }
+.ge-title { margin: 0; font-size: clamp(1.3rem, 2.4vw, 1.9rem); line-height: 1.16; letter-spacing: -0.01em; }
+.ge-lede { margin: 0; color: var(--ge-muted); font-size: 0.92rem; line-height: 1.55; }
+.ge-masthead-side { display: grid; gap: 10px; justify-items: end; align-content: start; }
+.ge-sources { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.ge-source-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 600;
+  border: 1px solid var(--ge-line); background: var(--ge-tint-weak); color: var(--ge-muted);
+}
+.ge-source-chip.is-ok { color: var(--ge-verified); border-color: var(--ge-verified-line); }
+.ge-source-chip.is-degraded, .ge-source-chip.is-unavailable { color: var(--ge-reference); border-color: color-mix(in srgb, var(--arb-color-warning) 40%, var(--arb-color-border)); }
+.ge-source-chip.is-degraded { background: color-mix(in srgb, var(--arb-color-warning) 12%, transparent); }
+
+.ge-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.ge-figure {
+  display: grid; gap: 3px; padding: 13px 15px; border-radius: var(--ge-radius);
+  border: 1px solid var(--ge-line); background: var(--ge-well);
+}
+.ge-figure b { font-size: 1.3rem; }
+.ge-figure span { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ge-muted); }
+.ge-figure--teal b { color: var(--ge-teal); }
+.ge-figure--green b { color: var(--ge-verified); }
+.ge-figure--gold b { color: var(--ge-reference); }
+.ge-figure--red b { color: var(--ge-red); }
+
+/* ---------------------------- Notices ---------------------------- */
+.ge-notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 12px 14px; border-radius: var(--ge-radius);
+  border: 1px solid var(--ge-line); background: var(--ge-tint-weak); font-size: 0.86rem; line-height: 1.5;
+}
+.ge-notice svg { flex: none; margin-top: 2px; }
+.ge-notice.is-error { border-color: color-mix(in srgb, var(--arb-color-danger) 45%, var(--arb-color-border)); background: color-mix(in srgb, var(--arb-color-danger) 12%, transparent); }
+.ge-notice.is-success { border-color: var(--ge-verified-line); background: color-mix(in srgb, var(--arb-color-accent) 12%, transparent); }
+.ge-notice.ge-education { border-color: var(--ge-verified-line); }
+
+/* ----------------------------- Tabs ----------------------------- */
+.ge-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.ge-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--ge-line); background: var(--ge-tint-weak);
+  color: var(--ge-muted); font: inherit; font-size: 0.84rem; font-weight: 600;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.ge-tab:hover { color: var(--ge-white); border-color: var(--ge-verified-line); }
+.ge-tab.is-active { color: var(--arb-color-surface); background: var(--ge-verified); border-color: var(--ge-verified); }
+.ge-tab-count {
+  min-width: 20px; text-align: center; padding: 1px 6px; border-radius: 999px;
+  background: var(--ge-tint); font-size: 0.7rem; font-weight: 700;
+}
+.ge-tab.is-active .ge-tab-count { background: color-mix(in srgb, var(--arb-color-surface) 26%, transparent); }
+
+.ge-section { display: grid; gap: 16px; }
+.ge-section-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
+.ge-section-head h2 { margin: 4px 0 0; font-size: 1.12rem; }
+.ge-section-head p { margin: 4px 0 0; color: var(--ge-muted); font-size: 0.86rem; max-width: 720px; line-height: 1.5; }
+
+/* ------------------------- Buttons & chips ------------------------- */
+.ge-btn {
+  display: inline-flex; align-items: center; gap: 7px; justify-content: center;
+  padding: 9px 14px; border-radius: 999px; cursor: pointer; font: inherit;
+  font-size: 0.82rem; font-weight: 600; border: 1px solid var(--ge-line);
+  background: var(--ge-tint-weak); color: var(--ge-white);
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.ge-btn:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--ge-verified-line); }
+.ge-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ge-btn--sm { padding: 6px 11px; font-size: 0.76rem; }
+.ge-btn--ghost { background: transparent; color: var(--ge-muted); }
+.ge-btn--invest { background: var(--ge-verified); border-color: var(--ge-verified); color: var(--arb-color-surface); }
+.ge-btn--danger { border-color: color-mix(in srgb, var(--arb-color-danger) 45%, var(--arb-color-border)); color: var(--ge-red); }
+.ge-page select, .ge-page input, .ge-page textarea {
+  font: inherit; color: var(--ge-white); background: var(--ge-surface-2);
+  border: 1px solid var(--ge-line); border-radius: 10px; padding: 8px 10px;
+}
+.ge-page select:focus, .ge-page input:focus, .ge-page textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--arb-color-accent) 55%, transparent); outline-offset: 1px;
+}
+
+.ge-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 600;
+  border: 1px solid var(--ge-line); background: var(--ge-tint-weak); color: var(--ge-muted);
+  white-space: nowrap;
+}
+.ge-chip--verified { color: var(--ge-verified); border-color: var(--ge-verified-line); }
+.ge-chip--reference { color: var(--ge-reference); border-color: color-mix(in srgb, var(--arb-color-warning) 42%, var(--arb-color-border)); }
+.ge-chip--type { color: var(--ge-teal-soft); }
+.ge-chip--standard { color: var(--ge-white); }
+.ge-chip--risk-prime, .ge-chip--risk-balanced { color: var(--ge-verified); }
+.ge-chip--risk-speculative { color: var(--ge-reference); }
+.ge-chip--risk-high_risk { color: var(--ge-red); }
+.ge-chip--status-issuing, .ge-chip--status-active { color: var(--ge-verified); }
+.ge-chip--status-funding { color: var(--ge-teal); }
+.ge-chip--status-withdrawn, .ge-chip--status-completed { color: var(--ge-muted); }
+
+/* ------------------------------ Toolbar ------------------------------ */
+.ge-toolbar {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; justify-content: space-between;
+  padding: 14px; border-radius: var(--ge-radius); border: 1px solid var(--ge-line); background: var(--ge-well);
+}
+.ge-filters { display: flex; flex-wrap: wrap; gap: 10px; }
+.ge-filter { display: grid; gap: 4px; }
+.ge-filter label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ge-muted); font-weight: 700; }
+.ge-filter input, .ge-filter select { min-width: 130px; }
+.ge-toolbar-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.ge-checkbox { display: inline-flex; align-items: center; gap: 7px; font-size: 0.8rem; color: var(--ge-muted); }
+
+/* ------------------------- Atlas / region map ------------------------- */
+.ge-atlas-shell {
+  display: grid;
+  grid-template-columns: minmax(180px, 210px) minmax(0, 1fr) minmax(300px, 360px);
+  gap: 14px;
+  align-items: start;
+}
+.ge-region-rail {
+  display: grid; gap: 6px; padding: 12px; border-radius: var(--ge-radius-lg);
+  border: 1px solid var(--ge-line); background: var(--ge-well); align-self: stretch;
+}
+.ge-region-rail-head { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ge-muted); font-weight: 700; padding: 0 4px 4px; }
+.ge-region-btn {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+  padding: 9px 11px; border-radius: 11px; cursor: pointer; text-align: left;
+  border: 1px solid transparent; background: transparent; color: var(--ge-muted); font: inherit; font-size: 0.82rem; font-weight: 600;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.ge-region-btn:hover { color: var(--ge-white); background: var(--ge-tint-weak); }
+.ge-region-btn.is-active { color: var(--ge-white); background: var(--ge-tint); border-color: var(--ge-verified-line); }
+.ge-region-btn small { display: block; font-size: 0.64rem; font-weight: 500; color: var(--ge-muted); }
+.ge-region-count { font-size: 0.72rem; font-weight: 700; color: var(--ge-teal); }
+.ge-region-bar { grid-column: 1 / -1; height: 3px; border-radius: 3px; background: var(--ge-tint); overflow: hidden; }
+.ge-region-bar i { display: block; height: 100%; background: var(--ge-teal); }
+
+.ge-atlas-canvas {
+  position: relative; border-radius: var(--ge-radius-lg); border: 1px solid var(--ge-verified-line);
+  background:
+    radial-gradient(120% 120% at 50% -10%, color-mix(in srgb, var(--arb-color-info) 20%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in srgb, var(--arb-color-canvas) 70%, var(--arb-color-surface)), var(--arb-color-canvas));
+  overflow: hidden; min-height: 340px;
+}
+.ge-atlas-svg { display: block; width: 100%; height: auto; }
+.ge-land { fill: color-mix(in srgb, var(--arb-color-info) 22%, transparent); stroke: color-mix(in srgb, var(--arb-color-info) 42%, transparent); stroke-width: 0.8; }
+.ge-grat { stroke: color-mix(in srgb, var(--arb-color-text) 12%, transparent); stroke-width: 0.6; fill: none; }
+.ge-region-label { fill: color-mix(in srgb, var(--arb-color-text) 58%, transparent); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.ge-region-label.is-active { fill: var(--ge-teal); }
+.ge-pin { cursor: pointer; }
+.ge-pin-halo { fill: var(--ge-reference); animation: ge-pin-pulse 2.4s ease-in-out infinite; }
+.ge-pin-dot { stroke: var(--arb-color-canvas); stroke-width: 1.4; animation: ge-pin-in 0.35s ease both; }
+.ge-pin-dot.is-verified { fill: var(--ge-verified); }
+.ge-pin-dot.is-reference { fill: var(--ge-reference); }
+.ge-pin-dot.is-selected { stroke: var(--ge-white); stroke-width: 2.2; }
+.ge-pin-label { fill: var(--ge-white); font-size: 11px; font-weight: 700; }
+.ge-atlas-legend {
+  position: absolute; left: 12px; bottom: 12px; display: grid; gap: 6px;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--ge-line);
+  background: color-mix(in srgb, var(--arb-color-canvas) 82%, transparent); backdrop-filter: blur(6px);
+  font-size: 0.72rem; color: var(--ge-muted);
+}
+.ge-legend-row { display: inline-flex; align-items: center; gap: 7px; }
+.ge-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.ge-legend-dot.is-verified { background: var(--ge-verified); }
+.ge-legend-dot.is-reference { background: var(--ge-reference); }
+.ge-atlas-empty {
+  position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+  color: var(--ge-muted); font-size: 0.86rem; padding: 20px;
+}
+
+/* --------------------------- Dossier drawer --------------------------- */
+.ge-dossier-drawer {
+  display: grid; gap: 12px; padding: 14px; border-radius: var(--ge-radius-lg);
+  border: 1px solid var(--ge-verified-line); background: var(--ge-surface-2);
+  animation: ge-drawer-in 0.28s ease both; align-self: start; position: sticky; top: 12px;
+  max-height: calc(100vh - 40px); overflow-y: auto;
+}
+.ge-dossier-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; }
+.ge-dossier-head h3 { margin: 0; font-size: 1rem; line-height: 1.3; }
+.ge-dossier-sub { color: var(--ge-muted); font-size: 0.78rem; }
+.ge-dossier-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ge-dossier-block { display: grid; gap: 4px; }
+.ge-dossier-block h4 { margin: 0; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ge-muted); }
+.ge-dossier-block p { margin: 0; font-size: 0.82rem; line-height: 1.5; color: var(--ge-white); }
+.ge-dossier-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ge-dossier-stat { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--ge-line); background: var(--ge-well); display: grid; gap: 2px; }
+.ge-dossier-stat span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ge-muted); }
+.ge-dossier-stat b { font-size: 0.9rem; }
+.ge-progress { display: grid; gap: 5px; }
+.ge-progress-label { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ge-muted); }
+.ge-progress-bar { height: 7px; border-radius: 7px; background: var(--ge-tint); overflow: hidden; }
+.ge-progress-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--ge-teal), var(--ge-verified)); }
+.ge-scenarios { display: grid; gap: 6px; }
+.ge-scenario { display: grid; gap: 2px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--ge-line); background: var(--ge-well); font-size: 0.76rem; }
+.ge-scenario--outperform { border-color: var(--ge-verified-line); }
+.ge-scenario--write_off { border-color: color-mix(in srgb, var(--arb-color-danger) 40%, var(--arb-color-border)); }
+.ge-scenario-head { font-weight: 700; }
+.ge-milestone-track { display: flex; flex-wrap: wrap; gap: 6px; }
+.ge-milestone { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--ge-line); background: var(--ge-tint-weak); font-size: 0.68rem; color: var(--ge-muted); }
+.ge-milestone.is-reached { color: var(--ge-verified); border-color: var(--ge-verified-line); }
+
+/* ------------------------------ Pin board ------------------------------ */
+.ge-pinboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.ge-pin-card {
+  display: grid; gap: 9px; padding: 13px; border-radius: var(--ge-radius);
+  border: 1px solid var(--ge-line); background: var(--ge-surface-2); text-align: left; cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease;
+}
+.ge-pin-card:hover { transform: translateY(-2px); border-color: var(--ge-verified-line); }
+.ge-pin-card.is-active { border-color: var(--ge-verified); box-shadow: 0 0 0 1px var(--ge-verified) inset; }
+.ge-pin-card-top { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+.ge-pin-card h3 { margin: 0; font-size: 0.9rem; line-height: 1.3; }
+.ge-pin-card-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.72rem; color: var(--ge-muted); }
+.ge-pin-card-meta b { color: var(--ge-white); }
+.ge-pin-glyph { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--ge-line); background: var(--ge-tint-weak); color: var(--ge-teal-soft); flex: none; }
+.ge-star { background: transparent; border: none; cursor: pointer; color: var(--ge-muted); padding: 2px; }
+.ge-star.is-on { color: var(--ge-reference); }
+.ge-pin-card-econ { display: grid; gap: 3px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--ge-line); background: var(--ge-well); font-size: 0.72rem; color: var(--ge-muted); }
+.ge-pin-card-econ b { color: var(--ge-white); }
+.ge-pin-card-invest { display: flex; gap: 8px; }
+.ge-pin-card-invest .ge-btn { flex: 1; }
+.ge-profit { color: var(--ge-verified); }
+.ge-delay { color: var(--ge-reference); }
+.ge-invest-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.ge-invest-figure { padding: 9px 10px; border-radius: 10px; border: 1px solid var(--ge-line); background: var(--ge-well); display: grid; gap: 2px; }
+.ge-invest-figure span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ge-muted); }
+.ge-invest-figure b { font-size: 0.9rem; }
+.ge-invest-figure--profit { border-color: var(--ge-verified-line); }
+
+/* ---------------------- Economic profile (auto-assigned) ---------------------- */
+.ge-econ-panel {
+  display: grid; gap: 8px; margin-top: 10px; padding: 12px; border-radius: var(--ge-radius);
+  border: 1px solid var(--ge-verified-line);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--arb-color-accent) 10%, transparent), color-mix(in srgb, var(--arb-color-warning) 6%, transparent)), var(--ge-well);
+}
+.ge-econ-panel--modal { margin: 10px 0 4px; }
+.ge-econ-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ge-econ-item { display: grid; gap: 2px; min-width: 0; }
+.ge-econ-item > span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ge-muted); }
+.ge-econ-item > b { font-size: 0.82rem; font-weight: 700; color: var(--ge-white); overflow-wrap: anywhere; }
+.ge-econ-delay {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px;
+  font-size: 0.7rem; line-height: 1.3;
+  color: var(--ge-reference);
+  background: color-mix(in srgb, var(--arb-color-warning) 12%, transparent);
+}
+.ge-econ-note { margin: 2px 0 0; font-size: 0.68rem; color: var(--ge-muted); }
+.ge-chip--profit { border-color: var(--ge-verified-line); color: var(--ge-verified); background: color-mix(in srgb, var(--arb-color-accent) 14%, transparent); }
+@media (max-width: 560px) {
+  .ge-econ-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ge-card-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.74rem; color: var(--ge-muted); align-items: center; }
+
+.ge-empty {
+  display: flex; gap: 8px; align-items: center; justify-content: center; text-align: center;
+  padding: 26px 18px; border-radius: var(--ge-radius); border: 1px dashed var(--ge-line); color: var(--ge-muted); font-size: 0.86rem;
+}
+.ge-spinner { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--ge-tint); border-top-color: var(--ge-teal); animation: ge-spin 0.8s linear infinite; display: inline-block; }
+
+/* ------------------------------ Table ------------------------------ */
+.ge-table-wrap { overflow-x: auto; border-radius: var(--ge-radius); border: 1px solid var(--ge-line); }
+.ge-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.ge-table th, .ge-table td { padding: 9px 11px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--ge-line-soft); }
+.ge-table th { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ge-muted); background: var(--ge-well); }
+.ge-table tbody tr:hover { background: var(--ge-tint-weak); }
+
+/* ---------------------------- Analytics ---------------------------- */
+.ge-analytics { display: grid; gap: 14px; }
+.ge-analytics-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.ge-analytics-stat { display: grid; gap: 2px; padding: 13px 15px; border-radius: var(--ge-radius); border: 1px solid var(--ge-line); background: var(--ge-well); }
+.ge-analytics-stat b { font-size: 1.25rem; }
+.ge-analytics-stat span { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ge-muted); }
+.ge-analytics-stat--green b { color: var(--ge-verified); }
+.ge-analytics-stat--teal b { color: var(--ge-teal); }
+.ge-analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.ge-analytics-card { display: grid; gap: 10px; padding: 15px; border-radius: var(--ge-radius); border: 1px solid var(--ge-line); background: var(--ge-surface-2); }
+.ge-analytics-card h3 { margin: 0; font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ge-teal-soft); }
+.ge-bar-row { display: grid; grid-template-columns: minmax(90px, 1.4fr) 1fr auto; gap: 10px; align-items: center; font-size: 0.78rem; }
+.ge-bar-track { height: 8px; border-radius: 8px; background: var(--ge-tint); overflow: hidden; }
+.ge-bar-fill { height: 100%; background: linear-gradient(90deg, var(--ge-teal), var(--ge-verified)); }
+
+/* ----------------------------- Modal ----------------------------- */
+.ge-modal {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--arb-color-canvas) 76%, transparent); backdrop-filter: blur(3px); padding: 18px;
+}
+.ge-modal-card {
+  width: min(640px, 100%); max-height: 88vh; overflow-y: auto; display: grid; gap: 14px;
+  padding: 20px; border-radius: var(--ge-radius-lg); border: 1px solid var(--ge-verified-line);
+  background: var(--ge-surface); box-shadow: var(--ge-shadow);
+}
+.ge-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ge-modal-body { display: grid; gap: 14px; }
+.ge-modal-foot { display: flex; justify-content: flex-end; gap: 10px; }
+.ge-field { display: grid; gap: 5px; }
+.ge-field label { font-size: 0.72rem; color: var(--ge-muted); font-weight: 600; }
+.ge-field small { font-size: 0.7rem; color: var(--ge-muted); }
+.ge-funding { display: grid; gap: 8px; }
+.ge-funding-option {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--ge-line); background: var(--ge-well);
+  cursor: pointer; color: var(--ge-white); font: inherit; text-align: left;
+}
+.ge-funding-option.is-selected { border-color: var(--ge-verified); background: color-mix(in srgb, var(--arb-color-accent) 12%, transparent); }
+.ge-funding-option small { display: block; color: var(--ge-muted); font-size: 0.7rem; }
+.ge-quote { display: grid; gap: 6px; padding: 12px; border-radius: var(--ge-radius); border: 1px solid var(--ge-line); background: var(--ge-well); font-size: 0.8rem; }
+.ge-quote-row { display: flex; justify-content: space-between; gap: 10px; }
+.ge-ok { color: var(--ge-verified); }
+.ge-bad { color: var(--ge-red); }
+
+/* ----------------------- Admin console layout ----------------------- */
+.ge-admin { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.ge-admin-form { display: grid; gap: 12px; padding: 16px; border-radius: var(--ge-radius-lg); border: 1px solid var(--ge-line); background: var(--ge-surface-2); }
+.ge-admin-list { display: grid; gap: 12px; }
+.ge-admin-row { display: grid; gap: 10px; padding: 14px; border-radius: var(--ge-radius); border: 1px solid var(--ge-line); background: var(--ge-surface-2); }
+.ge-admin-row-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; justify-content: space-between; }
+.ge-admin-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ge-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ge-three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ge-reference-note { display: flex; gap: 7px; align-items: flex-start; font-size: 0.76rem; color: var(--ge-muted); line-height: 1.5; }
+
+@media (max-width: 1180px) {
+  .ge-atlas-shell { grid-template-columns: minmax(160px, 190px) minmax(0, 1fr); }
+  .ge-dossier-drawer { grid-column: 1 / -1; position: static; max-height: none; }
+  .ge-admin { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .ge-atlas-shell { grid-template-columns: minmax(0, 1fr); }
+  .ge-region-rail { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+  .ge-region-rail-head { display: none; }
+  .ge-two, .ge-three { grid-template-columns: minmax(0, 1fr); }
+  .ge-masthead-side { justify-items: start; }
+}

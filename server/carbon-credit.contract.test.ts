@@ -35,7 +35,7 @@ describe("Carbon Credit desk", () => {
     expect(app).toContain('section==="carbon-credit"&&<Suspense');
     expect(app).toContain("<CustomerCarbonCredit push={push}/>");
     // The generic placeholder must explicitly exclude carbon-credit now.
-    expect(app).toContain('item.id!=="carbon-credit")&&<CustomerInvestmentCategory');
+    expect(app).toContain('item.id!=="carbon-credit"&&item.id!=="green-energy")&&<CustomerInvestmentCategory');
     // The customer menu reaches the desk through the shared slide menu.
     expect(slideMenu).toContain('target: "carbon-credit"');
 

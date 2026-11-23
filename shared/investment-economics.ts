@@ -28,10 +28,10 @@
  */
 
 /** The investment desks that carry auto-assigned economics. */
-export type DeskKey = "treasury" | "litigation" | "agro" | "ipRoyalty" | "music" | "cooperate" | "carbon";
+export type DeskKey = "treasury" | "litigation" | "agro" | "ipRoyalty" | "music" | "cooperate" | "carbon" | "greenEnergy";
 
 export const DESK_KEYS: readonly DeskKey[] = [
-  "treasury", "litigation", "agro", "ipRoyalty", "music", "cooperate", "carbon",
+  "treasury", "litigation", "agro", "ipRoyalty", "music", "cooperate", "carbon", "greenEnergy",
 ];
 
 const DESK_LABELS: Record<DeskKey, string> = {
@@ -42,6 +42,7 @@ const DESK_LABELS: Record<DeskKey, string> = {
   music: "Music Royalties",
   cooperate: "Cooperate Dept",
   carbon: "Carbon Credit",
+  greenEnergy: "Green Energy",
 };
 
 export function deskLabel(desk: DeskKey): string {

@@ -1,3 +1,68 @@
+## 2026-11-23 (feat) — New "Green Energy" desk, modelled on the Carbon Credit desk
+
+Owner request: *"Next we need to move to the next menu Green Energy … implement this well let it grab
+various green Energy investment all across the world remember how we did the rest menu so it should
+also have the features of the rest menu."* A complete new desk joins the seven existing menus
+(treasury, litigation, agro, ipRoyalty, music, cooperate, carbon), built by mirroring the Carbon Credit
+desk layer for layer so every capability the other menus have is present: live worldwide discovery, an
+administrator-published catalogue, customer atlas + positions, cross-wallet FX funding, distributions,
+settlement, and the shared Desk Economics integration.
+
+- **Catalogue (`shared/green-energy-catalogue.ts`, new).** Environment-neutral (runs on the server and as
+  the browser fallback; no `process.env`, no `node:` imports). Fourteen green-energy-only types across
+  four groups (`GREEN_ENERGY_TYPE_GROUPS`: *Solar & wind*, *Firm generation*, *Storage & clean fuels*,
+  *Grid & demand*) — solar PV, concentrated solar, onshore wind, offshore wind, hydropower, geothermal,
+  tidal & wave, biomass & bioenergy, battery storage, green hydrogen, waste-to-energy, grid
+  infrastructure, energy efficiency and EV charging — with `classifyGreenEnergyType`, sectors, standards
+  (IRENA / IFC Performance Standards / Equator Principles …), stages, dossier statuses, risk grades,
+  outcomes, territory/value bands, country centroids, `getGreenEnergyInvestmentCatalogue`,
+  `findGreenEnergyOpportunity`, `buildGreenEnergyAnalytics`, `defaultGreenEnergyMilestones` and
+  `GREEN_ENERGY_DESK_CURRENCY = "USD"`. Live discovery drains keyless public feeds all over the world
+  (World Bank + Eurostat) concurrently via `Promise.allSettled`, marking drained rows `fundable: false`
+  until an administrator publishes them. Renamed fields: `energyType`, `capacityMw`, `tariffPerMwhMinor`.
+- **Admin dossiers (`server/greenEnergyDossiers.ts`, new).** Additive `green_energy_dossiers` table with
+  the audited lifecycle actions `green_energy_dossier_created/updated/enabled/disabled/status_changed`,
+  `green_energy_milestone_reached`, `green_energy_dossier_deleted`; validation preserved verbatim
+  (*"Scenario probabilities must sum to exactly 100%"*, *"Milestone release weights must sum to exactly
+  100% of escrow"*, *"A modelled opportunity must cite its source URL so the economics can be verified"*).
+- **Customer desk (`server/greenEnergy.ts`, new).** `green_energy_positions` table, purchase, funding
+  quote, distributions, payout settlement, cross-wallet FX funding and idempotency, ledger types
+  `green_energy_purchase/distribution/payout/fx_debit/fx_credit`, `SETTLEMENT_CURRENCY = "USD"`,
+  `withGreenEnergyEconomics` → `getDeskEconomicsMap("greenEnergy", …)`, `instrumentId: discovery.id`.
+  Fail-closed FX, no cross-collation `JOIN currency_registry`/`LEFT JOIN customer_balances`.
+- **Desk Economics integration (`server/deskEconomicsSources.ts`).** New `case "greenEnergy"` unions the
+  enabled administrator dossiers with the live catalogue ids, so the shared cross-desk console can load
+  and bulk-edit green-energy offers like every other menu.
+- **Automatic economics (`shared/investment-economics.ts`).** `DeskKey` / `DESK_KEYS` gain
+  `"greenEnergy"` and `DESK_LABELS.greenEnergy = "Green Energy"`, so green-energy offers receive the same
+  deterministic auto-assigned profiles (USD, ticket min, funding target, 25–38% profit, term, 7–10% fee).
+- **API (`server/routers.ts`).** Customer router `customer.greenEnergy.*` (`market`, `fundingQuote`,
+  `purchase`) records an `INVESTMENT` console event titled *"Green Energy recorded"*; admin endpoints
+  `adminOperations.greenEnergyDossiers` / `createGreenEnergyDossier` / `updateGreenEnergyDossier` /
+  `setGreenEnergyDossierEnabled` / `setGreenEnergyDossierStatus` / `reachGreenEnergyMilestone` /
+  `deleteGreenEnergyDossier` / `greenEnergyOpenInstruments` / `recordGreenEnergyDistribution` /
+  `settleGreenEnergyInstrument`, plus zod schemas (14-value `energyType`, 8-value `standard`, outcome /
+  stage / status enums). `DESK_KEY_VALUES` gains `"greenEnergy"`.
+- **Admin UI (`client/src/components/AdminGreenEnergy.tsx`, new).** Full publish console mirroring
+  `AdminCarbonCredit` — create/update/enable/status/milestone/settle/distribution, `GreenEnergyTypeOptions`,
+  the capacity and tariff inputs, *Save economic profile* and *Re-roll auto profile*.
+- **Customer UI (`client/src/components/CustomerGreenEnergy.tsx` + `green-energy.css`, new).** The
+  self-contained equirectangular atlas (`ge-atlas-shell`, `ge-region-rail`, `ge-atlas-canvas`,
+  `ge-dossier-drawer`, `ge-pin-dot`/`ge-pin-halo`), positions and analytics tabs, watchlist
+  (`green-energy-watchlist`), CSV export, economics view and the *"Invest now"* flow with the
+  *"Cited catalogue reference — the administrator has not yet published"* fallback. Theme-token CSS
+  (`--ge-surface: var(--arb-color-surface)` …) with `ge-` keyframes; no hard-coded navy.
+- **Wiring.** `client/src/admin-navigation.ts` gains one Finance destination
+  (`id: "green-energy" → target: "greenEnergyDossiers"`, "Green Energy", `Zap`); `client/src/App.tsx`
+  lazy-loads both components and renders `section==="green-energy"` (customer) and
+  `section==="greenEnergyDossiers"` (admin); the customer slide menu already routed `green-energy`.
+- **Tests (`server/green-energy.contract.test.ts`, new, 16 cases).** Mirrors the carbon contract test and
+  the six prior desks' generic-placeholder exclusion chain was extended with `&&item.id!=="green-energy"`
+  (the cumulative exclusion-chain contract pattern), so adding the desk updated every earlier desk's test.
+  Suite now **208 files / 1701 tests**, 7 files / 36 skipped as before.
+- Verification: `pnpm check` (tsc --noEmit) clean; `pnpm test` 208 files / 1701 passed (0 failed);
+  `pnpm build` succeeded (emits `AdminGreenEnergy` and `CustomerGreenEnergy` chunks).
+
 ## 2026-11-23 (feat) — Edit every menu at once without making the values identical
 
 Owner request: *"Add more features that will enable the admin to update all the menus easily by saving time

@@ -6,6 +6,7 @@ import { getIpRoyaltiesCatalogue } from "@shared/ip-royalties-catalogue";
 import { getMusicRoyaltiesCatalogue } from "@shared/music-royalties-catalogue";
 import { getCooperateDeptCatalogue } from "@shared/cooperate-dept-catalogue";
 import { getCarbonInvestmentCatalogue } from "@shared/carbon-credit-catalogue";
+import { getGreenEnergyInvestmentCatalogue } from "@shared/green-energy-catalogue";
 import { listEnabledAdminTreasuryBondInstruments } from "./treasuryBondInstruments";
 import { listEnabledAdminLitigationDossiers } from "./litigationFundDossiers";
 import { listEnabledAdminAgroDossiers } from "./agroInvestmentDossiers";
@@ -13,6 +14,7 @@ import { listEnabledAdminIpRoyaltyDossiers } from "./ipRoyaltiesDossiers";
 import { listEnabledAdminMusicDossiers } from "./musicRoyaltyDossiers";
 import { listEnabledAdminCooperateDeptCompanies } from "./cooperateDeptCompanies";
 import { listEnabledAdminCarbonDossiers } from "./carbonCreditDossiers";
+import { listEnabledAdminGreenEnergyDossiers } from "./greenEnergyDossiers";
 import { getDeskEconomicsMap, listDeskEconomics } from "./deskEconomics";
 
 /** Collect the ids of one live list, tolerating a failed source. */
@@ -76,6 +78,12 @@ export async function listDeskSourceInstrumentIds(desk: DeskKey): Promise<string
       groups.push(
         await idsFrom("Carbon administrator dossiers", listEnabledAdminCarbonDossiers),
         await idsFrom("Carbon catalogue", async () => (await getCarbonInvestmentCatalogue()).opportunities),
+      );
+      break;
+    case "greenEnergy":
+      groups.push(
+        await idsFrom("Green Energy administrator dossiers", listEnabledAdminGreenEnergyDossiers),
+        await idsFrom("Green Energy catalogue", async () => (await getGreenEnergyInvestmentCatalogue()).opportunities),
       );
       break;
   }

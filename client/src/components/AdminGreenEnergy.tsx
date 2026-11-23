@@ -1,0 +1,792 @@
+import { useMemo, useState } from "react";
+import {
+  AlertTriangle, BadgePercent, Check, Coins, Compass, Gauge, RefreshCw, ScrollText, ShieldCheck, Trash2,
+} from "lucide-react";
+import { trpc } from "@/lib/trpc";
+import { COUNTRY_OPTIONS, flagFor } from "@shared/country-options";
+import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor } from "@shared/investment-economics";
+import {
+  GREEN_ENERGY_DOSSIER_STATUSES,
+  GREEN_ENERGY_OUTCOMES,
+  GREEN_ENERGY_RISK_GRADES,
+  GREEN_ENERGY_SECTORS,
+  GREEN_ENERGY_STAGES,
+  GREEN_ENERGY_STANDARDS,
+  GREEN_ENERGY_TERRITORY_BANDS,
+  GREEN_ENERGY_TYPE_GROUPS,
+  GREEN_ENERGY_TYPES,
+  greenEnergyOutcomeLabel,
+  greenEnergyRegionLabel,
+  greenEnergyRegionOf,
+  greenEnergyRiskLabel,
+  greenEnergySectorLabel,
+  greenEnergyStageLabel,
+  greenEnergyStandardLabel,
+  greenEnergyStatusLabel,
+  greenEnergyTerritoryBandLabel,
+  greenEnergyTypeLabel,
+  defaultGreenEnergyMilestones,
+  type GreenEnergyStage,
+  type GreenEnergyStandard,
+} from "@shared/green-energy-catalogue";
+import "./green-energy.css";
+
+const RISK_OPTIONS = GREEN_ENERGY_RISK_GRADES;
+const STATUS_OPTIONS = GREEN_ENERGY_DOSSIER_STATUSES;
+const STAGE_OPTIONS = GREEN_ENERGY_STAGES;
+
+/**
+ * Neutral template scenarios. Public sources publish green-energy context but no
+ * deal economics, so an administrator must model the three outcomes by hand;
+ * this template is only a starting point and probabilities must sum to 100%.
+ */
+const TEMPLATE_SCENARIOS = [
+  { outcome: "OUTPERFORM", label: "Outperform", probabilityPercent: "30", grossRevenueUsd: "", durationMonths: "24", funderMultiple: "2.20" },
+  { outcome: "ON_PLAN", label: "On plan", probabilityPercent: "50", grossRevenueUsd: "", durationMonths: "24", funderMultiple: "1.20" },
+  { outcome: "WRITE_OFF", label: "Write-off", probabilityPercent: "20", grossRevenueUsd: "", durationMonths: "24", funderMultiple: "0.00" },
+];
+
+const lines = (value: string, max: number) => value.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, max);
+const toMinor = (value: string): number | null => (value.trim() === "" ? null : Math.round(Number(value) * 100));
+const fromMinor = (value: number | null | undefined): string => (value === null || value === undefined ? "" : String(Number(value) / 100));
+const toInt = (value: string): number | null => (value.trim() === "" ? null : Math.round(Number(value)));
+const toBpsFromPercent = (value: string): number => Math.round((Number(value) || 0) * 100);
+const fromBpsToPercent = (bps: number | null | undefined): string => (bps === null || bps === undefined ? "" : String(Number(bps) / 100));
+const money = (minor: number | null | undefined) => {
+  const value = Number(minor || 0) / 100;
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
+  catch { return `USD ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+};
+const multiple = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 10_000).toFixed(2)}x`);
+const percent = (bps: number | null | undefined) => (bps === null || bps === undefined ? "—" : `${(Number(bps) / 100).toFixed(Number(bps) % 100 === 0 ? 0 : 1)}%`);
+const capacity = (value: number | null | undefined) => (value === null || value === undefined ? "—" : `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })} MW`);
+
+/** Green energy types, grouped into the desk's four lanes for the type picker. */
+function GreenEnergyTypeOptions() {
+  return <>{GREEN_ENERGY_TYPE_GROUPS.map((group) => <optgroup label={group.label} key={group.label}>
+    {group.types.map((value) => <option key={value} value={value}>{greenEnergyTypeLabel(value)}</option>)}
+  </optgroup>)}</>;
+}
+
+type DossierForm = {
+  title: string; operator: string; energyType: string; sector: string; standard: string; offtaker: string;
+  countryCode: string; territory: string; territoryBand: string; dealType: string;
+  description: string; revenueSharesPercent: string; expectedMultiple: string; expectedDurationMonths: string;
+  projectedRevenueUsd: string; capitalAtRiskUsd: string; fundingAskUsd: string;
+  capacityMw: string; tariffPerMwhUsd: string;
+  minimumInvestmentUsd: string; unitPriceUsd: string; eventDate: string; fundingDeadline: string;
+  stage: string; status: string; riskGrade: string; highlightsText: string;
+  source: string; sourceUrl: string; asOf: string; reason: string;
+};
+
+const emptyDossier = (): DossierForm => ({
+  title: "", operator: "", energyType: "SOLAR_PV", sector: "SOLAR", standard: "", offtaker: "",
+  countryCode: "BR", territory: "", territoryBand: "NATIONAL", dealType: "",
+  description: "", revenueSharesPercent: "", expectedMultiple: "", expectedDurationMonths: "",
+  projectedRevenueUsd: "", capitalAtRiskUsd: "", fundingAskUsd: "",
+  capacityMw: "", tariffPerMwhUsd: "",
+  minimumInvestmentUsd: "", unitPriceUsd: "", eventDate: "", fundingDeadline: "",
+  stage: "FUNDING", status: "FUNDING", riskGrade: "", highlightsText: "",
+  source: "", sourceUrl: "", asOf: "", reason: "",
+});
+
+type ScenarioForm = { outcome: string; label: string; probabilityPercent: string; grossRevenueUsd: string; durationMonths: string; funderMultiple: string };
+type MilestoneForm = { stage: string; label: string; releasePercent: string; status: string; reachedAt?: string | null };
+
+/** Administrator-editable economic profile for one opportunity (major units / percent / whole days). */
+type EconForm = {
+  currency: string; ticketMin: string; fundingTarget: string; profitPercent: string;
+  termDays: string; platformFeePercent: string; settlementDelay: string; closeDate: string; maturityDate: string;
+};
+
+const econScale = (code: string) => currencyByCode(code)?.scale ?? 2;
+const toMinorScaled = (value: string, scale: number): number | null => (value.trim() === "" ? null : Math.round(Number(value) * Math.pow(10, scale)));
+const fromMinorScaled = (minor: number | null | undefined, scale: number): string =>
+  minor === null || minor === undefined ? "" : String(Number(minor) / Math.pow(10, scale));
+
+const emptyEcon = (): EconForm => ({
+  currency: "USD", ticketMin: "", fundingTarget: "", profitPercent: "",
+  termDays: "", platformFeePercent: "", settlementDelay: "", closeDate: "", maturityDate: "",
+});
+
+/**
+ * Administrator console for the Green Energy desk. This desk is green-energy-only:
+ * an administrator posts a new green-energy opportunity — solar photovoltaic,
+ * concentrated solar, onshore wind, offshore wind, hydropower, geothermal,
+ * tidal & wave, biomass & bioenergy, battery storage, green hydrogen,
+ * waste-to-energy, grid infrastructure, energy efficiency or EV charging — by
+ * selecting its type and certification framework and publishing the sourced
+ * economics. This console is the primary source of investable opportunities, and
+ * it also records revenue distributions against funded opportunities and settles
+ * or writes them off.
+ */
+export function AdminGreenEnergy() {
+  const utils = trpc.useUtils();
+  const dossiersQuery = trpc.adminOperations.greenEnergyDossiers.useQuery(undefined, { refetchInterval: 20000 });
+  const openInstrumentsQuery = trpc.adminOperations.greenEnergyOpenInstruments.useQuery(undefined, { refetchInterval: 20000 });
+
+  // Every opportunity the console knows about — published dossiers plus anything
+  // carrying open commitments — is a candidate for an auto-assigned economic
+  // profile the administrator can review and override.
+  const economicsIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const row of (dossiersQuery.data || []) as any[]) if (row?.dossierId) ids.add(String(row.dossierId));
+    for (const row of (openInstrumentsQuery.data || []) as any[]) if (row?.instrumentId) ids.add(String(row.instrumentId));
+    return [...ids];
+  }, [dossiersQuery.data, openInstrumentsQuery.data]);
+  const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
+    { desk: "greenEnergy", instrumentIds: economicsIds },
+    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+  );
+
+  const [tab, setTab] = useState<"dossiers" | "distributions" | "settle" | "economics">("dossiers");
+  const [econForms, setEconForms] = useState<Record<string, EconForm>>({});
+  const [message, setMessage] = useState("");
+  const [messageKind, setMessageKind] = useState<"success" | "error">("success");
+  const [distributionForms, setDistributionForms] = useState<Record<string, { amountUsd: string; note: string }>>({});
+  const [settleForms, setSettleForms] = useState<Record<string, { outcome: string; multiplePercent: string; reason: string }>>({});
+
+  const [dossier, setDossier] = useState<DossierForm>(emptyDossier);
+  const [editingDossierId, setEditingDossierId] = useState<string | null>(null);
+  const [modelScenarios, setModelScenarios] = useState(false);
+  const [scenarios, setScenarios] = useState<ScenarioForm[]>(() => TEMPLATE_SCENARIOS.map((item) => ({ ...item })));
+  const [modelMilestones, setModelMilestones] = useState(false);
+  const [milestones, setMilestones] = useState<MilestoneForm[]>(() =>
+    defaultGreenEnergyMilestones().map((item) => ({ stage: item.stage, label: item.label, releasePercent: String(item.releaseBps / 100), status: item.status })));
+
+  const report = (kind: "success" | "error", text: string) => { setMessageKind(kind); setMessage(text); };
+  const onError = (error: { message: string }) => report("error", error.message);
+  const invalidate = () => {
+    void utils.adminOperations.greenEnergyDossiers.invalidate();
+    void utils.adminOperations.greenEnergyOpenInstruments.invalidate();
+    void utils.adminOperations.deskEconomicsBatch.invalidate();
+    void utils.customer.greenEnergy.market.invalidate();
+  };
+
+  const createDossier = trpc.adminOperations.createGreenEnergyDossier.useMutation({ onSuccess: (row: any) => { resetDossierForm(); invalidate(); report("success", `Published opportunity ${row.dossierId} “${row.title}”.`); }, onError });
+  const updateDossier = trpc.adminOperations.updateGreenEnergyDossier.useMutation({ onSuccess: (row: any) => { resetDossierForm(); invalidate(); report("success", `Updated opportunity ${row.dossierId}.`); }, onError });
+  const toggleDossier = trpc.adminOperations.setGreenEnergyDossierEnabled.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `${row.title} is now ${row.enabled ? "enabled on" : "disabled from"} the customer desk.`); }, onError });
+  const setStatus = trpc.adminOperations.setGreenEnergyDossierStatus.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `${row.title} status set to ${greenEnergyStatusLabel(row.status)}.`); }, onError });
+  const reachMilestone = trpc.adminOperations.reachGreenEnergyMilestone.useMutation({ onSuccess: (row: any) => { invalidate(); report("success", `${row.title} advanced to ${greenEnergyStageLabel(row.stage)}.`); }, onError });
+  const deleteDossier = trpc.adminOperations.deleteGreenEnergyDossier.useMutation({ onSuccess: (result: any) => { invalidate(); report("success", `Deleted ${result.dossierId}.`); }, onError });
+
+  const saveEconomics = trpc.adminOperations.setDeskEconomics.useMutation({
+    onSuccess: (row: any) => { setEconForms((current) => { const next = { ...current }; delete next[row.instrumentId]; return next; }); invalidate(); report("success", `Economic profile saved for ${row.instrumentId}.`); },
+    onError,
+  });
+  const reassignEconomics = trpc.adminOperations.reassignDeskEconomics.useMutation({
+    onSuccess: (row: any) => { invalidate(); report("success", row.source === "ADMIN" ? `${row.instrumentId} keeps its administrator profile.` : `Re-rolled the auto profile for ${row.instrumentId}.`); },
+    onError,
+  });
+
+  const recordDistribution = trpc.adminOperations.recordGreenEnergyDistribution.useMutation({
+    onSuccess: (result: any) => {
+      setDistributionForms((current) => { const next = { ...current }; delete next[result.instrumentId]; return next; });
+      invalidate();
+      report("success", `Distribution recorded on “${result.instrumentName}”: ${money(result.creditedMinor)} split across ${result.positions} open position(s).`);
+    },
+    onError,
+  });
+  const settleInstrument = trpc.adminOperations.settleGreenEnergyInstrument.useMutation({
+    onSuccess: (result: any) => {
+      setSettleForms((current) => { const next = { ...current }; delete next[result.instrumentId]; return next; });
+      invalidate();
+      report("success", `Settled “${result.instrumentName}” as ${greenEnergyOutcomeLabel(result.outcome)} at ${multiple(result.funderMultipleBps)}: ${money(result.paidMinor)} paid, ${money(result.writtenOffMinor)} written off.`);
+    },
+    onError,
+  });
+
+  const pending = createDossier.isPending || updateDossier.isPending;
+
+  function resetDossierForm() {
+    setEditingDossierId(null);
+    setDossier(emptyDossier());
+    setModelScenarios(false);
+    setScenarios(TEMPLATE_SCENARIOS.map((item) => ({ ...item })));
+    setModelMilestones(false);
+    setMilestones(defaultGreenEnergyMilestones().map((item) => ({ stage: item.stage, label: item.label, releasePercent: String(item.releaseBps / 100), status: item.status })));
+  }
+
+  const d = (key: keyof DossierForm, value: string) => setDossier((current) => ({ ...current, [key]: value }));
+  const setScenario = (index: number, key: keyof ScenarioForm, value: string) => setScenarios((current) => current.map((item, i) => (i === index ? { ...item, [key]: value } : item)));
+  const setMilestone = (index: number, key: keyof MilestoneForm, value: string) => setMilestones((current) => current.map((item, i) => (i === index ? { ...item, [key]: value } : item)));
+
+  const scenarioBpsTotal = scenarios.reduce((sum, item) => sum + toBpsFromPercent(item.probabilityPercent), 0);
+  const scenarioErrors = modelScenarios
+    ? (!dossier.fundingAskUsd.trim() ? "Set a funding target before modelling the outcomes. " : "")
+      + (!dossier.sourceUrl.trim() ? "A modelled opportunity must cite its source URL. " : "")
+      + (scenarioBpsTotal !== 10_000 ? "Outcome probabilities must sum to exactly 100%. " : "")
+    : "";
+
+  const milestoneBpsTotal = milestones.reduce((sum, item) => sum + toBpsFromPercent(item.releasePercent), 0);
+  const milestoneErrors = modelMilestones && milestoneBpsTotal !== 10_000
+    ? "Milestone escrow releases must sum to exactly 100%."
+    : "";
+
+  const dossierValid = dossier.title.trim().length >= 3
+    && dossier.operator.trim().length >= 2
+    && /^[A-Za-z]{2}$/.test(dossier.countryCode)
+    && dossier.description.trim().length >= 8
+    && !scenarioErrors
+    && !milestoneErrors;
+
+  const buildDossierPayload = () => {
+    const payload: any = {
+      title: dossier.title.trim(),
+      operator: dossier.operator.trim(),
+      energyType: dossier.energyType,
+      sector: dossier.sector,
+      countryCode: dossier.countryCode.toUpperCase(),
+      stage: dossier.stage,
+      status: dossier.status,
+      description: dossier.description.trim(),
+      highlights: lines(dossier.highlightsText, 12),
+    };
+    if (dossier.standard) payload.standard = dossier.standard;
+    if (dossier.offtaker.trim()) payload.offtaker = dossier.offtaker.trim();
+    if (dossier.territory.trim()) payload.territory = dossier.territory.trim();
+    if (dossier.territoryBand) payload.territoryBand = dossier.territoryBand;
+    if (dossier.dealType.trim()) payload.dealType = dossier.dealType.trim();
+    if (dossier.revenueSharesPercent.trim()) payload.revenueSharesBps = toBpsFromPercent(dossier.revenueSharesPercent);
+    if (dossier.expectedMultiple.trim()) payload.expectedMultipleBps = Math.round(Number(dossier.expectedMultiple) * 10_000);
+    if (dossier.expectedDurationMonths.trim()) payload.expectedDurationMonths = toInt(dossier.expectedDurationMonths);
+    if (dossier.projectedRevenueUsd.trim()) payload.projectedRevenueMinor = toMinor(dossier.projectedRevenueUsd);
+    if (dossier.capitalAtRiskUsd.trim()) payload.capitalAtRiskMinor = toMinor(dossier.capitalAtRiskUsd);
+    if (dossier.fundingAskUsd.trim()) payload.fundingAskMinor = toMinor(dossier.fundingAskUsd);
+    if (dossier.capacityMw.trim()) payload.capacityMw = toInt(dossier.capacityMw);
+    if (dossier.tariffPerMwhUsd.trim()) payload.tariffPerMwhMinor = toMinor(dossier.tariffPerMwhUsd);
+    if (dossier.minimumInvestmentUsd.trim()) payload.minimumInvestmentMinor = toMinor(dossier.minimumInvestmentUsd);
+    if (dossier.unitPriceUsd.trim()) payload.unitPriceMinor = toMinor(dossier.unitPriceUsd);
+    if (dossier.eventDate.trim()) payload.eventDate = dossier.eventDate.trim();
+    if (dossier.fundingDeadline.trim()) payload.fundingDeadline = dossier.fundingDeadline.trim();
+    if (dossier.riskGrade) payload.riskGrade = dossier.riskGrade;
+    if (dossier.source.trim()) payload.source = dossier.source.trim();
+    if (dossier.sourceUrl.trim()) payload.sourceUrl = dossier.sourceUrl.trim();
+    if (dossier.asOf.trim()) payload.asOf = dossier.asOf.trim();
+    if (dossier.reason.trim()) payload.reason = dossier.reason.trim();
+    if (modelScenarios) {
+      payload.scenarios = scenarios.map((item) => ({
+        outcome: item.outcome,
+        label: item.label.trim() || greenEnergyOutcomeLabel(item.outcome as any),
+        probabilityBps: toBpsFromPercent(item.probabilityPercent),
+        grossRevenueMinor: toMinor(item.grossRevenueUsd) ?? 0,
+        durationMonths: toInt(item.durationMonths) ?? 0,
+        funderMultipleBps: Math.round((Number(item.funderMultiple) || 0) * 10_000),
+      }));
+    }
+    if (modelMilestones) {
+      payload.milestones = milestones.map((item, index) => ({
+        stage: item.stage,
+        label: item.label.trim() || greenEnergyStageLabel(item.stage as GreenEnergyStage),
+        releaseBps: toBpsFromPercent(item.releasePercent),
+        status: item.status,
+        reachedAt: item.status === "REACHED" ? (dossier.asOf.trim() || new Date().toISOString().slice(0, 10)) : (milestones[index] as any).reachedAt ?? null,
+      }));
+    }
+    return payload;
+  };
+
+  const submitDossier = () => {
+    const payload = buildDossierPayload();
+    if (editingDossierId) updateDossier.mutate({ dossierId: editingDossierId, ...payload });
+    else createDossier.mutate(payload);
+  };
+
+  const beginEditDossier = (row: any) => {
+    setTab("dossiers");
+    setEditingDossierId(row.dossierId);
+    setMessage("");
+    setDossier({
+      title: row.title || "", operator: row.operator || "", energyType: row.energyType || "SOLAR_PV", sector: row.sector || "SOLAR",
+      standard: row.standard || "", offtaker: row.offtaker || "", countryCode: row.countryCode || "BR", territory: row.territory || "",
+      territoryBand: row.territoryBand || "NATIONAL", dealType: row.dealType || "",
+      description: row.description || "", revenueSharesPercent: fromBpsToPercent(row.revenueSharesBps),
+      expectedMultiple: row.expectedMultipleBps === null || row.expectedMultipleBps === undefined ? "" : String(Number(row.expectedMultipleBps) / 10_000),
+      expectedDurationMonths: row.expectedDurationMonths === null || row.expectedDurationMonths === undefined ? "" : String(row.expectedDurationMonths),
+      projectedRevenueUsd: fromMinor(row.projectedRevenueMinor), capitalAtRiskUsd: fromMinor(row.capitalAtRiskMinor),
+      fundingAskUsd: fromMinor(row.fundingAskMinor),
+      capacityMw: row.capacityMw === null || row.capacityMw === undefined ? "" : String(row.capacityMw),
+      tariffPerMwhUsd: fromMinor(row.tariffPerMwhMinor),
+      minimumInvestmentUsd: fromMinor(row.minimumInvestmentMinor),
+      unitPriceUsd: fromMinor(row.unitPriceMinor), eventDate: row.eventDate || "", fundingDeadline: row.fundingDeadline || "",
+      stage: row.stage || "FUNDING", status: row.status || "FUNDING", riskGrade: row.riskGrade || "",
+      highlightsText: Array.isArray(row.highlights) ? row.highlights.join("\n") : "",
+      source: row.source || "", sourceUrl: row.sourceUrl || "", asOf: row.asOf || "", reason: "",
+    });
+    if (Array.isArray(row.scenarios) && row.scenarios.length) {
+      setModelScenarios(true);
+      setScenarios(TEMPLATE_SCENARIOS.map((template) => {
+        const match = row.scenarios.find((item: any) => item.outcome === template.outcome);
+        if (!match) return { ...template };
+        return {
+          outcome: match.outcome || template.outcome,
+          label: match.label || template.label,
+          probabilityPercent: fromBpsToPercent(match.probabilityBps),
+          grossRevenueUsd: fromMinor(match.grossRevenueMinor),
+          durationMonths: String(match.durationMonths ?? 0),
+          funderMultiple: String(Number(match.funderMultipleBps || 0) / 10_000),
+        };
+      }));
+    } else {
+      setModelScenarios(false);
+      setScenarios(TEMPLATE_SCENARIOS.map((item) => ({ ...item })));
+    }
+    if (Array.isArray(row.milestones) && row.milestones.length) {
+      setModelMilestones(true);
+      setMilestones(row.milestones.map((item: any) => ({
+        stage: item.stage,
+        label: item.label || greenEnergyStageLabel(item.stage),
+        releasePercent: String(Number(item.releaseBps || 0) / 100),
+        status: item.status === "REACHED" ? "REACHED" : "PENDING",
+        ...(item.reachedAt ? { reachedAt: item.reachedAt } : {}),
+      })) as MilestoneForm[]);
+    } else {
+      setModelMilestones(false);
+      setMilestones(defaultGreenEnergyMilestones().map((item) => ({ stage: item.stage, label: item.label, releasePercent: String(item.releaseBps / 100), status: item.status })));
+    }
+  };
+
+  const dossierRows: any[] = dossiersQuery.data || [];
+  const openInstrumentRows: any[] = openInstrumentsQuery.data || [];
+  const fundableCount = useMemo(() => dossierRows.filter((row) => row.status === "FUNDING" && row.scenarios.length > 0 && row.fundingAskMinor > 0 && !row.outcome).length, [dossierRows]);
+  const generationCount = useMemo(() => dossierRows.filter((row) => ["SOLAR_PV", "CONCENTRATED_SOLAR", "ONSHORE_WIND", "OFFSHORE_WIND", "HYDROPOWER", "GEOTHERMAL", "TIDAL_WAVE", "BIOMASS_BIOENERGY"].includes(row.energyType)).length, [dossierRows]);
+  const openCommittedMinor = useMemo(() => openInstrumentRows.reduce((sum, row) => sum + Number(row.committedMinor || 0), 0), [openInstrumentRows]);
+
+  const econById = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const row of (economicsQuery.data || []) as any[]) map.set(String(row.instrumentId), row);
+    return map;
+  }, [economicsQuery.data]);
+  const econNameFor = (id: string) => {
+    const dossier = dossierRows.find((row) => String(row.dossierId) === id);
+    if (dossier) return `${dossier.flag ? `${dossier.flag} ` : ""}${dossier.title}`;
+    const instrument = openInstrumentRows.find((row) => String(row.instrumentId) === id);
+    return instrument?.instrumentName || id;
+  };
+  const econFormFor = (id: string): EconForm => {
+    const existing = econForms[id];
+    if (existing) return existing;
+    const profile = econById.get(id);
+    if (!profile) return emptyEcon();
+    const scale = econScale(profile.currency);
+    return {
+      currency: profile.currency,
+      ticketMin: fromMinorScaled(profile.ticketMinMinor, scale),
+      fundingTarget: fromMinorScaled(profile.fundingTargetMinor, scale),
+      profitPercent: fromBpsToPercent(profile.profitBps),
+      termDays: profile.termDays === null || profile.termDays === undefined ? "" : String(profile.termDays),
+      platformFeePercent: fromBpsToPercent(profile.platformFeeBps),
+      settlementDelay: profile.settlementDelayDays === null || profile.settlementDelayDays === undefined ? "" : String(profile.settlementDelayDays),
+      closeDate: profile.closeDate || "",
+      maturityDate: profile.maturityDate || "",
+    };
+  };
+  const setEconForm = (id: string, key: keyof EconForm, value: string) => setEconForms((current) => ({ ...current, [id]: { ...econFormFor(id), [key]: value } }));
+  const runSaveEconomics = (id: string) => {
+    const form = econFormFor(id);
+    const scale = econScale(form.currency);
+    const patch: any = { currency: form.currency };
+    const ticket = toMinorScaled(form.ticketMin, scale);
+    if (ticket !== null) patch.ticketMinMinor = ticket;
+    const target = toMinorScaled(form.fundingTarget, scale);
+    if (target !== null) patch.fundingTargetMinor = target;
+    if (form.profitPercent.trim()) patch.profitBps = toBpsFromPercent(form.profitPercent);
+    if (form.termDays.trim()) patch.termDays = Math.round(Number(form.termDays));
+    if (form.platformFeePercent.trim()) patch.platformFeeBps = toBpsFromPercent(form.platformFeePercent);
+    patch.settlementDelayDays = form.settlementDelay.trim() === "" ? null : Math.round(Number(form.settlementDelay));
+    if (form.closeDate.trim()) patch.closeDate = form.closeDate.trim();
+    if (form.maturityDate.trim()) patch.maturityDate = form.maturityDate.trim();
+    saveEconomics.mutate({ desk: "greenEnergy", instrumentId: id, ...patch });
+  };
+  const runReassignEconomics = (id: string) => {
+    if (!window.confirm(`Re-roll the auto-assigned economic profile for ${id}? An administrator profile is not affected.`)) return;
+    reassignEconomics.mutate({ desk: "greenEnergy", instrumentId: id, salt: `${Date.now()}-${Math.round(Math.random() * 1e6)}` });
+  };
+
+  const distributionFormFor = (row: any) => distributionForms[row.instrumentId] || { amountUsd: "", note: "" };
+  const setDistributionForm = (row: any, key: "amountUsd" | "note", value: string) => setDistributionForms((current) => ({ ...current, [row.instrumentId]: { ...(current[row.instrumentId] || { amountUsd: "", note: "" }), [key]: value } }));
+  const runDistribution = (row: any) => {
+    const form = distributionFormFor(row);
+    const amountMinor = toMinor(form.amountUsd) ?? 0;
+    if (amountMinor <= 0) { report("error", "Enter a distribution amount above zero."); return; }
+    recordDistribution.mutate({ instrumentId: row.instrumentId, amountMinor, note: form.note.trim() || undefined, idempotencyKey: crypto.randomUUID() });
+  };
+
+  const settleFormFor = (row: any) => settleForms[row.instrumentId] || { outcome: "OUTPERFORM", multiplePercent: "180", reason: "" };
+  const setSettleForm = (row: any, key: "outcome" | "multiplePercent" | "reason", value: string) => setSettleForms((current) => ({ ...current, [row.instrumentId]: { ...(current[row.instrumentId] || { outcome: "OUTPERFORM", multiplePercent: "180", reason: "" }), [key]: value } }));
+  const runSettle = (row: any) => {
+    const form = settleFormFor(row);
+    const funderMultipleBps = form.outcome === "WRITE_OFF" ? 0 : toBpsFromPercent(form.multiplePercent);
+    if (form.outcome !== "WRITE_OFF" && funderMultipleBps <= 0) { report("error", "Set a completion multiple above 0.00x for an outperform or on-plan outcome."); return; }
+    const confirmText = `Settle “${row.instrumentName}” as ${greenEnergyOutcomeLabel(form.outcome as any)} at ${form.outcome === "WRITE_OFF" ? "0.00x" : multiple(funderMultipleBps)}? This releases locked principal and pays or writes off all ${row.openPositions} open position(s) across ${money(row.committedMinor)} committed. It cannot be undone.`;
+    if (!window.confirm(confirmText)) return;
+    settleInstrument.mutate({ instrumentId: row.instrumentId, outcome: form.outcome as any, funderMultipleBps, reason: form.reason.trim() || "Administrator settlement" });
+  };
+
+  return <div className="arb-page portal-page ge-page">
+    <header className="ge-hero" aria-label="Green Energy console">
+      <div className="ge-hero-glow" aria-hidden="true" />
+      <div className="ge-masthead">
+        <div className="ge-masthead-lead">
+          <span className="ge-eyebrow ge-eyebrow--teal">Green energy · Opportunity publishing</span>
+          <h1 className="ge-title">Green Energy console</h1>
+          <p className="ge-lede">Post a new green-energy opportunity by selecting its type and certification framework and publishing the sourced economics — the project developer, the framework, the funding target, the installed capacity and tariff per MWh, the modelled outcomes and the construction window — as a dossier. This desk is green-energy-only, so this console is the primary source of investable opportunities customers see on the atlas. Record revenue distributions, advance a milestone, or settle a funded project here.</p>
+        </div>
+        <div className="ge-masthead-side">
+          <button className="ge-btn ge-btn--ghost ge-btn--sm" type="button" onClick={() => { void dossiersQuery.refetch(); void openInstrumentsQuery.refetch(); }} disabled={dossiersQuery.isFetching || openInstrumentsQuery.isFetching}>
+            <RefreshCw size={14} className={dossiersQuery.isFetching ? "spin" : ""}/> Refresh
+          </button>
+        </div>
+      </div>
+      <div className="ge-figures">
+        <div className="ge-figure ge-figure--teal"><b>{dossierRows.length}</b><span>Published opportunities</span></div>
+        <div className="ge-figure ge-figure--green"><b>{generationCount}</b><span>Generation projects</span></div>
+        <div className="ge-figure ge-figure--gold"><b>{fundableCount}</b><span>Open for investment</span></div>
+        <div className="ge-figure ge-figure--red"><b>{money(openCommittedMinor)}</b><span>Open commitments</span></div>
+      </div>
+    </header>
+
+    {message && <div className={`ge-notice${messageKind === "error" ? " is-error" : " is-success"}`} role={messageKind === "error" ? "alert" : "status"} aria-live="polite">
+      <ShieldCheck size={15}/><div>{message}</div>
+    </div>}
+
+    <nav className="ge-tabs" aria-label="Green Energy console sections">
+      <button type="button" className={`ge-tab${tab === "dossiers" ? " is-active" : ""}`} onClick={() => setTab("dossiers")}><ScrollText size={14}/> Opportunities <span className="ge-tab-count">{dossierRows.length}</span></button>
+      <button type="button" className={`ge-tab${tab === "distributions" ? " is-active" : ""}`} onClick={() => setTab("distributions")}><Coins size={14}/> Record distributions <span className="ge-tab-count">{openInstrumentRows.length}</span></button>
+      <button type="button" className={`ge-tab${tab === "settle" ? " is-active" : ""}`} onClick={() => setTab("settle")}><BadgePercent size={14}/> Settle &amp; write off <span className="ge-tab-count">{openInstrumentRows.length}</span></button>
+      <button type="button" className={`ge-tab${tab === "economics" ? " is-active" : ""}`} onClick={() => setTab("economics")}><Gauge size={14}/> Economics <span className="ge-tab-count">{economicsIds.length}</span></button>
+    </nav>
+
+    {tab === "dossiers" && <div className="ge-admin">
+      <div className="ge-admin-form">
+        <div className="ge-section-head"><div><span className="ge-eyebrow ge-eyebrow--teal">{editingDossierId ? "Edit opportunity" : "Publish opportunity"}</span><h2>{editingDossierId ? editingDossierId : "New green-energy opportunity"}</h2></div>{editingDossierId && <button className="ge-btn ge-btn--ghost ge-btn--sm" type="button" onClick={resetDossierForm}>Cancel edit</button>}</div>
+
+        <div className="ge-two">
+          <div className="ge-field"><label>Opportunity title</label><input value={dossier.title} onChange={(e) => d("title", e.target.value)} placeholder="e.g. Kenya Rift Valley geothermal — Naivasha"/></div>
+          <div className="ge-field"><label>Green energy type</label><select value={dossier.energyType} onChange={(e) => d("energyType", e.target.value)}><GreenEnergyTypeOptions/></select><small>Pick the type: solar photovoltaic, concentrated solar, onshore wind, offshore wind, hydropower, geothermal, tidal &amp; wave, biomass &amp; bioenergy, battery storage, green hydrogen, waste-to-energy, grid infrastructure, energy efficiency or EV charging.</small></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>Developer / operator / rights holder</label><input value={dossier.operator} onChange={(e) => d("operator", e.target.value)} placeholder="Who the project is for"/></div>
+          <div className="ge-field"><label>Sector</label><select value={dossier.sector} onChange={(e) => d("sector", e.target.value)}>{GREEN_ENERGY_SECTORS.map((value) => <option key={value} value={value}>{greenEnergySectorLabel(value)}</option>)}</select></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>Certification framework</label><select value={dossier.standard} onChange={(e) => d("standard", e.target.value)}><option value="">Not yet certified</option>{GREEN_ENERGY_STANDARDS.map((value) => <option key={value} value={value}>{greenEnergyStandardLabel(value)}</option>)}</select></div>
+          <div className="ge-field"><label>Committed buyer / offtaker (optional)</label><input value={dossier.offtaker} onChange={(e) => d("offtaker", e.target.value)} placeholder="e.g. Corporate PPA buyer"/></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>Deal type (optional)</label><input value={dossier.dealType} onChange={(e) => d("dealType", e.target.value)} placeholder="e.g. Revenue share, equity, recoupable advance"/></div>
+          <div className="ge-field"><label>Atlas region (derived)</label><input value={greenEnergyRegionLabel(greenEnergyRegionOf(dossier.countryCode))} readOnly/><small>Derived from the country: <strong>{flagFor(dossier.countryCode)} {dossier.countryCode}</strong></small></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>Country</label>
+            <select value={dossier.countryCode} onChange={(e) => d("countryCode", e.target.value)}>
+              {COUNTRY_OPTIONS.map((country) => <option key={country.code} value={country.code}>{flagFor(country.code)} {country.name} ({country.code})</option>)}
+            </select>
+            <small>The flag and atlas pin are derived from this.</small>
+          </div>
+          <div className="ge-field"><label>Territory band</label><select value={dossier.territoryBand} onChange={(e) => d("territoryBand", e.target.value)}>{GREEN_ENERGY_TERRITORY_BANDS.map((value) => <option key={value} value={value}>{greenEnergyTerritoryBandLabel(value)}</option>)}</select></div>
+        </div>
+        <div className="ge-field"><label>Territory label (optional)</label><input value={dossier.territory} onChange={(e) => d("territory", e.target.value)} placeholder="Defaults to the country name · e.g. East Africa"/></div>
+
+        <div className="ge-two">
+          <div className="ge-field"><label>Lifecycle stage</label><select value={dossier.stage} onChange={(e) => d("stage", e.target.value)}>{STAGE_OPTIONS.map((value) => <option key={value} value={value}>{greenEnergyStageLabel(value)}</option>)}</select></div>
+          <div className="ge-field"><label>Status</label><select value={dossier.status} onChange={(e) => d("status", e.target.value)}>{STATUS_OPTIONS.map((value) => <option key={value} value={value}>{greenEnergyStatusLabel(value)}</option>)}</select></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>Risk grade</label><select value={dossier.riskGrade} onChange={(e) => d("riskGrade", e.target.value)}><option value="">Not graded</option>{RISK_OPTIONS.map((value) => <option key={value} value={value}>{greenEnergyRiskLabel(value)}</option>)}</select></div>
+          <div className="ge-field"><label>Investor revenue share (%)</label><input type="number" min="0" max="100" step="0.01" value={dossier.revenueSharesPercent} onChange={(e) => d("revenueSharesPercent", e.target.value)} placeholder="e.g. 45"/></div>
+        </div>
+
+        <div className="ge-three">
+          <div className="ge-field"><label>Expected multiple (×)</label><input type="number" min="0" step="0.01" value={dossier.expectedMultiple} onChange={(e) => d("expectedMultiple", e.target.value)} placeholder="e.g. 1.55"/></div>
+          <div className="ge-field"><label>Expected duration (months)</label><input type="number" min="0" step="1" value={dossier.expectedDurationMonths} onChange={(e) => d("expectedDurationMonths", e.target.value)} placeholder="e.g. 24"/></div>
+          <div className="ge-field"><label>Projected revenue (USD)</label><input type="number" min="0" step="0.01" value={dossier.projectedRevenueUsd} onChange={(e) => d("projectedRevenueUsd", e.target.value)} placeholder="e.g. 2500000"/></div>
+        </div>
+        <div className="ge-three">
+          <div className="ge-field"><label>Installed capacity (MW)</label><input type="number" min="0" step="1" value={dossier.capacityMw} onChange={(e) => d("capacityMw", e.target.value)} placeholder="e.g. 250"/></div>
+          <div className="ge-field"><label>Tariff per MWh (USD)</label><input type="number" min="0" step="0.01" value={dossier.tariffPerMwhUsd} onChange={(e) => d("tariffPerMwhUsd", e.target.value)} placeholder="e.g. 65.00"/></div>
+          <div className="ge-field"><label>Capital at risk (USD)</label><input type="number" min="0" step="0.01" value={dossier.capitalAtRiskUsd} onChange={(e) => d("capitalAtRiskUsd", e.target.value)} placeholder="e.g. 400000"/></div>
+        </div>
+        <div className="ge-three">
+          <div className="ge-field"><label>Funding target (USD)</label><input type="number" min="0" step="0.01" value={dossier.fundingAskUsd} onChange={(e) => d("fundingAskUsd", e.target.value)} placeholder="e.g. 500000"/></div>
+          <div className="ge-field"><label>Minimum investment (USD)</label><input type="number" min="0" step="0.01" value={dossier.minimumInvestmentUsd} onChange={(e) => d("minimumInvestmentUsd", e.target.value)} placeholder="e.g. 1000"/></div>
+          <div className="ge-field"><label>Unit price (USD, optional)</label><input type="number" min="0" step="0.01" value={dossier.unitPriceUsd} onChange={(e) => d("unitPriceUsd", e.target.value)} placeholder="e.g. 100"/></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>Construction / commissioning date</label><input type="date" value={dossier.eventDate} onChange={(e) => d("eventDate", e.target.value)}/></div>
+          <div className="ge-field"><label>Funding deadline</label><input type="date" value={dossier.fundingDeadline} onChange={(e) => d("fundingDeadline", e.target.value)}/></div>
+        </div>
+
+        <div className="ge-field"><label>Description (required)</label><textarea rows={3} maxLength={2000} value={dossier.description} onChange={(e) => d("description", e.target.value)} placeholder="Describe the project, its technology and why it is investable."/></div>
+        <div className="ge-field"><label>Highlights (optional, one per line)</label><textarea rows={3} value={dossier.highlightsText} onChange={(e) => d("highlightsText", e.target.value)} placeholder={"Aligned with a recognised framework\nLong-term power purchase agreement"}/></div>
+
+        <div className="ge-field">
+          <label className="ge-checkbox"><input type="checkbox" checked={modelScenarios} onChange={(e) => setModelScenarios(e.target.checked)}/> Model the outcomes (required to make the opportunity fundable)</label>
+          <small>Publishing outcomes requires a funding target and a cited source URL. Probabilities must sum to exactly 100%; the full write-off case is always shown to customers.</small>
+        </div>
+        {modelScenarios && <div className="ge-admin-list">
+          {scenarios.map((scenario, index) => <div className="ge-admin-row" key={`${scenario.outcome}-${index}`}>
+            <div className="ge-admin-row-head"><strong>{greenEnergyOutcomeLabel(scenario.outcome as any)}</strong><span className="ge-chip">{percent(toBpsFromPercent(scenario.probabilityPercent))}</span></div>
+            <div className="ge-three">
+              <div className="ge-field"><label>Label</label><input value={scenario.label} onChange={(e) => setScenario(index, "label", e.target.value)}/></div>
+              <div className="ge-field"><label>Probability %</label><input type="number" min="0" max="100" step="0.01" value={scenario.probabilityPercent} onChange={(e) => setScenario(index, "probabilityPercent", e.target.value)}/></div>
+              <div className="ge-field"><label>Duration (months)</label><input type="number" min="0" step="1" value={scenario.durationMonths} onChange={(e) => setScenario(index, "durationMonths", e.target.value)}/></div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Gross revenue (USD)</label><input type="number" min="0" step="0.01" value={scenario.grossRevenueUsd} onChange={(e) => setScenario(index, "grossRevenueUsd", e.target.value)}/></div>
+              <div className="ge-field"><label>Funder multiple (×)</label><input type="number" min="0" step="0.01" value={scenario.funderMultiple} onChange={(e) => setScenario(index, "funderMultiple", e.target.value)}/></div>
+            </div>
+          </div>)}
+          <div className={`ge-notice${scenarioBpsTotal === 10_000 ? " is-success" : " is-error"}`}><div>Outcome probabilities: {percent(scenarioBpsTotal)} of 100%{scenarioBpsTotal === 10_000 ? " — complete" : " — must sum to exactly 100%"}.</div></div>
+        </div>}
+
+        <div className="ge-field">
+          <label className="ge-checkbox"><input type="checkbox" checked={modelMilestones} onChange={(e) => setModelMilestones(e.target.checked)}/> Model funding milestones (optional)</label>
+          <small>Each milestone releases a share of the held principal. Releases must sum to exactly 100%. A milestone marked REACHED is shown to customers as achieved.</small>
+        </div>
+        {modelMilestones && <div className="ge-admin-list">
+          {milestones.map((milestone, index) => <div className="ge-admin-row" key={`${milestone.stage}-${index}`}>
+            <div className="ge-two">
+              <div className="ge-field"><label>Stage</label><select value={milestone.stage} onChange={(e) => setMilestone(index, "stage", e.target.value)}>{STAGE_OPTIONS.map((value) => <option key={value} value={value}>{greenEnergyStageLabel(value)}</option>)}</select></div>
+              <div className="ge-field"><label>Label</label><input value={milestone.label} onChange={(e) => setMilestone(index, "label", e.target.value)}/></div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Escrow release %</label><input type="number" min="0" max="100" step="0.01" value={milestone.releasePercent} onChange={(e) => setMilestone(index, "releasePercent", e.target.value)}/></div>
+              <div className="ge-field"><label>Status</label><select value={milestone.status} onChange={(e) => setMilestone(index, "status", e.target.value)}><option value="PENDING">Pending</option><option value="REACHED">Reached</option></select></div>
+            </div>
+          </div>)}
+          <div className={`ge-notice${milestoneBpsTotal === 10_000 ? " is-success" : " is-error"}`}><div>Milestone releases: {percent(milestoneBpsTotal)} of 100%{milestoneBpsTotal === 10_000 ? " — complete" : " — must sum to exactly 100%"}.</div></div>
+        </div>}
+
+        <div className="ge-two">
+          <div className="ge-field"><label>Source label (optional)</label><input value={dossier.source} onChange={(e) => d("source", e.target.value)} placeholder="e.g. Registry project page / certification report"/></div>
+          <div className="ge-field"><label>Source URL {modelScenarios ? "(required when modelled)" : "(optional)"}</label><input value={dossier.sourceUrl} onChange={(e) => d("sourceUrl", e.target.value)} placeholder="https://public-source.example/opportunity"/></div>
+        </div>
+        <div className="ge-two">
+          <div className="ge-field"><label>As-of date (optional — defaults to today)</label><input type="date" value={dossier.asOf} onChange={(e) => d("asOf", e.target.value)}/></div>
+          <div className="ge-field"><label>Audit reason (optional)</label><input value={dossier.reason} onChange={(e) => d("reason", e.target.value)} placeholder="Reason recorded with this change"/></div>
+        </div>
+
+        {(scenarioErrors || milestoneErrors) && <div className="ge-notice is-error" role="alert"><AlertTriangle size={15}/><div>{scenarioErrors}{milestoneErrors}</div></div>}
+
+        <div className="ge-admin-actions">
+          <button className="ge-btn ge-btn--invest" type="button" disabled={!dossierValid || pending} onClick={submitDossier}>
+            {pending ? "Saving…" : editingDossierId ? "Save changes" : "Publish opportunity"} <Check size={14}/>
+          </button>
+          <span className="ge-card-meta"><ShieldCheck size={13}/> New opportunities are enabled on publish. An opportunity becomes fundable once it is FUNDING status, carries a funding target and has modelled outcomes summing to 100%.</span>
+        </div>
+      </div>
+
+      <div className="ge-admin-list">
+        <div className="ge-section-head"><span className="ge-eyebrow">Published opportunities ({dossierRows.length}) · {fundableCount} open for investment</span></div>
+        {!dossierRows.length && <div className="ge-empty"><Compass size={16}/> No green-energy opportunities yet. Publish one above to open it for investment on the customer atlas.</div>}
+        {dossierRows.map((row) => {
+          const fundable = row.status === "FUNDING" && row.scenarios.length > 0 && row.fundingAskMinor > 0 && !row.outcome;
+          return <div className="ge-admin-row" key={row.dossierId}>
+            <div className="ge-admin-row-head">
+              <div>
+                <strong>{row.flag} {row.title}</strong>
+                <div className="ge-card-meta"><span>{row.operator}</span><span>{row.territory} · {greenEnergySectorLabel(row.sector)}</span></div>
+              </div>
+              <div className="ge-dossier-tags">
+                <span className="ge-chip ge-chip--type">{greenEnergyTypeLabel(row.energyType)}</span>
+                <span className="ge-chip ge-chip--standard">{row.standard ? greenEnergyStandardLabel(row.standard) : "Uncertified"}</span>
+                <span className="ge-chip">{greenEnergyRegionLabel(greenEnergyRegionOf(row.countryCode))}</span>
+                {row.riskGrade && <span className={`ge-chip ge-chip--risk-${String(row.riskGrade).toLowerCase()}`}>{greenEnergyRiskLabel(row.riskGrade)}</span>}
+                <span className={`ge-chip ge-chip--status-${String(row.status).toLowerCase()}`}>{greenEnergyStatusLabel(row.status)}</span>
+                <span className="ge-chip">{greenEnergyStageLabel(row.stage)}</span>
+                <span className="ge-chip">{row.enabled ? "Enabled" : "Disabled"}</span>
+              </div>
+            </div>
+            <div className="ge-card-meta">
+              <span>Target {money(row.fundingAskMinor)} · committed {money(row.committedMinor)}</span>
+              <span>Distributed {money(row.distributedMinor)}</span>
+              <span>Capacity {capacity(row.capacityMw)}{row.tariffPerMwhMinor ? ` · ${money(row.tariffPerMwhMinor)}/MWh` : ""}</span>
+              <span>Expected {multiple(row.expectedMultipleBps)}{row.expectedDurationMonths ? ` · ${row.expectedDurationMonths}mo` : ""}</span>
+              {row.revenueSharesBps !== null && row.revenueSharesBps !== undefined && <span>Revenue share {percent(row.revenueSharesBps)}</span>}
+              {row.eventDate ? <span>Commissioning {row.eventDate}</span> : null}
+              <span>{row.scenarios.length ? `${row.scenarios.length} outcomes` : "Not modelled"}</span>
+              {row.outcome && <span className="ge-chip">Outcome {greenEnergyOutcomeLabel(row.outcome)}</span>}
+              <span>As of {row.asOf}</span>
+              <span>ID {row.dossierId}</span>
+            </div>
+            {row.scenarios.length > 0 && <div className="ge-scenarios">{row.scenarios.map((scenario: any, index: number) => <div className={`ge-scenario ge-scenario--${String(scenario.outcome).toLowerCase()}`} key={`${scenario.outcome}-${index}`}><span className="ge-scenario-head">{scenario.label}</span><span>{percent(scenario.probabilityBps)} · {money(scenario.grossRevenueMinor)} gross · {scenario.durationMonths}mo · {multiple(scenario.funderMultipleBps)}</span></div>)}</div>}
+
+            <div className="ge-admin-actions">
+              <button className="ge-btn ge-btn--ghost ge-btn--sm" type="button" disabled={Boolean(row.outcome)} onClick={() => beginEditDossier(row)}>Edit</button>
+              <button className="ge-btn ge-btn--ghost ge-btn--sm" type="button" disabled={toggleDossier.isPending} onClick={() => toggleDossier.mutate({ dossierId: row.dossierId, enabled: !row.enabled })}>{row.enabled ? "Disable" : "Enable"}</button>
+              <select value="" aria-label="Set status" disabled={setStatus.isPending} onChange={(e) => { if (e.target.value) setStatus.mutate({ dossierId: row.dossierId, status: e.target.value as any, reason: "Administrator status change" }); }}>
+                <option value="">Set status…</option>
+                {STATUS_OPTIONS.filter((value) => value !== row.status).map((value) => <option key={value} value={value}>{greenEnergyStatusLabel(value)}</option>)}
+              </select>
+              <select value="" aria-label="Reach milestone" disabled={reachMilestone.isPending} onChange={(e) => { if (e.target.value) reachMilestone.mutate({ dossierId: row.dossierId, stage: e.target.value as any, reason: "Administrator milestone" }); }}>
+                <option value="">Reach milestone…</option>
+                {STAGE_OPTIONS.filter((value) => value !== row.stage).map((value) => <option key={value} value={value}>{greenEnergyStageLabel(value)}</option>)}
+              </select>
+              <button className="ge-btn ge-btn--danger ge-btn--sm" type="button" disabled={deleteDossier.isPending || row.committedMinor > 0} onClick={() => { if (window.confirm(`Delete opportunity “${row.title}”? It is removed from the customer atlas.`)) deleteDossier.mutate({ dossierId: row.dossierId }); }}><Trash2 size={13}/> Delete</button>
+            </div>
+            {!fundable && !row.outcome && row.scenarios.length > 0 && <div className="ge-reference-note"><AlertTriangle size={13}/> Not currently fundable — status is {greenEnergyStatusLabel(row.status)} or the funding target is unset.</div>}
+            {!row.scenarios.length && <div className="ge-reference-note"><AlertTriangle size={13}/> Not modelled — customers can still invest, but the funding progress and the settlement multiple stay unset until the outcomes and a funding target are published with a cited source.</div>}
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {tab === "distributions" && <div className="ge-admin">
+      <div className="ge-admin-list">
+        <div className="ge-section-head"><div><span className="ge-eyebrow ge-eyebrow--teal">Record distributions ({openInstrumentRows.length}) · {money(openCommittedMinor)} committed</span><h2>Credit a green-energy revenue distribution</h2></div></div>
+        <div className="ge-notice">
+          <Coins size={15}/>
+          <div>The amount you record is split pro-rata across every open position on the opportunity by its principal and credited to each funder's settlement wallet as a withdrawable internal-ledger entry. Principal stays held during the term. It is idempotent per submit, and historical entries are never edited.</div>
+        </div>
+        {!openInstrumentRows.length && <div className="ge-empty"><Coins size={16}/> No opportunities carry open commitments right now. Funded opportunities appear here for distributions.</div>}
+        {openInstrumentRows.map((row) => {
+          const form = distributionFormFor(row);
+          const previewMinor = toMinor(form.amountUsd) ?? 0;
+          return <div className="ge-admin-row" key={row.instrumentId}>
+            <div className="ge-admin-row-head">
+              <div><strong>{row.instrumentName}</strong><div className="ge-card-meta"><span className="ge-mono">{row.energyType ? greenEnergyTypeLabel(row.energyType) : "Green energy"}{row.standard ? ` · ${greenEnergyStandardLabel(row.standard)}` : ""} · {row.instrumentId}</span></div></div>
+              <div className="ge-dossier-tags"><span className="ge-chip">{row.openPositions} open position{row.openPositions === 1 ? "" : "s"}</span><span className="ge-chip">{money(row.committedMinor)} committed</span></div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Distribution amount ({row.currency || "USD"})</label><input type="number" min="0" step="0.01" value={form.amountUsd} onChange={(e) => setDistributionForm(row, "amountUsd", e.target.value)} placeholder="e.g. 12000"/></div>
+              <div className="ge-field"><label>Note (optional)</label><input value={form.note} onChange={(e) => setDistributionForm(row, "note", e.target.value)} placeholder="e.g. Q1 generation statement"/></div>
+            </div>
+            <div className="ge-card-meta"><span>Preview {money(previewMinor)} split pro-rata across {row.openPositions} position(s)</span></div>
+            <div className="ge-admin-actions">
+              <button className="ge-btn ge-btn--invest" type="button" disabled={recordDistribution.isPending || previewMinor <= 0} onClick={() => runDistribution(row)}>
+                {recordDistribution.isPending ? "Recording…" : `Record ${money(previewMinor)} distribution`} <Check size={14}/>
+              </button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {tab === "settle" && <div className="ge-admin">
+      <div className="ge-admin-list">
+        <div className="ge-section-head"><div><span className="ge-eyebrow ge-eyebrow--teal">Settle &amp; write off ({openInstrumentRows.length}) · {money(openCommittedMinor)} committed</span><h2>Resolve a funded green-energy opportunity</h2></div></div>
+        <div className="ge-notice">
+          <AlertTriangle size={15}/>
+          <div>Choose the outcome and the completion multiple here to release held principal and pay or write off every open position. An outperform or on-plan outcome pays principal × the multiple you set; a write-off pays nothing and releases the lock without fabricating a return. Payouts and write-offs are internal-ledger compensating entries and are never edited. This cannot be undone.</div>
+        </div>
+        {!openInstrumentRows.length && <div className="ge-empty"><BadgePercent size={16}/> No opportunities carry open commitments right now. Funded opportunities appear here for settlement.</div>}
+        {openInstrumentRows.map((row) => {
+          const form = settleFormFor(row);
+          const payoutPreview = form.outcome === "WRITE_OFF" ? 0 : Math.round((Number(row.committedMinor || 0) * toBpsFromPercent(form.multiplePercent)) / 10_000);
+          return <div className="ge-admin-row" key={row.instrumentId}>
+            <div className="ge-admin-row-head">
+              <div><strong>{row.instrumentName}</strong><div className="ge-card-meta"><span className="ge-mono">{row.energyType ? greenEnergyTypeLabel(row.energyType) : "Green energy"}{row.standard ? ` · ${greenEnergyStandardLabel(row.standard)}` : ""} · {row.instrumentId}</span></div></div>
+              <div className="ge-dossier-tags"><span className="ge-chip">{row.openPositions} open position{row.openPositions === 1 ? "" : "s"}</span><span className="ge-chip">{money(row.committedMinor)} committed</span></div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Outcome</label>
+                <select value={form.outcome} onChange={(e) => setSettleForm(row, "outcome", e.target.value)}>
+                  {GREEN_ENERGY_OUTCOMES.map((value) => <option key={value} value={value}>{greenEnergyOutcomeLabel(value)}</option>)}
+                </select>
+              </div>
+              <div className="ge-field"><label>Completion multiple (%)</label>
+                <input type="number" min="0" step="1" value={form.multiplePercent} disabled={form.outcome === "WRITE_OFF"} onChange={(e) => setSettleForm(row, "multiplePercent", e.target.value)}/>
+                <small>{form.outcome === "WRITE_OFF" ? "A write-off pays nothing; every principal is written off." : `Funders receive principal × ${multiple(toBpsFromPercent(form.multiplePercent))}.`}</small>
+              </div>
+            </div>
+            <div className="ge-field"><label>Reason (optional)</label><input value={form.reason} onChange={(e) => setSettleForm(row, "reason", e.target.value)} placeholder="e.g. Generation completed at 1.80x on 2027-09-01"/></div>
+            <div className="ge-card-meta">
+              <span>Payout preview {money(payoutPreview)} of {money(row.committedMinor)} committed</span>
+              {form.outcome === "WRITE_OFF" && <span>{money(row.committedMinor)} written off</span>}
+            </div>
+            <div className="ge-admin-actions">
+              <button className="ge-btn ge-btn--invest" type="button" disabled={settleInstrument.isPending} onClick={() => runSettle(row)}>
+                {settleInstrument.isPending ? "Settling…" : `Settle as ${greenEnergyOutcomeLabel(form.outcome as any)} at ${form.outcome === "WRITE_OFF" ? "0.00x" : multiple(toBpsFromPercent(form.multiplePercent))}`} <Check size={14}/>
+              </button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {tab === "economics" && <div className="ge-admin">
+      <div className="ge-admin-list">
+        <div className="ge-section-head"><div><span className="ge-eyebrow ge-eyebrow--teal">Auto-assigned economics ({economicsIds.length})</span><h2>Amount, profit, term, currency &amp; platform fee</h2></div></div>
+        <div className="ge-notice">
+          <Gauge size={15}/>
+          <div>Every opportunity gets a deterministic economic profile the moment it appears on the customer desk — an investable amount from {money(ECONOMICS_BOUNDS.ticketMinMinorUsd)}, a {percent(ECONOMICS_BOUNDS.profitMinBps)}–{percent(ECONOMICS_BOUNDS.profitMaxBps)} profit, a term of {ECONOMICS_BOUNDS.termMinDays}–{ECONOMICS_BOUNDS.termMaxDays} days, a presentation currency and a {percent(ECONOMICS_BOUNDS.platformFeeMinBps)}–{percent(ECONOMICS_BOUNDS.platformFeeMaxBps)} platform fee. Override any value here; a saved profile is marked administrator-authored and is never re-rolled automatically.</div>
+        </div>
+        {!economicsIds.length && <div className="ge-empty"><Gauge size={16}/> No opportunities to profile yet. Publish an opportunity and its economic profile appears here.</div>}
+        {economicsIds.map((id) => {
+          const form = econFormFor(id);
+          const profile = econById.get(id);
+          const scale = econScale(form.currency);
+          const ticketMinor = toMinorScaled(form.ticketMin, scale);
+          const targetMinor = toMinorScaled(form.fundingTarget, scale);
+          return <div className="ge-admin-row" key={id}>
+            <div className="ge-admin-row-head">
+              <div><strong>{econNameFor(id)}</strong><div className="ge-card-meta"><span className="ge-mono">{id}</span></div></div>
+              <div className="ge-dossier-tags">
+                <span className="ge-chip">{profile?.source === "ADMIN" ? "Administrator profile" : "Auto-assigned"}</span>
+                {profile?.currency && <span className="ge-chip">{profile.currency}</span>}
+              </div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Presentation currency</label>
+                <select value={form.currency} onChange={(e) => setEconForm(id, "currency", e.target.value)}>
+                  {INVESTMENT_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+                </select>
+                <small>USD is the dominant choice; the others are for display.</small>
+              </div>
+              <div className="ge-field"><label>Minimum ticket</label>
+                <input type="number" min="0" step="1" value={form.ticketMin} onChange={(e) => setEconForm(id, "ticketMin", e.target.value)}/>
+                <small>{ticketMinor !== null ? `${money(currencyMinorToUsdMinor(ticketMinor, form.currency))} USD equivalent · ${scale} decimal place${scale === 1 ? "" : "s"}` : `Enter the amount in ${form.currency}`}</small>
+              </div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Funding target</label>
+                <input type="number" min="0" step="1" value={form.fundingTarget} onChange={(e) => setEconForm(id, "fundingTarget", e.target.value)}/>
+                <small>{targetMinor !== null ? `${money(currencyMinorToUsdMinor(targetMinor, form.currency))} USD equivalent` : "The capital target"}</small>
+              </div>
+              <div className="ge-field"><label>Profit (%)</label>
+                <input type="number" min="25" max="38" step="0.25" value={form.profitPercent} onChange={(e) => setEconForm(id, "profitPercent", e.target.value)}/>
+                <small>Between {percent(ECONOMICS_BOUNDS.profitMinBps)} and {percent(ECONOMICS_BOUNDS.profitMaxBps)}.</small>
+              </div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Term (days)</label>
+                <input type="number" min="30" max="365" step="1" value={form.termDays} onChange={(e) => setEconForm(id, "termDays", e.target.value)}/>
+                <small>Days from funding close to realising the profit ({ECONOMICS_BOUNDS.termMinDays}–{ECONOMICS_BOUNDS.termMaxDays}).</small>
+              </div>
+              <div className="ge-field"><label>Platform fee (%)</label>
+                <input type="number" min="7" max="10" step="0.25" value={form.platformFeePercent} onChange={(e) => setEconForm(id, "platformFeePercent", e.target.value)}/>
+                <small>Between {percent(ECONOMICS_BOUNDS.platformFeeMinBps)} and {percent(ECONOMICS_BOUNDS.platformFeeMaxBps)}.</small>
+              </div>
+            </div>
+            <div className="ge-two">
+              <div className="ge-field"><label>Investment closes</label>
+                <input type="date" value={form.closeDate} onChange={(e) => setEconForm(id, "closeDate", e.target.value)}/>
+              </div>
+              <div className="ge-field"><label>Profit realised</label>
+                <input type="date" value={form.maturityDate} onChange={(e) => setEconForm(id, "maturityDate", e.target.value)}/>
+              </div>
+            </div>
+            <div className="ge-field"><label>System settlement delay (days — blank for none)</label>
+              <input type="number" min="0" max="365" step="1" value={form.settlementDelay} onChange={(e) => setEconForm(id, "settlementDelay", e.target.value)} placeholder="e.g. 5"/>
+              <small>A bolt-on delay applied to some opportunities only, so a delayed payout reads as a real exception.</small>
+            </div>
+            <div className="ge-admin-actions">
+              <button className="ge-btn ge-btn--invest" type="button" disabled={saveEconomics.isPending} onClick={() => runSaveEconomics(id)}>
+                {saveEconomics.isPending ? "Saving…" : "Save economic profile"} <Check size={14}/>
+              </button>
+              <button className="ge-btn ge-btn--ghost" type="button" disabled={reassignEconomics.isPending} onClick={() => runReassignEconomics(id)}>
+                <RefreshCw size={14}/> Re-roll auto profile
+              </button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    <div className="ge-notice">
+      <ShieldCheck size={15}/>
+      <div>This console writes the green-energy opportunity dossiers, records distributions and settles funded opportunities to the platform database. This desk is green-energy-only — IP royalties, NFTs, music royalties, carbon credit and agro investment belong to their own menus and are excluded here. The discovery layer surfaces real, cited public green-energy sources (the keyless Eurostat and World Bank feeds), but those references are never fundable: only an administrator-published dossier with sourced economics is open for investment. Every change is audited, publishing outcomes requires a funding target with a cited source URL and a 100% probability split, and no green-energy economics figure is ever invented here.</div>
+    </div>
+  </div>;
+}
