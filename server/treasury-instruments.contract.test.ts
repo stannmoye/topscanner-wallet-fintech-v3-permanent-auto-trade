@@ -190,4 +190,27 @@ describe("Administrator treasury-instrument publishing", () => {
     expect(styles).toContain(".tb-econ-panel");
     expect(styles).toContain(".tb-econ-delay");
   });
+
+  it("does not set a new profit rate on instruments whose interest rate the source already publishes", () => {
+    // One shared rule decides when a published source rate suppresses the desk profit.
+    expect(investmentEconomics).toContain("export function profitRateIsPublished(");
+    expect(investmentEconomics).toContain("export function effectiveProfitBps(");
+
+    // The treasury desk honours the rule when it merges the profile, so the served
+    // instrument (customer card, modal and purchase) never carries a new rate.
+    expect(serverDesk).toContain("effectiveProfitBps(economics, instrument.couponRatePct)");
+
+    // The customer offer shows the source rate instead of an assigned profit.
+    expect(customerUi).toContain("tb-econ-norate");
+    expect(customerUi).toContain("view.profitBps > 0");
+    expect(customerUi).toContain("selectedEconomics.profitBps > 0");
+
+    // The administrator cannot set a profit rate on a source-priced instrument.
+    expect(adminUi).toContain("profitRateIsPublished");
+    expect(adminUi).toContain("disabled={sourceRated}");
+    expect(adminUi).toContain("!econSourceRated(id)");
+
+    // The suppressed row has its own muted style.
+    expect(styles).toContain(".tb-econ-norate");
+  });
 });

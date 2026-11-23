@@ -370,3 +370,26 @@ export function economicsFeeMinor(amountMinor: number, profitBps: number, platfo
   if (profit <= 0) return 0;
   return Math.round((profit * Number(platformFeeBps || 0)) / 10_000);
 }
+
+/**
+ * Whether an opportunity already publishes its own interest / coupon rate (so the
+ * desk must not set a new one). A rate of zero or less means the source published
+ * no rate, and the desk may assign a profit rate as usual.
+ */
+export function profitRateIsPublished(publishedRatePct: number | null | undefined): boolean {
+  return Number(publishedRatePct || 0) > 0;
+}
+
+/**
+ * The profit rate an opportunity actually offers. Some opportunities — most
+ * visibly treasury and sovereign bonds, whose coupon rate comes straight from the
+ * data source — already carry a published interest rate, so the desk must not set
+ * a new one on them: the published rate stands and the auto-assigned profit is
+ * suppressed (0 = none set). Every consumer reads the rate through this rule.
+ */
+export function effectiveProfitBps(
+  economics: Pick<DeskEconomics, "profitBps">,
+  publishedRatePct: number | null | undefined,
+): number {
+  return profitRateIsPublished(publishedRatePct) ? 0 : Number(economics.profitBps || 0);
+}

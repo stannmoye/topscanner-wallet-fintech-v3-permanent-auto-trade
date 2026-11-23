@@ -577,7 +577,9 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
               <div className="tb-card-econ-items">
                 <div className="tb-econ-item"><span>Currency</span><b>{view.currency} {view.symbol}</b></div>
                 <div className="tb-econ-item"><span>Invest from</span><b>{fmtEcon(view.ticketMinMinor, view.currency, view.scale)}</b></div>
-                <div className="tb-econ-item"><span>Profit</span><b className="tb-positive">{fmtBps(view.profitBps)}</b></div>
+                {view.profitBps > 0
+                  ? <div className="tb-econ-item"><span>Profit</span><b className="tb-positive">{fmtBps(view.profitBps)}</b></div>
+                  : <div className="tb-econ-item tb-econ-norate"><span>Profit</span><b>Set by the source interest rate</b></div>}
                 <div className="tb-econ-item"><span>Term</span><b>{view.termDays} days</b></div>
                 <div className="tb-econ-item"><span>Platform fee</span><b>{fmtBps(view.platformFeeBps)}</b></div>
                 <div className="tb-econ-item"><span>Closes</span><b>{formatDate(view.closeDate)}</b></div>
@@ -677,7 +679,9 @@ export function CustomerTreasuryBond({ push }: { push: (message: string) => void
             <div className="tb-econ-item"><span>Currency</span><b>{selectedEconomics.currency} {selectedEconomics.symbol}</b></div>
             <div className="tb-econ-item"><span>Invest from</span><b>{fmtEcon(selectedEconomics.ticketMinMinor, selectedEconomics.currency, selectedEconomics.scale)}</b></div>
             <div className="tb-econ-item"><span>Funding target</span><b>{fmtEcon(selectedEconomics.fundingTargetMinor, selectedEconomics.currency, selectedEconomics.scale)}</b></div>
-            <div className="tb-econ-item"><span>Profit</span><b className="tb-positive">{fmtBps(selectedEconomics.profitBps)}</b></div>
+            {selectedEconomics.profitBps > 0
+              ? <div className="tb-econ-item"><span>Profit</span><b className="tb-positive">{fmtBps(selectedEconomics.profitBps)}</b></div>
+              : <div className="tb-econ-item tb-econ-norate"><span>Profit</span><b>Set by the source interest rate</b></div>}
             <div className="tb-econ-item"><span>Term</span><b>{selectedEconomics.termDays} days</b></div>
             <div className="tb-econ-item"><span>Platform fee</span><b>{fmtBps(selectedEconomics.platformFeeBps)}</b></div>
             <div className="tb-econ-item"><span>Closes</span><b>{formatDate(selectedEconomics.closeDate)}</b></div>

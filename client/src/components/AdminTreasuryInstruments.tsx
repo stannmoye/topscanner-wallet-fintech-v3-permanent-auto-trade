@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Check, Gauge, Landmark, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS, findCountry, flagFor } from "@shared/country-options";
-import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor } from "@shared/investment-economics";
+import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor, profitRateIsPublished } from "@shared/investment-economics";
 
 const CATEGORY_OPTIONS = [
   { id: "BILL", label: "Bill (short-dated)" },
@@ -193,6 +193,12 @@ export function AdminTreasuryInstruments() {
     return map;
   }, [economicsQuery.data]);
   const econNameFor = (id: string) => rows.find((row) => String(row.instrumentId) === id)?.name || id;
+  // An instrument whose coupon rate the source already publishes carries its own
+  // interest rate, so the desk must not set a new profit rate on it.
+  const econSourceRated = (id: string): boolean => {
+    const row = rows.find((item) => String(item.instrumentId) === id);
+    return profitRateIsPublished(row?.couponRatePct);
+  };
   const econFormFor = (id: string): EconForm => {
     const existing = econForms[id];
     if (existing) return existing;
@@ -220,7 +226,7 @@ export function AdminTreasuryInstruments() {
     if (ticket !== null) patch.ticketMinMinor = ticket;
     const target = toMinorScaled(form.fundingTarget, scale);
     if (target !== null) patch.fundingTargetMinor = target;
-    if (form.profitPercent.trim()) patch.profitBps = toBpsFromPercent(form.profitPercent);
+    if (form.profitPercent.trim() && !econSourceRated(id)) patch.profitBps = toBpsFromPercent(form.profitPercent);
     if (form.termDays.trim()) patch.termDays = Math.round(Number(form.termDays));
     if (form.platformFeePercent.trim()) patch.platformFeeBps = toBpsFromPercent(form.platformFeePercent);
     patch.settlementDelayDays = form.settlementDelay.trim() === "" ? null : Math.round(Number(form.settlementDelay));
@@ -371,6 +377,7 @@ export function AdminTreasuryInstruments() {
           const scale = econScale(econForm.currency);
           const ticketMinor = toMinorScaled(econForm.ticketMin, scale);
           const targetMinor = toMinorScaled(econForm.fundingTarget, scale);
+          const sourceRated = econSourceRated(id);
           return <div className="settings-card" key={id} style={{ marginTop: "14px" }}>
             <div className="customer-table-row" style={{ border: 0, padding: 0 }}>
               <span>
@@ -398,8 +405,10 @@ export function AdminTreasuryInstruments() {
                 <small>{targetMinor !== null ? `${money(currencyMinorToUsdMinor(targetMinor, econForm.currency))} USD equivalent` : "The capital target"}</small>
               </label>
               <label>Profit (%)
-                <input type="number" min="25" max="38" step="0.25" value={econForm.profitPercent} onChange={(e) => setEconForm(id, "profitPercent", e.target.value)} />
-                <small>Between {percent(ECONOMICS_BOUNDS.profitMinBps)} and {percent(ECONOMICS_BOUNDS.profitMaxBps)}.</small>
+                <input type="number" min="25" max="38" step="0.25" disabled={sourceRated} value={sourceRated ? "" : econForm.profitPercent} onChange={(e) => setEconForm(id, "profitPercent", e.target.value)} placeholder={sourceRated ? "Set by source" : ""} />
+                <small>{sourceRated
+                  ? "Not set — this instrument's interest rate is published by the source."
+                  : `Between ${percent(ECONOMICS_BOUNDS.profitMinBps)} and ${percent(ECONOMICS_BOUNDS.profitMaxBps)}.`}</small>
               </label>
             </div>
             <div className="form-two">

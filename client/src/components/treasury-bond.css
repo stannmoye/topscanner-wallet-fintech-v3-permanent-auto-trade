@@ -933,6 +933,13 @@
   color: var(--arb-color-warning);
 }
 
+/* The source already publishes this instrument's interest rate, so no desk
+   profit rate is set — render the row muted to read as "not set". */
+.tb-econ-item.tb-econ-norate b {
+  color: var(--arb-color-text-muted);
+  font-weight: 600;
+}
+
 .tb-econ-ok {
   color: var(--arb-color-accent) !important;
 }

@@ -17,6 +17,7 @@ import {
 } from "./modules/trading-wallet-fx";
 import { getFreshTradingFxRate, getWalletFundingPriorityForFunding, listBalances, listCurrencies } from "./db";
 import { getDeskEconomicsMap, getOrAssignDeskEconomics } from "./deskEconomics";
+import { effectiveProfitBps } from "@shared/investment-economics";
 import type { DeskEconomics } from "@shared/investment-economics";
 
 type Db = mysql.PoolConnection;
@@ -380,10 +381,19 @@ async function getOrAssignTreasuryEconomics(instrumentId: string): Promise<DeskE
   }
 }
 
-/** Merge an instrument's economic profile without touching its published data. */
+/**
+ * Merge an instrument's economic profile without touching its published data.
+ * A treasury instrument's interest rate is already published by its source, so
+ * the desk must not set a new profit rate on it: the auto-assigned profit is
+ * suppressed for any instrument whose coupon rate the source has published,
+ * while the rest of the profile (amount, term, currency, platform fee and any
+ * settlement delay) is kept.
+ */
 function withTreasuryEconomics(instrument: TreasuryBondInstrument, economics: DeskEconomics | null | undefined): TreasuryBondInstrument {
   if (!economics) return instrument;
-  return { ...instrument, economics };
+  const profitBps = effectiveProfitBps(economics, instrument.couponRatePct);
+  const resolved = profitBps === economics.profitBps ? economics : { ...economics, profitBps };
+  return { ...instrument, economics: resolved };
 }
 
 /**

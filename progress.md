@@ -1,3 +1,38 @@
+## 2026-11-23 (fix) — Treasury Bond: no new interest rate where the source already publishes one
+
+Owner follow-up to the desk-economics roll-out: *"There are some that the API already have interest
+rate we should not set new interest rate on those ones it should leave those ones out — mostly found
+in Treasury Bond."* Treasury and sovereign instruments already carry an interest / coupon rate
+published by their data source, so the desk must not set a second, auto-assigned profit rate on them.
+This pass suppresses the auto-assigned profit rate for any instrument whose source has published a
+rate, while keeping the rest of the economic profile (investable amount, term, presentation currency,
+platform fee and any settlement delay). Nothing else on any desk changes.
+
+- **Shared rule (`shared/investment-economics.ts`).** Two new exported helpers:
+  `profitRateIsPublished(publishedRatePct)` (true when the source rate is greater than zero) and
+  `effectiveProfitBps(economics, publishedRatePct)` — the single place that decides an opportunity's
+  offered profit rate; a published source rate suppresses the desk profit to `0` (none set), otherwise
+  the auto-assigned rate stands. No derivation, bounds or storage behaviour changed.
+- **Server (`server/treasuryBonds.ts`).** `withTreasuryEconomics()` now resolves the profit through
+  `effectiveProfitBps(economics, instrument.couponRatePct)`, so every instrument served on the desk
+  (dashboard merge and the purchase `resolveInstrumentForPurchase` path) drops the auto-assigned profit
+  when the source already published a rate. The published rate, tenor, source and observation date are
+  still never touched, and the rest of the profile is kept.
+- **Customer desk (`client/src/components/CustomerTreasuryBond.tsx`).** The card and purchase-modal
+  "Investment offer" blocks render the Profit row only when a profit rate is set; otherwise the row is
+  muted (`.tb-econ-norate`) and reads "Set by the source interest rate". The published "Interest rate"
+  figure is unchanged and remains the rate the customer sees.
+- **Admin console (`client/src/components/AdminTreasuryInstruments.tsx`).** The economics tab disables
+  the Profit input (`disabled={sourceRated}`) for any instrument the source already prices, shows an
+  explanatory note, and `runSaveEconomics` never sends `profitBps` for those instruments — so an
+  administrator cannot set a new profit rate on a source-priced instrument.
+- **CSS (`client/src/components/treasury-bond.css`).** Added `.tb-econ-item.tb-econ-norate b` (muted).
+- **Test (`server/treasury-instruments.contract.test.ts`).** New case asserts the shared rule, the
+  server merge, the customer/admin suppression and the muted style. Suite now **206 files / 1678 tests**
+  (+1), 7 files / 36 tests skipped as before.
+- Verification: `pnpm check` (tsc --noEmit) clean; `npx vitest run` 206 files / 1678 passed;
+  `pnpm build` succeeded.
+
 ## 2026-11-23 (feat) — Desk economics engine rolled out to the Cooperate Dept desk (last desk)
 
 Seventh and final desk to carry the auto-assigned economic profile (after Agro, Carbon Credit, Music
