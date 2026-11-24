@@ -2050,6 +2050,19 @@ export async function setCustomerWithdrawalPin(userId: number, pin: string) {
   return { configured: true as const, updatedAt: row?.updatedAt ?? null };
 }
 
+/**
+ * Administrator action: remove a customer's PIN so they must set a new one before
+ * their next withdrawal (the request path fails closed while no PIN is configured).
+ */
+export async function clearCustomerWithdrawalPin(userId: number) {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  await ensureWithdrawalPinSchema();
+  const pool = await getRawDbPool();
+  if (!pool) throw new Error("Database is not available");
+  const [result] = await pool.query<any>("DELETE FROM customer_withdrawal_pins WHERE userId = ?", [userId]);
+  return { configured: false as const, removed: Number((result as any)?.affectedRows ?? 0) };
+}
+
 /** Fail closed when the customer has no PIN or supplies the wrong value. */
 export async function assertCustomerWithdrawalPin(userId: number, pin: unknown) {
   const row = await readWithdrawalPinRow(userId);

@@ -1046,3 +1046,29 @@
 .device-oversight-restore input{min-width:180px;padding:7px 9px;border:1px solid rgba(132,164,177,.2);border-radius:9px;color:#dcebea;background:rgba(255,255,255,.03);font-size:10px}
 .device-oversight-restore-actions{display:flex;gap:7px}
 @media(max-width:680px){.device-oversight-search{width:100%}.device-oversight-search input{min-width:0;width:100%}.device-oversight-group{padding:11px}}
+
+/* Withdrawal PINs (admin portal). */
+.admin-withdrawal-pin-value{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:5px 13px;border:1px solid var(--ux-line,rgba(156,188,215,.16));border-radius:9px;background:rgba(4,19,34,.55);color:var(--ux-text,#e1eceb);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:15px;font-weight:800;letter-spacing:.3em;text-indent:.3em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.admin-withdrawal-pins .api-access-section-heading{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:14px}
+.admin-withdrawal-pins .api-access-section-heading h2{margin:0}
+.admin-withdrawal-pins .api-access-section-heading .form-two{display:flex;flex-wrap:wrap;align-items:center;gap:10px;flex:1 1 320px;min-width:0;margin:0 0 0 auto}
+.admin-withdrawal-pins .api-access-section-heading .form-two label{flex:1 1 240px;min-width:0;margin:0}
+.admin-withdrawal-pins .api-access-section-heading input[type="search"]{width:100%;min-width:0;box-sizing:border-box}
+@media(max-width:680px){
+  .admin-withdrawal-pins .api-access-section-heading{align-items:stretch;flex-direction:column}
+  .admin-withdrawal-pins .api-access-section-heading .form-two{margin-left:0}
+}
+.admin-withdrawal-pin-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;margin-bottom:14px}
+.admin-withdrawal-pin-metric{display:flex;align-items:flex-start;gap:11px;padding:14px 15px;border:1px solid var(--ux-line,rgba(156,188,215,.16));border-radius:15px;background:linear-gradient(145deg,rgba(20,38,49,.92),rgba(11,23,34,.96));box-shadow:inset 0 1px rgba(255,255,255,.035)}
+.admin-withdrawal-pin-metric-icon{display:grid;place-items:center;flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:rgba(124,231,194,.12);color:#70dcb8}
+.admin-withdrawal-pin-metric div{display:grid;gap:2px;min-width:0}
+.admin-withdrawal-pin-metric span{color:#91a9b3;font-size:10px;font-weight:700;letter-spacing:.02em}
+.admin-withdrawal-pin-metric strong{color:#f1f7f6;font-size:23px;font-weight:750;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
+.admin-withdrawal-pin-metric small{color:#718d99;font-size:9px;line-height:1.4}
+.admin-withdrawal-pin-row-actions{display:flex;flex-wrap:wrap;gap:8px}
+.admin-withdrawal-pin-reset{border-color:rgba(250,150,149,.34)!important;color:#ffb4a8!important;background:rgba(160,50,44,.16)!important}
+.admin-withdrawal-pin-reset:hover:not(:disabled){border-color:rgba(250,150,149,.55)!important;background:rgba(180,60,52,.26)!important}
+.admin-withdrawal-pin-flash{display:flex;align-items:flex-start;gap:8px;margin:0 0 12px;padding:11px 13px;border:1px solid rgba(105,230,194,.3);border-radius:11px;background:rgba(23,192,160,.1);color:#8df2d3;font-size:11px;line-height:1.55}
+.admin-withdrawal-pin-flash svg{flex:0 0 auto;margin-top:1px}
+@media(max-width:760px){.admin-withdrawal-pin-metrics{grid-template-columns:1fr}}
+@media(max-width:480px){.admin-withdrawal-pin-row-actions{flex-direction:column}.admin-withdrawal-pin-row-actions .secondary-button{width:100%;justify-content:center}}

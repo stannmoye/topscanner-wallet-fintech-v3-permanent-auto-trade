@@ -18,6 +18,8 @@ import {
   listCustomerPayoutRequests,
   resolveCustomerPayoutRequest,
   setCustomerWithdrawalPin,
+  clearCustomerWithdrawalPin,
+  getCustomerWithdrawalPinStatus,
 } from "./db";
 
 const databaseUrl = process.env.PAYOUT_TEST_DATABASE_URL;
@@ -478,5 +480,29 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     expect(await ledgerCount(userId, "payout_reserve")).toBe(1);
     await cancelCustomerPayoutRequest(userId, Number(created.id));
     expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
+  });
+
+  it("clears a customer's PIN on admin reset and fails closed until they set a new one", async () => {
+    const userId = await createAccount();
+    expect((await getCustomerWithdrawalPinStatus(userId)).configured).toBe(true);
+
+    const cleared = await clearCustomerWithdrawalPin(userId);
+    expect(cleared).toEqual({ configured: false, removed: 1 });
+    expect((await getCustomerWithdrawalPinStatus(userId)).configured).toBe(false);
+
+    // With no PIN configured the withdrawal is rejected and no funds move.
+    await expect(createCustomerPayoutRequest(userId, { ...requestInput(1000, unique("payout-pin-cleared")), pin: FIXTURE_WITHDRAWAL_PIN }))
+      .rejects.toThrow("Set your 6-digit withdrawal PIN");
+    expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
+    expect(await ledgerCount(userId, "payout_reserve")).toBe(0);
+
+    // Resetting a PIN that is already absent is a harmless no-op.
+    expect(await clearCustomerWithdrawalPin(userId)).toEqual({ configured: false, removed: 0 });
+
+    // A newly set PIN authorizes the withdrawal again.
+    await setCustomerWithdrawalPin(userId, "654321");
+    const created = await createCustomerPayoutRequest(userId, { ...requestInput(1000, unique("payout-pin-reset")), pin: "654321" });
+    expect(created.status).toBe("processing");
+    expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
   });
 });

@@ -1,3 +1,47 @@
+## 2026-11-25 (feat) — Withdrawal PIN: administrator reset + coverage metrics
+
+Adds two capabilities on top of the responsive styling below.
+
+- **Admin reset (`server/db.ts`, `server/routers.ts`).** New
+  `clearCustomerWithdrawalPin(userId)` deletes the customer's row; `adminOperations.clearWithdrawalPin`
+  (adminProcedure, `{ userId }`) exposes it. Because the request path calls
+  `assertCustomerWithdrawalPin`, a cleared PIN fails closed — the customer must create a
+  new one before their next withdrawal. Idempotent (removing an absent PIN is a no-op).
+- **Admin UI (`client/src/components/AdminWithdrawalPins.tsx`,
+  `client/src/admin-operations.css`).** Each row gains a **Reset PIN** action (danger-styled,
+  `window.confirm`-guarded) that clears the PIN and refreshes the list. A new derived-overview
+  strip shows **Customers with a PIN**, **Changed in 24 hours** and **Changed in 7 days**
+  (computed from the loaded rows — no extra request). Metrics collapse to one column ≤760px
+  and the row actions stack ≤480px.
+- **Tests.** `server/manual-payout-requests.contract.test.ts` gains a case asserting the
+  clear route, the fail-closed delete, and the metrics markup; the MySQL integration suite
+  gains a clear → fail-closed → re-set → authorize lifecycle test.
+- **Verification.** `pnpm check` clean, `pnpm test` 1741 passed / 41 skipped, `pnpm build`
+  exit 0; no horizontal overflow at 320–1280px.
+
+## 2026-11-25 (style) — Withdrawal PIN pages: responsive layout across all devices
+
+Owner request: style the Withdrawal PIN pages properly across devices so the layout is
+well structured on mobile, tablet and desktop.
+
+- **Customer panel (`client/src/components/CustomerWithdrawalPinPanel.tsx`).** Dropped the
+  cross-file `../payout-requests.css` import and moved to self-contained
+  `customer-withdrawal-pin-*` classes (`-display`, `-label`, `-value`, `-meta`, `-error`,
+  `-feedback` with `is-error`/`is-success`, `-form`, `-actions`).
+- **Styles (`client/src/customer-reference.css`).** Added a responsive block: the reveal
+  row collapses to a single column and the PIN value/buttons go full-width ≤760px; the
+  set/reset form drops to one column ≤620px; the masked PIN uses a monospace `clamp()`
+  font that scales down on narrow screens (20px ≤380px); inputs are 16px to prevent mobile
+  zoom. Reuses the global button heights (40/39px) so it matches the rest of the portal.
+- **Admin page (`client/src/components/AdminWithdrawalPins.tsx`,
+  `client/src/admin-operations.css`).** Added an `admin-withdrawal-pins` root class and a
+  scoped `admin-withdrawal-pin-value` class (previously reused a customer-only class); the
+  heading/search toolbar wraps and stacks ≤680px.
+- **Verification.** `pnpm check` clean, `pnpm build` exit 0. Rendered the real markup
+  against the real CSS in headless Chromium at 320/375/620/768/1024/1280px: no horizontal
+  overflow at any width; reveal row stacks ≤760, form single-column ≤620, admin toolbar
+  stacks ≤680.
+
 ## 2026-11-24 (feat) — Withdrawal PIN: required 6-digit PIN with customer reset/reveal and an admin viewer
 
 Owner request: rename the customer "withdrawal security" menu to **Withdrawal PIN**;

@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, Eye, EyeOff, Lock, RefreshCw, ShieldCheck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
-import "../payout-requests.css";
 
 /**
  * Customer Withdrawal PIN panel.
@@ -101,9 +100,9 @@ export function CustomerWithdrawalPinPanel({ push }: { push: (message: string) =
           {revealing ? "Revealing…" : revealedPin ? <><EyeOff size={14} /> Hide PIN</> : <><Eye size={14} /> Reveal PIN</>}
         </button>
       </div>
-      {!configured && !status.isLoading && <small className="payout-form-error">No withdrawal PIN is set. Create one below before requesting a withdrawal.</small>}
-      {revealError && <small className="payout-form-error" role="alert">{revealError}</small>}
-      {lastUpdated && <small>Last changed {lastUpdated}.</small>}
+      {!configured && !status.isLoading && <small className="customer-withdrawal-pin-error">No withdrawal PIN is set. Create one below before requesting a withdrawal.</small>}
+      {revealError && <small className="customer-withdrawal-pin-error" role="alert">{revealError}</small>}
+      {lastUpdated && <small className="customer-withdrawal-pin-meta">Last changed {lastUpdated}.</small>}
 
       <form className="customer-withdrawal-pin-form" onSubmit={submit}>
         <span className="eyebrow">{configured ? "Reset your PIN" : "Create your PIN"}</span>
@@ -135,14 +134,14 @@ export function CustomerWithdrawalPinPanel({ push }: { push: (message: string) =
             />
           </label>
         </div>
-        {pin && !pinValid && <small className="payout-form-error">Your PIN must be exactly 6 digits.</small>}
-        {pinValid && confirmPin && !pinsMatch && <small className="payout-form-error">The two PINs do not match.</small>}
+        {pin && !pinValid && <small className="customer-withdrawal-pin-error">Your PIN must be exactly 6 digits.</small>}
+        {pinValid && confirmPin && !pinsMatch && <small className="customer-withdrawal-pin-error">The two PINs do not match.</small>}
         {feedback && (
-          <div className={feedbackKind === "error" ? "payout-form-error" : "payout-feedback success"} role={feedbackKind === "error" ? "alert" : "status"}>
+          <div className={feedbackKind === "error" ? "customer-withdrawal-pin-feedback is-error" : "customer-withdrawal-pin-feedback is-success"} role={feedbackKind === "error" ? "alert" : "status"}>
             {feedbackKind === "error" ? feedback : <><CheckCircle2 size={14} /> {feedback}</>}
           </div>
         )}
-        <div className="payout-submit-row">
+        <div className="customer-withdrawal-pin-actions">
           <button className="primary-button" type="submit" disabled={!pinsMatch || saveMutation.isPending}>
             {saveMutation.isPending ? "Saving PIN…" : configured ? <><RefreshCw size={14} /> Reset withdrawal PIN</> : "Save withdrawal PIN"}
           </button>

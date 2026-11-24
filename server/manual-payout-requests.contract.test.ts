@@ -11,6 +11,7 @@ const migrationRunner = readFileSync(new URL("../scripts/apply-portal-migrations
 const customerUi = readFileSync(new URL("../client/src/components/PayoutRequests.tsx", import.meta.url), "utf8");
 const payoutBrowserAcceptance = readFileSync(new URL("../scripts/payout-browser-acceptance.cjs", import.meta.url), "utf8");
 const adminUi = readFileSync(new URL("../client/src/components/AdminOperationsPages.tsx", import.meta.url), "utf8");
+const adminPinUi = readFileSync(new URL("../client/src/components/AdminWithdrawalPins.tsx", import.meta.url), "utf8");
 
 const requestStart = db.indexOf("export async function createCustomerPayoutRequest");
 const cancelStart = db.indexOf("export async function cancelCustomerPayoutRequest");
@@ -171,5 +172,21 @@ describe("manual payout request lifecycle contract", () => {
     expect(payoutBrowserAcceptance).toContain("async function runAdminPayoutReview(browser)");
     expect(payoutBrowserAcceptance).toContain("External transfer reference for payout-admin-paid-1");
     expect(payoutBrowserAcceptance).toContain("Required operator note for payout-admin-reject-1");
+  });
+
+  it("lets administrators reset a customer withdrawal PIN and surfaces PIN coverage metrics", () => {
+    // Server: a clear action that fails closed (the request path rejects an unset PIN).
+    expect(db).toContain("export async function clearCustomerWithdrawalPin");
+    expect(db).toContain("DELETE FROM customer_withdrawal_pins WHERE userId = ?");
+    expect(router).toContain("clearWithdrawalPin: adminProcedure.input(z.object({ userId: z.number().int().positive() }))");
+    expect(router).toContain("clearCustomerWithdrawalPin(input.userId)");
+    // Admin UI: destructive reset is confirmed, refreshes the list, and no PIN is left behind.
+    expect(adminPinUi).toContain("trpc.adminOperations.clearWithdrawalPin.useMutation");
+    expect(adminPinUi).toContain("window.confirm");
+    expect(adminPinUi).toContain("utils.adminOperations.withdrawalPins.invalidate()");
+    expect(adminPinUi).toContain('className="secondary-button admin-withdrawal-pin-reset"');
+    // Overview metrics derived from the loaded rows.
+    expect(adminPinUi).toContain("admin-withdrawal-pin-metrics");
+    expect(adminPinUi).toContain("Customers with a PIN");
   });
 });
