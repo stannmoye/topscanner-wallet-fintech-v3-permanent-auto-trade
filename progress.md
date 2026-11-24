@@ -1,3 +1,23 @@
+## 2026-11-24 (fix) — Wire the customer API Access page to the real key-management panel
+
+The customer-facing **API Access** preference item was falling through to the
+generic `CustomerPreferencePanel` placeholder (a "Review API permissions"
+button that only pushed a toast). The phase-1 REST routes (`/api/customer/api-keys`)
+existed but had no UI. This wires a real panel so customers can list, create and
+revoke their own scoped read-only keys with the one-time secret reveal.
+
+- New `client/src/components/CustomerApiAccessPanel.tsx` — fetches
+  `GET /api/customer/api-keys`, create form (name, read scopes, environment,
+  optional IP allowlist, optional rate limit), one-time secret copy box, key
+  list with per-key revoke. Reuses `CustomerApiAccessPanel.css`.
+- `client/src/App.tsx` — lazy-imports `CustomerApiAccessPanel`, adds the
+  `isApiAccess` branch in `CustomerPreferencePanel`, and imports the CSS.
+- Verification: `pnpm check` clean, `pnpm test` 1740 passed / 39 skipped,
+  `pnpm build` exit 0 (both `AdminCustomerApiAccess` and `CustomerApiAccessPanel`
+  chunks emitted).
+- The default per-customer policy is **enabled** with the full read-scope
+  ceiling, so nothing is disabled out of the box.
+
 ## 2026-11-24 (feat) — Admin side of Customer API v1: key management, per-customer access and audit
 
 Owner request: *"I want you to also add it on the admin side for us to be able to add or update the apis."*

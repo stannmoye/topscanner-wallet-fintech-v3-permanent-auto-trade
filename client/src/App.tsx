@@ -86,6 +86,7 @@ const AdminManualPayouts = lazy(() => import("@/components/AdminOperationsPages"
 const AdminVerificationOversight = lazy(() => import("@/components/AdminOperationsPages").then((module) => ({ default: module.AdminVerificationOversight })));
 const AdminClearTradeButton = lazy(() => import("@/components/AdminOperationsPages").then((module) => ({ default: module.AdminClearTradeButton })));
 const CustomerTrustedDevicesPanel = lazy(() => import("@/components/CustomerTrustedDevicesPanel").then((module) => ({ default: module.CustomerTrustedDevicesPanel })));
+const CustomerApiAccessPanel = lazy(() => import("@/components/CustomerApiAccessPanel").then((module) => ({ default: module.CustomerApiAccessPanel })));
 const AdminDeviceOversight = lazy(() => import("@/components/AdminDeviceOversight").then((module) => ({ default: module.AdminDeviceOversight })));
 const AdminVisitorAnalytics = lazy(() => import("@/components/AdminOperationsPages").then((module) => ({ default: module.AdminVisitorAnalytics })));
 const AdminCustomerApiAccess = lazy(() => import("@/components/AdminCustomerApiAccess"));
@@ -103,6 +104,7 @@ import { buildWhatsAppContactUrl, renderMessageTemplate, type CommunicationTempl
 import "./admin-operations.css";
 import "./trading-experience.css";
 import "./components/customer-exchange-scanner.css";
+import "./components/CustomerApiAccessPanel.css";
 import "./communication-settings.css";
 import { nativeMinorToUsd } from "../../shared/money";
 import {
@@ -1022,10 +1024,11 @@ function CustomerPreferencePanel({itemId,push}:{itemId:string;push:(message:stri
   const isStatements=item.id==="statements";
   const isSignIn=item.id==="signin-authentication";
   const isDevicesSessions=item.id==="devices-sessions";
+  const isApiAccess=item.id==="api-access";
   const action = item.id === "close-account" ? "Review closure requirements" : item.id === "api-access" ? "Review API permissions" : item.id === "statements" ? "Open statements centre" : "Save preference";
   return <div className="arb-page portal-page settings-page customer-preference-page">
     <div className="portal-page-top"><div><div className="eyebrow">{customerPreferenceGroups.find(group => group.items.some(x => x.id === item.id))?.label}</div><h1>{item.label}</h1><p>{isClosure?"We are sorry to see you considering leaving Arbitrade. If something has not worked as expected, your feedback helps us improve.":isPersonal?"Keep your first name, last name, gender, country, state, address, and telephone up to date, and save changes whenever you need.":isStatements?"Search, filter, reconcile, and download a complete accounting statement of your credits, debits, and closing balances.":isSignIn?"Change your password with a strong passphrase, learn how to build one, and get practical guidance on keeping it safe.":isDevicesSessions?"Review every device that has accessed your workspace, rename the ones you know, and block any device you do not recognise. Blocking signs that device out immediately and stops it signing in until an administrator restores it.":item.description}</p></div><span className="admin-live-chip"><span className="pulse"/> {isClosure?"Account closure review":isPersonal?"Editable profile":isStatements?"Ledger-backed statements":isSignIn?"Protected sign-in":isDevicesSessions?"Device access control":"Account preference"}</span></div>
-    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:isStatements?<CustomerStatementsCentre push={push}/>:isSignIn?<CustomerPasswordCentre push={push}/>:isDevicesSessions?<Suspense fallback={<div className="test-notice" role="status">Loading trusted devices…</div>}><CustomerTrustedDevicesPanel push={push}/></Suspense>:<>
+    {isClosure?<Suspense fallback={<div className="test-notice" role="status">Loading account-closure request…</div>}><CustomerAccountClosurePanel push={push}/></Suspense>:isPersonal?<CustomerPersonalDetailsContent push={push}/>:isStatements?<CustomerStatementsCentre push={push}/>:isSignIn?<CustomerPasswordCentre push={push}/>:isDevicesSessions?<Suspense fallback={<div className="test-notice" role="status">Loading trusted devices…</div>}><CustomerTrustedDevicesPanel push={push}/></Suspense>:isApiAccess?<Suspense fallback={<div className="test-notice" role="status">Loading API access…</div>}><CustomerApiAccessPanel/></Suspense>:<>
       <div className="preference-hero"><div className="preference-hero-icon"><Icon size={22}/></div><div><span className="eyebrow">WiseBond account controls</span><h2>{item.label}</h2><p>These controls are designed around clear ownership, secure access, and an auditable customer experience.</p></div></div>
       <div className="preference-card-grid"><div className="settings-card preference-card"><div className="settings-card-icon"><Icon size={18}/></div><h2>{item.label}</h2><p>{item.description}</p><button className="primary-button" onClick={()=>push(item.label + " settings opened")}>{action} <ArrowUpRight size={14}/></button></div><div className="settings-card preference-card preference-card-secondary"><div className="settings-card-icon"><ShieldCheck size={18}/></div><h2>Protected workspace</h2><p>Changes remain subject to account status, administrator policy, and server-side security checks. No setting on this page moves funds by itself.</p><span className="preference-status"><CheckCircle2 size={14}/> Ready for secure configuration</span></div></div>
     </>}
