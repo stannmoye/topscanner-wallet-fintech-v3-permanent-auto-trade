@@ -30,6 +30,7 @@ import { getLendingDesk } from "../lending";
 import { getCustomerMiningDashboard } from "../mining";
 import { authenticateApiKey, createApiKey, listApiKeys, revokeApiKey, ApiKeyError, type AuthenticatedApiKey } from "./keys";
 import { hasScope, ApiScopeError, type ApiScope, SCOPE_DESCRIPTIONS } from "./scopes";
+import { ensureCustomerApiSchema } from "./schema";
 import { getLocalSessionFromRequest } from "../_core/localAuth";
 
 /**
@@ -186,6 +187,7 @@ async function recordRequestLog(entry: { apiKeyId: number | null; requestId: str
 
 /** Authenticate the presented key, enforce the per-key rate limit, resolve context. */
 const requireApiKey: RequestHandler = async (req, res, next) => {
+  await ensureCustomerApiSchema();
   const presented = readPresentedKey(req);
   if (!presented) {
     sendProblem(res, 401, "unauthorized", "Authentication required", "Provide a key as 'Authorization: Bearer ak_...' or the 'X-API-Key' header.");
@@ -424,7 +426,8 @@ function buildManagementRouter(): Router {
   const router = express.Router();
 
   const requireCustomer: RequestHandler = (req, res, next) => {
-    resolvePortalCustomer(req)
+    void ensureCustomerApiSchema()
+      .then(() => resolvePortalCustomer(req))
       .then((user) => {
         if (!user) {
           res.status(401).json({ error: "Authentication required" });

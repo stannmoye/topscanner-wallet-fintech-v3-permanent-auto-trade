@@ -1,3 +1,31 @@
+## 2026-11-24 (fix) — Self-provision the Customer API schema on the production start path
+
+Owner report: the customer-side API Access page still did not show, and any
+disabled state should remain enabled. Root cause found while auditing the deploy:
+the Customer API tables are created only by the **portal** migration runner
+(`scripts/apply-portal-migrations.mjs`, run by the installer), but the production
+start command (`scripts/start-with-diagnostics.mjs`) runs only the guarded
+**main** migration runner. `0120_customer_api_v1.sql` / `0121_customer_api_settings.sql`
+were never registered in the Drizzle journal, so `api_keys` and
+`customer_api_settings` never existed on a host that runs only the main
+migrations — the key-management routes would 503 even after the UI was deployed.
+
+- New `server/customer-api/schema.ts` — a memoized `ensureCustomerApiSchema()`
+  that issues the same idempotent `CREATE TABLE IF NOT EXISTS` DDL as the tracked
+  portal migration (the six `api_*` tables plus `customer_api_settings`),
+  mirroring the additive-desktop pattern (`ensureLendingDeskSchema`,
+  `ensureVisitorAnalyticsSchema`).
+- `server/_core/index.ts` — awaits it at boot next to `ensureVisitorAnalyticsSchema`.
+- `server/customer-api/gateway.ts` — also ensures it in the `requireApiKey` and
+  `requireCustomer` middleware, so the tables exist even if a host is started
+  directly from `dist/index.js`.
+- No policy change: a missing `customer_api_settings` row still means **enabled**
+  with the full read-scope ceiling, so nothing is disabled by default.
+- Verification: `pnpm check` clean, `pnpm test` 1740 passed / 39 skipped,
+  `pnpm build` exit 0.
+- Deployment note: the live build was still `0341295` (main is `7ac2ecb`); the
+  fix is pushed and needs the connected build platform to rebuild from `main`.
+
 ## 2026-11-24 (fix) — Wire the customer API Access page to the real key-management panel
 
 The customer-facing **API Access** preference item was falling through to the

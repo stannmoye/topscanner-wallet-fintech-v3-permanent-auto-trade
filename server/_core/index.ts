@@ -36,6 +36,7 @@ import { ensureSessionSecret } from "../../installer/session-secret.mjs";
 import { isValidSettlementEvidenceStorageKey, settlementEvidenceStorageKey, validateSettlementEvidenceUpload } from "../settlement-evidence";
 import { normalizeVisitorKey, recordAnalyticsEvent, ensureVisitorAnalyticsSchema, VISITOR_COOKIE } from "../site-analytics";
 import { ensureExampleLendingDesk } from "../lendingDossiers";
+import { ensureCustomerApiSchema } from "../customer-api/schema";
 import { registerCustomerApiRoutes } from "../customer-api/gateway";
 import { parse as parseCookieHeader } from "cookie";
 
@@ -479,6 +480,10 @@ async function startServer() {
     // the administrator dashboard works even when this process is started
     // directly from dist/index.js (which skips the external startup wrapper).
     await ensureVisitorAnalyticsSchema();
+    // Guarantee the additive Customer API tables exist before serving, so the
+    // customer/admin key-management surface works on hosts that run only the
+    // guarded main migrations (the additive portal migration is not on that path).
+    await ensureCustomerApiSchema();
     // Publish the six demonstration loan auctions and lender reserves on boot so
     // the customer lending desk always has a working board after a rebuild. The
     // seed only touches rows whose id starts with `example-`, so real loans are
