@@ -120,7 +120,9 @@ describe("manual payout request lifecycle contract", () => {
     expect(customerUi).toContain('className="payout-eligibility-alert" role="alert"');
     expect(customerUi).toContain("!payoutAllowed || !amountValid");
     expect(customerUi).toContain('setAmountText(""); setWalletAddress(""); setNetwork(firstPayoutNetwork(nextCurrency));');
-    expect(customerUi).toContain("Never enter passwords, PINs, private keys, or seed phrases.");
+    expect(customerUi).toContain("Never enter your account password, private keys, or seed phrases.");
+    expect(customerUi).toContain('id="payout-pin"');
+    expect(customerUi).toContain("pinValid");
     expect(customerUi).toContain('id="payout-network"');
     expect(customerUi).toContain('id="payout-wallet-address"');
     expect(customerUi).toContain("composeCryptoDestination(network, walletAddress)");
@@ -153,6 +155,9 @@ describe("manual payout request lifecycle contract", () => {
     expect(parsed.code).toContain('procedure === "customer.requestPayout"');
     expect(payoutBrowserAcceptance).toContain('procedure === "customer.requestPayout"');
     expect(payoutBrowserAcceptance).toContain('procedure === "customer.cancelPayoutRequest"');
+    expect(payoutBrowserAcceptance).toContain('procedure === "customer.withdrawalPinStatus"');
+    expect(payoutBrowserAcceptance).toContain('getByLabel("Withdrawal PIN")');
+    expect(payoutBrowserAcceptance).toContain("withdrawal PIN is required before a request can be submitted");
     expect(payoutBrowserAcceptance).toContain("Available for withdrawal: USD 80.00");
     expect(payoutBrowserAcceptance).toContain('getByText("Processing", { exact: true })');
     expect(payoutBrowserAcceptance).toContain('getByText(/External: BANK-TRANSFER-VERIFIED-001/)');

@@ -7,7 +7,7 @@ import { registerProviderOAuthRoutes } from "./providerOAuth";
 import { publicPlatformScript } from "./publicConfig";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, createNotification, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, resolveCustomerPackageName, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
+import { catchUpDueAutomaticSettlements, closeDbPool, countOutstandingTrades, createLocalCustomer, createNotification, ensureWithdrawalPinSchema, getAppSetting, getCustomerTicket, getSettlementEvidenceUploadTarget, getUserByEmail, getUserById, processNotificationCampaignLifecycle, reconcileAllDueTradesAwaitingConfirmation, processAutomaticMarketSettlements, processConfirmedTradeCredits, repairLegacyTradeSettlementPolicy, resolveCustomerPackageName, runAutoTradeCycle, runTradingTierQualificationWorkerCycle } from "../db";
 import { buildDeviceContext, isDeviceBlocked, recordDeviceLogin, safeLogDeviceEvent } from "../trusted-devices";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
@@ -484,6 +484,10 @@ async function startServer() {
     // customer/admin key-management surface works on hosts that run only the
     // guarded main migrations (the additive portal migration is not on that path).
     await ensureCustomerApiSchema();
+    // Guarantee the additive customer withdrawal-PIN table exists before serving,
+    // so the PIN requirement on every withdrawal and the admin PIN viewer work on
+    // hosts that run only the guarded main migrations.
+    await ensureWithdrawalPinSchema();
     // Publish the six demonstration loan auctions and lender reserves on boot so
     // the customer lending desk always has a working board after a rebuild. The
     // seed only touches rows whose id starts with `example-`, so real loans are

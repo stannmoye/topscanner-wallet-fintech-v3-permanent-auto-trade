@@ -16,6 +16,7 @@ import {
   Globe2,
   HandCoins,
   History,
+  KeyRound,
   Landmark,
   Layers3,
   Mail,
@@ -70,6 +71,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
       { label: "Add Customer", detail: "Create a database-backed account" },
       { label: "Customer Profile", detail: "Summary, access, verification, risk, notes and activity" },
     ]},
+    { id: "customer-withdrawal-pins", target: "withdrawalPins", label: "Withdrawal PINs", detail: "View every customer's 6-digit withdrawal PIN, masked until you reveal it", icon: KeyRound },
   ]},
   { id: "finance", label: "Finance", detail: "Wallets, ledger and asset controls", items: [
     { id: "wallet-ledger", target: "transactionReview", focus: "ledger", label: "Wallet & Ledger", detail: "Read-only wallet balances and transaction history", icon: WalletCards },

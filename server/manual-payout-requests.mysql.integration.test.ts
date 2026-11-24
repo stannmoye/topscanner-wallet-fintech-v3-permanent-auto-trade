@@ -17,6 +17,7 @@ import {
   getDb,
   listCustomerPayoutRequests,
   resolveCustomerPayoutRequest,
+  setCustomerWithdrawalPin,
 } from "./db";
 
 const databaseUrl = process.env.PAYOUT_TEST_DATABASE_URL;
@@ -29,8 +30,13 @@ type PayoutInput = {
   destinationType: "bank_transfer" | "crypto_transfer";
   destinationDetails: string;
   idempotencyKey: string;
+  /** The 6-digit withdrawal PIN required for every request. */
+  pin: string;
   totpCode?: string;
 };
+
+/** The 6-digit withdrawal PIN every fixture customer sets before withdrawing. */
+const FIXTURE_WITHDRAWAL_PIN = "123456";
 
 integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", () => {
   const pool = databaseUrl ? mysql.createPool(databaseUrl) : null;
@@ -70,6 +76,8 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
         "INSERT INTO customer_balances (userId,currency,availableMinor,lockedMinor,promotionalMinor,earnedMinor) VALUES (?, 'USD', 10000, 0, 2000, 0)",
         [userId],
       );
+      // Every withdrawal requires the customer's 6-digit PIN.
+      await setCustomerWithdrawalPin(userId, FIXTURE_WITHDRAWAL_PIN);
     }
     return userId;
   }
@@ -104,6 +112,7 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
       destinationType: "bank_transfer",
       destinationDetails: destination,
       idempotencyKey,
+      pin: FIXTURE_WITHDRAWAL_PIN,
     };
   }
 
@@ -133,6 +142,7 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
       for (const table of [
         "customer_notifications",
         "customer_totp_authenticators",
+        "customer_withdrawal_pins",
         "payout_requests",
         "balance_ledger",
         "customer_balances",
@@ -442,5 +452,31 @@ integrationDescribe("manual payout lifecycle against disposable MySQL/MariaDB", 
     } finally {
       await setPolicy({ kyc: false, withdrawals: true, twofa: false, facial: false });
     }
+  });
+
+  it("requires the customer's 6-digit withdrawal PIN for every request", async () => {
+    const userId = await createAccount();
+    const key = unique("payout-pin-gate");
+
+    // A wrong PIN is rejected before any funds are reserved.
+    await expect(createCustomerPayoutRequest(userId, { ...requestInput(1000, key), pin: "000000" }))
+      .rejects.toThrow("Incorrect withdrawal PIN");
+    expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
+    expect(await ledgerCount(userId, "payout_reserve")).toBe(0);
+
+    // A customer without a configured PIN is told to set one first.
+    const pinlessUser = await createAccount();
+    await pool!.execute("DELETE FROM customer_withdrawal_pins WHERE userId=?", [pinlessUser]);
+    await expect(createCustomerPayoutRequest(pinlessUser, { ...requestInput(1000, unique("payout-pin-missing")), pin: "" }))
+      .rejects.toThrow("Set your 6-digit withdrawal PIN");
+    expect(await balance(pinlessUser)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
+
+    // The correct PIN authorizes the withdrawal.
+    const created = await createCustomerPayoutRequest(userId, { ...requestInput(1000, key), pin: FIXTURE_WITHDRAWAL_PIN });
+    expect(created.status).toBe("processing");
+    expect(await balance(userId)).toEqual({ availableMinor: 9000, lockedMinor: 1000, promotionalMinor: 2000 });
+    expect(await ledgerCount(userId, "payout_reserve")).toBe(1);
+    await cancelCustomerPayoutRequest(userId, Number(created.id));
+    expect(await balance(userId)).toEqual({ availableMinor: 10000, lockedMinor: 0, promotionalMinor: 2000 });
   });
 });

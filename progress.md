@@ -1,3 +1,45 @@
+## 2026-11-24 (feat) — Withdrawal PIN: required 6-digit PIN with customer reset/reveal and an admin viewer
+
+Owner request: rename the customer "withdrawal security" menu to **Withdrawal PIN**;
+require a **6-digit numeric PIN** for every withdrawal from **any** wallet; let the
+customer **reset** the PIN from the portal; give the admin a **dedicated menu** to view
+every customer's PIN; and show the PIN as **`******`** until the customer clicks
+**Reveal PIN**. Built on the existing withdrawal flow (reserve → admin resolve), so the
+PIN is enforced at request time and the rest of the lifecycle is unchanged.
+
+- **Schema/DB (`server/db.ts`).** Additive idempotent `ensureWithdrawalPinSchema()`
+  creating `customer_withdrawal_pins` (`user_id` PK, `pin` 6-digit varchar, `updated_at`).
+  Helpers `getCustomerWithdrawalPinStatus`, `getCustomerWithdrawalPin`,
+  `setCustomerWithdrawalPin`, `assertCustomerWithdrawalPin` (constant-time compare via
+  `crypto.timingSafeEqual` with `padEnd(6,"\0")`), and `listCustomerWithdrawalPins`
+  (joins the customer for name/email). `createCustomerPayoutRequest` now calls
+  `await assertCustomerWithdrawalPin(userId, input.pin)` **before** reserving funds, so a
+  missing/wrong PIN fails closed with no ledger movement. The PIN is stored reversibly
+  because both the customer and the admin must be able to view it.
+- **Boot (`server/_core/index.ts`).** `await ensureWithdrawalPinSchema()` alongside the
+  other `ensure*Schema()` calls.
+- **tRPC (`server/routers.ts`).** Customer: `withdrawalPinStatus`, `revealWithdrawalPin`,
+  `setWithdrawalPin`, and `pin: z.string().regex(/^\d{6}$/)` added to `requestPayout`.
+  Admin: `adminOperations.withdrawalPins` (adminProcedure → `listCustomerWithdrawalPins`).
+- **Customer portal.** New `client/src/components/CustomerWithdrawalPinPanel.tsx` — shows
+  the PIN masked as `******` with a **Reveal PIN / Hide PIN** toggle, and a set/reset form
+  (two 6-digit inputs, `inputMode="numeric"`, digits-only). `client/src/App.tsx` renames
+  the menu item `withdrawal-security` → label **Withdrawal PIN** and renders the panel.
+  `client/src/components/PayoutRequests.tsx` adds a required `Withdrawal PIN` field, blocks
+  submit until it is 6 digits, and sends `pin` with `requestPayout`.
+- **Admin portal.** New `client/src/components/AdminWithdrawalPins.tsx` — a dedicated page
+  listing every customer's PIN masked per row until **Reveal PIN** is clicked, with search
+  and last-changed time. `client/src/admin-navigation.ts` adds a `Withdrawal PINs` item
+  (target `withdrawalPins`) to the **Customers** group; `App.tsx` renders it.
+- **Tests.** `server/manual-payout-requests.contract.test.ts` and
+  `server/manual-payout-requests.mysql.integration.test.ts` updated for the required PIN
+  (new test: wrong PIN rejected, unset PIN rejected, correct PIN reserves, cancel restores).
+  `scripts/payout-browser-acceptance.cjs` mocks `customer.withdrawalPinStatus` and drives
+  the new field. Note: the new `pin` input is a **breaking change** to
+  `createCustomerPayoutRequest`; all internal callers were updated.
+- **Verification.** `pnpm check` clean, `pnpm test` 1740 passed / 40 skipped, `pnpm build`
+  exit 0 (includes the new `AdminWithdrawalPins` / `CustomerWithdrawalPinPanel` chunks).
+
 ## 2026-11-24 (fix) — Self-provision the Customer API schema on the production start path
 
 Owner report: the customer-side API Access page still did not show, and any

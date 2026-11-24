@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { AlertCircle, CheckCircle2, Clock3, RefreshCw, Send, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock3, Lock, RefreshCw, Send, XCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import "../payout-requests.css";
 import { currentWithdrawalCurrency } from "../withdrawal-navigation";
@@ -102,6 +102,7 @@ export function CustomerPayoutRequests() {
   );
   const eligibility = trpc.customer.payoutEligibility.useQuery(undefined, { refetchInterval: 30_000 });
   const authenticatorStatus = trpc.customer.authenticatorStatus.useQuery(undefined, { refetchInterval: 30_000 });
+  const pinStatus = trpc.customer.withdrawalPinStatus.useQuery(undefined, { refetchInterval: 30_000 });
   // Opens pre-set to the currency the customer clicked in their wallet; falls
   // back to USD when the page is reached from the navigation menu.
   const [currency, setCurrency] = useState<PayoutAsset>(() => {
@@ -117,6 +118,7 @@ export function CustomerPayoutRequests() {
   const [swiftCode, setSwiftCode] = useState("");
   const [bankCountry, setBankCountry] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [pin, setPin] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
   const [feedback, setFeedback] = useState("");
   const [receipt, setReceipt] = useState<any>(null);
@@ -140,6 +142,7 @@ export function CustomerPayoutRequests() {
       setSwiftCode("");
       setBankCountry("");
       setTotpCode("");
+      setPin("");
       setIdempotencyKey(newIdempotencyKey());
       setCursorStack([undefined]);
       void requests.refetch();
@@ -177,6 +180,9 @@ export function CustomerPayoutRequests() {
   const destinationReady = isCryptoAsset
     ? network.trim().length > 0 && walletAddress.trim().length >= 10
     : beneficiaryName.trim().length >= 2 && bankName.trim().length >= 2 && accountNumber.trim().length >= 4 && swiftCode.trim().length >= 2 && bankCountry.trim().length >= 2;
+  // A 6-digit withdrawal PIN is required for every withdrawal.
+  const pinValid = /^\d{6}$/.test(pin);
+  const pinConfigured = pinStatus.data?.configured === true;
   const destinationDetails = isCryptoAsset
     ? composeCryptoDestination(network, walletAddress)
     : composeBankDestination({ beneficiaryName, bankName, accountNumber, swiftCode, bankCountry });
@@ -196,7 +202,7 @@ export function CustomerPayoutRequests() {
 
   const submitRequest = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!payoutAllowed || !amountValid || amountMinor === null || !destinationReady || isBusy) return;
+    if (!payoutAllowed || !amountValid || amountMinor === null || !destinationReady || !pinValid || isBusy) return;
     setFeedback("");
     requestMutation.mutate({
       currency,
@@ -204,6 +210,7 @@ export function CustomerPayoutRequests() {
       destinationType,
       destinationDetails,
       idempotencyKey,
+      pin,
       totpCode: totpCode || undefined,
     });
   };
@@ -301,6 +308,13 @@ export function CustomerPayoutRequests() {
           </dl>
         </div>
 
+        <div className="payout-form-field">
+          <label htmlFor="payout-pin">Withdrawal PIN</label>
+          <input id="payout-pin" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{6}" maxLength={6} value={pin} disabled={formDisabled} placeholder="6-digit PIN" onChange={(event) => changeFormValue(() => setPin(event.target.value.replace(/\D/g, "").slice(0, 6)))} />
+          <small>Required for every withdrawal. Set, reset, or reveal your PIN under <strong>Withdrawal PIN</strong> in your account menu.</small>
+          {pin && !pinValid && <small className="payout-form-error">Enter your 6-digit withdrawal PIN.</small>}
+          {!pinConfigured && !pinStatus.isLoading && <small className="payout-form-error"><Lock size={12} /> No withdrawal PIN is set yet — create one under <strong>Withdrawal PIN</strong> before you can withdraw.</small>}
+        </div>
         {authenticatorStatus.data?.enabled && <div className="payout-form-field">
           <label htmlFor="payout-totp-code">Authenticator code</label>
           <input id="payout-totp-code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={totpCode} disabled={formDisabled} onChange={(event) => changeFormValue(() => setTotpCode(event.target.value.replace(/\D/g, "").slice(0, 6)))} />
@@ -308,11 +322,11 @@ export function CustomerPayoutRequests() {
         </div>}
         <div className="payout-request-warning">
           <AlertCircle size={16} />
-          <span>Never enter passwords, PINs, private keys, or seed phrases. The destination is recorded for administrator review; this form does not send funds.</span>
+          <span>Enter your 6-digit withdrawal PIN above. Never enter your account password, private keys, or seed phrases. The destination is recorded for administrator review; this form does not send funds.</span>
         </div>
         {feedback && <div className={/was received|was cancelled/.test(feedback) ? "payout-feedback success" : "payout-feedback"} role="status">{feedback}</div>}
         <div className="payout-submit-row">
-          <button className="payout-submit" type="submit" disabled={!payoutAllowed || !amountValid || !destinationReady || isBusy || balances.isLoading}>
+          <button className="payout-submit" type="submit" disabled={!payoutAllowed || !amountValid || !destinationReady || !pinValid || isBusy || balances.isLoading}>
             <Send size={15} /> {requestMutation.isPending ? "Submitting withdrawal…" : "Confirm withdrawal"}
           </button>
           {balances.isError && <small className="payout-form-error">Wallet balances could not be loaded. Refresh before submitting.</small>}

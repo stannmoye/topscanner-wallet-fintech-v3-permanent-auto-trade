@@ -1766,6 +1766,8 @@ type CustomerPayoutInput = {
   destinationType: "bank_transfer" | "crypto_transfer";
   destinationDetails: string;
   idempotencyKey: string;
+  /** The customer's 6-digit withdrawal PIN. Required for every withdrawal. */
+  pin: string;
   totpCode?: string;
 };
 
@@ -1955,6 +1957,132 @@ export async function listAdminPayoutRequests(input: { cursor?: string; pageSize
   }).from(payoutRequests).leftJoin(users, eq(users.id, payoutRequests.userId))
     .where(cursorPredicate || undefined).orderBy(desc(payoutRequests.createdAt), desc(payoutRequests.id)).limit(limit), input);
 }
+// ---------------------------------------------------------------------------
+// Customer withdrawal PIN
+//
+// Every customer sets a 6-digit numeric withdrawal PIN and it is required on
+// every withdrawal from any wallet. The PIN is stored reversibly because the
+// administrator console must be able to display every customer PIN and the
+// customer may reveal their own PIN from the portal. It is provisioned by an
+// additive, idempotent helper rather than the Drizzle journal so it also exists
+// on hosts that run only the guarded main migrations.
+// ---------------------------------------------------------------------------
+const CREATE_WITHDRAWAL_PIN_TABLE_SQL = `CREATE TABLE IF NOT EXISTS customer_withdrawal_pins (
+  userId int NOT NULL,
+  pin varchar(6) NOT NULL,
+  createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (userId)
+) ENGINE=InnoDB`;
+
+let withdrawalPinSchemaReady: Promise<void> | null = null;
+
+/** Idempotently ensure the additive customer withdrawal-PIN table exists (memoized). */
+export function ensureWithdrawalPinSchema(): Promise<void> {
+  if (withdrawalPinSchemaReady) return withdrawalPinSchemaReady;
+  withdrawalPinSchemaReady = (async () => {
+    try {
+      if (!process.env.DATABASE_URL) return;
+      const pool = await getRawDbPool();
+      if (!pool) return;
+      await pool.query(CREATE_WITHDRAWAL_PIN_TABLE_SQL);
+      console.log("[WithdrawalPin] Ensured customer withdrawal-PIN schema.");
+    } catch (error) {
+      // Allow a later caller to retry rather than memoizing a transient failure.
+      withdrawalPinSchemaReady = null;
+      console.error("[WithdrawalPin] Failed to ensure schema:", error instanceof Error ? error.message : "UnknownError");
+    }
+  })();
+  return withdrawalPinSchemaReady;
+}
+
+const WITHDRAWAL_PIN_PATTERN = /^\d{6}$/;
+
+function normalizeWithdrawalPin(value: unknown): string {
+  const pin = String(value ?? "").trim();
+  if (!WITHDRAWAL_PIN_PATTERN.test(pin)) throw new Error("Your withdrawal PIN must be exactly 6 digits.");
+  return pin;
+}
+
+function withdrawalPinTimestamp(value: unknown): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+async function readWithdrawalPinRow(userId: number): Promise<{ pin: string; updatedAt: string | null } | null> {
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  await ensureWithdrawalPinSchema();
+  const pool = await getRawDbPool();
+  if (!pool) throw new Error("Database is not available");
+  const [rows] = await pool.query<any[]>(
+    "SELECT pin, updatedAt FROM customer_withdrawal_pins WHERE userId = ? LIMIT 1",
+    [userId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { pin: String(row.pin ?? ""), updatedAt: withdrawalPinTimestamp(row.updatedAt) };
+}
+
+/** Whether the customer has configured a withdrawal PIN, plus when it last changed. */
+export async function getCustomerWithdrawalPinStatus(userId: number) {
+  const row = await readWithdrawalPinRow(userId);
+  return { configured: Boolean(row), updatedAt: row?.updatedAt ?? null };
+}
+
+/** Return the customer's own PIN for the portal reveal action, or null when unset. */
+export async function getCustomerWithdrawalPin(userId: number): Promise<string | null> {
+  return (await readWithdrawalPinRow(userId))?.pin ?? null;
+}
+
+/** Create or reset the customer's 6-digit withdrawal PIN. */
+export async function setCustomerWithdrawalPin(userId: number, pin: string) {
+  const normalized = normalizeWithdrawalPin(pin);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("A valid customer account is required.");
+  await ensureWithdrawalPinSchema();
+  const pool = await getRawDbPool();
+  if (!pool) throw new Error("Database is not available");
+  await pool.query(
+    "INSERT INTO customer_withdrawal_pins (userId, pin) VALUES (?, ?) ON DUPLICATE KEY UPDATE pin = VALUES(pin)",
+    [userId, normalized],
+  );
+  const row = await readWithdrawalPinRow(userId);
+  return { configured: true as const, updatedAt: row?.updatedAt ?? null };
+}
+
+/** Fail closed when the customer has no PIN or supplies the wrong value. */
+export async function assertCustomerWithdrawalPin(userId: number, pin: unknown) {
+  const row = await readWithdrawalPinRow(userId);
+  if (!row) throw new Error("Set your 6-digit withdrawal PIN in the portal before requesting a withdrawal.");
+  const candidate = String(pin ?? "").padEnd(6, "\0");
+  const stored = row.pin.padEnd(6, "\0");
+  const a = Buffer.from(candidate, "utf8");
+  const b = Buffer.from(stored, "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    throw new Error("Incorrect withdrawal PIN. Reset it in the portal if you have forgotten it.");
+  }
+}
+
+/** Administrator view: every customer with a withdrawal PIN, most recently changed first. */
+export async function listCustomerWithdrawalPins() {
+  await ensureWithdrawalPinSchema();
+  const pool = await getRawDbPool();
+  if (!pool) throw new Error("Database is not available");
+  const [rows] = await pool.query<any[]>(
+    `SELECT p.userId AS userId, p.pin AS pin, p.updatedAt AS updatedAt, u.name AS name, u.email AS email
+       FROM customer_withdrawal_pins p
+       LEFT JOIN users u ON u.id = p.userId
+      ORDER BY p.updatedAt DESC, p.userId ASC`,
+  );
+  return (rows as any[]).map((row) => ({
+    userId: Number(row.userId),
+    name: row.name ?? null,
+    email: row.email ?? null,
+    pin: String(row.pin ?? ""),
+    updatedAt: withdrawalPinTimestamp(row.updatedAt),
+  }));
+}
+
 export async function createCustomerPayoutRequest(userId: number, input: CustomerPayoutInput) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
@@ -1976,6 +2104,9 @@ export async function createCustomerPayoutRequest(userId: number, input: Custome
   // Captured from the enabled currency row so the post-commit admin alert can
   // render the reserved amount in the currency's own minor units.
   let resolvedScale = 2;
+
+  // Every withdrawal from any wallet requires the customer's 6-digit PIN.
+  await assertCustomerWithdrawalPin(userId, input.pin);
 
   const outcome = await db.transaction(async (tx) => {
     const user = (await tx.select({ id: users.id, role: users.role })

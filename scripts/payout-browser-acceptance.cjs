@@ -239,6 +239,8 @@ async function main() {
           data = payoutPage(requests);
         } else if (procedure === "customer.walletPreferences") {
           data = { tradingCurrency: "USD", swapCurrency: "USD", autoTopUpEnabled: false, withdrawalWhitelistEnabled: true };
+        } else if (procedure === "customer.withdrawalPinStatus") {
+          data = { configured: true, updatedAt: null };
         } else if (procedure === "customer.requestPayout") {
           requestCount += 1;
           const item = {
@@ -346,12 +348,20 @@ async function main() {
       await page.getByLabel("Account number or IBAN").fill("00001234");
       await page.getByLabel("SWIFT / BIC or routing number").fill("EXAMPUS33");
       await page.getByLabel("Bank country").fill("United States");
+      // Every withdrawal requires the customer's 6-digit PIN.
+      const pinField = page.getByLabel("Withdrawal PIN");
+      const pinFieldVisible = await pinField.isVisible().catch(() => false);
+      await pinField.fill("12345");
+      const wrongPinDisabled = await submit.isDisabled();
+      await pinField.fill("123456");
       const validAmountEnabled = await submit.isEnabled();
       record("promotional balance excluded from amount limit",
         amountAboveAvailableDisabled && amountErrorVisible && validAmountEnabled, {
           amountAboveAvailableDisabled, amountErrorVisible, validAmountEnabled,
           availableText: await available80.innerText().catch(() => null),
         });
+      record("withdrawal PIN is required before a request can be submitted",
+        pinFieldVisible && wrongPinDisabled && validAmountEnabled, { pinFieldVisible, wrongPinDisabled, validAmountEnabled });
 
       await submit.click();
       const pendingButton = page.getByRole("button", { name: /Submitting withdrawal/ });
