@@ -159,9 +159,9 @@ describe("trusted devices — enforcement and wiring", () => {
 
   it("wires the customer panel, the account-centre destination and the admin page", () => {
     expect(app).toContain("CustomerTrustedDevicesPanel");
-    // Trusted devices now lives on the account-centre rail, not the resource drawer.
-    expect(app).toContain('{ id: "trusted-devices", label: "Trusted Devices"');
-    expect(app).toContain('isTrustedDevices');
+    // Devices & sessions on the account-centre rail merges the old Trusted Devices + Active Sessions entries.
+    expect(app).toContain('{ id: "devices-sessions", label: "Devices & sessions"');
+    expect(app).toContain('isDevicesSessions');
     expect(app).toContain('section==="deviceOversight"');
     expect(adminNav).toContain('target: "deviceOversight"');
   });

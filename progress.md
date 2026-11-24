@@ -1,3 +1,24 @@
+## 2026-11-24 (feat) — Account-centre rail: merge Language + Date/Time and de-duplicate the sign-in security entries
+
+Owner request: the left "Account centre" rail (`customerPreferenceGroups` in `client/src/App.tsx`) listed
+"Language & Region" and "Date & Time" separately, and five security entries (Two-Factor Auth, Password, Trusted
+Devices, Active Sessions, Login Activity) that all rendered the same generic card. Scope confirmed via a scoping
+question: **Merge + rename** the security entries, and call the merged locale entry **"Language & time"**.
+
+- **Account Preferences.** Merged `language-region` + `date-time` into one **Language & time** entry (kept the
+  `language-region` id, so routing is unchanged).
+- **Security & Access.** Replaced the six near-identical rows with four clearly distinct ones:
+  - **Sign-in & authentication** (`signin-authentication`) — Password + Two-Factor Auth.
+  - **Devices & sessions** (`devices-sessions`) — Trusted Devices + Active Sessions.
+  - **Sign-in activity** (`login-activity`) — the former Login Activity.
+  - **Withdrawal security** (`withdrawal-security`) — unchanged.
+- **Render wiring.** `CustomerPreferencePanel` now gates the password centre on `signin-authentication` and the
+  device panel on `devices-sessions` (identifiers renamed `isPassword`→`isSignIn`, `isTrustedDevices`→
+  `isDevicesSessions`), so each merged entry still opens its full functional page.
+- `client/src/components/CustomerSlideMenu.tsx`: `primaryLabels` updated for the two new section ids.
+- `server/trusted-devices.contract.test.ts`: asserts the merged `devices-sessions` rail entry.
+- **Verification.** `pnpm check` clean; `pnpm test` 1718 passed / 39 skipped (217 files); `pnpm build` exit 0.
+
 ## 2026-11-24 (feat) — Customer MENU drawer trimmed to the twelve curated destinations, regrouped into sections
 
 Owner request: *"On the right navigation we have the various menus, remove them all except Power tools, Portfolio
