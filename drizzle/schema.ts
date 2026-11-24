@@ -1625,3 +1625,23 @@ export const apiRequestLog = mysqlTable("api_request_log", {
 }));
 
 export type ApiRequestLog = typeof apiRequestLog.$inferSelect;
+
+/**
+ * Per-customer API access policy. A missing row means "platform default":
+ * access enabled, platform rate limit, and the full read-scope ceiling. A row
+ * lets administrators turn a customer's API access off or narrow its ceiling.
+ */
+export const customerApiSettings = mysqlTable("customer_api_settings", {
+  userId: int("userId").primaryKey(),
+  apiEnabled: boolean("apiEnabled").default(true).notNull(),
+  /** Platform-default requests/minute for this customer's keys (null = global default). */
+  defaultRateLimitPerMinute: int("defaultRateLimitPerMinute"),
+  /** Optional ceiling of scopes any of this customer's keys may hold (null = all read scopes). */
+  allowedScopes: json("allowedScopes"),
+  /** Last administrator to change this policy. */
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type CustomerApiSettings = typeof customerApiSettings.$inferSelect;

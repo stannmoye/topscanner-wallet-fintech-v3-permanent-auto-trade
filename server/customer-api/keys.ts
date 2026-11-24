@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { apiKeys } from "../../drizzle/schema";
 import { normalizeStoredScopes, validateIssuableScopes, type ApiScope } from "./scopes";
+import { narrowToReadScopes, resolveApiAccess } from "./settings";
 
 /**
  * Customer API v1 — API-key generation, storage and authentication.
@@ -132,10 +133,19 @@ export async function createApiKey(userId: number, input: CreateApiKeyInput): Pr
   const db = await getDb();
   if (!db) throw new ApiKeyError("Database is not available.");
   const name = validateName(input.name);
-  const scopes = validateIssuableScopes(input.scopes);
+  const requested = validateIssuableScopes(input.scopes);
   const environment: ApiKeyEnvironment = input.environment === "test" ? "test" : "live";
   const ipAllowlist = normalizeIpAllowlist(input.ipAllowlist);
   const rateLimitPerMinute = normalizeRateLimit(input.rateLimitPerMinute);
+
+  // A key can never hold a scope beyond the account's configured ceiling.
+  const access = await resolveApiAccess(userId);
+  const ceiling = new Set<string>(access.allowedScopes);
+  const scopes = requested.filter((scope) => ceiling.has(scope));
+  if (scopes.length !== requested.length) {
+    const blocked = requested.filter((scope) => !ceiling.has(scope));
+    throw new ApiKeyError(`These scopes exceed the ceiling configured for this account: ${blocked.join(", ")}.`);
+  }
 
   // Retry on the (astronomically unlikely) prefix collision against the unique index.
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -209,6 +219,53 @@ export async function revokeApiKey(userId: number, keyId: number, reason: string
   return true;
 }
 
+export interface UpdateApiKeyInput {
+  name?: unknown;
+  scopes?: unknown;
+  ipAllowlist?: unknown;
+  rateLimitPerMinute?: unknown;
+  status?: "active" | "revoked";
+}
+
+/**
+ * Update a stored key's label, scopes, limits or status by id. Returns null when
+ * the key does not exist. Any new scope list is validated and clamped to the
+ * owning account's ceiling, so an edit can never widen access beyond policy.
+ */
+export async function updateApiKey(keyId: number, input: UpdateApiKeyInput): Promise<PublicApiKey | null> {
+  const db = await getDb();
+  if (!db) throw new ApiKeyError("Database is not available.");
+  const existing = (await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1))[0];
+  if (!existing) return null;
+
+  const patch: Partial<typeof apiKeys.$inferInsert> = {};
+
+  if (input.name !== undefined) patch.name = validateName(input.name);
+  if (input.ipAllowlist !== undefined) patch.ipAllowlist = normalizeIpAllowlist(input.ipAllowlist);
+  if (input.rateLimitPerMinute !== undefined) patch.rateLimitPerMinute = normalizeRateLimit(input.rateLimitPerMinute);
+  if (input.scopes !== undefined) {
+    const requested = validateIssuableScopes(input.scopes);
+    const access = await resolveApiAccess(existing.userId);
+    const ceiling = new Set<string>(access.allowedScopes);
+    const blocked = requested.filter((scope) => !ceiling.has(scope));
+    if (blocked.length > 0) {
+      throw new ApiKeyError(`These scopes exceed the ceiling configured for this account: ${blocked.join(", ")}.`);
+    }
+    patch.scopes = requested;
+  }
+  if (input.status !== undefined) {
+    if (input.status !== "active" && input.status !== "revoked") throw new ApiKeyError("Status must be active or revoked.");
+    patch.status = input.status;
+    patch.revokedAt = input.status === "revoked" ? (existing.revokedAt ?? new Date()) : null;
+  }
+
+  if (Object.keys(patch).length === 0) return toPublicApiKey(existing);
+
+  await db.update(apiKeys).set(patch).where(eq(apiKeys.id, keyId));
+  const row = (await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1))[0];
+  return row ? toPublicApiKey(row) : null;
+}
+
 function ipMatchesAllowlist(ip: string | undefined, allowlist: string[] | null): boolean {
   if (!allowlist || allowlist.length === 0) return true;
   if (!ip) return false;
@@ -257,17 +314,23 @@ export async function authenticateApiKey(rawKey: unknown, options: AuthenticateO
   const allowlist = Array.isArray(row.ipAllowlist) ? (row.ipAllowlist as string[]) : null;
   if (!ipMatchesAllowlist(options.ip, allowlist)) return null;
 
+  // Honour the account's access policy: a disabled customer cannot authenticate,
+  // and neither key scopes nor key rate limits may exceed the account ceiling.
+  const access = await resolveApiAccess(row.userId);
+  if (!access.apiEnabled) return null;
+  const ceiling = new Set<string>(access.allowedScopes);
+
   if (!options.skipTouch) {
     void db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, row.id)).catch(() => undefined);
   }
 
-  const scopes = normalizeStoredScopes(row.scopes as unknown);
+  const scopes = narrowToReadScopes(row.scopes).filter((scope) => ceiling.has(scope));
   return {
     id: row.id,
     userId: row.userId,
     name: row.name,
     scopes,
     environment: row.environment,
-    rateLimitPerMinute: row.rateLimitPerMinute && row.rateLimitPerMinute > 0 ? row.rateLimitPerMinute : DEFAULT_RATE_LIMIT_PER_MINUTE,
+    rateLimitPerMinute: row.rateLimitPerMinute && row.rateLimitPerMinute > 0 ? row.rateLimitPerMinute : access.defaultRateLimitPerMinute,
   };
 }

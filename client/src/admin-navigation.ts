@@ -172,6 +172,7 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "appearance-themes", target: "appearance", label: "Appearance & Themes", detail: "Default theme, previews and customer theme permissions", icon: Palette },
   ]},
   { id: "integrations", label: "Integrations", detail: "Providers and operational readiness", items: [
+    { id: "customer-api-access", target: "apiAccess", label: "Customer API", detail: "Create, update and revoke customer API keys, set each customer's access policy and review the request and delivery audit", icon: PlugZap },
     { id: "provider-registry", target: "apis", label: "Provider Registry", detail: "API, market, payment and identity adapters", icon: PlugZap },
     { id: "provider-details", target: "apis", label: "Provider Details", detail: "Connection state and setup readiness", icon: Search },
     { id: "readiness-approval", target: "apis", label: "Readiness & Approval", detail: "Sandbox, permissions and activation gates", icon: ShieldCheck },

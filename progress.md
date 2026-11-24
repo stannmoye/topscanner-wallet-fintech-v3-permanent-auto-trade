@@ -1,3 +1,37 @@
+## 2026-11-24 (feat) — Admin side of Customer API v1: key management, per-customer access and audit
+
+Owner request: *"I want you to also add it on the admin side for us to be able to add or update the apis."*
+Scope confirmed via a scoping question: **API keys**, **per-customer API access toggle** and **request & delivery
+visibility**, delivered as **admin portal UI + tRPC procedures**. No new money logic — administrators still cannot
+move funds through this surface.
+
+- **Schema.** New `drizzle/schema.ts` table `customer_api_settings` (one optional row per customer: `apiEnabled`,
+  `defaultRateLimitPerMinute`, `allowedScopes`, `updatedBy`). A missing row is the platform default: enabled,
+  platform rate limit, full read-scope ceiling — so no back-fill is required. Additive, idempotent migration
+  `drizzle/0121_customer_api_settings.sql`, registered in `scripts/apply-portal-migrations.mjs`.
+- **Policy service `server/customer-api/settings.ts`.** `resolveApiAccess` (defaults applied), `getCustomerApiSettings`,
+  `updateCustomerApiSettings` (validates, narrows scopes to read scopes, clamps the rate limit, upserts, and writes a
+  `customer_api.settings_created`/`settings_updated` audit event). `narrowToReadScopes` guards every scope list.
+- **Enforcement (`keys.ts`).** `createApiKey` refuses scopes beyond the account ceiling; `authenticateApiKey` returns
+  null for a disabled account and clamps requested scopes/limits to the ceiling. New `updateApiKey(keyId, patch)` edits
+  a key's label/scopes/allowlist/limit/status and re-checks the ceiling.
+- **Admin operations `server/customer-api/admin.ts`.** `listAdminApiKeys` (joins the customer, search/filter/paginate),
+  `createAdminApiKey`/`updateAdminApiKey`/`revokeAdminApiKey` (reason-gated, audited into `v5_audit_events`),
+  `listAdminApiRequests`, `listAdminApiWebhookDeliveries`, `getAdminApiOverview` and `listAdminApiCustomerOptions`
+  (excludes staff). All reads are read-only.
+- **tRPC.** New `adminOperations.apiAccess` router (`adminProcedure`) — `overview`, `customerOptions`, `keys`,
+  `createKey`, `updateKey`, `revokeKey`, `requests`, `deliveries`, `settings`, `updateSettings`; domain
+  validation failures map to a 400.
+- **Admin UI.** `client/src/components/AdminCustomerApiAccess.tsx` (lazy-loaded) with the overview counters, create
+  form (one-time secret reveal), key list with inline edit + reason-gated revoke, the per-customer policy editor and
+  read-only request/delivery tables. New canonical destination `customer-api-access` (`target: "apiAccess"`) under the
+  Integrations group; rendered in `AdminPortal`.
+- **Tests.** `server/customer-api/admin-api-access.contract.test.ts` asserts the procedures, navigation/render wiring,
+  audit actions, migration registration and that the panel's grantable scopes never drift from the server registry.
+- **Verification.** `pnpm check` clean; `pnpm test` 1740 passed / 39 skipped (221 files); `pnpm build` exit 0.
+- **Next.** Phase 2 guarded writes (`payouts:write`, module purchases, ticket create/reply) with `Idempotency-Key`;
+  signed webhook delivery worker + endpoint registration.
+
 ## 2026-11-24 (feat) — Customer API v1: scoped-key read gateway + key management
 
 Owner request: *"Let's start with API but I need suggestion best API to offer our customers according to our programs …

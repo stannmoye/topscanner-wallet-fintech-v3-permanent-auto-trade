@@ -79,6 +79,9 @@ const migrationFiles = [
   // endpoints/deliveries, write idempotency, request audit). Idempotent/additive
   // (CREATE TABLE IF NOT EXISTS), so it is safe to replay.
   "0120_customer_api_v1.sql",
+  // Per-customer API access policy (enable/disable, default rate limit, scope
+  // ceiling). Idempotent/additive (CREATE TABLE IF NOT EXISTS).
+  "0121_customer_api_settings.sql",
   // 0101/0102 are canonical Drizzle-journal migrations. They must not be
   // replayed by this legacy portal tracker after guarded-main-migrate.
 ];

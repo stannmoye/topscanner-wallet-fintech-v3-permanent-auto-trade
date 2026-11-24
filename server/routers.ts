@@ -75,6 +75,22 @@ import { getWalletFundingPriority, setWalletFundingPriority, WalletFundingPriori
 import { getOpportunityGenerationControl, getOpportunityGenerationMonitor, listOpportunityGenerationTemplates, OpportunityGenerationControlVersionConflictError, saveOpportunityGenerationTemplate, setOpportunityGenerationControl } from "./db";
 import { getSystemDiagnosticsReport } from "./_core/systemDiagnostics";
 import { exportOpportunityDeliveryRecords, getOpportunityDeliveryCustomer, getOpportunityDeliveryDetails, getOpportunityDeliveryQueueDiagnostics, listOpportunityDeliveryRecords, searchOpportunityDeliveryCustomers } from "./opportunityDeliveryDiagnostics";
+import { createAdminApiKey, getAdminApiOverview, listAdminApiCustomerOptions, listAdminApiKeys, listAdminApiRequests, listAdminApiWebhookDeliveries, revokeAdminApiKey, updateAdminApiKey } from "./customer-api/admin";
+import { getCustomerApiSettings, updateCustomerApiSettings, ApiAccessPolicyError } from "./customer-api/settings";
+import { ApiKeyError } from "./customer-api/keys";
+
+/** Map customer-API domain validation failures onto a 400 for the admin console. */
+async function runApiAccessAction<T>(action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    if (error instanceof ApiKeyError || error instanceof ApiAccessPolicyError) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+    }
+    throw error;
+  }
+}
+
 
 const opportunityDeliveryFiltersSchema = z.object({
   customerName: z.string().trim().min(2).max(100).optional(),
@@ -2154,6 +2170,57 @@ export const appRouter = router({
     }),
     replyTicket: adminProcedure.input(z.object({ ticketId: z.number().int().positive(), body: z.string().trim().min(1).max(20000), status: z.enum(["answered", "resolved", "closed"]) })).mutation(async ({ ctx, input }) => { const ticket=await getSupportTicketById(input.ticketId); if(!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Ticket not found" }); if(ticket.subject === ACCOUNT_CLOSURE_TICKET_SUBJECT) throw new TRPCError({code:"BAD_REQUEST",message:"Use the explicit account-closure decision controls for this request."}); await addTicketMessage(ctx.user.id,input.ticketId,input.body,input.status); return { success:true }; }),
     reopenTicket: adminProcedure.input(z.object({ ticketId: z.number().int().positive() })).mutation(async ({ ctx, input }) => { const ticket=await getSupportTicketById(input.ticketId); if(ticket?.subject === ACCOUNT_CLOSURE_TICKET_SUBJECT) throw new TRPCError({code:"BAD_REQUEST",message:"Account-closure requests cannot be reopened from generic support controls."}); return reopenSupportTicket(ctx.user.id,input.ticketId); }),
+    apiAccess: router({
+      overview: adminProcedure.query(() => getAdminApiOverview()),
+      customerOptions: adminProcedure.input(z.object({ query: z.string().trim().max(160).optional() }).optional()).query(({ input }) => listAdminApiCustomerOptions(input ?? {})),
+      keys: adminProcedure.input(z.object({
+        query: z.string().trim().max(160).optional(),
+        status: z.enum(["active", "revoked"]).optional(),
+        userId: z.number().int().positive().optional(),
+        page: z.number().int().min(1).max(10_000).optional(),
+        pageSize: z.number().int().min(1).max(100).optional(),
+      }).optional()).query(({ input }) => listAdminApiKeys(input ?? {})),
+      createKey: adminProcedure.input(z.object({
+        userId: z.number().int().positive(),
+        name: z.string().trim().min(2).max(64),
+        scopes: z.array(z.string().trim().min(1)).min(1),
+        environment: z.enum(["live", "test"]).optional(),
+        ipAllowlist: z.array(z.string().trim().min(1)).max(50).optional(),
+        rateLimitPerMinute: z.number().int().min(1).max(100_000).optional(),
+        reason: z.string().trim().min(5).max(500),
+      })).mutation(({ ctx, input }) => runApiAccessAction(() => createAdminApiKey(ctx.user.id, input))),
+      updateKey: adminProcedure.input(z.object({
+        keyId: z.number().int().positive(),
+        name: z.string().trim().min(2).max(64).optional(),
+        scopes: z.array(z.string().trim().min(1)).min(1).optional(),
+        ipAllowlist: z.array(z.string().trim().min(1)).max(50).optional(),
+        rateLimitPerMinute: z.number().int().min(1).max(100_000).nullable().optional(),
+        status: z.enum(["active", "revoked"]).optional(),
+        reason: z.string().trim().min(5).max(500),
+      })).mutation(({ ctx, input }) => runApiAccessAction(() => updateAdminApiKey(ctx.user.id, input))),
+      revokeKey: adminProcedure.input(z.object({
+        keyId: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(500),
+      })).mutation(({ ctx, input }) => runApiAccessAction(() => revokeAdminApiKey(ctx.user.id, input.keyId, input.reason))),
+      requests: adminProcedure.input(z.object({
+        apiKeyId: z.number().int().positive().optional(),
+        userId: z.number().int().positive().optional(),
+        page: z.number().int().min(1).max(10_000).optional(),
+        pageSize: z.number().int().min(1).max(100).optional(),
+      }).optional()).query(({ input }) => listAdminApiRequests(input ?? {})),
+      deliveries: adminProcedure.input(z.object({
+        page: z.number().int().min(1).max(10_000).optional(),
+        pageSize: z.number().int().min(1).max(100).optional(),
+      }).optional()).query(({ input }) => listAdminApiWebhookDeliveries(input ?? {})),
+      settings: adminProcedure.input(z.object({ userId: z.number().int().positive() })).query(({ input }) => getCustomerApiSettings(input.userId)),
+      updateSettings: adminProcedure.input(z.object({
+        userId: z.number().int().positive(),
+        apiEnabled: z.boolean().optional(),
+        defaultRateLimitPerMinute: z.number().int().min(1).max(100_000).nullable().optional(),
+        allowedScopes: z.array(z.string().trim().min(1)).min(1).nullable().optional(),
+        reason: z.string().trim().min(5).max(500),
+      })).mutation(({ ctx, input }) => runApiAccessAction(() => updateCustomerApiSettings(ctx.user.id, input.userId, input))),
+    }),
   }),
 
   // TODO: add feature routers here, e.g.
