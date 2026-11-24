@@ -1,28 +1,27 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// The customer portal keeps a 12-destination quick strip and a complete
-// searchable drawer so primary pages and additional resources remain reachable.
-// Support was retired from the customer nav when the Lending desk replaced it.
+// The customer portal keeps a 12-destination workspace strip plus a drawer that
+// is deliberately limited to the twelve curated resource destinations the owner
+// asked to keep, arranged into four sections. Investment desks and core pages
+// stay reachable from the workspace strip; account settings and trusted devices
+// stay reachable from the account-centre rail.
 
 const slideMenu = readFileSync(new URL("./components/CustomerSlideMenu.tsx", import.meta.url), "utf8");
 const layoutCss = readFileSync(new URL("./index.css", import.meta.url), "utf8");
 
-const drawerTargets = new Set(
-  Array.from(slideMenu.matchAll(/target:\s*"([a-z-]+)"/g)).map((match) => match[1]),
+const destinationGroupsBlock = slideMenu.match(/const destinationGroups[\s\S]*?\n\];/);
+const drawerTargets = Array.from(
+  destinationGroupsBlock?.[0].matchAll(/target:\s*"([a-z-]+)"/g) || [],
+  (match) => match[1],
 );
 
-// Every destination the customer portal can render. The single navigation menu
-// must be able to reach each one (the header bell/console/profile and the
-// dashboard quick actions remain as shortcuts, not as the only path).
-const requiredDestinations = [
-  "dashboard", "wallet", "opportunities", "yield", "activity", "crypto-mining",
-  "advanced", "intelligence", "account", "trusted-devices",
-  "whitepaper", "token-launch", "tokenomics", "roadmap", "investment-research",
+// The twelve destinations the owner asked to keep, in section order.
+const curatedDrawerDestinations = [
+  "advanced", "intelligence",
+  "whitepaper", "roadmap", "investment-research",
   "knowledge-base", "documentation", "faqs", "trading-guides",
   "risk-disclosure", "legal-documents", "news-updates",
-  "treasury-bond", "cooperate-dept", "litigation-funds", "ip-royalties",
-  "music-royalties", "agro-investment", "carbon-credit", "green-energy", "lending",
 ];
 
 describe("customer navigation", () => {
@@ -39,9 +38,19 @@ describe("customer navigation", () => {
     expect(actualTargets).toEqual(primaryDestinations);
   });
 
-  it("keeps every customer destination reachable through the searchable drawer", () => {
-    for (const target of requiredDestinations) {
-      expect(drawerTargets.has(target), `drawer is missing destination "${target}"`).toBe(true);
+  it("shows only the twelve curated destinations in the drawer, arranged into sections", () => {
+    expect(destinationGroupsBlock).not.toBeNull();
+    expect(drawerTargets).toEqual(curatedDrawerDestinations);
+    const sectionLabels = Array.from(
+      destinationGroupsBlock?.[0].matchAll(/\n {4}label: "([^"]+)",\n {4}detail:/g) || [],
+      (match) => match[1],
+    );
+    expect(sectionLabels).toEqual(["Workspace Tools", "Project & Investment", "Knowledge & Support", "Transparency & Updates"]);
+  });
+
+  it("retires every other menu entry from the drawer", () => {
+    for (const removed of ["wallet", "opportunities", "yield", "activity", "account", "trusted-devices", "tokenomics"]) {
+      expect(drawerTargets, `drawer should no longer list "${removed}"`).not.toContain(removed);
     }
   });
 

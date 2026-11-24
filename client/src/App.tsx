@@ -1038,7 +1038,7 @@ const customerResourceNavigation: Array<{id:string;label:string;group:string;des
   {id:"whitepaper",label:"Whitepaper",group:"Project & Investment",description:"A structured overview of the platform thesis, operating model, architecture, and investment review principles.",icon:BookOpen},
   {id:"tokenomics",label:"Tokenomics",group:"Project & Investment",description:"Token model information will be published here if and when a formal token offering is approved.",icon:Scale,planned:true},
   {id:"roadmap",label:"Roadmap",group:"Project & Investment",description:"A transparent view of delivery phases, milestones, and the priorities shaping the WiseBond platform.",icon:MapIcon},
-  {id:"investment-research",label:"Investment Research",group:"Project & Investment",description:"Research context, market signals, and decision-support notes designed to help customers review opportunities carefully.",icon:Library},
+  {id:"investment-research",label:"Research",group:"Project & Investment",description:"Research context, market signals, and decision-support notes designed to help customers review opportunities carefully.",icon:Library},
   {id:"knowledge-base",label:"Knowledge Base",group:"Knowledge & Support",description:"A practical starting point for understanding account workflows, balances, investment review, and support options.",icon:BookMarked},
   {id:"documentation",label:"Documentation",group:"Knowledge & Support",description:"Clear documentation for how the customer workspace, operating controls, and review flows work.",icon:FileText},
   {id:"faqs",label:"FAQs",group:"Knowledge & Support",description:"Frequently asked questions about account access, platform workflows, investment information, and support.",icon:CircleHelp},

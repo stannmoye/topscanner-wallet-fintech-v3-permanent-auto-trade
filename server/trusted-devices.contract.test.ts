@@ -24,7 +24,6 @@ const schema = read("../drizzle/schema.ts");
 const migration = read("../drizzle/0120_trusted_devices.sql");
 const deviceDetailsMigration = read("../drizzle/0121_device_details.sql");
 const app = read("../client/src/App.tsx");
-const slideMenu = read("../client/src/components/CustomerSlideMenu.tsx");
 const adminNav = read("../client/src/admin-navigation.ts");
 
 describe("trusted devices — device identity", () => {
@@ -158,9 +157,11 @@ describe("trusted devices — enforcement and wiring", () => {
     }
   });
 
-  it("wires the customer panel, the dashboard destination and the admin page", () => {
+  it("wires the customer panel, the account-centre destination and the admin page", () => {
     expect(app).toContain("CustomerTrustedDevicesPanel");
-    expect(slideMenu).toContain('target: "trusted-devices"');
+    // Trusted devices now lives on the account-centre rail, not the resource drawer.
+    expect(app).toContain('{ id: "trusted-devices", label: "Trusted Devices"');
+    expect(app).toContain('isTrustedDevices');
     expect(app).toContain('section==="deviceOversight"');
     expect(adminNav).toContain('target: "deviceOversight"');
   });

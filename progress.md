@@ -1,3 +1,32 @@
+## 2026-11-24 (feat) — Customer MENU drawer trimmed to the twelve curated destinations, regrouped into sections
+
+Owner request: *"On the right navigation we have the various menus, remove them all except Power tools, Portfolio
+intelligence, White Paper, Road map, Investment research (rename to Research), Knowledge base, Documentation, Faqs,
+Trading Guide, Risk disclosure, Legal document, News & Update. Now arrange them properly … into proper sections.
+Make sure you push to main."* Scope confirmed via a scoping question: the trimmed list stays in the **right MENU
+drawer**, and *every* other entry (investment desks + core pages) is **removed from the drawer**.
+
+- `client/src/components/CustomerSlideMenu.tsx`: replaced the five old `destinationGroups` (Workspace, Core
+  Workspace, Project & Investment, Knowledge & Support, Transparency & Updates — ~30 items incl. every desk) with
+  **four sections holding only the twelve kept items** — *Workspace Tools* (Power tools → `advanced`, Portfolio
+  intelligence → `intelligence`), *Project & Investment* (Whitepaper, Roadmap, Research → `investment-research`),
+  *Knowledge & Support* (Knowledge Base, Documentation, FAQs, Trading Guides), *Transparency & Updates* (Risk
+  Disclosure, Legal Documents, News & Updates).
+- Because the desks were dropped from `destinations`, the top workspace strip now resolves from a new
+  `topWorkspaceItems` array (12 entries) instead of the removed group items; `topWorkspaceTargets` order is
+  unchanged, so the strip still shows all 12 pages/desks. Removed the now-unused `LockKeyhole`/`Smartphone` imports.
+- `client/src/App.tsx`: renamed the resource label `"Investment Research"` → `"Research"` (`id` stays
+  `investment-research`) so the drawer entry and the rendered page title agree.
+- Reachability preserved: desks/core pages stay on the workspace strip; account settings and trusted devices stay
+  on the account-centre rail (`customerPreferenceGroups`); main-menu pages stay searchable in the drawer via
+  `mainPageSearchDestinations`.
+- Tests updated to the trimmed drawer:
+  `client/src/customer-navigation-consolidation.contract.test.ts` now asserts `destinationGroups` contains exactly
+  the twelve curated targets in order, that the four section labels are present, and that `wallet`/`opportunities`/
+  `yield`/`activity`/`account`/`trusted-devices`/`tokenomics` are gone;
+  `server/trusted-devices.contract.test.ts` now checks the account-centre rail entry instead of a drawer target.
+- **Verification.** `pnpm check` clean; `pnpm test` 1718 passed / 39 skipped (217 files); `pnpm build` exit 0.
+
 ## 2026-11-24 (fix) — Lending example auctions invisible: ISO-8601 string rejected by strict MySQL on a DATETIME column
 
 Owner report: *"check the site live see why it's not showing the various lending examples you added … if it's code
