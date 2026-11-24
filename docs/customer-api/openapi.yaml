@@ -1,0 +1,586 @@
+openapi: 3.1.0
+info:
+  title: Arbitrade Customer API
+  version: "1.0.0"
+  summary: Read-first customer API with scoped API keys and signed webhooks.
+  description: |
+    A stateless REST/JSON layer in front of the Arbitrade customer procedures.
+
+    - Base path `/api/v1`; HTTPS only.
+    - Auth: `Authorization: Bearer ak_live_<keyId>_<secret>` (or `X-API-Key`).
+    - Every key carries explicit scopes; missing scope returns `403`.
+    - All money values are integer **minor units**; rates are decimal strings.
+    - Reads never mutate state (in particular, `/opportunities` never consumes delivery or posts ledger entries).
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.arbitrade.example/api/v1
+    description: Production
+  - url: https://api.sandbox.arbitrade.example/api/v1
+    description: Sandbox (test keys)
+security:
+  - bearerAuth: []
+tags:
+  - name: Account
+  - name: Wallets
+  - name: Ledger
+  - name: Trading
+  - name: Positions
+  - name: Payouts
+  - name: Kyc
+  - name: Notifications
+  - name: Support
+
+paths:
+  /me:
+    get:
+      tags: [Account]
+      summary: Current account
+      operationId: getMe
+      responses:
+        "200":
+          description: Account profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /wallets:
+    get:
+      tags: [Wallets]
+      summary: Balances and USD summary
+      operationId: listWallets
+      security: [{ bearerAuth: [wallets:read] }]
+      responses:
+        "200":
+          description: Wallet summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WalletSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /wallets/{currency}:
+    get:
+      tags: [Wallets]
+      summary: A single wallet
+      operationId: getWallet
+      security: [{ bearerAuth: [wallets:read] }]
+      parameters:
+        - name: currency
+          in: path
+          required: true
+          schema: { type: string, examples: [USD] }
+      responses:
+        "200":
+          description: One wallet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Wallet" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /fx/rates:
+    get:
+      tags: [Wallets]
+      summary: Enabled currencies and live USD rates
+      operationId: listFxRates
+      security: [{ bearerAuth: [wallets:read] }]
+      responses:
+        "200":
+          description: Rates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currencies:
+                    type: array
+                    items: { $ref: "#/components/schemas/Currency" }
+                  ratesUnavailable: { type: boolean }
+                  conversions:
+                    type: array
+                    items: { $ref: "#/components/schemas/FxConversion" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /ledger:
+    get:
+      tags: [Ledger]
+      summary: Wallet ledger history
+      operationId: listLedger
+      security: [{ bearerAuth: [ledger:read] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated ledger
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/LedgerEntry" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /trades:
+    get:
+      tags: [Trading]
+      summary: Trade history
+      operationId: listTrades
+      security: [{ bearerAuth: [trading:read] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated trades
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Trade" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /opportunities:
+    get:
+      tags: [Trading]
+      summary: Read-only opportunity snapshot
+      description: Returns the customer-visible projection only. Never consumes delivery, allocates capital, or posts ledger entries.
+      operationId: listOpportunities
+      security: [{ bearerAuth: [trading:read] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated opportunities
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Opportunity" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /positions/{module}:
+    get:
+      tags: [Positions]
+      summary: Positions for an investment module
+      operationId: listPositions
+      security: [{ bearerAuth: [positions:read] }]
+      parameters:
+        - name: module
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [stake, treasury, cooperate-dept, litigation-funds, ip-royalties, music-royalties, agro-investment, carbon-credit, green-energy, lending, mining]
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated positions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Position" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /payouts:
+    get:
+      tags: [Payouts]
+      summary: Payout requests
+      operationId: listPayouts
+      security: [{ bearerAuth: [payouts:read] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated payouts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Payout" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /payouts/{id}:
+    get:
+      tags: [Payouts]
+      summary: One payout request
+      operationId: getPayout
+      security: [{ bearerAuth: [payouts:read] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Payout
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payout" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /kyc:
+    get:
+      tags: [Kyc]
+      summary: KYC status
+      operationId: getKyc
+      security: [{ bearerAuth: [kyc:read] }]
+      responses:
+        "200":
+          description: KYC status (no document contents)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Notification history
+      operationId: listNotifications
+      security: [{ bearerAuth: [notifications:read] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Notification" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /tickets:
+    get:
+      tags: [Support]
+      summary: Support tickets
+      operationId: listTickets
+      security: [{ bearerAuth: [support:read] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated tickets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Ticket" }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /tickets/{id}/messages:
+    get:
+      tags: [Support]
+      summary: Ticket messages
+      operationId: listTicketMessages
+      security: [{ bearerAuth: [support:read] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+webhooks:
+  wallet.ledger.posted:
+    post:
+      summary: A ledger entry was committed
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LedgerEntry" }
+      responses:
+        "2xx": { description: Ack }
+  trade.settled:
+    post:
+      summary: A trade reached settlement
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Trade" }
+      responses:
+        "2xx": { description: Ack }
+  opportunity.delivered:
+    post:
+      summary: An opportunity was dispatched to the customer
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Opportunity" }
+      responses:
+        "2xx": { description: Ack }
+  payout.updated:
+    post:
+      summary: A payout status changed
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Payout" }
+      responses:
+        "2xx": { description: Ack }
+  mining.reward:
+    post:
+      summary: A mining reward posted
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                packageRef: { type: string }
+                asset: { type: string, examples: [CKI] }
+                amountMinor: { type: integer }
+                postedAt: { type: string, format: date-time }
+      responses:
+        "2xx": { description: Ack }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ak_live_<keyId>_<secret>
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or revoked API key
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Key is missing the required scope
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Not found, or not owned by this key's customer
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Account:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        packageName: { type: [string, "null"] }
+    Currency:
+      type: object
+      properties:
+        code: { type: string }
+        name: { type: string }
+        symbol: { type: string }
+        scale: { type: integer }
+        assetType: { type: string, enum: [fiat, crypto, token] }
+    FxConversion:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+        rate: { type: string }
+        provider: { type: string }
+        updatedAt: { type: [string, "null"], format: date-time }
+    Wallet:
+      type: object
+      properties:
+        currency: { type: string }
+        availableMinor: { type: integer }
+        lockedMinor: { type: integer }
+        promotionalMinor: { type: integer }
+        earnedMinor: { type: integer }
+        pendingWithdrawalMinor: { type: integer }
+        updatedAt: { type: [string, "null"], format: date-time }
+    WalletSummary:
+      type: object
+      properties:
+        balances:
+          type: array
+          items: { $ref: "#/components/schemas/Wallet" }
+        currencies:
+          type: array
+          items: { $ref: "#/components/schemas/Currency" }
+        summary:
+          type: object
+          properties:
+            availableUsd: { type: number }
+            lockedUsd: { type: number }
+            withdrawingUsd: { type: number }
+            promotionalUsd: { type: number }
+            earnedUsd: { type: number }
+            totalUsd: { type: number }
+            ratesUnavailable: { type: boolean }
+            conversions:
+              type: array
+              items: { $ref: "#/components/schemas/FxConversion" }
+    LedgerEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        currency: { type: string }
+        amountMinor: { type: integer }
+        entryType: { type: string }
+        createdAt: { type: string, format: date-time }
+    Trade:
+      type: object
+      properties:
+        id: { type: integer }
+        reference: { type: string }
+        symbol: { type: string }
+        currency: { type: string }
+        principalMinor: { type: integer }
+        rewardMinor: { type: integer }
+        status: { type: string }
+        openedAt: { type: string, format: date-time }
+        settledAt: { type: [string, "null"], format: date-time }
+    Opportunity:
+      type: object
+      description: Customer-visible projection only.
+      properties:
+        eventId: { type: string }
+        symbol: { type: string }
+        expiresAt: { type: [string, "null"], format: date-time }
+    Position:
+      type: object
+      properties:
+        id: { type: integer }
+        module: { type: string }
+        reference: { type: string }
+        currency: { type: string }
+        principalMinor: { type: integer }
+        accruedMinor: { type: integer }
+        status: { type: string }
+        openedAt: { type: string, format: date-time }
+        maturesAt: { type: [string, "null"], format: date-time }
+    Payout:
+      type: object
+      properties:
+        id: { type: integer }
+        requestReference: { type: string }
+        currency: { type: string }
+        amountMinor: { type: integer }
+        destinationType: { type: string, enum: [bank_transfer, crypto_transfer] }
+        destinationDetails: { type: string, description: Masked. }
+        status: { type: string, enum: [confirming, processing, completed, declined, cancelled] }
+        externalReference: { type: [string, "null"] }
+        resolutionNote: { type: [string, "null"] }
+        resolvedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    KycStatus:
+      type: object
+      properties:
+        status: { type: string }
+        stages:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              label: { type: string }
+              state: { type: string }
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        category: { type: string }
+        priority: { type: string }
+        createdAt: { type: string, format: date-time }
+        readAt: { type: [string, "null"], format: date-time }
+    Ticket:
+      type: object
+      properties:
+        id: { type: integer }
+        subject: { type: string }
+        status: { type: string }
+        priority: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TicketMessage:
+      type: object
+      properties:
+        id: { type: integer }
+        author: { type: string, enum: [customer, support] }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+    Problem:
+      type: object
+      description: RFC 9457 problem document.
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }

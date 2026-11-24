@@ -1,3 +1,38 @@
+## 2026-11-24 (feat) — Customer API v1: scoped-key read gateway + key management
+
+Owner request: *"Let's start with API but I need suggestion best API to offer our customers according to our programs …
+Proceed and always remember to push to main."* Design source: `customer-api-v1/API-DESIGN.md` (+ `openapi.yaml`,
+`api-keys.schema.sql`). Chosen shape: a versioned REST `/api/v1` translation layer over the existing
+server-authoritative `customer.*` service functions, authenticated with scoped Bearer API keys, read-only first.
+
+- **Schema.** `drizzle/schema.ts` gains five access-governance tables — `api_keys`, `api_webhook_endpoints`,
+  `api_webhook_deliveries`, `api_idempotency_keys`, `api_request_log`. They govern access/delivery/audit only and
+  never hold money. Additive migration `drizzle/0120_customer_api_v1.sql` (all `CREATE TABLE IF NOT EXISTS`) is
+  registered in `scripts/apply-portal-migrations.mjs`. The plaintext key secret is never stored — only its
+  SHA-256 hash — and is shown once at creation.
+- **Module `server/customer-api/`.** `scopes.ts` (fixed scope allowlist + `validateIssuableScopes`, which refuses
+  unknown/duplicate/phase-2 write scopes), `keys.ts` (`ak_<env>_<keyId>_<secret>` generation, constant-time
+  authentication, per-key IP allowlist, hashed-at-rest secrets, list/revoke), and `gateway.ts` (the read router +
+  the session-authed key-management routes).
+- **`/api/v1` (read).** `GET /me`, `/scopes`, `/wallets`, `/wallets/{currency}`, `/fx/rates`, `/ledger`, `/trades`,
+  `/opportunities`, `/positions/{module}` (all eleven desks), `/payouts`, `/payouts/{id}`, `/kyc`, `/notifications`,
+  `/tickets`, `/tickets/{id}`, `/tickets/{id}/messages`. Auth via `Authorization: Bearer` or `X-API-Key`; scope
+  enforcement per route; RFC 9457 `application/problem+json` errors (401/403/404/422/429/503); a per-key
+  in-memory rate limiter; `X-Request-Id` on every response; best-effort request audit. Every read is scoped to the
+  key's owning customer, so a cross-customer id yields 404. Payout destination details are masked.
+- **Read-only guarantees.** `/opportunities` calls `listCustomerOpportunities(userId, { consumeDelivery: false })`
+  and never enables automatic execution — a read cannot consume a delivery, allocate capital or post a ledger
+  entry. Internal package/policy fields are stripped from trade/opportunity payloads.
+- **Key management (customer portal).** `GET/POST /api/customer/api-keys` and `POST /api/customer/api-keys/{id}/revoke`
+  are cookie-session authenticated (auth-version checked) and return the plaintext key exactly once on creation.
+- **Wiring.** `registerCustomerApiRoutes(app)` is called in `server/_core/index.ts` before the tRPC mount and the
+  SPA/static fallback, so `/api/v1` is never shadowed.
+- **Tests.** `server/customer-api/scopes.test.ts`, `keys.test.ts` (pure key material + scope registry) and
+  `customer-api.contract.test.ts` (table/migration/route-order/read-only/desk-coverage source contracts).
+- **Verification.** `pnpm check` clean; `pnpm test` 1732 passed / 39 skipped (220 files); `pnpm build` exit 0.
+- **Next.** Phase 2 (guarded writes: `payouts:write`, module purchases, ticket create/reply) with required
+  `Idempotency-Key`; signed webhook delivery worker + endpoint registration; publish OpenAPI/hosted docs.
+
 ## 2026-11-24 (feat) — Account-centre rail: merge Language + Date/Time and de-duplicate the sign-in security entries
 
 Owner request: the left "Account centre" rail (`customerPreferenceGroups` in `client/src/App.tsx`) listed

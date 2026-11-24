@@ -36,6 +36,7 @@ import { ensureSessionSecret } from "../../installer/session-secret.mjs";
 import { isValidSettlementEvidenceStorageKey, settlementEvidenceStorageKey, validateSettlementEvidenceUpload } from "../settlement-evidence";
 import { normalizeVisitorKey, recordAnalyticsEvent, ensureVisitorAnalyticsSchema, VISITOR_COOKIE } from "../site-analytics";
 import { ensureExampleLendingDesk } from "../lendingDossiers";
+import { registerCustomerApiRoutes } from "../customer-api/gateway";
 import { parse as parseCookieHeader } from "cookie";
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
@@ -426,6 +427,10 @@ async function startServer() {
     }
   });
   registerProviderOAuthRoutes(app);
+  // Customer API v1 — versioned public REST surface (scoped API keys + read
+  // gateway) and the customer-portal key-management routes. Registered before
+  // the tRPC/static fallback so /api/v1 is never shadowed by the SPA.
+  registerCustomerApiRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",

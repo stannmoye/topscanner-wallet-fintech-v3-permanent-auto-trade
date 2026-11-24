@@ -1,4 +1,4 @@
-import { bigint, int, longtext, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, index, uniqueIndex, foreignKey } from "drizzle-orm/mysql-core";
+import { bigint, int, json, longtext, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, index, uniqueIndex, foreignKey } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 
 /**
@@ -1517,3 +1517,111 @@ export const deviceAccessEvents = mysqlTable("device_access_events", {
 }));
 
 export type DeviceAccessEvent = typeof deviceAccessEvents.$inferSelect;
+
+/**
+ * Customer API v1 — access governance.
+ *
+ * These tables only govern access, webhook delivery and audit. They never hold
+ * money: every amount an API caller sees is read from the existing wallet /
+ * ledger / trade tables. The plaintext key secret is never stored — only a
+ * SHA-256 hash — and it is shown to the customer exactly once at creation.
+ */
+export const apiKeys = mysqlTable("api_keys", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Owning customer. Every query is scoped to this account. */
+  userId: int("userId").notNull(),
+  /** Human label chosen by the customer. */
+  name: varchar("name", { length: 64 }).notNull(),
+  /** Public, indexable prefix, e.g. `ak_live_9f3c1a7b2d4e6f80`. */
+  keyPrefix: varchar("keyPrefix", { length: 40 }).notNull(),
+  /** SHA-256 (hex) of the secret half of the key. */
+  secretHash: varchar("secretHash", { length: 64 }).notNull(),
+  /** Granted scopes, validated server-side against the fixed allowlist. */
+  scopes: json("scopes").notNull(),
+  environment: mysqlEnum("environment", ["live", "test"]).default("live").notNull(),
+  /** Optional CIDR/IP allowlist; null means any source. */
+  ipAllowlist: json("ipAllowlist"),
+  /** Optional per-key override of the platform default request rate. */
+  rateLimitPerMinute: int("rateLimitPerMinute"),
+  status: mysqlEnum("status", ["active", "revoked"]).default("active").notNull(),
+  lastUsedAt: timestamp("lastUsedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedReason: varchar("revokedReason", { length: 255 }),
+}, (table) => ({
+  prefixUnique: uniqueIndex("api_keys_prefix_unique").on(table.keyPrefix),
+  userStatusIdx: index("api_keys_user_status_idx").on(table.userId, table.status),
+}));
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type InsertApiKey = typeof apiKeys.$inferInsert;
+
+export const apiWebhookEndpoints = mysqlTable("api_webhook_endpoints", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  url: varchar("url", { length: 512 }).notNull(),
+  /** Signing secret, encrypted at rest (never returned after creation). */
+  secretEncrypted: varchar("secretEncrypted", { length: 512 }).notNull(),
+  subscribedEvents: json("subscribedEvents").notNull(),
+  description: varchar("description", { length: 128 }),
+  status: mysqlEnum("status", ["active", "paused", "disabled"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  userStatusIdx: index("api_webhook_endpoints_user_status_idx").on(table.userId, table.status),
+}));
+
+export type ApiWebhookEndpoint = typeof apiWebhookEndpoints.$inferSelect;
+
+export const apiWebhookDeliveries = mysqlTable("api_webhook_deliveries", {
+  id: int("id").autoincrement().primaryKey(),
+  endpointId: int("endpointId").notNull(),
+  /** Idempotent event id (uuid) — at-least-once, deduped per endpoint. */
+  eventId: varchar("eventId", { length: 36 }).notNull(),
+  eventType: varchar("eventType", { length: 64 }).notNull(),
+  payload: json("payload").notNull(),
+  status: mysqlEnum("status", ["pending", "delivered", "failed", "dead"]).default("pending").notNull(),
+  attempts: int("attempts").default(0).notNull(),
+  lastAttemptAt: timestamp("lastAttemptAt"),
+  responseStatus: int("responseStatus"),
+  nextAttemptAt: timestamp("nextAttemptAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  endpointEventUnique: uniqueIndex("api_webhook_deliveries_endpoint_event_unique").on(table.endpointId, table.eventId),
+  retryIdx: index("api_webhook_deliveries_retry_idx").on(table.status, table.nextAttemptAt),
+}));
+
+export type ApiWebhookDelivery = typeof apiWebhookDeliveries.$inferSelect;
+
+export const apiIdempotencyKeys = mysqlTable("api_idempotency_keys", {
+  id: int("id").autoincrement().primaryKey(),
+  apiKeyId: int("apiKeyId").notNull(),
+  idemKey: varchar("idemKey", { length: 160 }).notNull(),
+  /** SHA-256 of method + path + body, to detect a key reused with a different request. */
+  requestHash: varchar("requestHash", { length: 64 }).notNull(),
+  response: json("response"),
+  status: mysqlEnum("status", ["in_progress", "completed"]).default("in_progress").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+}, (table) => ({
+  keyUnique: uniqueIndex("api_idempotency_keys_key_unique").on(table.apiKeyId, table.idemKey),
+  expiryIdx: index("api_idempotency_keys_expiry_idx").on(table.expiresAt),
+}));
+
+export type ApiIdempotencyKey = typeof apiIdempotencyKeys.$inferSelect;
+
+export const apiRequestLog = mysqlTable("api_request_log", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Null when authentication failed before a key could be resolved. */
+  apiKeyId: int("apiKeyId"),
+  requestId: varchar("requestId", { length: 36 }).notNull(),
+  method: varchar("method", { length: 8 }).notNull(),
+  path: varchar("path", { length: 255 }).notNull(),
+  status: int("status").notNull(),
+  latencyMs: int("latencyMs").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  keyCreatedIdx: index("api_request_log_key_created_idx").on(table.apiKeyId, table.createdAt),
+  requestIdx: index("api_request_log_request_idx").on(table.requestId),
+}));
+
+export type ApiRequestLog = typeof apiRequestLog.$inferSelect;

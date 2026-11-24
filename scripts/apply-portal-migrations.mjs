@@ -75,6 +75,10 @@ const migrationFiles = [
   // Enables the per-customer withdrawal flag for every existing account so no
   // stored record can leave customer withdrawals disabled. Idempotent/additive.
   "0118_customer_withdrawals_unrestricted.sql",
+  // Customer API v1 access-governance tables (scoped API keys, signed webhook
+  // endpoints/deliveries, write idempotency, request audit). Idempotent/additive
+  // (CREATE TABLE IF NOT EXISTS), so it is safe to replay.
+  "0120_customer_api_v1.sql",
   // 0101/0102 are canonical Drizzle-journal migrations. They must not be
   // replayed by this legacy portal tracker after guarded-main-migrate.
 ];
