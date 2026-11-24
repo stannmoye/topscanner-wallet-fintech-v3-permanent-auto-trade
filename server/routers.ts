@@ -67,7 +67,7 @@ import { localIdentityService } from "./_core/localIdentityService";
 import { createHeartbeatJob, deleteHeartbeatJob, listHeartbeatJobs, updateHeartbeatJob } from "./_core/heartbeat";
 import { getWorkerHealthSummary, requeueDeadQualificationJob } from "./_core/workerHealth";
 import { getVisitorAnalyticsReport } from "./site-analytics";
-import { getSignInActivityReport } from "./sign-in-activity";
+import { getSignInActivityReport, getCustomerSignInActivity } from "./sign-in-activity";
 import { getTradeGlobalControls, setTradeGlobalControl, TradeGlobalControlVersionConflictError } from "./db";
 import { getPackageFeePolicies, getPackageFeeHistory, updatePackageFeePolicy } from "./db";
 import { getDeliveryRetryPolicy, updateDeliveryRetryPolicy, DeliveryRetryPolicyVersionConflictError } from "./db";
@@ -959,6 +959,9 @@ export const appRouter = router({
       return { success: true as const };
     }),
     deviceAccessEvents: protectedProcedure.query(({ ctx }) => listDeviceEvents(ctx.user.id, 40)),
+    signInActivity: protectedProcedure.input(z.object({
+      limit: z.number().int().min(1).max(500).optional(),
+    }).strict().optional()).query(({ ctx, input }) => getCustomerSignInActivity(ctx.user.id, input?.limit ?? 100)),
     requestDeviceUnblock: protectedProcedure.input(z.object({ deviceId: z.number().int().positive(), reason: z.string().trim().min(10).max(1000) })).mutation(async ({ ctx, input }) => {
       const { devices } = await listTrustedDevices(ctx.user.id);
       const device = devices.find((item) => Number(item.id) === input.deviceId);

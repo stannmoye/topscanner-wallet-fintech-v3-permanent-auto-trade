@@ -227,6 +227,68 @@ function summaryFromRow(row: Record<string, unknown> | undefined): SignInActivit
 }
 
 /**
+ * Build the customer's own sign-in activity report for the trailing retention
+ * window: a count summary plus their most recent sign-ins, newest first. This
+ * never returns another customer's data.
+ */
+export async function getCustomerSignInActivity(userId: number, limit: number = DEFAULT_ENTRIES): Promise<SignInActivityReport> {
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    const now = new Date();
+    return {
+      sourceAvailable: true,
+      generatedAt: now.toISOString(),
+      retentionDays: SIGN_IN_ACTIVITY_RETENTION_DAYS,
+      windowStart: utcStamp(new Date(now.getTime() - SIGN_IN_ACTIVITY_RETENTION_DAYS * 24 * 60 * 60 * 1000)),
+      summary: { ...EMPTY_SUMMARY },
+      entries: [],
+    };
+  }
+  const safeLimit = Number.isFinite(limit) ? Math.min(MAX_ENTRIES, Math.max(1, Math.trunc(limit))) : DEFAULT_ENTRIES;
+  const now = new Date();
+  const windowStart = utcStamp(new Date(now.getTime() - SIGN_IN_ACTIVITY_RETENTION_DAYS * 24 * 60 * 60 * 1000));
+  const last24hCutoff = utcStamp(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const base: SignInActivityReport = {
+    sourceAvailable: true,
+    generatedAt: now.toISOString(),
+    retentionDays: SIGN_IN_ACTIVITY_RETENTION_DAYS,
+    windowStart,
+    summary: { ...EMPTY_SUMMARY },
+    entries: [],
+  };
+  try {
+    const db = await getDb();
+    if (!db) return { ...base, sourceAvailable: false };
+    const summaryResult = await db.execute(sql`SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN eventType='login' THEN 1 ELSE 0 END) AS logins,
+        SUM(CASE WHEN eventType='signup' THEN 1 ELSE 0 END) AS signups,
+        COUNT(DISTINCT userId) AS distinctCustomers,
+        SUM(CASE WHEN eventDate=${utcDateKey(now)} THEN 1 ELSE 0 END) AS today,
+        SUM(CASE WHEN createdAt >= ${last24hCutoff} THEN 1 ELSE 0 END) AS last24h
+      FROM sign_in_activity_events
+      WHERE userId=${userId} AND createdAt >= ${windowStart}`);
+    const summaryRows = ((summaryResult as unknown as [Record<string, unknown>[], unknown])[0] || []) as Record<string, unknown>[];
+    const entriesResult = await db.execute(sql`SELECT
+        id,userId,userName,userEmail,userRole,eventType,source,deviceName,countryCode,ipAddress,userAgent,
+        DATE_FORMAT(createdAt,'%Y-%m-%dT%H:%i:%s.000Z') AS createdAt
+      FROM sign_in_activity_events
+      WHERE userId=${userId} AND createdAt >= ${windowStart}
+      ORDER BY createdAt DESC, id DESC
+      LIMIT ${safeLimit}`);
+    const entryRows = ((entriesResult as unknown as [Record<string, unknown>[], unknown])[0] || []) as Record<string, unknown>[];
+    return {
+      ...base,
+      summary: summaryFromRow(summaryRows[0]),
+      entries: entryRows.map(toEntry),
+    };
+  } catch (error) {
+    if (isMissingTableError(error)) return { ...base, sourceAvailable: false };
+    console.error("[SignInActivity] Failed to build customer report:", error instanceof Error ? error.name : "UnknownError");
+    return { ...base, sourceAvailable: false };
+  }
+}
+
+/**
  * Build the administrator sign-in activity report for the trailing retention
  * window: a count summary plus the most recent entries, newest first.
  */

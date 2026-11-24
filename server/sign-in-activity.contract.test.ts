@@ -44,7 +44,15 @@ describe("sign-in activity contract", () => {
   it("exposes an admin-only sign-in activity query", () => {
     expect(router).toContain("signInActivity: adminProcedure.input(z.object({");
     expect(router).toContain("getSignInActivityReport(input?.limit ?? 200)");
-    expect(router).toContain('import { getSignInActivityReport } from "./sign-in-activity"');
+    expect(router).toContain('import { getSignInActivityReport, getCustomerSignInActivity } from "./sign-in-activity"');
+  });
+
+  it("exposes a customer-only sign-in activity query for their own records", () => {
+    expect(router).toContain("signInActivity: protectedProcedure.input(z.object({");
+    expect(router).toContain("getCustomerSignInActivity(ctx.user.id, input?.limit ?? 100)");
+    expect(module).toContain("export async function getCustomerSignInActivity(userId: number");
+    // The customer report must be scoped to a single user id.
+    expect(module).toContain("WHERE userId=${userId}");
   });
 
   it("adds a Sign in Activity menu entry that routes to the dedicated owner component", () => {
@@ -59,5 +67,16 @@ describe("sign-in activity contract", () => {
     expect(component).toContain("admin-sign-in-metrics");
     expect(component).toContain("Sign-ins (7 days)");
     expect(component).toContain("cleared automatically");
+  });
+
+  it("wires the customer 'Sign-in activity' menu item to a real log instead of the generic placeholder", () => {
+    expect(appSource).toContain('{ id: "login-activity", label: "Sign-in activity"');
+    expect(appSource).toContain("const isLoginActivity=item.id===\"login-activity\"");
+    expect(appSource).toContain("isLoginActivity?<Suspense fallback={<div className=\"test-notice\" role=\"status\">Loading sign-in activity…</div>}><CustomerSignInActivity push={push}/></Suspense>");
+    expect(appSource).toContain('const CustomerSignInActivity = lazy(() => import("@/components/CustomerSignInActivity")');
+    const customerComponent = readFileSync(new URL("../client/src/components/CustomerSignInActivity.tsx", import.meta.url), "utf8");
+    expect(customerComponent).toContain("trpc.customer.signInActivity.useQuery({ limit: 100 }");
+    expect(customerComponent).toContain("customer-sign-in-list");
+    expect(customerComponent).toContain("cleared automatically");
   });
 });

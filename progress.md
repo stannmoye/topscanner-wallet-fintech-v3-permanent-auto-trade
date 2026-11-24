@@ -1,3 +1,31 @@
+## 2026-11-25 (fix) — Sign in Activity: show the customer's own log instead of the generic placeholder
+
+Owner report: logging in and opening the customer "Sign-in activity" page showed only the
+generic WiseBond account-controls placeholder ("Save preference") instead of the real log.
+
+The customer sidebar already had a `login-activity` "Sign-in activity" item under Security &
+Access, but `CustomerPreferencePanel` had no dedicated branch for it, so it fell through to
+the generic preference placeholder.
+
+- **Customer-scoped server report (`server/sign-in-activity.ts`).** Added
+  `getCustomerSignInActivity(userId, limit)` which returns only the current customer's own
+  sign-ins (logins + sign-ups) for the trailing seven-day window, newest first, plus a
+  summary. Never returns another customer's data.
+- **Customer tRPC route (`server/routers.ts`).** Added `customer.signInActivity`
+  (`protectedProcedure`, optional `{ limit }`) calling `getCustomerSignInActivity(ctx.user.id, …)`.
+- **Customer UI (`client/src/components/CustomerSignInActivity.tsx`).** New panel showing the
+  customer's sign-in count (7 days + last 24h) and a searchable list of recent sign-ins
+  (device, time, source, country, IP), with the automatic seven-day clearing note.
+- **Wiring (`client/src/App.tsx`).** Added a `login-activity` branch in `CustomerPreferencePanel`
+  that renders `CustomerSignInActivity` instead of the generic placeholder, with a descriptive
+  page intro and "Seven-day sign-in log" chip.
+- **CSS (`client/src/customer-reference.css`).** Responsive styling for the customer sign-in
+  metrics, search bar and list (stacks on small screens).
+- **Tests.** Updated `server/sign-in-activity.contract.test.ts` to assert the customer route,
+  the customer-scoped query, and the `login-activity` → `CustomerSignInActivity` wiring.
+- **Verification.** `pnpm check` clean, `pnpm test` 1750 passed / 42 skipped, `pnpm build`
+  exit 0.
+
 ## 2026-11-25 (feat) — Sign in Activity: seven-day sign-in log with automatic clearing
 
 Owner request: build a Sign in Activity feature reachable from the "sign in activity" menu

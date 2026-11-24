@@ -2958,3 +2958,32 @@
 }
 @media(max-width:380px){.customer-withdrawal-pin-value{font-size:20px;letter-spacing:.22em;text-indent:.22em}}
 @media (prefers-reduced-motion: reduce){.customer-withdrawal-pin-form input{transition:none}}
+
+/* Customer Sign-in Activity panel (Security & Access). */
+.customer-sign-in-activity{display:grid;gap:14px}
+.customer-sign-in-head{display:flex;flex-wrap:wrap;align-items:center;gap:11px}
+.customer-sign-in-metric{display:flex;align-items:center;gap:11px;flex:1 1 150px;min-width:0;padding:13px 14px;border:1px solid var(--ux-line,rgba(156,188,215,.16));border-radius:14px;background:linear-gradient(145deg,rgba(20,38,49,.9),rgba(11,23,34,.95))}
+.customer-sign-in-metric-icon{display:grid;place-items:center;flex:0 0 auto;width:32px;height:32px;border-radius:9px;background:rgba(124,231,194,.12);color:#70dcb8}
+.customer-sign-in-metric div{display:grid;gap:1px;min-width:0}
+.customer-sign-in-metric small{color:#91a9b3;font-size:9px;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.customer-sign-in-metric strong{color:#f1f7f6;font-size:21px;font-weight:750;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.customer-sign-in-metric span{color:#718d99;font-size:9px;line-height:1.4}
+.customer-sign-in-refresh{flex:0 0 auto}
+.customer-sign-in-log{display:grid;gap:12px}
+.customer-sign-in-log-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.customer-sign-in-log-head h2{margin:0;font-size:14px}
+.customer-sign-in-search{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:0}
+.customer-sign-in-search input{flex:1 1 auto;min-width:0}
+.customer-sign-in-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.customer-sign-in-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--ux-line,rgba(156,188,215,.14));border-radius:12px;background:rgba(12,28,40,.55)}
+.customer-sign-in-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid rgba(124,231,194,.24);border-radius:999px;color:#8fe9ca;background:rgba(124,231,194,.1);font-size:10px;font-weight:700;white-space:nowrap;flex:0 0 auto}
+.customer-sign-in-badge.is-signup{border-color:rgba(147,197,253,.28);color:#a9cdfb;background:rgba(96,165,250,.12)}
+.customer-sign-in-main{display:grid;gap:2px;min-width:0;flex:1 1 auto}
+.customer-sign-in-main strong{color:#eaf2f1;font-size:12px;font-weight:600}
+.customer-sign-in-main small{color:#7d95a0;font-size:10px}
+.customer-sign-in-meta{display:grid;justify-items:end;gap:2px;flex:0 0 auto}
+.customer-sign-in-meta span{display:inline-flex;align-items:center;gap:5px;color:#91a9b3;font-size:10px}
+.customer-sign-in-meta code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:9px;color:#cfe4ee}
+.customer-sign-in-note{margin-top:2px}
+@media(max-width:680px){.customer-sign-in-log-head{align-items:stretch;flex-direction:column}.customer-sign-in-search{width:100%}}
+@media(max-width:480px){.customer-sign-in-item{flex-wrap:wrap}.customer-sign-in-meta{justify-items:start;width:100%;padding-top:4px;border-top:1px solid var(--ux-line,rgba(156,188,215,.1))}}
