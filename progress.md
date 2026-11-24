@@ -1,3 +1,40 @@
+## 2026-11-25 (feat) — Sign in Activity: seven-day sign-in log with automatic clearing
+
+Owner request: build a Sign in Activity feature reachable from the "sign in activity" menu
+that records all sign-in activity for all customers, is kept for a rolling seven days, and
+automatically clears out after seven days including the logs and residue.
+
+- **Storage (`server/sign-in-activity.ts`).** New additive table
+  `sign_in_activity_events` created lazily and idempotently by `ensureSignInActivitySchema()`
+  (raw pool + `CREATE TABLE IF NOT EXISTS`, mirrors `site-analytics.ts`). `recordSignInActivity`
+  is never-throw and fails quietly when the add-in table is absent, so recording a sign-in can
+  never break authentication. Every timestamp is written/compared as an explicit UTC
+  `DATETIME(3)` so the stored value never drifts with the pool timezone.
+- **Seven-day retention with automatic clearing.** `purgeSignInActivity(olderThanDays = 7)`
+  hard-deletes rows older than the cutoff (`DELETE … WHERE createdAt < ?`) so no stale
+  log or residue is left behind. It runs once at boot and then on an hourly
+  `registerWorkerInterval` in `server/_core/index.ts`; the admin report is additionally
+  window-filtered to the last seven days so out-of-window residue is never shown.
+- **Recording hooks (`server/_core/index.ts`).** `recordSignInActivityEvent` is called from
+  the successful `/api/customer/register`, `/api/customer/login` and `/api/admin/login`
+  handlers (customer and administrator), capturing account, role, source, device, country,
+  user-agent and IP. `registerLoginDevice` now also returns the resolved device name.
+- **Admin surface.** `adminOperations.signInActivity` (adminProcedure, optional `{ limit }`)
+  returns a summary (total, logins, sign-ups, distinct customers, today, last 24h) plus the
+  newest entries. New `client/src/components/AdminSignInActivity.tsx` renders the metrics
+  strip, a searchable table and the automatic-clear note; menu item **Sign in Activity**
+  added to the **Verification & Risk** group in `client/src/admin-navigation.ts`, routed via
+  `client/src/App.tsx` to `AdminSignInActivity`. Responsive CSS in `client/src/admin-operations.css`
+  (4-up metrics → 2-up ≤900px → 1-up ≤480px; toolbar stacks ≤680px).
+- **Tests.** `server/sign-in-activity.contract.test.ts` asserts the additive table, the
+  seven-day constant, the hard-delete purge, the window-filtered report, the three recording
+  hooks, the boot + scheduled purge wiring, the admin query and the menu/route. The MySQL
+  integration suite `server/sign-in-activity.mysql.integration.test.ts` (skipped without
+  `SIGN_IN_ACTIVITY_TEST_DATABASE_URL`) records recent + stale sign-ins, asserts the report
+  hides the stale record, purges it, and confirms a second purge is a no-op.
+- **Verification.** `pnpm check` clean, `pnpm test` 1748 passed / 42 skipped, `pnpm build`
+  exit 0. (The MySQL integration suite is skipped in this sandbox — no local MariaDB.)
+
 ## 2026-11-25 (feat) — Withdrawal PIN: administrator reset + coverage metrics
 
 Adds two capabilities on top of the responsive styling below.

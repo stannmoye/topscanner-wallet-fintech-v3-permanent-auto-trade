@@ -67,6 +67,7 @@ import { localIdentityService } from "./_core/localIdentityService";
 import { createHeartbeatJob, deleteHeartbeatJob, listHeartbeatJobs, updateHeartbeatJob } from "./_core/heartbeat";
 import { getWorkerHealthSummary, requeueDeadQualificationJob } from "./_core/workerHealth";
 import { getVisitorAnalyticsReport } from "./site-analytics";
+import { getSignInActivityReport } from "./sign-in-activity";
 import { getTradeGlobalControls, setTradeGlobalControl, TradeGlobalControlVersionConflictError } from "./db";
 import { getPackageFeePolicies, getPackageFeeHistory, updatePackageFeePolicy } from "./db";
 import { getDeliveryRetryPolicy, updateDeliveryRetryPolicy, DeliveryRetryPolicyVersionConflictError } from "./db";
@@ -2101,6 +2102,9 @@ export const appRouter = router({
       days: z.number().int().min(1).max(180).optional(),
       countryLimit: z.number().int().min(1).max(50).optional(),
     }).strict().optional()).query(({ input }) => getVisitorAnalyticsReport(input?.days ?? 30, input?.countryLimit ?? 12)),
+    signInActivity: adminProcedure.input(z.object({
+      limit: z.number().int().min(1).max(500).optional(),
+    }).strict().optional()).query(({ input }) => getSignInActivityReport(input?.limit ?? 200)),
     updatePackagePolicies: adminProcedure.input(z.object({
       reason: z.string().trim().min(5).max(500),
       policies: z.array(z.object({

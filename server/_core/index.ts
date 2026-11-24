@@ -35,6 +35,7 @@ import { runMiningWorkerCycle } from "../mining";
 import { ensureSessionSecret } from "../../installer/session-secret.mjs";
 import { isValidSettlementEvidenceStorageKey, settlementEvidenceStorageKey, validateSettlementEvidenceUpload } from "../settlement-evidence";
 import { normalizeVisitorKey, recordAnalyticsEvent, ensureVisitorAnalyticsSchema, VISITOR_COOKIE } from "../site-analytics";
+import { ensureSignInActivitySchema, purgeSignInActivity, recordSignInActivity } from "../sign-in-activity";
 import { ensureExampleLendingDesk } from "../lendingDossiers";
 import { ensureCustomerApiSchema } from "../customer-api/schema";
 import { registerCustomerApiRoutes } from "../customer-api/gateway";
@@ -190,11 +191,30 @@ async function startServer() {
     });
   };
   /**
+   * Record one sign-in activity row for a successful authentication so the
+   * administrator console can list every customer sign-in. Never blocks the
+   * response and is retained for a rolling seven-day window.
+   */
+  const recordSignInActivityEvent = (req: express.Request, user: { id: number; name?: string | null; email?: string | null; role?: string | null }, eventType: "login" | "signup", source: "customer" | "admin", deviceName?: string | null): void => {
+    void recordSignInActivity({
+      userId: user.id,
+      userName: user.name ?? null,
+      userEmail: user.email ?? null,
+      userRole: user.role ?? null,
+      eventType,
+      source,
+      deviceName: deviceName ?? null,
+      countryCode: resolveRequestCountry(req),
+      userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+      ipAddress: requestIpAddress(req),
+    });
+  };
+  /**
    * Shared post-authentication device step. Refuses a blocked device and records
    * a first-seen or returning login. Returns the device key used to bind the
    * session cookie, or null when the sign-in must be refused.
    */
-  const registerLoginDevice = async (req: express.Request, userId: number, device: unknown): Promise<{ deviceKey: string; blocked: boolean }> => {
+  const registerLoginDevice = async (req: express.Request, userId: number, device: unknown): Promise<{ deviceKey: string; deviceName: string; blocked: boolean }> => {
     const context = requestDeviceContext(req, userId, device);
     let blocked = false;
     try {
@@ -204,7 +224,7 @@ async function startServer() {
     }
     if (blocked) {
       await safeLogDeviceEvent(userId, { deviceKey: context.deviceKey, deviceName: context.deviceName, action: "login_blocked", actorRole: "system", detail: "Sign-in refused: this device is blocked for the account.", ipAddress: context.ipAddress, userAgent: context.userAgent });
-      return { deviceKey: context.deviceKey, blocked: true };
+      return { deviceKey: context.deviceKey, deviceName: context.deviceName, blocked: true };
     }
     const record = await recordDeviceLogin(userId, context);
     await safeLogDeviceEvent(userId, { deviceKey: context.deviceKey, deviceName: context.deviceName, action: record.isNew ? "device_first_seen" : "login", actorRole: "customer", actorId: userId, detail: record.isNew ? "New device signed in." : "Signed in from a recognised device.", ipAddress: context.ipAddress, userAgent: context.userAgent });
@@ -212,7 +232,7 @@ async function startServer() {
       void createNotification(userId, "New device signed in", `A new device signed in to your account: ${context.deviceName}. If this was not you, open Account Settings → Trusted Devices to block it and change your password.`, { eventKey: `device-new:${record.id}`, category: "security", priority: "high", href: "/customer" })
         .catch((error) => console.error("[TrustedDevices] New-device notice failed:", error instanceof Error ? error.name : "UnknownError"));
     }
-    return { deviceKey: context.deviceKey, blocked: false };
+    return { deviceKey: context.deviceKey, deviceName: context.deviceName, blocked: false };
   };
   app.post("/api/customer/register", registrationRateLimit, async (req, res) => {
     try {
@@ -222,6 +242,7 @@ async function startServer() {
       const device = await registerLoginDevice(req, user.id, req.body?.device);
       setLocalSession(req, res, user, device.deviceKey);
       recordAuthAnalytics(req, res, "signup", user.id, "customer");
+      recordSignInActivityEvent(req, user, "signup", "customer", device.deviceName);
       void requestEmailVerification(user.id).catch(error => console.error("[Email] Registration verification enqueue failed:", error instanceof Error ? error.name : "UnknownError"));
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
@@ -246,6 +267,7 @@ async function startServer() {
       if (device.blocked) return res.status(403).json({ error: "This device has been blocked for this account. If you believe this is a mistake, contact support or ask an administrator to restore access." });
       setLocalSession(req, res, user, device.deviceKey);
       recordAuthAnalytics(req, res, "login", user.id, "customer");
+      recordSignInActivityEvent(req, user, "login", "customer", device.deviceName);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
@@ -265,6 +287,7 @@ async function startServer() {
       if (device.blocked) return res.status(403).json({ error: "This device has been blocked for this account. If you believe this is a mistake, contact support or ask an administrator to restore access." });
       setLocalSession(req, res, user, device.deviceKey);
       recordAuthAnalytics(req, res, "login", user.id, "admin");
+      recordSignInActivityEvent(req, user, "login", "admin", device.deviceName);
       await openTransactionConsoleSession(req, res, user.id);
       const { passwordHash: _passwordHash, ...safeUser } = user;
       return res.json({ user: { ...safeUser, packageName: await resolveCustomerPackageName(user.id) } });
@@ -488,6 +511,22 @@ async function startServer() {
     // so the PIN requirement on every withdrawal and the admin PIN viewer work on
     // hosts that run only the guarded main migrations.
     await ensureWithdrawalPinSchema();
+    // Guarantee the additive sign-in activity table exists before serving, so the
+    // administrator "Sign in Activity" console works on hosts that run only the
+    // guarded main migrations.
+    await ensureSignInActivitySchema();
+    // Clear any sign-in activity older than the seven-day retention window and
+    // then keep clearing it automatically so the system never accumulates stale
+    // sign-in logs or residue.
+    void purgeSignInActivity()
+      .then(result => { if (result.deleted) console.log("[SignInActivity] cleared expired sign-in records on startup", { deleted: result.deleted, retentionDays: result.retentionDays }); })
+      .catch(error => console.error("[SignInActivity] startup purge failed", error instanceof Error ? error.message : "UnknownError"));
+    const signInActivityRetentionTimer = registerWorkerInterval(() => {
+      void purgeSignInActivity()
+        .then(result => { if (result.deleted) console.log("[SignInActivity] auto-cleared expired sign-in records", { deleted: result.deleted, retentionDays: result.retentionDays }); })
+        .catch(error => console.error("[SignInActivity] retention sweep failed", error instanceof Error ? error.message : "UnknownError"));
+    }, 60 * 60_000);
+    signInActivityRetentionTimer.unref();
     // Publish the six demonstration loan auctions and lender reserves on boot so
     // the customer lending desk always has a working board after a rebuild. The
     // seed only touches rows whose id starts with `example-`, so real loans are

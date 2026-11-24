@@ -154,6 +154,10 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "alert-governance", target: "riskWatchlist", label: "Alert Governance", detail: "Review and govern risk signals", icon: Bell },
     { id: "session-device-oversight", target: "riskWatchlist", label: "Session & Device Oversight", detail: "Review and revoke customer sessions", icon: ShieldAlert },
     { id: "device-oversight", target: "deviceOversight", label: "Device Oversight", detail: "All registered devices and the devices each customer has blocked", icon: ShieldAlert },
+    { id: "sign-in-activity", target: "signInActivity", label: "Sign in Activity", detail: "Every customer and administrator sign-in for the last seven days, cleared automatically as it ages out", icon: History, children: [
+      { label: "Recent Sign-ins", detail: "Who signed in, from where and on which device, newest first" },
+      { label: "Seven-day Window", detail: "Only the last seven days are kept — older records are cleared automatically" },
+    ]},
     { id: "kyc-audit-trail", target: "kycCenter", label: "KYC Audit Trail", detail: "Signed KYC chain and minimized events", icon: FileText },
   ]},
   { id: "communications", label: "Communications", detail: "Email operations and support work", items: [

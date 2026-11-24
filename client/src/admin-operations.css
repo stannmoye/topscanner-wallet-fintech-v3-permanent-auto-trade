@@ -1072,3 +1072,27 @@
 .admin-withdrawal-pin-flash svg{flex:0 0 auto;margin-top:1px}
 @media(max-width:760px){.admin-withdrawal-pin-metrics{grid-template-columns:1fr}}
 @media(max-width:480px){.admin-withdrawal-pin-row-actions{flex-direction:column}.admin-withdrawal-pin-row-actions .secondary-button{width:100%;justify-content:center}}
+
+/* Sign in Activity (admin portal). */
+.admin-sign-in-activity .api-access-section-heading{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:14px}
+.admin-sign-in-activity .api-access-section-heading h2{margin:0}
+.admin-sign-in-activity .api-access-section-heading .form-two{display:flex;flex-wrap:wrap;align-items:center;gap:10px;flex:1 1 320px;min-width:0;margin:0 0 0 auto}
+.admin-sign-in-activity .api-access-section-heading .form-two label{flex:1 1 240px;min-width:0;margin:0}
+.admin-sign-in-activity .api-access-section-heading input[type="search"]{width:100%;min-width:0;box-sizing:border-box}
+.admin-sign-in-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-bottom:14px}
+.admin-sign-in-metric{display:flex;align-items:flex-start;gap:11px;padding:14px 15px;border:1px solid var(--ux-line,rgba(156,188,215,.16));border-radius:15px;background:linear-gradient(145deg,rgba(20,38,49,.92),rgba(11,23,34,.96));box-shadow:inset 0 1px rgba(255,255,255,.035)}
+.admin-sign-in-metric-icon{display:grid;place-items:center;flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:rgba(124,231,194,.12);color:#70dcb8}
+.admin-sign-in-metric div{display:grid;gap:2px;min-width:0}
+.admin-sign-in-metric span{color:#91a9b3;font-size:10px;font-weight:700;letter-spacing:.02em}
+.admin-sign-in-metric strong{color:#f1f7f6;font-size:23px;font-weight:750;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
+.admin-sign-in-metric small{color:#718d99;font-size:9px;line-height:1.4}
+.admin-sign-in-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid rgba(124,231,194,.24);border-radius:999px;color:#8fe9ca;background:rgba(124,231,194,.1);font-size:10px;font-weight:700;white-space:nowrap}
+.admin-sign-in-badge.is-signup{border-color:rgba(147,197,253,.28);color:#a9cdfb;background:rgba(96,165,250,.12)}
+.admin-sign-in-activity .admin-ops-table td code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#cfe4ee}
+.admin-sign-in-activity .admin-ops-table td small{display:block;margin-top:2px;color:#7d95a0;font-size:9px}
+@media(max-width:900px){.admin-sign-in-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:680px){
+  .admin-sign-in-activity .api-access-section-heading{align-items:stretch;flex-direction:column}
+  .admin-sign-in-activity .api-access-section-heading .form-two{margin-left:0}
+}
+@media(max-width:480px){.admin-sign-in-metrics{grid-template-columns:1fr}}
