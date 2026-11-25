@@ -20,6 +20,8 @@ export default defineConfig({
       "client/src/contexts/theme-policy.test.ts",
       "client/src/notification-sound-*.test.ts",
       "client/src/lib/**/*.test.ts",
+      "client/src/i18n/**/*.test.ts",
+      "client/src/language-time-preference.contract.test.ts",
       "client/src/admin-navigation.test.ts",
       "client/src/admin-navigation-drawer.contract.test.ts",
       "client/src/customer-navigation-consolidation.contract.test.ts",

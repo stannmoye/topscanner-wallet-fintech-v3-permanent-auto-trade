@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 const App = lazy(() => import("./App"));
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { LanguageProvider } from "./i18n/LanguageProvider";
 import PortalRenderBoundary from "./components/PortalRenderBoundary";
 import "./index.css";
 import "./design-system.css";
@@ -111,11 +112,13 @@ const renderApp = () => createRoot(rootElement).render(
   <trpc.Provider client={trpcClient} queryClient={queryClient}>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="original" switchable>
-        <PortalRenderBoundary portal="application">
-          <Suspense fallback={<div role="status" aria-live="polite">Loading Arbitrade workspace…</div>}>
-            <App />
-          </Suspense>
-        </PortalRenderBoundary>
+        <LanguageProvider>
+          <PortalRenderBoundary portal="application">
+            <Suspense fallback={<div role="status" aria-live="polite">Loading Arbitrade workspace…</div>}>
+              <App />
+            </Suspense>
+          </PortalRenderBoundary>
+        </LanguageProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </trpc.Provider>

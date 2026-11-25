@@ -1,3 +1,50 @@
+## 2026-11-25 (feat) — Customer "Language & time": auto-translated interface + country time zone
+
+Owner request: build the customer "Language & time" menu so a customer can (a) set their time
+zone from a dropdown of every country's time zone showing the country flag, the UTC offset and
+the country/time-zone name, and (b) pick one of ~12 popular languages that auto-translates the
+entire website using a totally free API. The language must persist even after sign-out —
+including on the sign-in and sign-up pages — until changed, with a reset button back to the
+default (English). No auto-showing widget. Arabic (right-to-left script) excluded.
+
+- **Languages (12, English default, LTR only) — `client/src/i18n/languages.ts`.** English,
+  Spanish, French, German, Portuguese, Italian, Chinese (Simplified), Japanese, Korean, Hindi,
+  Russian, Turkish. Arabic/Hebrew/Persian deliberately excluded because the layout is not
+  mirrored. Includes storage helpers (`readStoredLanguage` / `writeStoredLanguage`).
+- **Free auto-translation, no API key, no widget.** `client/src/i18n/text-translation.ts`
+  (`createFreeTranslator()`) tries the Google Translate public endpoint (`client=gtx`) first and
+  falls back to MyMemory; on any failure it returns the original English so the UI never breaks.
+  In-memory cache + in-flight de-dupe. `client/src/i18n/dom-translator.ts` is a MutationObserver
+  engine that walks the live DOM, translates text nodes and human-readable attributes
+  (placeholder/title/aria-label/alt), re-translates as React re-renders, skips numbers/code/
+  inputs/`<option>`, and restores exact English on switch-back. `client/src/i18n/LanguageProvider.tsx`
+  mounts the translator app-wide and persists the choice in `localStorage` (`wisebond-language`),
+  so it applies to the whole site — sign-in/sign-up included — and survives sign-out. `<html lang>`
+  is kept in sync.
+- **Country time-zone picker — `client/src/lib/timezones.ts`** (generated from the IANA `zone.tab`
+  database): 418 zones covering every country, with live UTC-offset labels and a 24-hour clock
+  (`timezoneOffsetLabel`, `formatTimezoneClock`, `timezoneCityLabel`, `detectLocalTimezone`).
+  `client/src/lib/locale-preferences.ts` persists the choice in `localStorage` (`wisebond-timezone`).
+- **Panel + wiring.** `client/src/components/CustomerLanguageTimezonePanel.tsx` renders the language
+  select, the country/zone select (grouped by country with flag + offset + zone name), a live preview
+  clock, and reset buttons ("Reset to English", "Reset to device time zone"). `client/src/App.tsx`
+  gained an `isLanguageRegion` branch for the `language-region` menu item; `client/src/main.tsx`
+  wraps `<App/>` in `<LanguageProvider>`. CSS added in `client/src/customer-reference.css`
+  (`.language-time-*`).
+- **Tests.** `client/src/i18n/languages.test.ts`, `client/src/i18n/text-translation.test.ts`,
+  `client/src/lib/timezones.test.ts`, `client/src/language-time-preference.contract.test.ts`
+  (31 new tests). `vitest.config.ts` now includes `client/src/i18n/**` and the contract test.
+- **Verification.** `tsc --noEmit` clean, `vitest run` 1790 passed / 42 skipped, `vite build` exit 0.
+
+**Next stage to continue (not yet done):**
+1. Apply the selected time zone to the timestamps shown across the app — today most rendering uses
+   `toLocaleString(undefined, …)` (the browser zone). Introduce a shared formatter that reads
+   `readStoredTimezone()` and route all customer date/time output through it.
+2. Optionally persist language + time zone on the user record server-side (a new tRPC preference,
+   mirroring `customer.personalDetails`) so the choice follows the account across devices. It is
+   currently device-local (`localStorage`), which is exactly what lets it survive sign-out with no session.
+3. Optionally surface the same language picker in the admin console.
+
 ## 2026-11-25 (fix) — Sign in Activity: show the customer's own log instead of the generic placeholder
 
 Owner report: logging in and opening the customer "Sign-in activity" page showed only the
