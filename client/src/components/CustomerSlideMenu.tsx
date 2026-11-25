@@ -104,7 +104,7 @@ const primaryLabels: Record<string, string> = {
   withdraw: "Withdraw funds",
   activity: "Activity", support: "Support", account: "Account Settings", security: "Security",
   kyc: "Identity verification", notifications: "Notifications", console: "Customer console",
-  "signin-authentication": "Sign-in & authentication", "devices-sessions": "Devices & sessions",
+  "signin-authentication": "Authentication", "devices-sessions": "Devices & sessions",
   "crypto-mining": "Crypto Mining", "token-launch": "Token Launch", "treasury-bond": "Treasury Bond", "cooperate-dept": "Cooperate Dept",
   "litigation-funds": "Litigation Funds", "ip-royalties": "IP Royalties", "music-royalties": "Music Royalties", "agro-investment": "Agro Investment",
   "carbon-credit": "Carbon Credit", "green-energy": "Green Energy", "lending": "Lending",

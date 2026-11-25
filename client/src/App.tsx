@@ -525,7 +525,7 @@ const customerPreferenceGroups: CustomerPreferenceGroup[] = [
     { id: "statements", label: "Statements", icon: FileText, description: "Access account statements, activity records, and downloadable reports." },
   ] },
   { id: "security-access", label: "Security & Access", detail: "Protect every sign-in", items: [
-    { id: "signin-authentication", label: "Sign-in & authentication", icon: ShieldCheck, description: "Update your password and manage two-factor authentication for stronger sign-in security." },
+    { id: "signin-authentication", label: "Authentication", icon: ShieldCheck, description: "Update your password and manage two-factor authentication for stronger sign-in security." },
     { id: "devices-sessions", label: "Devices & sessions", icon: Smartphone, description: "Review every device and active session signed in to your account, rename the ones you know, and block any you do not recognise." },
     { id: "login-activity", label: "Sign-in activity", icon: Activity, description: "Review recent sign-in events, time and location context, and account access activity." },
     { id: "withdrawal-security", label: "Withdrawal PIN", icon: Lock, description: "Set or reset the 6-digit PIN required for every withdrawal from any wallet, and reveal it whenever you need to." },
