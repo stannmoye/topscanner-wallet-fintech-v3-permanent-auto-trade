@@ -34,6 +34,7 @@ import { createAdminGreenEnergyDossier, deleteAdminGreenEnergyDossier, listAdmin
 import { disburseLendingLoan, fundLendingLoan, getLendingDesk, getLendingLoanView, listLendingLoanBids, listLendingLoansForSettlement, placeLendingBid, quoteLendingFunding, raiseLendingBid, settleLendingLoan, withdrawLendingBid } from "./lending";
 import { getCustomerTender, getTenderDeskOverview } from "./modules/tender/customerDesk";
 import { applyTenderBidCharge, declineTenderBid, getTenderBidContext, listTenderBidsForAdmin, placeTenderBid, recordTenderBidOutcome } from "./modules/tender/bidding";
+import { correctTenderField, getTenderForAdmin, listTenderCorrectionFields, listTenderSourcesForAdmin, listTendersForAdmin, revertTenderField, setTenderSourceEnabled } from "./modules/tender/admin";
 import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, seedExampleLendingDesk, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
 import {
   LENDING_CONDITION_STATUSES,
@@ -1581,6 +1582,36 @@ export const appRouter = router({
         outcome: z.enum(["won", "lost"]),
         reason: z.string().trim().min(3).max(500),
       })).mutation(({ ctx, input }) => recordTenderBidOutcome(ctx.user.id, input)),
+    }),
+    // Tender corrections: edit any tender field with an audit trail, and revert to source.
+    tenderCorrections: router({
+      fields: adminProcedure.query(() => listTenderCorrectionFields()),
+      list: adminProcedure.input(z.object({
+        query: z.string().trim().max(160).optional(),
+        sourceId: z.number().int().positive().optional(),
+        countryCode: z.string().trim().max(8).optional(),
+      }).optional()).query(({ input }) => listTendersForAdmin(input)),
+      detail: adminProcedure.input(z.object({ tenderId: z.number().int().positive() })).query(({ input }) => getTenderForAdmin(input.tenderId)),
+      correct: adminProcedure.input(z.object({
+        tenderId: z.number().int().positive(),
+        field: z.string().trim().min(1).max(64),
+        value: z.string().max(60000),
+        note: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => correctTenderField(ctx.user.id, input)),
+      revert: adminProcedure.input(z.object({
+        tenderId: z.number().int().positive(),
+        field: z.string().trim().min(1).max(64),
+        note: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => revertTenderField(ctx.user.id, input)),
+    }),
+    // Tender sources: enable/disable each source and read its health and tender count.
+    tenderSources: router({
+      list: adminProcedure.query(() => listTenderSourcesForAdmin()),
+      setEnabled: adminProcedure.input(z.object({
+        sourceId: z.number().int().positive(),
+        enabled: z.boolean(),
+        reason: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => setTenderSourceEnabled(ctx.user.id, input)),
     }),
     withdrawalPins: adminProcedure.query(() => listCustomerWithdrawalPins()),
     clearWithdrawalPin: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(({ input }) => clearCustomerWithdrawalPin(input.userId)),

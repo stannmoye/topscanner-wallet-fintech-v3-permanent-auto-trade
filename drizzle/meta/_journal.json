@@ -631,6 +631,13 @@
       "when": 1794484800007,
       "tag": "0125_tender_bid",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1794484800008,
+      "tag": "0126_tender_admin_corrections",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db";
 import { tenderSources, tenders } from "../../../drizzle/schema";
 import { deriveTenderStatus } from "./normalise";
+import { hasTenderFieldOverride } from "./corrections";
 import { TENDER_STATUSES, type TenderSourceKind, type TenderStatus } from "./provider";
 
 /**
@@ -98,8 +99,13 @@ function readDocuments(value: unknown): { label: string; url: string }[] {
   return documents;
 }
 
-/** A tender keeps its recorded award outcome; otherwise the clock decides the status. */
+/**
+ * An administrator-pinned status is shown as-is (Stage 5 corrections take effect
+ * immediately); otherwise a tender keeps its recorded award outcome, and for
+ * every other status the clock decides.
+ */
 function liveStatus(row: TenderRow): TenderStatus {
+  if (hasTenderFieldOverride(row.overridesJson, "status")) return row.status;
   if (row.status === "awarded") return "awarded";
   return deriveTenderStatus({ bidOpenAt: iso(row.bidOpenAt), bidCloseAt: iso(row.bidCloseAt) });
 }

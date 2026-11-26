@@ -1,0 +1,253 @@
+/* Tender Bid — administrator console (Stage 5).
+   The bid queue, the corrections desk and the sources health console share one
+   identity built on the platform semantic tokens (--arb-color-*) so they blend
+   with whichever admin theme is active. Every surface, border and text tone
+   derives from those tokens; status chips reuse the accent/info/warning/danger
+   tokens. Nothing here computes a figure — the pages render only server data. */
+
+.admin-tender-page {
+  --tb-admin-surface: var(--arb-color-surface);
+  --tb-admin-surface-2: var(--arb-color-surface-raised);
+  --tb-admin-line: color-mix(in srgb, var(--arb-color-border) 82%, transparent);
+  --tb-admin-line-soft: color-mix(in srgb, var(--arb-color-border) 48%, transparent);
+  --tb-admin-accent-line: color-mix(in srgb, var(--arb-color-accent) 42%, var(--arb-color-border));
+  --tb-admin-info-line: color-mix(in srgb, var(--arb-color-info) 42%, var(--arb-color-border));
+  --tb-admin-warning-line: color-mix(in srgb, var(--arb-color-warning) 42%, var(--arb-color-border));
+  --tb-admin-danger-line: color-mix(in srgb, var(--arb-color-danger) 42%, var(--arb-color-border));
+  --tb-admin-white: var(--arb-color-text);
+  --tb-admin-muted: var(--arb-color-text-muted);
+  --tb-admin-tint-weak: color-mix(in srgb, var(--arb-color-text) 5%, transparent);
+  --tb-admin-well: color-mix(in srgb, var(--arb-color-canvas) 58%, transparent);
+  --tb-admin-radius: 14px;
+  display: grid;
+  gap: 18px;
+}
+
+/* ------------------------------- Chips ------------------------------- */
+.tb-admin-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid var(--tb-admin-line);
+  background: var(--tb-admin-tint-weak);
+  color: var(--tb-admin-muted);
+}
+.tb-admin-chip-placed,
+.tb-admin-sync-partial {
+  color: var(--arb-color-info);
+  border-color: var(--tb-admin-info-line);
+}
+.tb-admin-chip-charge_pending,
+.tb-admin-sync-no_adapter {
+  color: var(--arb-color-warning);
+  border-color: var(--tb-admin-warning-line);
+}
+.tb-admin-chip-charged,
+.tb-admin-chip-won,
+.tb-admin-sync-ok {
+  color: var(--arb-color-accent);
+  border-color: var(--tb-admin-accent-line);
+}
+.tb-admin-chip-lost,
+.tb-admin-sync-never {
+  color: var(--tb-admin-muted);
+  border-color: var(--tb-admin-line);
+}
+.tb-admin-chip-cancelled,
+.tb-admin-sync-error {
+  color: var(--arb-color-danger);
+  border-color: var(--tb-admin-danger-line);
+}
+
+/* ----------------------------- Bid queue ----------------------------- */
+.tb-admin-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+}
+.tb-admin-actions label {
+  display: block;
+}
+.tb-admin-actions input {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--tb-admin-white);
+  background: var(--tb-admin-surface-2);
+  border: 1px solid var(--tb-admin-line);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.tb-admin-actions input:focus {
+  outline: 2px solid color-mix(in srgb, var(--arb-color-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+.tb-admin-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tb-admin-action-buttons button {
+  padding: 7px 11px;
+  font-size: 0.76rem;
+}
+
+/* --------------------------- Corrections ---------------------------- */
+.tb-admin-override-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--arb-color-info);
+  border: 1px solid var(--tb-admin-info-line);
+  background: color-mix(in srgb, var(--arb-color-info) 12%, transparent);
+}
+.tb-admin-detail {
+  display: grid;
+  gap: 14px;
+}
+.tb-admin-meta {
+  font-size: 0.78rem;
+  color: var(--tb-admin-muted);
+}
+.tb-admin-note {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--arb-color-warning);
+}
+.tb-admin-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+.tb-admin-note-field {
+  display: grid;
+  gap: 5px;
+}
+.tb-admin-note-field > span {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--tb-admin-muted);
+}
+.tb-admin-note-field textarea {
+  font: inherit;
+  font-size: 0.84rem;
+  color: var(--tb-admin-white);
+  background: var(--tb-admin-surface-2);
+  border: 1px solid var(--tb-admin-line);
+  border-radius: 10px;
+  padding: 9px 11px;
+}
+.tb-admin-note-field textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--arb-color-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+.tb-admin-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+.tb-admin-field {
+  display: grid;
+  gap: 7px;
+  padding: 12px 13px;
+  border-radius: var(--tb-admin-radius);
+  border: 1px solid var(--tb-admin-line);
+  background: var(--tb-admin-well);
+  min-width: 0;
+}
+.tb-admin-field-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tb-admin-field-head > span:first-child {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 700;
+  color: var(--tb-admin-muted);
+}
+.tb-admin-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.tb-admin-field-row > input,
+.tb-admin-field-row > select,
+.tb-admin-field-row > textarea {
+  flex: 1 1 150px;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.84rem;
+  color: var(--tb-admin-white);
+  background: var(--tb-admin-surface-2);
+  border: 1px solid var(--tb-admin-line);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.tb-admin-field-row > textarea {
+  flex-basis: 100%;
+  resize: vertical;
+}
+.tb-admin-field-row > input:focus,
+.tb-admin-field-row > select:focus,
+.tb-admin-field-row > textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--arb-color-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+.tb-admin-field-row button {
+  padding: 7px 12px;
+  font-size: 0.76rem;
+  flex: none;
+}
+.tb-admin-field > small {
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--tb-admin-muted);
+}
+.tb-admin-history {
+  display: grid;
+  gap: 10px;
+}
+.tb-admin-history code {
+  font-size: 0.74rem;
+  color: var(--tb-admin-white);
+  overflow-wrap: anywhere;
+}
+
+/* ----------------------------- Errors ------------------------------- */
+.tb-admin-error {
+  display: inline-block;
+  max-width: 260px;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--arb-color-danger);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .tb-admin-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tb-admin-actions {
+    min-width: 0;
+  }
+}

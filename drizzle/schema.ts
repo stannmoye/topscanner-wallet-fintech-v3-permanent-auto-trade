@@ -1732,6 +1732,14 @@ export const tenders = mysqlTable("tenders", {
   documentsJson: json("documentsJson"),
   sourceUrl: varchar("sourceUrl", { length: 768 }).notNull(),
   status: mysqlEnum("status", ["upcoming", "open", "closing", "closed", "awarded"]).default("upcoming").notNull(),
+  /**
+   * Administrator corrections (Stage 5). Maps each overridden field to the
+   * source-derived value captured when it was first overridden. Ingestion reads
+   * the keys and leaves those fields untouched, so an override survives
+   * re-ingestion; the captured value lets an administrator revert a field to
+   * its source value.
+   */
+  overridesJson: json("overridesJson"),
   lastSyncedAt: timestamp("lastSyncedAt"),
   rawJson: longtext("rawJson"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

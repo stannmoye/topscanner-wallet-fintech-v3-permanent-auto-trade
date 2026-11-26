@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { getDb, getFreshTradingFxRate } from "../../db";
 import { currencyRegistry, fxRateSnapshots, tenderSources, tenders } from "../../../drizzle/schema";
 import { nativeMinorToUsdMinorExact } from "../../../shared/money";
@@ -6,6 +6,7 @@ import { sanitizeWorkerErrorMessage } from "../../_core/workerHealth";
 import { computeTenderDedupeGroup } from "./dedupe";
 import { deriveTenderStatus } from "./normalise";
 import { resolveTenderAdapter, type TenderAdapter } from "./registry";
+import { TENDER_SOURCE_DERIVED_FIELDS, readTenderOverrides } from "./corrections";
 import type { NormalizedTender } from "./provider";
 import type { FxRateSnapshot } from "../trading-wallet-fx";
 
@@ -24,6 +25,9 @@ import type { FxRateSnapshot } from "../trading-wallet-fx";
  *   native amount is kept and the USD value stays null (fail closed, never guessed);
  * - administrator-owned fields (the qualification percentage/amount and its override
  *   flag) are never written by ingestion, so a correction survives the next sync;
+ * - a field an administrator has overridden through the corrections menu is omitted
+ *   from the update set, so the correction also survives the next sync (the override
+ *   map records which fields to leave alone);
  * - each page is bounded, and a source that does not drain within the page cap resumes
  *   from the high-water mark of the items it did ingest.
  *
@@ -214,11 +218,25 @@ async function upsertTender(
     rawJson: safeStringify(tender.raw),
   };
 
+  // Preserve administrator corrections: read the stored override map for this
+  // (sourceId, externalId) row and drop every overridden source-derived field from
+  // the update set, so a correction made in the corrections menu is not clobbered
+  // by the next sync. A fresh row has no overrides, so a first insert is unaffected.
+  const existing = (await db.select({ overridesJson: tenders.overridesJson })
+    .from(tenders)
+    .where(and(eq(tenders.sourceId, source.id), eq(tenders.externalId, tender.externalId)))
+    .limit(1))[0];
+  const overrides = readTenderOverrides(existing?.overridesJson);
+  const update: Record<string, unknown> = { ...shared, updatedAt: now };
+  for (const field of Object.keys(overrides)) {
+    if (TENDER_SOURCE_DERIVED_FIELDS.has(field) && field in update) delete update[field];
+  }
+
   await db.insert(tenders).values({
     sourceId: source.id,
     externalId: tender.externalId,
     ...shared,
-  }).onDuplicateKeyUpdate({ set: { ...shared, updatedAt: now } });
+  }).onDuplicateKeyUpdate({ set: update });
   return true;
 }
 

@@ -253,11 +253,12 @@ describe("worker schema contracts", () => {
     expect(workerBridgeIndex).toBeGreaterThanOrEqual(0);
     expect(boostRewardsIndex).toBeGreaterThan(workerBridgeIndex);
     expect(boostRewards.when).toBeGreaterThan(journal.entries[workerBridgeIndex].when);
-    expect(last.tag).toBe("0125_tender_bid");
-    expect(journal.entries.at(-2).tag).toBe("0121_device_details");
-    expect(journal.entries.at(-3).tag).toBe("0120_trusted_devices");
-    expect(journal.entries.at(-4).tag).toBe("0119_customer_personal_details");
-    expect(journal.entries.at(-5).tag).toBe("0116_immediate_trade_settlement");
+    expect(last.tag).toBe("0126_tender_admin_corrections");
+    expect(journal.entries.at(-2).tag).toBe("0125_tender_bid");
+    expect(journal.entries.at(-3).tag).toBe("0121_device_details");
+    expect(journal.entries.at(-4).tag).toBe("0120_trusted_devices");
+    expect(journal.entries.at(-5).tag).toBe("0119_customer_personal_details");
+    expect(journal.entries.at(-6).tag).toBe("0116_immediate_trade_settlement");
     const firstTradingMigration = journal.entries.findIndex((entry) => entry.tag === "0072_wallet_ledger_reconciliation_indexes");
     const masterIndex = journal.entries.findIndex((entry) => entry.tag === "0100_global_trade_master_controls");
     const feeIndex = journal.entries.findIndex((entry) => entry.tag === "0101_package_fee_policy_versions");

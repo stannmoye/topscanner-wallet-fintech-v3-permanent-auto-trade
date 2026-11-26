@@ -146,6 +146,21 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "trade-audit-policy-history", target: "audit", label: "Audit & Policy History", detail: "Review who changed Trading settings, why they changed and the saved versions", icon: FileText },
     { id: "trade-admin-guide", target: "tradeAdminGuide", label: "Trade Settings Guide", detail: "Read the menu guide and explanations for each Trading control", icon: BookOpen },
   ]},
+  { id: "tender-bid", label: "Tender Bid", detail: "Public-tender bidding desk, corrections and ingestion health", items: [
+    { id: "tender-bids", target: "tenderBids", label: "Tender Bids", detail: "Every customer bid on a real ingested tender with the balance they held at bid time; apply the charge, decline or record the outcome", icon: Gavel, children: [
+      { label: "Bid Queue", detail: "Apply the classified charge, decline the bid or record won/lost" },
+      { label: "Audited Actions", detail: "Each administrator action is recorded with its reason" },
+    ]},
+    { id: "tender-corrections", target: "tenderCorrections", label: "Tender Corrections", detail: "Edit any tender field with an audit trail; overrides survive re-ingestion and revert to the source value", icon: FileText, children: [
+      { label: "Find a Tender", detail: "Search by title, buyer or external id and narrow by source and country" },
+      { label: "Edit Fields", detail: "Change any field; each change is audited old → new with a note" },
+      { label: "Correcting History", detail: "Review the append-only correction history and revert to source" },
+    ]},
+    { id: "tender-sources", target: "tenderSources", label: "Tender Sources", detail: "Enable or disable each source and read its sync health and per-source tender count", icon: Activity, children: [
+      { label: "Sources", detail: "Each configured country and supranational source with its health" },
+      { label: "Enable / Disable", detail: "Stop or resume future polling; stored tenders remain visible" },
+    ]},
+  ]},
   { id: "verification-risk", label: "Verification & Risk", detail: "KYC, review, risk and session oversight", items: [
     { id: "kyc-overview", target: "kycCenter", label: "KYC Overview", detail: "Stages, metrics, settings and review posture", icon: ShieldCheck },
     { id: "verification-queue", target: "verificationOversight", label: "Verification Queue", detail: "Human decisions and verification status", icon: FileCheck2 },

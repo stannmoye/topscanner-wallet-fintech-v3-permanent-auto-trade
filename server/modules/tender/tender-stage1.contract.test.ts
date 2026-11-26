@@ -107,7 +107,10 @@ describe("Tender Bid Stage 1 — migration and journal", () => {
     expect(entry!.when).toBeGreaterThan(entries[entries.indexOf(entry!) - 1].when);
     const previousLast = entries.filter((item) => item.when < entry!.when).at(-1);
     expect(previousLast?.tag).toBe("0121_device_details");
-    expect(entry).toBe(entries.at(-1));
+    // Later tender stages may append newer migrations, so assert the tender
+    // migration was appended immediately after the then-last entry rather than
+    // pinning it as the global last.
+    expect(entries.indexOf(entry!)).toBe(entries.indexOf(previousLast!) + 1);
   });
 });
 

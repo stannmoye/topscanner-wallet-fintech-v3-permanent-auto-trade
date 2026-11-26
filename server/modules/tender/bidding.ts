@@ -3,6 +3,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { adjustCustomerBalance, createNotification, createTicket, getDb, getFreshTradingFxRate } from "../../db";
 import { customerBalances, currencyRegistry, tenderBidEvents, tenderBids, tenders, users } from "../../../drizzle/schema";
 import { deriveTenderStatus } from "./normalise";
+import { hasTenderFieldOverride } from "./corrections";
 import { calculateCombinedBalanceSnapshot, type FxRateSnapshot } from "../trading-wallet-fx";
 import type { TenderBidStatus } from "./provider";
 
@@ -77,8 +78,12 @@ function fmtUsd(minor: number): string {
   return `$${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** A recorded award outcome survives; every other status is derived from the bidding window. */
+/**
+ * An administrator-pinned status wins; otherwise a recorded award survives and
+ * every other status is derived from the bidding window.
+ */
 function liveTenderStatus(row: TenderRow): string {
+  if (hasTenderFieldOverride(row.overridesJson, "status")) return row.status;
   if (row.status === "awarded") return "awarded";
   return deriveTenderStatus({ bidOpenAt: iso(row.bidOpenAt), bidCloseAt: iso(row.bidCloseAt) });
 }

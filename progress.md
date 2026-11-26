@@ -1,3 +1,66 @@
+## 2026-11-27 (feature / Stage 5) — Tender Bid admin corrections, bid queue and source health
+
+Owner request: "Proceed" (continue the staged Tender Bid delivery). Delivered the Stage 5 admin
+increment per `docs/TENDER_BID_SPECIFICATION.md` (§10 admin experience — the Tender Bids queue, the
+Tender corrections menu, Sources health; §11 Stage 5; §5 domain model incl. `tender_field_history`;
+§12 guardrails). Stage 5 "done when" is met: an administrator can edit any tender field with a
+`tender_field_history` audit row (old → new, administrator, note) that reflects immediately on the
+customer side; an override survives re-ingestion and can be reverted to the source value; the Tender
+Bids queue applies charges / declines / records outcomes; and each source shows enable/disable,
+`lastSyncAt` / `lastStatus` / `lastError` and its tender count.
+
+- **Corrections catalogue (`server/modules/tender/corrections.ts`)** — the single source of truth for
+  the 21 editable tender fields: each entry carries its column, JSON key, display label, kind
+  (`text`/`int`/`decimal`/`timestamp`/`enum`) and `sourceDerived` flag; `TENDER_SOURCE_DERIVED_FIELDS`
+  is derived from it. `parseTenderCorrection` is fail-closed (unknown field, empty value, unparseable
+  int/decimal/enum all rejected) and every field round-trips through `tenderFieldToJson` /
+  `tenderFieldFromJson` / `tenderFieldDisplay`. `readTenderOverrides` / `hasTenderFieldOverride`
+  defensively parse the `overridesJson` column.
+- **Admin service (`server/modules/tender/admin.ts`)** — `correctTenderField` writes the new column
+  value, captures the **source** value into `tenders.overridesJson` (so it can be reverted), and
+  appends a `tender_field_history` row + a `v5_audit_events` row inside one transaction;
+  `revertTenderField` restores the captured source value and drops the override key. `listTendersForAdmin`
+  / `getTenderForAdmin` back the corrections search and detail views; `listTenderCorrectionFields`
+  exposes the catalogue; `listTenderSourcesForAdmin` / `setTenderSourceEnabled` back source health.
+  `TENDER_ADMIN_MAX_ROWS = 200` and `TENDER_CORRECTION_HISTORY_MAX_ROWS = 100` bound every read; the
+  service fails closed without a database.
+- **Override-preserving ingestion (`server/modules/tender/ingest.ts`)** — reads `readTenderOverrides`
+  and omits every overridden source-derived field from the `onDuplicateKeyUpdate` set, so a re-ingest
+  never clobbers an administrator correction; the captured source value stays in `overridesJson` for a
+  later revert. The qualification fields (`qualificationAmountUsdMinor` / `qualificationPctBps`) are
+  never emitted by ingestion.
+- **Override-aware reads (`server/modules/tender/customerDesk.ts`, `bidding.ts`)** — `liveStatus` /
+  `liveTenderStatus` pin an administrator-set `status` (an admin override reflected on the customer
+  side immediately) while still deriving open/closing/expired from the window and preserving a recorded
+  `awarded` outcome.
+- **Admin UI (`client/src/components/AdminTenderBid.tsx`, `admin-tender.css`)** — `AdminTenderBids`
+  (queue: filter, per-bid apply charge / decline / record outcome), `AdminTenderCorrections` (search +
+  per-field drafts with Save/Revert and inline history), and `AdminTenderSources` (source table with
+  enable/disable, `lastSyncAt` / `lastStatus` / `lastError` and per-source tender count). Styles use the
+  platform semantic tokens only.
+- **Navigation & shell (`client/src/admin-navigation.ts`, `client/src/App.tsx`)** — a new `tender-bid`
+  nav group (Tender Bids / Tender Corrections / Tender Sources); three lazy imports, `ADMIN_SECTIONS`
+  membership and `Suspense` render branches.
+- **tRPC (`server/routers.ts`)** — `adminOperations.tenderCorrections`
+  (`fields` / `list` / `detail` / `correct` / `revert`) and `adminOperations.tenderSources`
+  (`list` / `setEnabled`), all `adminProcedure`, sharing the corrections catalogue.
+- **Schema (`drizzle/0126_tender_admin_corrections.sql`, `drizzle/schema.ts`, journal)** — adds
+  `tenders.overridesJson json NULL`; registered as the forward-only migration
+  `0126_tender_admin_corrections`.
+- **Tests** — new `server/modules/tender/tender-stage5.contract.test.ts` (25 tests): the catalogue
+  single-source-of-truth, fail-closed `parseTenderCorrection`, defensive override parsing,
+  column↔JSON round-trips, the audited correction + transaction history write, override capture,
+  revert-to-source, read bounds, admin-pinned status, override-preserving ingestion, the customer-desk
+  / bidding status seam, schema/migration, source health + audit, admin-gated router wiring, the console
+  UI, nav/render wiring and the admin CSS classes. The Stage 1 journal test and the four installer
+  migration-journal snapshots were reconciled so appending a forward migration stays green.
+- Verification: `pnpm run check` exit 0; targeted contract tests 4 files / 79 tests passed; full
+  `pnpm test` 226 files passed (42 skipped) / 1,902 tests passed; `pnpm exec vitest run --config
+  vitest.installer.config.ts` 34 files / 198 tests passed; `pnpm build` succeeded (`AdminTenderBid`
+  emitted as its own lazy JS+CSS chunk). No database was connected to (no `DATABASE_URL`); every
+  service fails closed without one.
+- Next: Stage 6 (the remaining tender-source adapters) per the spec.
+
 ## 2026-11-27 (feature / Stage 4) — Tender Bid bidding flow (bid panel, admin charge/decline with classified ledger entries)
 
 Owner request: "we are still working on the Tender Bid menu page, we have already completed stage 0 to
