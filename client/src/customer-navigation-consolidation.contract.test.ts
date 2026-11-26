@@ -28,7 +28,7 @@ describe("customer navigation", () => {
   it("restores the primary workspace strip with all 12 destinations", () => {
     expect(slideMenu).toContain('aria-label="Workspace and investments"');
     const primaryDestinations = [
-      "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
+      "dashboard", "crypto-mining", "tender-bid", "treasury-bond", "cooperate-dept",
       "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
       "carbon-credit", "green-energy", "lending",
     ];

@@ -504,7 +504,7 @@ function CustomerTradeProgress(){
 }
 const customerInvestmentNavigation = [
   { id:"crypto-mining", label:"Crypto Mining", kicker:"Digital infrastructure", description:"Explore structured crypto-mining opportunities with transparent capacity, operating assumptions, energy posture, and account eligibility.", icon:Coins, tone:"mint" },
-  { id:"token-launch", label:"Token Launch", kicker:"Early access desk", description:"Planned token-launch information with project context, access rules, allocation windows, vesting visibility, and risk disclosures. No live offering is active.", icon:Sparkles, tone:"violet" },
+  { id:"tender-bid", label:"Tender Bid", kicker:"Competitive allocations", description:"Planned tender-bid information with project context, access rules, bid windows, allocation visibility, and risk disclosures. No live offering is active.", icon:Sparkles, tone:"violet" },
   { id:"treasury-bond", label:"Treasury Bond", kicker:"Capital preservation", description:"Browse treasury-bond pathways designed around duration, issuer context, yield expectations, and a clearly explained maturity profile.", icon:Landmark, tone:"blue" },
   { id:"cooperate-dept", label:"Cooperate Dept", kicker:"Corporate opportunities", description:"Review corporate-department opportunities, participation requirements, governance notes, and the information needed before requesting access.", icon:Building2, tone:"amber" },
   { id:"litigation-funds", label:"Litigation Funds", kicker:"Case-linked capital", description:"Explore litigation-fund opportunities with case-stage context, outcome ranges, timeline assumptions, and risk-first disclosures.", icon:ShieldCheck, tone:"coral" },
@@ -1064,7 +1064,7 @@ const customerResourceIds = new Set(customerResourceNavigation.map(item=>item.id
 // restored from the URL so a stale or hand-edited link cannot open an empty page.
 const CUSTOMER_SECTIONS = new Set<string>([
   "dashboard","intelligence","opportunities","wallet","withdraw","console","account","security","privacy",
-  "kyc","activity","notifications","advanced","support","yield","token-launch",
+  "kyc","activity","notifications","advanced","support","yield","tender-bid",
   ...customerInvestmentNavigation.map(item=>item.id),
   ...customerPreferenceItems.map(item=>item.id),
   ...customerResourceNavigation.map(item=>item.id),

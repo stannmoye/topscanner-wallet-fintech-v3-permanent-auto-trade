@@ -57,7 +57,7 @@ const destinationGroups: CustomerDestinationGroup[] = [
 
 const destinations = destinationGroups.flatMap((group) => group.items);
 const topWorkspaceTargets = [
-  "dashboard", "crypto-mining", "token-launch", "treasury-bond", "cooperate-dept",
+  "dashboard", "crypto-mining", "tender-bid", "treasury-bond", "cooperate-dept",
   "litigation-funds", "ip-royalties", "music-royalties", "agro-investment",
   "carbon-credit", "green-energy", "lending",
 ];
@@ -66,7 +66,7 @@ const topWorkspaceTargets = [
 const topWorkspaceItems: CustomerDestination[] = [
   { label: "Home", detail: "Main customer dashboard", target: "dashboard", icon: Home },
   { label: "Crypto Mining", detail: "Mining packages and activity", target: "crypto-mining", icon: Coins },
-  { label: "Token Launch", detail: "Planned offering · review only, not live", target: "token-launch", icon: Coins, planned: true },
+  { label: "Tender Bid", detail: "Planned tender · review only, not live", target: "tender-bid", icon: Coins, planned: true },
   { label: "Treasury Bond", detail: "Treasury bond investment section", target: "treasury-bond", icon: Landmark },
   { label: "Cooperate Dept", detail: "Corporate opportunities section", target: "cooperate-dept", icon: Building2 },
   { label: "Litigation Funds", detail: "Litigation fund opportunities", target: "litigation-funds", icon: Scale },
@@ -105,7 +105,7 @@ const primaryLabels: Record<string, string> = {
   activity: "Activity", support: "Support", account: "Account Settings", security: "Security",
   kyc: "Identity verification", notifications: "Notifications", console: "Customer console",
   "signin-authentication": "Authentication", "devices-sessions": "Devices & sessions",
-  "crypto-mining": "Crypto Mining", "token-launch": "Token Launch", "treasury-bond": "Treasury Bond", "cooperate-dept": "Cooperate Dept",
+  "crypto-mining": "Crypto Mining", "tender-bid": "Tender Bid", "treasury-bond": "Treasury Bond", "cooperate-dept": "Cooperate Dept",
   "litigation-funds": "Litigation Funds", "ip-royalties": "IP Royalties", "music-royalties": "Music Royalties", "agro-investment": "Agro Investment",
   "carbon-credit": "Carbon Credit", "green-energy": "Green Energy", "lending": "Lending",
 };

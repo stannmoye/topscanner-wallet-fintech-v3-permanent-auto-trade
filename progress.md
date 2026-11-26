@@ -1,3 +1,18 @@
+## 2026-11-27 (refactor) — Workspace desk "Token Launch" renamed to "Tender Bid"
+
+Owner request: turn the menu "Token Launch" into "Tender Bid" (full rename — label, copy, and the
+internal section id/target). Renamed `token-launch` → `tender-bid` across the customer portal:
+
+- `client/src/App.tsx`: the `customerInvestmentNavigation` desk (`id:"tender-bid"`, `label:"Tender
+  Bid"`, kicker "Competitive allocations", Tender-Bid wording) and the `CUSTOMER_SECTIONS` registry.
+- `client/src/components/CustomerSlideMenu.tsx`: `topWorkspaceTargets`, the `topWorkspaceItems` desk
+  entry (label / target / detail), and the `primaryLabels` map.
+- `client/src/customer-navigation-consolidation.contract.test.ts`: the asserted 12-destination list.
+- Left unchanged: docs (`docs/arbitrade-platform-spec.md` "token-launch participation",
+  `docs/ARBITRADE_STAGE_1_AUDIT.md`) — compliance/audit text outside the code rename scope.
+- Verification: `pnpm run check` (`tsc --noEmit`) exit 0; full `vitest run` 221 files / 1,811 tests
+  passed (42 skipped); `pnpm build` succeeded.
+
 ## 2026-11-26 (fix + feat) — Daily reports persisted every day; no more zeroed daily offer record
 
 Owner request: reports must be saved every day and the customer daily offer record (Offers Used /
