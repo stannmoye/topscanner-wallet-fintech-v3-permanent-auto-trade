@@ -1,3 +1,36 @@
+## 2026-11-26 (feat) — Privacy menu: customer action prompts, ageing indicators and admin triage
+
+Owner request: improve the privacy menu on the customer and admin portals and add more features.
+
+- **Shared helpers (`shared/privacy.ts`).** Added `privacyRequestNeedsCustomerAction(status)`
+  (true only for `awaiting_customer`), `privacyRequestAgingSummary(requests, now)` (open/onTrack/
+  dueSoon/overdue across open requests) and `sortPrivacyRequests(requests, order)` with the
+  `PrivacyRequestSortOrder` type (`newest` / `oldest` / `longest_open`, which floats open requests
+  to the top, oldest first). All pure and non-mutating so both portals share one implementation.
+- **Customer Privacy Centre (`client/src/components/CustomerPrivacyCenter.tsx`).** Added an
+  "action needed" callout that appears when one or more requests are `awaiting_customer`, with a
+  button that switches the status filter to the new **Needs your input (N)** option and scrolls the
+  request list into view; a fourth overview card ("Needs your input") with the live count; and an
+  ageing pill on each open request (on_track / due_soon / overdue) so customers can see how long a
+  request has been open.
+- **Admin Privacy Management (`client/src/components/AdminPrivacyManagement.tsx`).** Added a queue
+  **Sort** control (Newest / Oldest / Longest open first) that drives the rendered order and the
+  CSV export, and an ageing triage line above the queue ("N overdue · N due soon · N on track
+  within the 30-day review target") that is colour-banded and nudges admins to sort by longest open
+  when anything is at risk.
+- **Styling (`client/src/components/privacy-center.css`).** Added token-based styles for
+  `.privacy-action-callout` (+ icon/copy), the `.privacy-request-age` band variants, and the
+  `.privacy-admin-triage` band variants; the overview grid now uses
+  `repeat(auto-fit,minmax(178px,1fr))` for the fourth card, with a small-screen stack rule.
+- **Tests (`server/privacy.test.ts`).** Added a "privacy request triage helpers" suite (5 cases):
+  needs-action classification, ageing summary (incl. closed requests ignored and the all-zero
+  case), sort orders for newest/oldest/longest_open with input-immutability, and deterministic
+  handling of missing/invalid timestamps.
+- **Verification.** `tsc --noEmit` exit 0; `vite build` exit 0; full `vitest run` 1805 passed /
+  42 skipped (220 files) with `server/privacy.test.ts` now at 15 tests. Contract suites
+  (`scripts/privacy-workflow-contract.test.mjs`, `scripts/privacy-migration-safety.test.mjs`)
+  still pass.
+
 ## 2026-11-26 (feat) — Privacy menu: exports, receipts, ageing and the admin status summary
 
 Owner request: improve the privacy menu on the customer and admin portals (see the previous

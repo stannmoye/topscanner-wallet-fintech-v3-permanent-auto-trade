@@ -7,10 +7,14 @@ import {
   privacyRequestAgeDays,
   privacyRequestAgingBand,
   privacyRequestAgingLabel,
+  privacyRequestAgingSummary,
   privacyRequestGroupCounts,
   privacyRequestIsOpen,
+  privacyRequestNeedsCustomerAction,
   privacyRequestStatusGroup,
   privacyRequestStatusMessage,
+  sortPrivacyRequests,
+  type PrivacyRequestSortOrder,
   type PrivacyRequestStatus,
 } from "../shared/privacy";
 
@@ -99,5 +103,60 @@ describe("privacy request reporting helpers", () => {
     expect(privacyRequestAgingLabel(0)).toBe("Received today");
     expect(privacyRequestAgingLabel(1)).toBe("1 day since submission");
     expect(privacyRequestAgingLabel(5)).toBe("5 days since submission");
+  });
+});
+
+describe("privacy request triage helpers", () => {
+  it("flags only awaiting_customer as needing customer action", () => {
+    expect(privacyRequestNeedsCustomerAction("awaiting_customer")).toBe(true);
+    for (const status of ["submitted", "identity_check", "in_review", "completed", "declined", "cancelled"] as PrivacyRequestStatus[]) {
+      expect(privacyRequestNeedsCustomerAction(status)).toBe(false);
+    }
+  });
+
+  it("summarises ageing bands across open requests only", () => {
+    const now = new Date("2026-03-31T12:00:00Z");
+    const summary = privacyRequestAgingSummary(
+      [
+        { status: "submitted" as PrivacyRequestStatus, createdAt: "2026-03-31T08:00:00Z" },
+        { status: "in_review" as PrivacyRequestStatus, createdAt: "2026-03-11T08:00:00Z" },
+        { status: "awaiting_customer" as PrivacyRequestStatus, createdAt: "2026-02-01T08:00:00Z" },
+        { status: "completed" as PrivacyRequestStatus, createdAt: "2026-01-01T08:00:00Z" },
+      ],
+      now,
+    );
+    expect(summary).toEqual({ open: 3, onTrack: 1, dueSoon: 1, overdue: 1 });
+  });
+
+  it("returns an all-zero summary when no requests are open", () => {
+    const summary = privacyRequestAgingSummary([
+      { status: "completed" as PrivacyRequestStatus, createdAt: "2026-01-01T08:00:00Z" },
+      { status: "cancelled" as PrivacyRequestStatus, createdAt: "2026-01-02T08:00:00Z" },
+    ]);
+    expect(summary).toEqual({ open: 0, onTrack: 0, dueSoon: 0, overdue: 0 });
+  });
+
+  it("sorts requests by age without mutating the input array", () => {
+    const rows = [
+      { id: "b" as const, status: "completed" as PrivacyRequestStatus, createdAt: "2026-03-05T08:00:00Z" },
+      { id: "a" as const, status: "submitted" as PrivacyRequestStatus, createdAt: "2026-03-01T08:00:00Z" },
+      { id: "c" as const, status: "in_review" as PrivacyRequestStatus, createdAt: "2026-03-10T08:00:00Z" },
+    ];
+    const ids = (order: PrivacyRequestSortOrder) => sortPrivacyRequests(rows, order).map((row) => row.id);
+    expect(ids("newest")).toEqual(["c", "b", "a"]);
+    expect(ids("oldest")).toEqual(["a", "b", "c"]);
+    // Open requests first (oldest-first), then closed requests (oldest-first).
+    expect(ids("longest_open")).toEqual(["a", "c", "b"]);
+    expect(rows.map((row) => row.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("keeps requests with missing or invalid timestamps stable and deterministic", () => {
+    const rows = [
+      { id: "x" as const, status: "submitted" as PrivacyRequestStatus, createdAt: null },
+      { id: "y" as const, status: "submitted" as PrivacyRequestStatus, createdAt: "not-a-date" },
+      { id: "z" as const, status: "submitted" as PrivacyRequestStatus, createdAt: "2026-03-01T08:00:00Z" },
+    ];
+    expect(sortPrivacyRequests(rows, "newest").map((row) => row.id)).toEqual(["z", "x", "y"]);
+    expect(sortPrivacyRequests(rows, "oldest").map((row) => row.id)).toEqual(["x", "y", "z"]);
   });
 });

@@ -66,7 +66,14 @@
 .privacy-inline-notice.is-error{border-color:color-mix(in srgb,#ef7777 44%,var(--privacy-border));background:color-mix(in srgb,#ef7777 7%,var(--privacy-surface))}
 .privacy-inline-notice.is-error>svg{color:#ef7777}
 .privacy-inline-notice>button{margin-left:auto;flex:0 0 auto;display:grid;place-items:center;color:var(--privacy-muted);background:transparent}
-.privacy-overview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:17px 0 22px}
+.privacy-overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:12px;margin:17px 0 22px}
+/* Customer action callout — surfaces requests blocked on the customer. */
+.privacy-action-callout{display:flex;align-items:center;gap:13px;margin:0 0 17px;padding:14px 16px;border:1px solid color-mix(in srgb,#d7a84c 46%,var(--privacy-border));border-radius:12px;background:linear-gradient(120deg,color-mix(in srgb,#d7a84c 12%,var(--privacy-surface)),var(--privacy-surface) 72%),var(--privacy-surface);box-shadow:0 8px 22px color-mix(in srgb,var(--privacy-canvas) 82%,transparent)}
+.privacy-action-callout-icon{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;border-radius:10px;color:#d7a84c;background:color-mix(in srgb,#d7a84c 14%,var(--privacy-surface-raised));border:1px solid color-mix(in srgb,#d7a84c 26%,var(--privacy-border))}
+.privacy-action-callout-copy{display:grid;gap:3px;min-width:0;flex:1}
+.privacy-action-callout-copy strong{font-size:12px;letter-spacing:-.02em;color:var(--privacy-text)}
+.privacy-action-callout-copy span{color:var(--privacy-text-soft);font-size:10px;line-height:1.55}
+.privacy-action-callout .privacy-primary-button{flex:0 0 auto;white-space:nowrap}
 .privacy-overview-card{min-width:0;display:grid;grid-template-columns:34px minmax(0,1fr);grid-template-rows:auto auto auto;column-gap:11px;align-content:start;padding:16px;border:1px solid var(--privacy-border);border-radius:13px;background:var(--privacy-surface)}
 .privacy-overview-icon{grid-column:1;grid-row:1/4;display:grid;place-items:center;width:34px;height:34px;border-radius:10px;color:var(--privacy-accent);background:color-mix(in srgb,var(--privacy-accent) 10%,var(--privacy-surface-raised));border:1px solid color-mix(in srgb,var(--privacy-accent) 14%,var(--privacy-border))}
 .privacy-overview-label{color:var(--privacy-muted);font-size:10px}
@@ -144,6 +151,12 @@
 .privacy-status-identity_check,.privacy-status-awaiting_customer{border-color:color-mix(in srgb,#d7a84c 42%,var(--privacy-border));color:#d7a84c}
 .privacy-status-completed{border-color:color-mix(in srgb,#25bd87 38%,var(--privacy-border));color:#25bd87}
 .privacy-status-declined,.privacy-status-cancelled{opacity:.78}
+/* Ageing indicator shown on open customer requests. */
+.privacy-request-age{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;border:1px solid var(--privacy-border);background:var(--privacy-surface-raised);font-weight:750;letter-spacing:.01em}
+.privacy-request-age::before{content:"";width:6px;height:6px;border-radius:999px;background:currentColor;opacity:.85}
+.privacy-request-age-on_track{color:color-mix(in srgb,#25bd87 78%,var(--privacy-text));border-color:color-mix(in srgb,#25bd87 30%,var(--privacy-border))}
+.privacy-request-age-due_soon{color:#d7a84c;border-color:color-mix(in srgb,#d7a84c 36%,var(--privacy-border))}
+.privacy-request-age-overdue{color:#e28a8a;border-color:color-mix(in srgb,#ef7777 38%,var(--privacy-border))}
 .privacy-timeline{margin:13px 0 0 4px;padding-left:13px;border-left:1px solid var(--privacy-border)}
 .privacy-timeline-event{display:flex;align-items:flex-start;gap:9px;position:relative;padding:0 0 12px}
 .privacy-timeline-event:last-child{padding-bottom:0}
@@ -319,5 +332,11 @@
 .privacy-summary-chip.is-active span{background:var(--privacy-accent);color:var(--privacy-accent-contrast)}
 .privacy-admin-request-row>small.privacy-admin-age-overdue{color:#e28a8a}
 .privacy-admin-request-row>small.privacy-admin-age-due_soon{color:#d7a84c}
+/* Admin ageing triage line above the request queue. */
+.privacy-admin-triage{display:flex;align-items:flex-start;gap:8px;margin:0;padding:11px 13px;border-bottom:1px solid var(--privacy-border);background:var(--privacy-surface);color:var(--privacy-text-soft);font-size:10px;font-weight:650;line-height:1.55}
+.privacy-admin-triage svg{flex:0 0 auto;margin-top:1px}
+.privacy-admin-triage-on_track{border-left:3px solid color-mix(in srgb,#25bd87 60%,var(--privacy-border));color:color-mix(in srgb,#25bd87 62%,var(--privacy-text))}
+.privacy-admin-triage-due_soon{border-left:3px solid color-mix(in srgb,#d7a84c 68%,var(--privacy-border));color:color-mix(in srgb,#d7a84c 72%,var(--privacy-text))}
+.privacy-admin-triage-overdue{border-left:3px solid color-mix(in srgb,#ef7777 72%,var(--privacy-border));color:color-mix(in srgb,#ef7777 62%,var(--privacy-text))}
 @media(min-width:561px){.privacy-detail-facts{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media(max-width:560px){.privacy-heading-actions{width:100%}.privacy-heading-actions>button{flex:1}.privacy-admin-queue-tools{flex-wrap:wrap}.privacy-queue-export{width:100%}}
+@media(max-width:560px){.privacy-heading-actions{width:100%}.privacy-heading-actions>button{flex:1}.privacy-admin-queue-tools{flex-wrap:wrap}.privacy-queue-export{width:100%}.privacy-action-callout{flex-wrap:wrap}.privacy-action-callout .privacy-primary-button{width:100%}}

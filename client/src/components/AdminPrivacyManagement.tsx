@@ -26,6 +26,7 @@ import { buildPrivacyHtmlDocument } from "@/lib/privacyHtml";
 import { buildPrivacyRequestCsv, privacyRequestCsvFilename } from "@/lib/privacy-requests";
 import {
   DEFAULT_PRIVACY_POLICY_SECTIONS,
+  PRIVACY_REQUEST_REVIEW_TARGET_DAYS,
   PRIVACY_REQUEST_TYPES,
   canTransitionPrivacyRequest,
   countPrivacyRequestsByStatus,
@@ -33,9 +34,12 @@ import {
   privacyRequestAgeDays,
   privacyRequestAgingBand,
   privacyRequestAgingLabel,
+  privacyRequestAgingSummary,
   privacyRequestGroupCounts,
   privacyRequestStatusLabel,
+  sortPrivacyRequests,
   type PrivacyPolicySection,
+  type PrivacyRequestSortOrder,
   type PrivacyRequestStatus,
 } from "../../../shared/privacy";
 import "./privacy-center.css";
@@ -64,6 +68,7 @@ export function AdminPrivacyManagement() {
   const policyState = trpc.adminOperations.privacyPolicyState.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: 60000, refetchOnWindowFocus: false });
   const [requestFilter, setRequestFilter] = useState<"all" | PrivacyRequestStatus>("all");
   const [queueQuery, setQueueQuery] = useState("");
+  const [queueSort, setQueueSort] = useState<PrivacyRequestSortOrder>("newest");
   // Fetch the full queue once and filter in the browser so the status summary
   // counts stay accurate while a status filter is active.
   const requestQueue = trpc.adminOperations.privacyRequests.useQuery(undefined, { refetchInterval: 20000 });
@@ -308,10 +313,12 @@ export function AdminPrivacyManagement() {
     return `${request.requestReference} ${request.subject} ${request.customerName || ""} ${request.customerEmail || ""}`.toLowerCase().includes(normalizedQueueQuery);
   });
   const queueFiltered = Boolean(normalizedQueueQuery) || requestFilter !== "all";
+  const queueAging = privacyRequestAgingSummary(privacyRequests);
+  const orderedQueue = sortPrivacyRequests(filteredQueue, queueSort);
 
   const exportQueue = () => {
-    if (!filteredQueue.length) return;
-    const rows = filteredQueue.map((request) => ({
+    if (!orderedQueue.length) return;
+    const rows = orderedQueue.map((request) => ({
       requestReference: request.requestReference,
       requestType: PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType,
       status: privacyRequestStatusLabel(request.status as PrivacyRequestStatus),
@@ -436,6 +443,12 @@ export function AdminPrivacyManagement() {
                 <option value="all">All statuses</option>
                 {REQUEST_STATUSES.map((status) => <option value={status} key={status}>{privacyRequestStatusLabel(status)}</option>)}
               </select>
+              <label htmlFor="privacy-queue-sort">Sort</label>
+              <select id="privacy-queue-sort" value={queueSort} onChange={(event) => setQueueSort(event.target.value as PrivacyRequestSortOrder)}>
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="longest_open">Longest open first</option>
+              </select>
               <button type="button" className="privacy-icon-button" aria-label="Refresh privacy request queue" onClick={() => requestQueue.refetch()} disabled={requestQueue.isFetching}><History size={15} /></button>
             </div>
             <div className="privacy-admin-status-summary" role="group" aria-label="Privacy request status summary">
@@ -444,13 +457,17 @@ export function AdminPrivacyManagement() {
                 <button type="button" key={status} className={"privacy-summary-chip " + (requestFilter === status ? "is-active" : "")} aria-pressed={requestFilter === status} onClick={() => { setRequestFilter(status); setSelectedRequestId(null); }}>{privacyRequestStatusLabel(status)}<span>{queueStatusCounts[status]}</span></button>
               ))}
             </div>
+            {queueAging.open > 0 && <p className={"privacy-admin-triage privacy-admin-triage-" + (queueAging.overdue > 0 ? "overdue" : queueAging.dueSoon > 0 ? "due_soon" : "on_track")} role="status">
+              <Clock3 size={14} />
+              <span>{queueAging.overdue} overdue · {queueAging.dueSoon} due soon · {queueAging.onTrack} on track within the {PRIVACY_REQUEST_REVIEW_TARGET_DAYS}-day review target.{queueAging.overdue + queueAging.dueSoon > 0 ? " Sort by longest open to triage first." : ""}</span>
+            </p>}
             {requestQueue.isLoading ? <div className="privacy-loading-panel" role="status">Loading privacy requests…</div> :
               requestQueue.isError ? <div className="privacy-empty-state" role="alert"><span>The request queue could not be loaded.</span><button type="button" className="privacy-secondary-button" onClick={() => requestQueue.refetch()}>Retry</button></div> :
               privacyRequests.length === 0 ? <div className="privacy-empty-state privacy-empty-compact"><Inbox size={22} /><strong>No requests in this view.</strong><span>New customer privacy requests will appear here when submitted.</span></div> :
-              filteredQueue.length === 0 ? <div className="privacy-empty-state privacy-empty-compact" role="status"><Search size={22} /><strong>No requests match your search.</strong><span>Try a different reference, subject or customer.</span><button type="button" className="privacy-secondary-button" onClick={() => setQueueQuery("")}>Clear search</button></div> :
+              orderedQueue.length === 0 ? <div className="privacy-empty-state privacy-empty-compact" role="status"><Search size={22} /><strong>No requests match your search.</strong><span>Try a different reference, subject or customer.</span><button type="button" className="privacy-secondary-button" onClick={() => setQueueQuery("")}>Clear search</button></div> :
               <>
-                {queueFiltered && <p className="privacy-queue-count" role="status">Showing {filteredQueue.length} of {privacyRequests.length} requests.</p>}
-                <div className="privacy-admin-request-list">{filteredQueue.map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequestId(request.id)} className={"privacy-admin-request-row " + (selectedRequestId === request.id ? "is-selected" : "")}>
+                {queueFiltered && <p className="privacy-queue-count" role="status">Showing {orderedQueue.length} of {privacyRequests.length} requests.</p>}
+                <div className="privacy-admin-request-list">{orderedQueue.map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequestId(request.id)} className={"privacy-admin-request-row " + (selectedRequestId === request.id ? "is-selected" : "")}>
                   <span className="privacy-request-reference">{request.requestReference}</span><strong>{request.subject}</strong><span>{request.customerName || request.customerEmail || "Customer " + request.userId}</span>
                   <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
                   <small className={"privacy-admin-age privacy-admin-age-" + privacyRequestAgingBand(privacyRequestAgeDays(request.createdAt))}>{formatAdminDate(request.createdAt)} · {privacyRequestAgingLabel(privacyRequestAgeDays(request.createdAt))}</small>

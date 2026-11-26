@@ -200,6 +200,60 @@ export function countPrivacyRequestsByStatus(
   return counts;
 }
 
+// A request the customer must act on before the review can continue. This drives
+// the "needs your input" prompts in the customer Privacy Centre.
+export function privacyRequestNeedsCustomerAction(status: PrivacyRequestStatus): boolean {
+  return status === "awaiting_customer";
+}
+
+export type PrivacyRequestAgingSummary = {
+  open: number;
+  onTrack: number;
+  dueSoon: number;
+  overdue: number;
+};
+
+// Aggregates the ageing bands of every open request so a portal can show a
+// triage line without recomputing bands per row.
+export function privacyRequestAgingSummary(
+  requests: ReadonlyArray<{ status: PrivacyRequestStatus; createdAt: Date | string | null | undefined }>,
+  now: Date = new Date(),
+): PrivacyRequestAgingSummary {
+  let onTrack = 0;
+  let dueSoon = 0;
+  let overdue = 0;
+  for (const request of requests) {
+    if (!privacyRequestIsOpen(request.status)) continue;
+    const band = privacyRequestAgingBand(privacyRequestAgeDays(request.createdAt, now));
+    if (band === "overdue") overdue += 1;
+    else if (band === "due_soon") dueSoon += 1;
+    else onTrack += 1;
+  }
+  return { open: onTrack + dueSoon + overdue, onTrack, dueSoon, overdue };
+}
+
+export type PrivacyRequestSortOrder = "newest" | "oldest" | "longest_open";
+
+// Ordered copy of a request list. `longest_open` surfaces unanswered open
+// requests first (oldest first) so administrators can triage them quickly.
+export function sortPrivacyRequests<T extends { status: PrivacyRequestStatus; createdAt: Date | string | null | undefined }>(
+  requests: ReadonlyArray<T>,
+  order: PrivacyRequestSortOrder,
+): T[] {
+  const submittedAt = (value: Date | string | null | undefined): number => {
+    if (!value) return 0;
+    const time = new Date(value).getTime();
+    return Number.isNaN(time) ? 0 : time;
+  };
+  const copy = [...requests];
+  if (order === "oldest") return copy.sort((a, b) => submittedAt(a.createdAt) - submittedAt(b.createdAt));
+  if (order === "longest_open") {
+    const group = (request: T) => (privacyRequestIsOpen(request.status) ? 0 : 1);
+    return copy.sort((a, b) => group(a) - group(b) || submittedAt(a.createdAt) - submittedAt(b.createdAt));
+  }
+  return copy.sort((a, b) => submittedAt(b.createdAt) - submittedAt(a.createdAt));
+}
+
 export function privacyRequestStatusMessage(status: PrivacyRequestStatus): string {
   const messages: Record<PrivacyRequestStatus, string> = {
     submitted: "Your privacy request has been received and is awaiting review.",

@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import {
+  AlertCircle,
   ArrowDownToLine,
   ArrowRight,
   Building2,
@@ -34,7 +35,10 @@ import {
 import {
   PRIVACY_REQUEST_TYPES,
   privacyRequestAgeDays,
+  privacyRequestAgingBand,
+  privacyRequestAgingLabel,
   privacyRequestGroupCounts,
+  privacyRequestNeedsCustomerAction,
   privacyRequestStatusLabel,
   type PrivacyRequestStatus,
   type PrivacyRequestType,
@@ -75,9 +79,10 @@ export function CustomerPrivacyCenter() {
   const [noticeTone, setNoticeTone] = useState<"success" | "error">("success");
   const [requestError, setRequestError] = useState("");
   const [requestQuery, setRequestQuery] = useState("");
-  const [requestStatusFilter, setRequestStatusFilter] = useState<"all" | "open" | "closed">("all");
+  const [requestStatusFilter, setRequestStatusFilter] = useState<"all" | "open" | "closed" | "awaiting">("all");
   const [copiedReference, setCopiedReference] = useState("");
   const [expandedRequestIds, setExpandedRequestIds] = useState<number[]>([]);
+  const requestListRef = useRef<HTMLElement | null>(null);
 
   const currentPolicy = policy.data;
   const viewedPolicy = selectedVersionId
@@ -90,12 +95,14 @@ export function CustomerPrivacyCenter() {
   const filteredRequests = customerRequests.filter((request) => {
     if (requestStatusFilter === "open" && closedRequestStatuses.has(request.status as PrivacyRequestStatus)) return false;
     if (requestStatusFilter === "closed" && !closedRequestStatuses.has(request.status as PrivacyRequestStatus)) return false;
+    if (requestStatusFilter === "awaiting" && !privacyRequestNeedsCustomerAction(request.status as PrivacyRequestStatus)) return false;
     if (!normalizedRequestQuery) return true;
     const category = PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType;
     return `${request.requestReference} ${request.subject} ${category} ${request.status}`.toLowerCase().includes(normalizedRequestQuery);
   });
   const requestsFiltered = Boolean(normalizedRequestQuery) || requestStatusFilter !== "all";
   const requestGroupCounts = privacyRequestGroupCounts(customerRequests);
+  const awaitingCustomerCount = customerRequests.filter((request) => privacyRequestNeedsCustomerAction(request.status as PrivacyRequestStatus)).length;
   const requestTypeLabel = (value: string) => PRIVACY_REQUEST_TYPES.find((item) => item.value === value)?.label || value;
 
   const downloadTextFile = (filename: string, contents: string, mime: string) => {
@@ -162,6 +169,12 @@ export function CustomerPrivacyCenter() {
     setFormOpen(true);
     setNotice("");
     window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0);
+  };
+
+  const focusAwaitingRequests = () => {
+    setRequestStatusFilter("awaiting");
+    setRequestQuery("");
+    window.setTimeout(() => requestListRef.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }), 0);
   };
 
   const downloadPolicy = () => {
@@ -274,6 +287,15 @@ export function CustomerPrivacyCenter() {
         <button type="button" aria-label="Dismiss message" onClick={() => setNotice("")}><XCircle size={14} /></button>
       </div>}
 
+      {awaitingCustomerCount > 0 && <div className="privacy-action-callout" role="status">
+        <span className="privacy-action-callout-icon"><AlertCircle size={18} /></span>
+        <div className="privacy-action-callout-copy">
+          <strong>Action needed on {awaitingCustomerCount} {awaitingCustomerCount === 1 ? "request" : "requests"}</strong>
+          <span>An authorized reviewer has asked for more information before the review can continue. Open the request to read the message and reply through the authenticated Support Centre.</span>
+        </div>
+        <button type="button" className="privacy-primary-button" onClick={focusAwaitingRequests}>Review {awaitingCustomerCount === 1 ? "request" : "requests"} <ArrowRight size={14} /></button>
+      </div>}
+
       <div className="privacy-overview-grid">
         <div className="privacy-overview-card">
           <span className="privacy-overview-icon"><FileText size={17} /></span>
@@ -286,6 +308,12 @@ export function CustomerPrivacyCenter() {
           <span className="privacy-overview-label">Your requests</span>
           <strong>{requests.isLoading ? "…" : requestGroupCounts.total}</strong>
           <small>{requests.isLoading ? "Requests submitted from this account" : requestGroupCounts.open + " open · " + requestGroupCounts.closed + " closed"}</small>
+        </div>
+        <div className="privacy-overview-card">
+          <span className="privacy-overview-icon"><AlertCircle size={17} /></span>
+          <span className="privacy-overview-label">Needs your input</span>
+          <strong>{requests.isLoading ? "…" : awaitingCustomerCount}</strong>
+          <small>{awaitingCustomerCount > 0 ? "Requests waiting for information from you" : "No requests are waiting for you"}</small>
         </div>
         <div className="privacy-overview-card">
           <span className="privacy-overview-icon"><History size={17} /></span>
@@ -352,7 +380,7 @@ export function CustomerPrivacyCenter() {
             )}
           </section>
 
-          <section className="privacy-request-list-card" aria-labelledby="privacy-requests-heading">
+          <section className="privacy-request-list-card" aria-labelledby="privacy-requests-heading" ref={requestListRef}>
             <div className="privacy-section-heading privacy-request-heading">
               <div>
                 <span className="eyebrow">ACCOUNTABLE FOLLOW-THROUGH</span>
@@ -386,10 +414,11 @@ export function CustomerPrivacyCenter() {
                     </label>
                     <label className="privacy-request-filter">
                       <span>Status</span>
-                      <select value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value as "all" | "open" | "closed")} aria-label="Filter your privacy requests by status">
+                      <select value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value as "all" | "open" | "closed" | "awaiting")} aria-label="Filter your privacy requests by status">
                         <option value="all">All requests ({requestGroupCounts.total})</option>
                         <option value="open">Open requests ({requestGroupCounts.open})</option>
                         <option value="closed">Closed requests ({requestGroupCounts.closed})</option>
+                        <option value="awaiting">Needs your input ({awaitingCustomerCount})</option>
                       </select>
                     </label>
                   </div>
@@ -421,6 +450,7 @@ export function CustomerPrivacyCenter() {
                                 <span>{requestTypeLabel(request.requestType)}</span>
                                 <span>Submitted {displayDateTime(request.createdAt)}</span>
                                 <span>Last updated {displayDateTime(request.updatedAt)}</span>
+                                {!closedRequestStatuses.has(request.status as PrivacyRequestStatus) && <span className={"privacy-request-age privacy-request-age-" + privacyRequestAgingBand(privacyRequestAgeDays(request.createdAt))}>{privacyRequestAgingLabel(privacyRequestAgeDays(request.createdAt))}</span>}
                               </div>
                               {events.length > 0 && <div className="privacy-timeline">
                                 {visibleEvents.map((event) => (
