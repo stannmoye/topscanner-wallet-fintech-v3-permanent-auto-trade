@@ -1,3 +1,52 @@
+## 2026-11-27 (feature / Stage 2) — First-cohort tender adapters and the ingestion worker
+
+Owner request: proceed with Stage 2 of `docs/TENDER_BID_SPECIFICATION.md` and push each completed
+stage to `main`. Delivered the first adapter cohort, the ingestion worker, dedupe/upsert, fail-closed
+FX, and worker health. Real, documented endpoints only — nothing fabricated.
+
+- **Adapters (`server/modules/tender/adapters/`)** — `sam-gov.ts` (US SAM.gov; requires
+  `SAM_GOV_API_KEY`, refuses when absent), `find-a-tender.ts` (UK OCDS release packages with a
+  `links.next` cursor chain), `canada-buys.ts` (CanadaBuys open CSV via CKAN `package_show`, no
+  fabricated amount), `ted.ts` (EU TED v3 search, no auth), `world-bank.ts` (World Bank procnotices,
+  no fabricated amount), and `oeffentlichevergabe.ts` (Germany Bekanntmachungsservice OCDS ZIP export,
+  one day per page, never today/future, floor 2022-12-01).
+- **Adapter registry (`server/modules/tender/registry.ts`)** — `TENDER_ADAPTERS` mapping the six
+  cohort keys to `{ provider, normalise }`, `resolveTenderAdapter`, `listImplementedAdapterKeys`.
+  Unimplemented sources stay absent (so ingestion records them as `no_adapter`, never guessed).
+- **Ingestion worker (`server/modules/tender/ingest.ts`)** — one cycle walks every due, enabled
+  `tender_sources` row (ordered, capped at `TENDER_INGEST_MAX_SOURCES_PER_CYCLE`), fetches pages
+  through the adapter (`TENDER_INGEST_MAX_PAGES_PER_SOURCE` cap), and upserts by
+  `(sourceId, externalId)` via `onDuplicateKeyUpdate`. Fail closed: an unreadable tender fails only
+  that row; a page failure fails only that source (`lastStatus:"error"`); `no_adapter` is recorded as
+  such. Administrator-owned fields (qualification pct/amount + override flag) are never written, so a
+  correction survives the next sync.
+- **FX (fail closed)** — the stored `currency_registry.usdRate` is an audit snapshot and is never a
+  calculation input; USD value comes only from a fresh `getFreshTradingFxRate` quote via
+  `nativeMinorToUsdMinorExact`. Unknown/disabled currency or an unavailable quote leaves the native
+  amount with a null USD value. One `fx_rate_snapshots` row is recorded per currency per cycle and
+  shared by every tender that uses it.
+- **Shared helpers** — `http.ts` (timeout + typed fetch), `normalise.ts` (whitespace/string/number
+  helpers, minor-unit conversion, CPV/NAICS→industry maps, `deriveTenderStatus`), `dedupe.ts`
+  (`computeTenderDedupeGroup`, deterministic 64-hex), `economics.ts` (inclusion range + qualification
+  clamp to $1,000–$600,000, pct in whole basis points), `csv.ts` (RFC-4180 parser for open-data
+  portals), `zip.ts` (central-directory ZIP reader, STORED + DEFLATE), `countries.ts`
+  (name→ISO code).
+- **Worker health (`server/_core/workerHealth.ts`)** — added the `tender-ingest` entry to
+  `WORKER_HEALTH_REGISTRY` (expected 300 s, stale after 1,800 s).
+- **Wiring (`server/_core/index.ts`)** — inside the `DATABASE_URL` block, `tender-ingest` runs through
+  `runMonitoredWorkerCycle` on a 300 s `registerWorkerInterval`, degrades when any source fails, and
+  runs once immediately at startup.
+- **Tests** — new `server/modules/tender/tender-stage2.contract.test.ts` (25 tests): adapter registry
+  parity + per-country routing + real documented endpoint URLs, dedupe determinism/noise-insensitivity,
+  economics bounds + fail-closed, shared normalisation (status, CSV, ZIP), the six source normalisers,
+  the Germany export window, and the worker guardrails (registered + wired; FX only from a fresh quote;
+  upsert-by-key; admin fields untouched).
+- Verification: `pnpm run check` exit 0; full `pnpm test` 223 files passed / 1,848 tests passed (42
+  skipped); `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests passed;
+  `pnpm build` succeeded. No database was connected to; the worker was not run against live sources in
+  this sandbox (no `DATABASE_URL`).
+- Next: Stage 3 (customer Tender Bid desk — list + detail pop-up) per the spec's stage table.
+
 ## 2026-11-27 (feature / Stage 1) — Tender Bid schema, guarded migration, provider contract, source registry
 
 Owner request: proceed with Stage 1 of `docs/TENDER_BID_SPECIFICATION.md`. Delivered the data model,
