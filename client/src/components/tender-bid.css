@@ -482,6 +482,127 @@
 .tb-modal-docs svg,
 .tb-modal-sources a svg { flex: none; }
 
+/* ------------------------------ Bid panel ------------------------------ */
+.tb-bid-panel {
+  display: grid;
+  gap: 11px;
+  padding: 14px 15px;
+  border-radius: var(--tb-radius);
+  border: 1px solid var(--tb-accent-line);
+  background: color-mix(in srgb, var(--arb-color-accent) 8%, var(--tb-well));
+}
+.tb-bid-panel h3 {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--tb-muted);
+}
+.tb-bid-idle { border-color: var(--tb-line); background: var(--tb-well); }
+.tb-bid-message,
+.tb-bid-note {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--tb-muted);
+}
+.tb-bid-message svg,
+.tb-bid-note svg { flex: none; margin-top: 1px; }
+
+.tb-bid-status { display: grid; gap: 5px; }
+.tb-bid-status small { font-size: 0.74rem; line-height: 1.5; color: var(--tb-muted); }
+
+.tb-bid-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid var(--tb-line);
+  background: var(--tb-tint-weak);
+  color: var(--tb-muted);
+}
+.tb-bid-chip-placed { color: var(--tb-info); border-color: var(--tb-info-line); }
+.tb-bid-chip-charge_pending { color: var(--tb-warning); border-color: color-mix(in srgb, var(--arb-color-warning) 42%, var(--arb-color-border)); }
+.tb-bid-chip-charged { color: var(--tb-accent); border-color: var(--tb-accent-line); }
+.tb-bid-chip-won { color: var(--tb-accent); border-color: var(--tb-accent-line); }
+.tb-bid-chip-lost { color: var(--tb-muted); border-color: var(--tb-line); }
+.tb-bid-chip-cancelled { color: var(--tb-danger); border-color: color-mix(in srgb, var(--arb-color-danger) 42%, var(--arb-color-border)); }
+
+.tb-bid-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 11px;
+}
+.tb-bid-figures > div {
+  display: grid;
+  gap: 3px;
+  padding: 11px 13px;
+  border-radius: var(--tb-radius);
+  border: 1px solid var(--tb-line);
+  background: var(--tb-surface-2);
+}
+.tb-bid-figures small {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--tb-muted);
+  font-weight: 700;
+}
+.tb-bid-figures strong { font-size: 1.08rem; color: var(--tb-white); overflow-wrap: anywhere; }
+
+.tb-bid-button {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  border: 1px solid var(--tb-accent);
+  background: var(--tb-accent);
+  color: var(--arb-color-surface);
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.tb-bid-button:hover:not(:disabled) { transform: translateY(-1px); }
+.tb-bid-button:disabled { opacity: 0.62; cursor: progress; }
+
+.tb-bid-deposit {
+  display: grid;
+  gap: 10px;
+  padding: 12px 13px;
+  border-radius: var(--tb-radius);
+  border: 1px solid color-mix(in srgb, var(--arb-color-warning) 42%, var(--arb-color-border));
+  background: color-mix(in srgb, var(--arb-color-warning) 10%, transparent);
+}
+.tb-bid-deposit p { margin: 0; font-size: 0.82rem; line-height: 1.5; color: var(--tb-white); }
+.tb-bid-deposit-button {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid var(--tb-warning);
+  background: color-mix(in srgb, var(--arb-color-warning) 18%, transparent);
+  color: var(--tb-warning);
+  transition: transform 0.12s ease;
+}
+.tb-bid-deposit-button:hover { transform: translateY(-1px); }
+
 @media (max-width: 560px) {
   .tb-card-figures { grid-template-columns: minmax(0, 1fr); }
   .tb-modal-body { padding: 16px; }

@@ -1,3 +1,60 @@
+## 2026-11-27 (feature / Stage 4) — Tender Bid bidding flow (bid panel, admin charge/decline with classified ledger entries)
+
+Owner request: "we are still working on the Tender Bid menu page, we have already completed stage 0 to
+3, now move to stage 4 and remember to push to main after completing stage 4, remember to follow the
+documentation and progress on GitHub". Delivered the bidding flow per
+`docs/TENDER_BID_SPECIFICATION.md` (§9 bidding flow & notifications, §10 admin experience, §11 Stage 4,
+§12 guardrails) and resolved the §13 open item (administrator-charge ledger classification). Stage 4
+"done when" is met: a bid notifies admins; the charge posts a classified ledger entry; an insufficient
+balance prompts a deposit and records no bid.
+
+- **Bidding service (`server/modules/tender/bidding.ts`)** — `placeTenderBid`, `getTenderBidContext`,
+  `listTenderBidsForAdmin`, `applyTenderBidCharge`, `declineTenderBid`, `recordTenderBidOutcome`.
+  Placement is fail-closed and idempotent: the tender must be `open`/`closing` with an admin-configured
+  qualification amount; the customer's combined eligible balance is valued across **every wallet** in
+  USD from a **fresh** `getFreshTradingFxRate` quote via `calculateCombinedBalanceSnapshot`, and a
+  foreign wallet with no fresh quote makes the total `unknown` ⇒ **no bid** (never silently
+  under-counted). On a shortfall the function returns `insufficient_balance` with the required amount
+  and writes **nothing** — the client shows the deposit prompt. On success it inserts `tender_bids`
+  (`placed`) + a `tender_bid_events` row in one transaction, keyed by a hashed `idempotencyKey`
+  (`ER_DUP_ENTRY` fallback read) with a unique `(userId, tenderId)` so a customer holds at most one bid
+  per tender. Wallet balances and currency metadata are read separately (not joined) to avoid the
+  `customer_balances`/`currency_registry` collation clash.
+- **Administrator charge (classified ledger)** — `applyTenderBidCharge` posts the configured amount
+  through the existing classified manual-adjustment ledger path (`adjustCustomerBalance`,
+  `mode:"debit"`, `debitClassification:"ordinary_debit"` ⇒ ledger `entryType = "admin_debit"`), then
+  locks the bid (`for("update")`) and sets `status:"charged"` recording `chargeAmountUsdMinor` and
+  `chargeLedgerId`, with a `charged` audit event. `declineTenderBid` sets `cancelled` (no money);
+  `recordTenderBidOutcome` records `won`/`lost` on a charged bid. Every transition is a `tenderBidEvents`
+  row; history is never edited.
+- **Admin notification (`notifyAdminsOfTenderBid`)** — mirrors `notifyAdminsOfPayoutRequest`:
+  `createNotification` to every administrator (`eventKey` deduped, `href:"/admin"`) plus a durable
+  support ticket (`openTenderBidTicket`). Only a newly-created bid alerts, so a duplicate replay never
+  re-notifies. Decline/outcome notify the customer.
+- **tRPC (`server/routers.ts`)** — protected `customer.tender.bidContext` and `placeBid`
+  (`{ tenderId, idempotencyKey }`); admin `adminOperations.tenderBids` with `list` / `applyCharge` /
+  `decline` / `recordOutcome` (all `adminProcedure`, audited reasons 3–500 chars).
+- **Customer UI (`client/src/components/CustomerTenderBid.tsx`, `tender-bid.css`)** — a bid panel in the
+  tender pop-up: the qualification amount vs the customer's eligible balance, a **Bid** button when
+  qualified, or a **deposit prompt** ("Add funds to qualify") that asks the portal to open the wallet via
+  the existing `arbitrade:customer-navigate` event (no new prop threaded through the shell). After a bid
+  a server-driven status chip (`Placed → Charge pending → Charged → Won/Lost`) shows on the card and in
+  the panel, plus a "Your bids" summary tile. Every figure is labelled a configured/contractual value;
+  the copy states no funds move until an administrator applies the charge and no award is guaranteed.
+- **Tests** — new `server/modules/tender/tender-stage4.contract.test.ts` (17 tests): fail-closed
+  guards; fresh-FX combined valuation with `unknown`; shortfall records no bid (insert only after the
+  gate); unique/idempotent bid; row lock; the classified `admin_debit` charge path; admin notification +
+  ticket; decline/outcome; router wiring; the customer bid panel and themed styles. The Stage 3 test is
+  unchanged (the desk is still mounted as `<CustomerTenderBid push={push}/>`).
+- Verification: `pnpm run check` exit 0 (an unreachable duplicate status comparison in
+  `recordTenderBidOutcome` was removed); targeted contract tests 2 files / 29 tests passed; full
+  `pnpm test` 225 files passed (9 skipped) / 1,877 tests passed (42 skipped);
+  `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests passed; `pnpm build`
+  succeeded (`CustomerTenderBid` emitted as its own lazy JS+CSS chunk). No database was connected to (no
+  `DATABASE_URL`); the service fails closed without one.
+- Next: Stage 5 (admin corrections menu with per-field audit history + revert-to-source, the Tender Bids
+  queue UI, and source health) per the spec.
+
 ## 2026-11-27 (feature / Stage 3) — Customer Tender Bid desk (list, filters, detail pop-up)
 
 Owner request: "Proceed to stage 3 and push to main". Delivered the read-only customer Tender Bid

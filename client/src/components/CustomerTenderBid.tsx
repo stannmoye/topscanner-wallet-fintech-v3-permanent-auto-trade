@@ -3,17 +3,22 @@ import { trpc } from "@/lib/trpc";
 import "./tender-bid.css";
 import {
   Banknote, Building2, Calendar, ChevronRight, Clock, ExternalLink, FileText,
-  Filter, Globe2, Info, Landmark, MapPin, RefreshCw, Search, ShieldCheck, Tag, X,
+  Filter, Globe2, Info, Landmark, MapPin, RefreshCw, Search, ShieldCheck, Tag, Wallet, X,
 } from "lucide-react";
 
 /**
- * Customer Tender Bid desk (Stage 3, read-only).
+ * Customer Tender Bid desk.
  *
  * Renders only real tenders recorded by the ingestion worker (`customer.tender`
  * endpoints) — never a placeholder or a synthesised row. The catalogue is
  * narrowable by country, industry, tender type, status, closing-soon and
  * contract-value band, and each tender opens a pop-up holding the full record
  * (long description scrolls inside the pop-up) plus every source link.
+ *
+ * Stage 4 adds the bid panel: the qualification amount, the customer's combined
+ * eligible balance (all wallets, USD, fresh FX), and either a Bid button (when
+ * the balance qualifies) or a deposit prompt (when it is short). A placed bid is
+ * shown as a status chip driven by the server's `tender_bids.status`.
  *
  * Every amount is shown as a configured/contractual value; nothing implies an
  * external-market execution or a guaranteed award.
@@ -30,6 +35,11 @@ const COUNTRY_NAMES: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   upcoming: "Upcoming", open: "Open for bidding", closing: "Closing soon",
   closed: "Closed", awarded: "Awarded",
+};
+
+const BID_STATUS_LABELS: Record<string, string> = {
+  placed: "Bid placed", charge_pending: "Charge pending", charged: "Charged",
+  won: "Won", lost: "Lost", cancelled: "Cancelled",
 };
 
 const CONTRACT_BANDS: { id: string; label: string; min: number; max: number }[] = [
@@ -58,10 +68,24 @@ function dateText(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? "Not stated" : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+/** A fresh, non-guessable bid idempotency key (the server dedupes on it). */
+function newIdempotencyKey(): string {
+  const uuid = typeof globalThis.crypto?.randomUUID === "function" ? globalThis.crypto.randomUUID() : "";
+  return uuid || `bid-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/** Ask the portal to show the wallet so a short-balance customer can deposit. */
+function goToWallet(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("arbitrade:customer-navigate", { detail: "wallet" }));
+}
+
 type Tender = any;
+type MyBid = any;
 
 export function CustomerTenderBid({ push }: { push: (message: string) => void }) {
   const overview = trpc.customer.tender.overview.useQuery(undefined, { refetchInterval: 60000 });
+  const bidContext = trpc.customer.tender.bidContext.useQuery(undefined, { refetchInterval: 30000 });
+  const placeBid = trpc.customer.tender.placeBid.useMutation();
   const [search, setSearch] = useState("");
   const [country, setCountry] = useState("");
   const [industry, setIndustry] = useState("");
@@ -70,9 +94,38 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
   const [closingSoon, setClosingSoon] = useState(false);
   const [band, setBand] = useState("any");
   const [openId, setOpenId] = useState<number | null>(null);
+  const [biddingId, setBiddingId] = useState<number | null>(null);
 
   const tenders: Tender[] = overview.data?.tenders || [];
   const facets = overview.data?.facets;
+  const eligibleUsdMinor = bidContext.data?.eligibleUsdMinor ?? null;
+  const valuationAvailable = bidContext.data?.valuationAvailable ?? false;
+
+  const bidsByTender = useMemo(() => {
+    const map: Record<number, MyBid> = {};
+    for (const bid of bidContext.data?.bids || []) map[Number(bid.tenderId)] = bid;
+    return map;
+  }, [bidContext.data?.bids]);
+
+  const requestBid = (tender: Tender) => {
+    setBiddingId(tender.id);
+    placeBid.mutate({ tenderId: tender.id, idempotencyKey: newIdempotencyKey() }, {
+      onSuccess: (result: any) => {
+        setBiddingId(null);
+        void bidContext.refetch();
+        if (result?.status === "insufficient_balance") {
+          void overview.refetch();
+          push(result?.message || "Your balance does not cover the qualification amount. Deposit funds to qualify.");
+          return;
+        }
+        push(result?.alreadyPlaced ? "Your bid on this tender is already recorded." : "Bid placed. The administrator will review it and apply the charge or decline it.");
+      },
+      onError: (error: any) => {
+        setBiddingId(null);
+        push(error?.message || "Your bid could not be placed. Please try again.");
+      },
+    });
+  };
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -98,6 +151,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
 
   const openCount = tenders.filter((tender) => tender.status === "open" || tender.status === "closing").length;
   const closingCount = tenders.filter((tender) => tender.status === "closing").length;
+  const myBidCount = bidContext.data?.bids.length || 0;
   const filtersActive = Boolean(search || country || industry || tenderType || status || closingSoon || band !== "any");
 
   const resetFilters = () => {
@@ -121,7 +175,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
       <div className="tb-summary-tile"><span className="tb-summary-icon"><Landmark size={17}/></span><div><small>Published tenders</small><strong>{overview.isLoading ? "…" : tenders.length}</strong></div></div>
       <div className="tb-summary-tile"><span className="tb-summary-icon"><Clock size={17}/></span><div><small>Open for bidding</small><strong>{overview.isLoading ? "…" : openCount}</strong></div></div>
       <div className="tb-summary-tile"><span className="tb-summary-icon"><Calendar size={17}/></span><div><small>Closing within 7 days</small><strong>{overview.isLoading ? "…" : closingCount}</strong></div></div>
-      <div className="tb-summary-tile"><span className="tb-summary-icon"><Globe2 size={17}/></span><div><small>Countries covered</small><strong>{overview.isLoading ? "…" : (facets?.countries.length || 0)}</strong></div></div>
+      <div className="tb-summary-tile"><span className="tb-summary-icon"><Wallet size={17}/></span><div><small>Your bids</small><strong>{bidContext.isLoading ? "…" : myBidCount}</strong></div></div>
     </section>
 
     <section className="tb-filters" aria-label="Filter tenders">
@@ -150,6 +204,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
     {filtered.length > 0 && <section className="tb-grid" aria-label="Tender results">
       {filtered.map((tender) => {
         const source = tender.sources?.[0];
+        const myBid: MyBid | undefined = bidsByTender[tender.id];
         return <article className="tb-card" key={tender.id}>
           <header className="tb-card-head">
             <span className={`tb-source-badge ${source?.kind === "private" ? "is-private" : "is-government"}`}>{source?.kind === "private" ? "Private source" : "Government source"}</span>
@@ -171,6 +226,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
             <span><Banknote size={13}/>Expected payout {dateText(tender.payoutAt)}</span>
           </div>
           <footer className="tb-card-foot">
+            {myBid && <span className={`tb-bid-chip tb-bid-chip-${myBid.status}`}>{BID_STATUS_LABELS[myBid.status] || myBid.status}</span>}
             {tender.sourceCount > 1 && <span className="tb-multi-source">{tender.sourceCount} sources</span>}
             <button type="button" className="tb-view" onClick={() => openDetail(tender)}>View details<ChevronRight size={14}/></button>
           </footer>
@@ -180,13 +236,34 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
 
     <p className="tb-disclaimer"><Info size={14}/><span>Contract and qualification amounts are configured/contractual values taken from each tender's published source record. They are not a market quote and do not guarantee an award. Every tender links to its original source.</span></p>
 
-    {openId != null && <TenderDetailModal tenderId={openId} onClose={() => setOpenId(null)} onMessage={push}/>}
+    {openId != null && <TenderDetailModal
+      tenderId={openId}
+      myBid={bidsByTender[openId]}
+      eligibleUsdMinor={eligibleUsdMinor}
+      valuationAvailable={valuationAvailable}
+      bidding={biddingId === openId}
+      onBid={requestBid}
+      onClose={() => setOpenId(null)}
+    />}
   </div>;
 }
 
-function TenderDetailModal({ tenderId, onClose, onMessage }: { tenderId: number; onClose: () => void; onMessage: (message: string) => void }) {
+function TenderDetailModal({ tenderId, myBid, eligibleUsdMinor, valuationAvailable, bidding, onBid, onClose }: {
+  tenderId: number;
+  myBid?: MyBid;
+  eligibleUsdMinor: number | null;
+  valuationAvailable: boolean;
+  bidding: boolean;
+  onBid: (tender: Tender) => void;
+  onClose: () => void;
+}) {
   const detail = trpc.customer.tender.detail.useQuery({ tenderId }, { enabled: Number.isFinite(tenderId) });
   const tender: Tender | null | undefined = detail.data;
+  const canBid = tender?.status === "open" || tender?.status === "closing";
+  const qualified = tender?.qualificationConfigured && eligibleUsdMinor != null && eligibleUsdMinor >= Number(tender.qualificationAmountUsdMinor);
+  const shortfall = tender?.qualificationConfigured && eligibleUsdMinor != null
+    ? Math.max(0, Number(tender.qualificationAmountUsdMinor) - eligibleUsdMinor)
+    : null;
   return <div className="tb-modal-backdrop" role="presentation" onClick={onClose}>
     <div className="tb-modal" role="dialog" aria-modal="true" aria-label="Tender details" onClick={(event) => event.stopPropagation()}>
       <header className="tb-modal-head">
@@ -210,6 +287,18 @@ function TenderDetailModal({ tenderId, onClose, onMessage }: { tenderId: number;
             <div><small>Contract value</small><strong>{usd(tender.contractAmountUsdMinor)}</strong>{tender.contractCurrency && tender.contractAmountMinor != null && <em>Published as {native(tender.contractAmountMinor, tender.contractCurrency)}</em>}</div>
             <div><small>Qualification amount</small><strong>{tender.qualificationConfigured ? usd(tender.qualificationAmountUsdMinor) : "Not yet configured"}</strong><em>{tender.qualificationConfigured ? "Configured/contractual value" : "Set by the administrator before bidding opens"}</em></div>
           </section>
+
+          <BidPanel
+            tender={tender}
+            myBid={myBid}
+            eligibleUsdMinor={eligibleUsdMinor}
+            valuationAvailable={valuationAvailable}
+            canBid={Boolean(canBid)}
+            qualified={Boolean(qualified)}
+            shortfall={shortfall}
+            bidding={bidding}
+            onBid={() => onBid(tender)}
+          />
 
           <section className="tb-modal-block">
             <h3>Key facts</h3>
@@ -249,4 +338,67 @@ function TenderDetailModal({ tenderId, onClose, onMessage }: { tenderId: number;
       </div>
     </div>
   </div>;
+}
+
+/**
+ * The bid panel. Shows the qualification amount and the customer's eligible
+ * balance, then either a Bid button (qualified) or a deposit prompt (short or
+ * unvalued). Once a bid exists it shows the server-driven status chip instead.
+ */
+function BidPanel({ tender, myBid, eligibleUsdMinor, valuationAvailable, canBid, qualified, shortfall, bidding, onBid }: {
+  tender: Tender;
+  myBid?: MyBid;
+  eligibleUsdMinor: number | null;
+  valuationAvailable: boolean;
+  canBid: boolean;
+  qualified: boolean;
+  shortfall: number | null;
+  bidding: boolean;
+  onBid: () => void;
+}) {
+  if (!tender.qualificationConfigured) {
+    return <section className="tb-bid-panel tb-bid-idle">
+      <h3>Place a bid</h3>
+      <p className="tb-bid-message"><Info size={14}/>The qualification amount for this tender has not been configured yet, so bidding is not open.</p>
+    </section>;
+  }
+
+  if (myBid) {
+    return <section className="tb-bid-panel">
+      <h3>Place a bid</h3>
+      <div className="tb-bid-status">
+        <span className={`tb-bid-chip tb-bid-chip-${myBid.status}`}>{BID_STATUS_LABELS[myBid.status] || myBid.status}</span>
+        <small>Your bid is recorded. It moves through Placed → Charge pending → Charged → Won/Lost as the administrator reviews it.</small>
+      </div>
+      <div className="tb-bid-figures">
+        <div><small>Qualification amount</small><strong>{usd(tender.qualificationAmountUsdMinor)}</strong></div>
+        <div><small>Charge applied</small><strong>{myBid.chargeAmountUsdMinor != null ? usd(myBid.chargeAmountUsdMinor) : "Not yet applied"}</strong></div>
+      </div>
+      <p className="tb-bid-note"><Info size={14}/>Placing a bid records your interest only. No funds leave your wallet until an administrator applies the charge, and no award is guaranteed.</p>
+    </section>;
+  }
+
+  if (!canBid) {
+    return <section className="tb-bid-panel tb-bid-idle">
+      <h3>Place a bid</h3>
+      <p className="tb-bid-message"><Info size={14}/>Bidding is not open on this tender.</p>
+    </section>;
+  }
+
+  return <section className="tb-bid-panel">
+    <h3>Place a bid</h3>
+    <div className="tb-bid-figures">
+      <div><small>Qualification amount</small><strong>{usd(tender.qualificationAmountUsdMinor)}</strong></div>
+      <div><small>Your eligible balance</small><strong>{valuationAvailable && eligibleUsdMinor != null ? usd(eligibleUsdMinor) : "Valuation unavailable"}</strong></div>
+    </div>
+    {qualified
+      ? <button type="button" className="tb-bid-button" onClick={onBid} disabled={bidding}>{bidding ? "Placing your bid…" : "Bid on this tender"}</button>
+      : <div className="tb-bid-deposit">
+        <p>{!valuationAvailable || eligibleUsdMinor == null
+          ? `Your eligible balance could not be valued at a current exchange rate. Add funds to your wallet, then place your bid.`
+          : `Your eligible balance does not cover the ${usd(tender.qualificationAmountUsdMinor)} qualification amount${shortfall ? ` (short by ${usd(shortfall)})` : ""}. Add funds to your wallet to qualify, then place your bid.`}</p>
+        <button type="button" className="tb-bid-deposit-button" onClick={goToWallet}><Wallet size={15}/>Add funds to qualify</button>
+      </div>}
+    <p className="tb-bid-note"><Info size={14}/>Placing a bid records your interest only. No funds leave your wallet until an administrator applies the charge, and no award is guaranteed.</p>
+  </section>;
 }

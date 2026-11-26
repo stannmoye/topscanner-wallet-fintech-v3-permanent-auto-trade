@@ -33,6 +33,7 @@ import { getGreenEnergyInvestmentDashboard, listGreenEnergyOpenInstruments, purc
 import { createAdminGreenEnergyDossier, deleteAdminGreenEnergyDossier, listAdminGreenEnergyDossiers, reachAdminGreenEnergyMilestone, setAdminGreenEnergyDossierEnabled, setAdminGreenEnergyDossierStatus, updateAdminGreenEnergyDossier } from "./greenEnergyDossiers";
 import { disburseLendingLoan, fundLendingLoan, getLendingDesk, getLendingLoanView, listLendingLoanBids, listLendingLoansForSettlement, placeLendingBid, quoteLendingFunding, raiseLendingBid, settleLendingLoan, withdrawLendingBid } from "./lending";
 import { getCustomerTender, getTenderDeskOverview } from "./modules/tender/customerDesk";
+import { applyTenderBidCharge, declineTenderBid, getTenderBidContext, listTenderBidsForAdmin, placeTenderBid, recordTenderBidOutcome } from "./modules/tender/bidding";
 import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, seedExampleLendingDesk, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
 import {
   LENDING_CONDITION_STATUSES,
@@ -1333,9 +1334,16 @@ export const appRouter = router({
       withdrawBid: protectedProcedure.input(z.object({ bidId: z.string().trim().min(1).max(80) })).mutation(({ ctx, input }) => withdrawLendingBid(ctx.user.id, input.bidId)),
     }),
     tender: router({
-      // Read-only customer Tender Bid desk: real ingested tenders only.
+      // Customer Tender Bid desk: real ingested tenders only.
       overview: protectedProcedure.query(() => getTenderDeskOverview()),
       detail: protectedProcedure.input(z.object({ tenderId: z.number().int().positive() })).query(({ input }) => getCustomerTender(input.tenderId)),
+      // The customer's own bids and combined eligible balance, for the bid panel.
+      bidContext: protectedProcedure.query(({ ctx }) => getTenderBidContext(ctx.user.id)),
+      // Fail-closed, idempotent bid placement. Records no bid when the balance is short.
+      placeBid: protectedProcedure.input(z.object({
+        tenderId: z.number().int().positive(),
+        idempotencyKey: z.string().min(8).max(160),
+      })).mutation(({ ctx, input }) => placeTenderBid(ctx.user.id, input)),
     }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
@@ -1556,6 +1564,24 @@ export const appRouter = router({
       externalReference: z.string().trim().max(160).optional(),
       note: z.string().trim().min(3).max(1000),
     })).mutation(({ ctx, input }) => resolveCustomerPayoutRequest(ctx.user.id, input)),
+    // Tender Bids queue: review a bid, apply the classified charge, decline it, or record an outcome.
+    tenderBids: router({
+      list: adminProcedure.query(() => listTenderBidsForAdmin()),
+      applyCharge: adminProcedure.input(z.object({
+        bidId: z.number().int().positive(),
+        idempotencyKey: z.string().min(8).max(160),
+        reason: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => applyTenderBidCharge(ctx.user.id, input)),
+      decline: adminProcedure.input(z.object({
+        bidId: z.number().int().positive(),
+        reason: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => declineTenderBid(ctx.user.id, input)),
+      recordOutcome: adminProcedure.input(z.object({
+        bidId: z.number().int().positive(),
+        outcome: z.enum(["won", "lost"]),
+        reason: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => recordTenderBidOutcome(ctx.user.id, input)),
+    }),
     withdrawalPins: adminProcedure.query(() => listCustomerWithdrawalPins()),
     clearWithdrawalPin: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(({ input }) => clearCustomerWithdrawalPin(input.userId)),
     notifications: adminProcedure.query(({ctx})=>listNotifications(ctx.user.id)),
