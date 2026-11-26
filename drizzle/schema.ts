@@ -1645,3 +1645,174 @@ export const customerApiSettings = mysqlTable("customer_api_settings", {
 });
 
 export type CustomerApiSettings = typeof customerApiSettings.$inferSelect;
+
+/**
+ * Tender Bid — ingested procurement sources.
+ *
+ * One row per external tender source (a national government procurement portal
+ * or a supranational/private aggregator such as EU TED or the World Bank). Rows
+ * are seeded from the code registry in `server/modules/tender/source-registry.ts`
+ * and are administrator-controlled at runtime: a source is only polled when
+ * `enabled` is true, and the ingestion worker records `lastSyncAt`/`lastStatus`/
+ * `lastError` for health. `adapter` selects the provider implementation so a
+ * source can be an API, an open-data file, or a scraper without changing the
+ * rest of the system.
+ */
+export const tenderSources = mysqlTable("tender_sources", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Stable registry key, e.g. "sam_gov". */
+  key: varchar("key", { length: 64 }).notNull(),
+  label: varchar("label", { length: 160 }).notNull(),
+  /** ISO 3166-1 alpha-2; empty for supranational sources. */
+  countryCode: varchar("countryCode", { length: 8 }).notNull().default(""),
+  kind: mysqlEnum("kind", ["government", "private"]).notNull(),
+  /** Provider implementation name, e.g. "sam_gov". */
+  adapter: varchar("adapter", { length: 64 }).notNull(),
+  /** Adapter-specific configuration (never secrets; keys come from secret storage). */
+  configJson: json("configJson"),
+  /** Administrator-controlled; disabled until explicitly enabled. */
+  enabled: boolean("enabled").default(false).notNull(),
+  expectedIntervalMs: int("expectedIntervalMs").default(3600000).notNull(),
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastStatus: varchar("lastStatus", { length: 32 }),
+  lastError: varchar("lastError", { length: 500 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  keyUnique: uniqueIndex("tender_sources_key_uq").on(table.key),
+  countryIdx: index("tender_sources_country_idx").on(table.countryCode),
+  enabledIdx: index("tender_sources_enabled_idx").on(table.enabled),
+}));
+
+export type TenderSource = typeof tenderSources.$inferSelect;
+export type InsertTenderSource = typeof tenderSources.$inferInsert;
+
+/**
+ * Tender Bid — normalised tenders.
+ *
+ * One row per tender per source, unique on (sourceId, externalId). Money is
+ * integer USD minor units; the native amount and currency are kept alongside the
+ * FX-converted USD value and the FX snapshot it came from. `qualificationPctBps`
+ * is the administrator-configured percentage applied to the USD contract value;
+ * `qualificationOverridden` marks a per-tender administrator override that
+ * ingestion must never overwrite. Every field can be corrected by an
+ * administrator (see `tender_field_history`) and the correction is reflected on
+ * the customer side immediately.
+ */
+export const tenders = mysqlTable("tenders", {
+  id: int("id").autoincrement().primaryKey(),
+  sourceId: int("sourceId").notNull(),
+  externalId: varchar("externalId", { length: 191 }).notNull(),
+  /** Groups the same tender seen via multiple sources so it can be shown once. */
+  dedupeGroup: varchar("dedupeGroup", { length: 64 }),
+  countryCode: varchar("countryCode", { length: 8 }).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  buyer: varchar("buyer", { length: 300 }),
+  buyerType: varchar("buyerType", { length: 80 }),
+  industry: varchar("industry", { length: 120 }),
+  tenderType: varchar("tenderType", { length: 80 }),
+  procedure: varchar("procedure", { length: 120 }),
+  contractAmountMinor: bigint("contractAmountMinor", { mode: "number" }),
+  contractCurrency: varchar("contractCurrency", { length: 12 }),
+  contractAmountUsdMinor: bigint("contractAmountUsdMinor", { mode: "number" }),
+  fxSnapshotId: int("fxSnapshotId"),
+  qualificationPctBps: int("qualificationPctBps"),
+  qualificationAmountUsdMinor: bigint("qualificationAmountUsdMinor", { mode: "number" }),
+  qualificationOverridden: boolean("qualificationOverridden").default(false).notNull(),
+  /** Bidding opens. */
+  bidOpenAt: timestamp("bidOpenAt"),
+  /** Bidding expires. */
+  bidCloseAt: timestamp("bidCloseAt"),
+  /** Expected payment date. */
+  payoutAt: timestamp("payoutAt"),
+  publishedAt: timestamp("publishedAt"),
+  summary: varchar("summary", { length: 1000 }),
+  /** Long-form description; shown in the per-tender pop-up. */
+  descriptionText: longtext("descriptionText"),
+  documentsJson: json("documentsJson"),
+  sourceUrl: varchar("sourceUrl", { length: 768 }).notNull(),
+  status: mysqlEnum("status", ["upcoming", "open", "closing", "closed", "awarded"]).default("upcoming").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  rawJson: longtext("rawJson"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  sourceExternalUnique: uniqueIndex("tenders_source_external_uq").on(table.sourceId, table.externalId),
+  countryStatusIdx: index("tenders_country_status_idx").on(table.countryCode, table.status),
+  statusCloseIdx: index("tenders_status_close_idx").on(table.status, table.bidCloseAt),
+  dedupeIdx: index("tenders_dedupe_idx").on(table.dedupeGroup),
+}));
+
+export type Tender = typeof tenders.$inferSelect;
+export type InsertTender = typeof tenders.$inferInsert;
+
+/**
+ * Tender Bid — administrator correction audit trail.
+ *
+ * One row per field changed through the administrator Tender corrections menu:
+ * the old and new value, the acting administrator, and an optional note. This is
+ * an append-only audit record; historical rows are never edited.
+ */
+export const tenderFieldHistory = mysqlTable("tender_field_history", {
+  id: int("id").autoincrement().primaryKey(),
+  tenderId: int("tenderId").notNull(),
+  adminUserId: int("adminUserId").notNull(),
+  field: varchar("field", { length: 64 }).notNull(),
+  oldValue: text("oldValue"),
+  newValue: text("newValue"),
+  note: varchar("note", { length: 500 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  tenderCreatedIdx: index("tender_field_history_tender_created_idx").on(table.tenderId, table.createdAt),
+}));
+
+export type TenderFieldHistory = typeof tenderFieldHistory.$inferSelect;
+
+/**
+ * Tender Bid — customer bids.
+ *
+ * `qualificationAmountUsdMinor` is the snapshot of the qualification amount at
+ * bid time; `chargeAmountUsdMinor` and `chargeLedgerId` record the administrator's
+ * manual charge once applied. `idempotencyKey` prevents duplicate bids on retries
+ * or concurrent clicks, and (userId, tenderId) allows at most one bid per
+ * customer per tender.
+ */
+export const tenderBids = mysqlTable("tender_bids", {
+  id: int("id").autoincrement().primaryKey(),
+  tenderId: int("tenderId").notNull(),
+  userId: int("userId").notNull(),
+  status: mysqlEnum("status", ["placed", "charge_pending", "charged", "won", "lost", "cancelled"]).default("placed").notNull(),
+  qualificationAmountUsdMinor: bigint("qualificationAmountUsdMinor", { mode: "number" }).notNull(),
+  chargeAmountUsdMinor: bigint("chargeAmountUsdMinor", { mode: "number" }),
+  /** The classified manual-adjustment ledger entry that applied the charge. */
+  chargeLedgerId: int("chargeLedgerId"),
+  idempotencyKey: varchar("idempotencyKey", { length: 160 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  userTenderUnique: uniqueIndex("tender_bids_user_tender_uq").on(table.userId, table.tenderId),
+  idempotencyUnique: uniqueIndex("tender_bids_idempotency_uq").on(table.idempotencyKey),
+  tenderStatusIdx: index("tender_bids_tender_status_idx").on(table.tenderId, table.status),
+}));
+
+export type TenderBid = typeof tenderBids.$inferSelect;
+export type InsertTenderBid = typeof tenderBids.$inferInsert;
+
+/**
+ * Tender Bid — per-bid audit trail.
+ *
+ * Append-only events describing the lifecycle of a bid (placed, charge applied,
+ * declined, outcome recorded). `payloadJson` carries the event-specific detail so
+ * the history is self-describing.
+ */
+export const tenderBidEvents = mysqlTable("tender_bid_events", {
+  id: int("id").autoincrement().primaryKey(),
+  bidId: int("bidId").notNull(),
+  type: varchar("type", { length: 48 }).notNull(),
+  payloadJson: json("payloadJson"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  bidCreatedIdx: index("tender_bid_events_bid_created_idx").on(table.bidId, table.createdAt),
+}));
+
+export type TenderBidEvent = typeof tenderBidEvents.$inferSelect;

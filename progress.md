@@ -1,3 +1,39 @@
+## 2026-11-27 (feature / Stage 1) — Tender Bid schema, guarded migration, provider contract, source registry
+
+Owner request: proceed with Stage 1 of `docs/TENDER_BID_SPECIFICATION.md`. Delivered the data model,
+the journaled idempotent migration, the provider seam, and the 23-country source registry.
+
+- **Schema (`drizzle/schema.ts`)** — five new tables: `tender_sources` (registry + enable/health),
+  `tenders` (normalised, unique on `(sourceId, externalId)`, `dedupeGroup`, native + USD minor-unit
+  amounts, qualification pct/amount with an override flag, bidding/payout dates, status, `sourceUrl`,
+  `rawJson`), `tender_field_history` (admin-correction audit, append-only), `tender_bids` (unique
+  `(userId, tenderId)` + unique `idempotencyKey`, charge snapshot + `chargeLedgerId`), and
+  `tender_bid_events` (per-bid audit). Money columns are `bigint(...Minor, { mode: "number" })`.
+- **Migration `drizzle/0125_tender_bid.sql`** (journal idx 89, `when` 1794484800007, strictly after
+  `0121_device_details`) — idempotent and additive `CREATE TABLE IF NOT EXISTS` for all five tables
+  plus an `INSERT … ON DUPLICATE KEY UPDATE` seed of the registry (the 23 national sources + the 5
+  supranational feeds). Seed refreshes descriptive fields only; `enabled`, `configJson`, and health
+  columns are never overwritten, and sources are seeded **disabled** (admin enables before ingestion).
+- **Provider contract (`server/modules/tender/provider.ts`)** — `TenderProvider`, `NormalizedTender`,
+  `RawTenderPage`, `TenderFetchParams`, plus the `TenderStatus` / `TenderBidStatus` / `TenderSourceKind`
+  enums kept in lockstep with the DB enums.
+- **Source registry (`server/modules/tender/source-registry.ts`)** — `TENDER_COUNTRY_SOURCES` (exactly
+  23 countries), `TENDER_SUPRANATIONAL_SOURCES`, the combined `TENDER_SOURCES`, `getTenderSource`, and
+  `listTenderCountryCodes`.
+- **Tests** — new `server/modules/tender/tender-stage1.contract.test.ts` (12 tests): 23-country
+  coverage, unique/well-formed keys, schema tables + minor-unit money + uniqueness, migration
+  idempotency + full seed parity with the registry, and a strictly-increasing forward journal entry.
+  Updated the four journal-tail pinning tests for the new tail (`.at(-1)`/`slice(-25)` chains) in
+  `scripts/worker-schema-contracts.test.mjs`, `scripts/apply-portal-migrations-safety.test.mjs`,
+  `scripts/trading-package-subscription-repair.test.mjs`, and
+  `scripts/trading-settlement-timing-schema-repair.test.mjs`.
+- Verification: `pnpm run check` exit 0; full `pnpm test` 222 files / 1,823 tests passed (42 skipped);
+  `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests passed;
+  `pnpm build` succeeded. No database was connected to; the migration was not run in this sandbox
+  (no `DATABASE_URL`).
+- Next: Stage 2 (first adapter cohort US SAM.gov / UK Find a Tender / CanadaBuys / Germany / EU TED /
+  World Bank, ingestion worker + dedupe/upsert + FX + health).
+
 ## 2026-11-27 (spec / Stage 0) — Tender Bid build plan approved and recorded
 
 Owner request: build a real "Tender Bid" desk — ingest public/private tenders from 23 countries, show

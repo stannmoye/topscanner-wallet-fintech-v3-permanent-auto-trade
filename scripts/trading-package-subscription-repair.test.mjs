@@ -41,7 +41,6 @@ describe("Trading customer package subscription schema repair", () => {
     const tailStart = entries.length - 25;
     const tail = entries.slice(tailStart);
     expect(tail.map((item) => item.tag)).toEqual([
-      "0095_fx_snapshot_source_timestamp_precision",
       "0096_trade_settlement_review_timestamp",
       "0097_trading_daily_execution_attempt_accounting",
       "0098_enable_automatic_financial_execution",
@@ -66,6 +65,7 @@ describe("Trading customer package subscription schema repair", () => {
       "0119_customer_personal_details",
       "0120_trusted_devices",
       "0121_device_details",
+      "0125_tender_bid",
     ]);
     tail.forEach((item, offset) => {
       const index = tailStart + offset;

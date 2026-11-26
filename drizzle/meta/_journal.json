@@ -624,6 +624,13 @@
       "when": 1794484800006,
       "tag": "0121_device_details",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1794484800007,
+      "tag": "0125_tender_bid",
+      "breakpoints": true
     }
   ]
 }
