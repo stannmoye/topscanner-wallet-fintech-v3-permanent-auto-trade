@@ -1,3 +1,41 @@
+## 2026-11-26 (fix) — Customer daily offer record: correct values at the correct moment
+
+Owner request: the four customer-dashboard offer-record tiles (Offers Remain, Offers Used, Today
+Profit, Next Offers) must display their calculations at exactly the right moment. Confirmed scope:
+live countdown, customer local timezone (display only), instant update on event, and the
+`rolling_24h` next-offer time.
+
+- **Root cause (Next Offers).** `dailySummary.nextOfferAvailableAt` was set to `quotaWindow.end`.
+  For `rolling_24h` that equals `now`, and for `calendar_day` it is UTC midnight — a static
+  timestamp the tile could never count down correctly.
+- **Server — true next-offer instant (`server/db.ts`, `listCustomerOpportunities`).** New
+  `nextOfferAvailableAt` is computed after `deliveryCapacity`/`formulaReadyAt`: `null` (the tile
+  reads "Available now") when a delivery slot is free; the soonest `formulaReadyAt` when only
+  cooling remains; the next UTC midnight for `calendar_day` when the daily cap is reached; and for
+  `rolling_24h` the oldest counted, non-failed delivery's `deliveredAt + 24h` that is still in the
+  future. `deliveredAt` was added to the `deliveredToday` projection to support this. The
+  `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED` early return now passes the same UTC-next-midnight value
+  through a new `nextOfferAvailableAt` parameter on `emptyResult` (previously hard-coded `null`).
+- **Client — live, server-anchored countdown (`client/src/App.tsx`).** New
+  `formatNextOfferCountdown(iso, nowMs)` renders a ticking `d h m` / `h m s` / `m s` value that
+  reads "Available now" at/after the target. New `useAnchoredNow(serverTime)` derives "now" from the
+  server clock anchor (`createServerClockAnchor` + `serverNowMilliseconds`, monotonic
+  `performance.now()`) and re-renders every second, so a tampered device clock cannot move it. Both
+  the header ("Next") and dashboard band ("Next Offers") tiles use it; `PortalHeader` passes
+  `scannerFeed?.serverTime` and `CustomerWorkspace` passes `opportunityMeta.data?.serverTime`.
+- **Instant update on event.** When the feed observes a settlement/credit, the balance and trades
+  queries were already invalidated; `utils.customer.opportunities.invalidate()` is now invalidated
+  in the same tick so the tiles reflect the credit immediately rather than waiting for the next poll.
+- **Customer local timezone (display only, owner-approved default).** `formatNextOfferAvailability`
+  now formats with the stored timezone (`readStoredTimezone`), guarded by `isKnownTimezone` and
+  falling back to the device zone, so the "Next offers available" instant is shown in the customer's
+  zone. The countdown is a duration and therefore already timezone-independent. The server quota
+  window (`resolveTradingQuotaWindow`) remains authoritative UTC; no financial/quota behaviour was
+  changed.
+- **Verification.** `pnpm run check` (`tsc --noEmit`) exit 0; full `vitest run` 220 files /
+  1,805 tests passed (42 skipped). The delivery-quota, offer-availability-banner and
+  opportunity-countdown contract tests all pass unchanged.
+
 ## 2026-11-26 (fix + feat) — Privacy menu: production schema bridge and the customer account snapshot
 
 Owner request: the customer and admin privacy menus returned HTTP 500 in production ("Failed query:

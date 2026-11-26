@@ -4483,10 +4483,10 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   const quotaDay=now.toISOString().slice(0,10);
   const settled:Array<{tradeId:number;rewardMinor:number;currency:string;totalMinor:number}>=[];
   const controls=await ensureCustomerControls(userId);
-  const emptyResult=async (delivery:any,reason:string,counts:Record<string,number>={})=>({serverTime:new Date().toISOString(),offers:[],missed:await listMissedOpportunities(userId),autoTrades:[],settled,generatedOpportunityId:null,delivery,
+  const emptyResult=async (delivery:any,reason:string,counts:Record<string,number>={},nextOfferAvailableAt:string|null=null)=>({serverTime:new Date().toISOString(),offers:[],missed:await listMissedOpportunities(userId),autoTrades:[],settled,generatedOpportunityId:null,delivery,
     dailySummary:{offersAllowance:Math.max(0,Number(delivery?.maxPopupsPerDay||0)),offersUsed:0,
       offersRemaining:Boolean(delivery?.dailySuccessfulCapReached)?0:Math.max(0,Number(delivery?.maxPopupsPerDay||0)),
-      allOffersUsed:Boolean(delivery?.dailySuccessfulCapReached),earnedTodayUsd:0,nextOfferAvailableAt:null},
+      allOffersUsed:Boolean(delivery?.dailySuccessfulCapReached),earnedTodayUsd:0,nextOfferAvailableAt},
     generationDiagnostics:{attempted:false,reason,generationControlEnabled:options.automaticGenerationEnabled===true,
       globalControlsAvailable:globalPolicy.available,tierPolicyMasterEnabled:globalPolicy.tierPolicyMasterEnabled,
       popupDeliveryMasterEnabled:globalPolicy.informationalPopupDeliveryEnabled,...counts},
@@ -4574,6 +4574,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     offerId:opportunityDeliveryEvents.offerId,
     status:opportunityDeliveryEvents.status,
     quotaDay:opportunityDeliveryEvents.quotaDay,
+    deliveredAt:opportunityDeliveryEvents.deliveredAt,
   }).from(opportunityDeliveryEvents).where(and(
     eq(opportunityDeliveryEvents.userId,userId),gte(opportunityDeliveryEvents.deliveredAt,effectiveQuotaStart),
     gt(opportunityDeliveryEvents.id,opportunityUsageResetBoundary?.deliveryEventMaxId??0),
@@ -4618,7 +4619,8 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   // customer never sees a popup whose amount would not be deducted and locked.
   if(eligibleSubscriptions.every(subscription=>!subscriptionHasDailySuccessfulCapacity(subscription))){
     return emptyResult({packageName:eligibleSubscriptions.map(row=>row.packageName).join(", "),maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,dailySuccessfulCapReached:true,popupPolicy:{}},
-      "DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED",{activeAutomaticSubscriptions:subscriptions.length,validPolicySubscriptions:eligibleSubscriptions.length});
+      "DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED",{activeAutomaticSubscriptions:subscriptions.length,validPolicySubscriptions:eligibleSubscriptions.length},
+      new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())+24*60*60*1000).toISOString());
   }
   const subscriptionHasQuota=(subscription:any)=>{
     const dailyQuota=quotaFor(subscription);
@@ -4747,6 +4749,25 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   // to USD with the same live rates the wallet summary uses. Drives the customer
   // daily Trade record and the all-offers-used login notice.
   const earnedTodayUsd=await getCustomerEarnedUsdInWindow(userId,effectiveQuotaStart,quotaWindow.end);
+  // The next instant the customer can receive another offer, so the tile can count
+  // down to the true unlock moment instead of the (rolling) window end:
+  //  - a slot is free now     -> null (the tile reads "Available now");
+  //  - the daily cap is met   -> the next UTC midnight for a calendar-day window, or
+  //                              the oldest counted delivery ageing out of the rolling 24h window;
+  //  - only cooling remains   -> the soonest package ready time.
+  const nextOfferAvailableAt=(()=>{
+    if(deliveryCapacity.dailyRemaining<=0){
+      if(effectiveSchedulingPeriod!=="rolling_24h") return quotaWindow.end.toISOString();
+      const releasedAt=effectiveDeliveredToday
+        .filter((row:any)=>String(row.status||"").toLowerCase()!=="failed")
+        .map((row:any)=>new Date(row.deliveredAt).getTime())
+        .filter((ms:number)=>Number.isFinite(ms))
+        .map((ms:number)=>ms+24*60*60*1000)
+        .filter((ms:number)=>ms>now.getTime());
+      return releasedAt.length?new Date(Math.min(...releasedAt)).toISOString():null;
+    }
+    return formulaReadyAt&&formulaReadyAt.getTime()>now.getTime()?formulaReadyAt.toISOString():null;
+  })();
   let remainingQuota=deliveryCapacity.remainingQuota;
   const balancesSnapshot=await listBalances(userId);
   let newlyEligible:any[]=[];
@@ -5156,7 +5177,7 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
     remainingQuota,activeVisibleCount:activeVisibleCount+newlyEligible.length,schedulingPeriod:effectiveSchedulingPeriod,
     formulaCooling,formulaReadyAt,nextPopupFormulaDelaySeconds:Number(policy?.postCompletionIntervalSeconds||0),rateProfile:{minHourlyTarget:Number(policy?.minHourlyTarget||0),normalHourlyTarget:Number(policy?.normalHourlyTarget||0),marketInfluenceBps:Number(policy?.marketInfluenceBps||0),burstEnabled:globalPolicy.burstDeliveryEnabled,maxBurstSize:Number(policy?.maxBurstSize||0)},popupPolicy},dailySummary:{offersAllowance:dailyCap,offersUsed:deliveredOfferCount,
       offersRemaining:Math.max(0,deliveryCapacity.dailyRemaining),allOffersUsed:dailyCap>0&&deliveredOfferCount>=dailyCap,
-      earnedTodayUsd,nextOfferAvailableAt:quotaWindow.end.toISOString(),windowPeriod:effectiveSchedulingPeriod}};
+      earnedTodayUsd,nextOfferAvailableAt,windowPeriod:effectiveSchedulingPeriod}};
 }
 export async function claimAutoTradeCycleCustomers(input:{batchSize?:number}={}){
   const db=await getDb();
