@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
+  customerControls,
   privacyAuditEvents,
   privacyPolicyVersions,
   privacyRequestEvents,
@@ -238,6 +239,45 @@ export async function publishPrivacyPolicy(adminId: number, draftId: number, rev
   });
 }
 
+/**
+ * A read-only snapshot of the account information a customer rights request
+ * concerns. Administrators use it to review an "access my information" request
+ * with the full customer record in view; the customer sees their own snapshot.
+ * It never includes credentials or authentication secrets.
+ */
+export async function getAccountPrivacySummary(userId: number) {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The account summary is temporarily unavailable." });
+  const account = (await db.select({
+    id: users.id,
+    name: users.name,
+    email: users.email,
+    packageName: users.packageName,
+    createdAt: users.createdAt,
+    lastSignedIn: users.lastSignedIn,
+  }).from(users).where(eq(users.id, userId)).limit(1))[0];
+  if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "The customer account for this request is no longer available." });
+  const controls = (await db.select().from(customerControls).where(eq(customerControls.userId, userId)).limit(1))[0];
+  const totals = await Promise.all([
+    db.select({ value: count() }).from(privacyRequests).where(eq(privacyRequests.userId, userId)),
+    db.select({ value: count() }).from(privacyRequests).where(and(eq(privacyRequests.userId, userId), inArray(privacyRequests.status, ACTIVE_STATUSES))),
+  ]);
+  return {
+    userId: account.id,
+    name: account.name,
+    email: account.email,
+    packageName: account.packageName,
+    accountCreatedAt: account.createdAt,
+    lastSignedIn: account.lastSignedIn,
+    accountStatus: controls?.accountStatus ?? "active",
+    tradingEnabled: controls?.tradingEnabled ?? true,
+    kycRequired: controls?.kycRequired ?? true,
+    riskTier: controls?.riskTier ?? "standard",
+    totalRequests: Number(totals[0]?.[0]?.value ?? 0),
+    openRequests: Number(totals[1]?.[0]?.value ?? 0),
+  };
+}
+
 export async function listAdminPrivacyRequesters() {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The privacy request queue is temporarily unavailable." });
@@ -365,7 +405,8 @@ export async function getAdminPrivacyRequestDetail(requestId: number) {
   if (!request) throw new TRPCError({ code: "NOT_FOUND", message: "Privacy request not found." });
   const events = await db.select().from(privacyRequestEvents).where(eq(privacyRequestEvents.requestId, requestId))
     .orderBy(desc(privacyRequestEvents.createdAt), desc(privacyRequestEvents.id));
-  return { ...request, events };
+  const customerAccount = await getAccountPrivacySummary(request.userId);
+  return { ...request, events, customerAccount };
 }
 
 export async function updatePrivacyRequest(

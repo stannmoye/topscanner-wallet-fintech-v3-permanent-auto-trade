@@ -131,6 +131,9 @@ async function main() {
   // The administrator visitor-analytics dashboard reads site_analytics_events,
   // which lives outside the Drizzle chain and is created additively here.
   await runPhase("visitor-analytics-schema-repair", ["scripts/ensure-analytics-schema.mjs"]);
+  // The customer and admin Privacy Centre menus read tables that live outside
+  // the Drizzle chain; create and verify them additively before serving.
+  await runPhase("privacy-center-schema-repair", ["scripts/ensure-privacy-schema.mjs"]);
   await runPhase("worker-runtime-schema-preflight", ["scripts/ensure-worker-runtime-schema.mjs", "--verify-only"]);
   await runPhase("application-server", ["--trace-uncaught", "--unhandled-rejections=strict", "dist/index.js"], {}, true);
 

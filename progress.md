@@ -1,3 +1,54 @@
+## 2026-11-26 (fix + feat) — Privacy menu: production schema bridge and the customer account snapshot
+
+Owner request: the customer and admin privacy menus returned HTTP 500 in production ("Failed query:
+select ... from privacy_policy_versions") and the admin "Access my information" review needs the
+full customer record. Fix the errors and add more features.
+
+- **Root cause (production 500s).** `privacy_policy_versions`, `privacy_requests`,
+  `privacy_request_events` and `privacy_audit_events` live outside the Drizzle journal
+  (`drizzle/0062_privacy_center.sql` / `0063_privacy_notice_html.sql` were never chained into
+  `_journal.json`) and no deployment path created them, so every privacy read failed on hosts that
+  had not run the legacy portal tracker.
+- **Idempotent schema bridge (`scripts/privacy-schema.mjs`, NEW).** Mirrors the analytics
+  precedent: `ensurePrivacyCenterSchema(db, { required })` inspects the four tables' columns,
+  replays the two privacy SQL files through `executeCompatibleMigrationSql` when anything is
+  missing, re-checks, and either returns `{ present, repaired }` or throws when `required`.
+  `PRIVACY_CENTER_TABLES` / `PRIVACY_CENTER_REQUIRED_COLUMNS` document the contract.
+- **CLI runner (`scripts/ensure-privacy-schema.mjs`, NEW).** Parses `DATABASE_URL`, calls the
+  ensure-module with `required: true` and prints `{ status, tables, state }` — clone of
+  `ensure-analytics-schema.mjs`.
+- **Startup wiring (`scripts/start-with-diagnostics.mjs`).** Added the
+  `privacy-center-schema-repair` phase (running `ensure-privacy-schema.mjs`) before the worker
+  runtime preflight, so a fresh host self-heals its privacy tables before serving requests.
+- **Migration wiring (`scripts/guarded-main-migrate.mjs`).** Added the
+  `privacy-center-schema-reconciliation` step (registered in `IDEMPOTENT_RECONCILIATION_STEPS`)
+  that calls `ensurePrivacyCenterSchema(connection, { required: false })` just before the worker
+  schema contracts, logging `created and verified` / `verified` / deferred.
+- **Diagnostic alignment (`installer/migration-recovery-status.mjs`).** Added the drifted
+  `0120_customer_api_v1.sql` and `0121_customer_api_settings.sql` entries so the recovery
+  diagnostic matches `apply-portal-migrations.mjs` (fixes a pre-existing test failure).
+- **Feature — customer account snapshot (`server/privacy.ts`).** New
+  `getAccountPrivacySummary(userId)` returns the user's name/email/package/created/last-sign-in,
+  their `customerControls` status/trading/KYC/risk tier, and total/open request counts. It is
+  exposed to the customer via `privacy.myAccountSummary` and appended as `customerAccount` to
+  `getAdminPrivacyRequestDetail`, so an "Access my information" request shows the full customer
+  record to the reviewing administrator.
+- **Customer UI (`client/src/components/CustomerPrivacyCenter.tsx`).** New account-information
+  side card (Account ID, name, email, package, account status, member since, last sign-in,
+  privacy requests).
+- **Admin UI (`client/src/components/AdminPrivacyManagement.tsx`).** The request detail renders a
+  "Customer account snapshot" grid (11 facts incl. trading/KYC/risk tier and request counts) plus
+  an access-request helper note when reviewing an access request.
+- **Styling (`client/src/components/privacy-center.css`).** Token-based styles for the account
+  facts grid and the request subject block.
+- **Tests.** `scripts/privacy-migration-safety.test.mjs` now asserts the table set, the two SQL
+  files, the runner call, the startup phase and the migration reconciliation ordering;
+  `scripts/privacy-workflow-contract.test.mjs` asserts `myAccountSummary`, `getAccountPrivacySummary`,
+  the `customerAccount` field and the absence of any password field.
+- **Verification.** `tsc --noEmit` exit 0; installer suite `vitest run --config
+  vitest.installer.config.ts` 34 files / 198 tests passed; full `vitest run` 220 files / 1,805
+  tests passed (+42 skipped); `CI=1 pnpm build` succeeded.
+
 ## 2026-11-26 (feat) — Privacy menu: customer action prompts, ageing indicators and admin triage
 
 Owner request: improve the privacy menu on the customer and admin portals and add more features.

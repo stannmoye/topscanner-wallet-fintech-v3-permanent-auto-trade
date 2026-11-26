@@ -65,6 +65,7 @@ export function CustomerPrivacyCenter() {
   const policy = trpc.privacy.currentPolicy.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: 60000, refetchOnWindowFocus: false });
   const history = trpc.privacy.policyHistory.useQuery(undefined, { retry: 1, refetchInterval: 60000 });
   const requests = trpc.privacy.myRequests.useQuery(undefined, { refetchInterval: 30000 });
+  const accountSummary = trpc.privacy.myAccountSummary.useQuery(undefined, { staleTime: 60000, refetchOnWindowFocus: false });
   const utils = trpc.useUtils();
   const createRequest = trpc.privacy.createRequest.useMutation();
   const cancelRequest = trpc.privacy.cancelRequest.useMutation();
@@ -486,6 +487,24 @@ export function CustomerPrivacyCenter() {
         </main>
 
         <aside className="privacy-side-column" aria-label="Privacy tools">
+          <section className="privacy-side-card privacy-account-card">
+            <span className="privacy-side-icon"><ShieldCheck size={19} /></span>
+            <span className="eyebrow">ACCOUNT INFORMATION ON FILE</span>
+            <h2>What we currently hold about you</h2>
+            <p>A summary of the account information connected to this Privacy Centre. Use a request to ask for a full, reviewed disclosure of eligible records.</p>
+            {accountSummary.isLoading ? <p className="privacy-muted-copy">Loading your account summary…</p> :
+              accountSummary.isError ? <p className="privacy-muted-copy">Your account summary is temporarily unavailable.</p> :
+              accountSummary.data ? <div className="privacy-detail-facts privacy-account-facts">
+                <div><span>Account ID</span><strong>#{accountSummary.data.userId}</strong></div>
+                <div><span>Name</span><strong>{accountSummary.data.name || "Not set"}</strong></div>
+                <div><span>Email</span><strong>{accountSummary.data.email || "Not set"}</strong></div>
+                <div><span>Package</span><strong>{accountSummary.data.packageName}</strong></div>
+                <div><span>Account status</span><strong>{accountSummary.data.accountStatus}</strong></div>
+                <div><span>Member since</span><strong>{displayDate(accountSummary.data.accountCreatedAt)}</strong></div>
+                <div><span>Last sign-in</span><strong>{displayDate(accountSummary.data.lastSignedIn)}</strong></div>
+                <div><span>Privacy requests</span><strong>{accountSummary.data.totalRequests} total · {accountSummary.data.openRequests} open</strong></div>
+              </div> : null}
+          </section>
           {viewedPolicy && <section className="privacy-side-card privacy-controller-card">
             <span className="privacy-side-icon"><Building2 size={19} /></span>
             <span className="eyebrow">RESPONSIBLE ORGANIZATION</span>

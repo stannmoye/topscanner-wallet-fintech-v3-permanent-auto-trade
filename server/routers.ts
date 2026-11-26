@@ -745,6 +745,10 @@ export const appRouter = router({
       if (ctx.user.role !== "user") throw new TRPCError({ code: "FORBIDDEN", message: "Privacy requests are available to customer accounts." });
       return privacyService.listMyPrivacyRequests(ctx.user.id);
     }),
+    myAccountSummary: protectedProcedure.query(({ ctx }) => {
+      if (ctx.user.role !== "user") throw new TRPCError({ code: "FORBIDDEN", message: "The account summary is available to customer accounts." });
+      return privacyService.getAccountPrivacySummary(ctx.user.id);
+    }),
     createRequest: protectedProcedure.input(z.object({
       requestType: z.enum(["access", "correction", "deletion", "restriction", "objection", "other"]),
       subject: z.string().trim().min(5).max(180),

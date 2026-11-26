@@ -487,6 +487,23 @@ export function AdminPrivacyManagement() {
                   <div><span>Last updated</span><strong>{formatAdminDate(selectedRequest.updatedAt)}</strong></div>
                   <div><span>Time open</span><strong>{privacyRequestAgingLabel(privacyRequestAgeDays(selectedRequest.createdAt))}</strong></div>
                 </div>
+                {selectedRequest.customerAccount && <div className="privacy-request-subject">
+                  <strong className="privacy-request-subject-heading"><Users size={14} /> Customer account snapshot</strong>
+                  <div className="privacy-detail-facts privacy-account-facts">
+                    <div><span>Account ID</span><strong>#{selectedRequest.customerAccount.userId}</strong></div>
+                    <div><span>Name</span><strong>{selectedRequest.customerAccount.name || "Not set"}</strong></div>
+                    <div><span>Email</span><strong>{selectedRequest.customerAccount.email || "No email on record"}</strong></div>
+                    <div><span>Package</span><strong>{selectedRequest.customerAccount.packageName}</strong></div>
+                    <div><span>Account status</span><strong>{selectedRequest.customerAccount.accountStatus}</strong></div>
+                    <div><span>Trading</span><strong>{selectedRequest.customerAccount.tradingEnabled ? "Enabled" : "Disabled"}</strong></div>
+                    <div><span>KYC</span><strong>{selectedRequest.customerAccount.kycRequired ? "Required" : "Not required"}</strong></div>
+                    <div><span>Risk tier</span><strong>{selectedRequest.customerAccount.riskTier}</strong></div>
+                    <div><span>Member since</span><strong>{formatAdminDate(selectedRequest.customerAccount.accountCreatedAt)}</strong></div>
+                    <div><span>Last sign-in</span><strong>{formatAdminDate(selectedRequest.customerAccount.lastSignedIn)}</strong></div>
+                    <div><span>Privacy requests</span><strong>{selectedRequest.customerAccount.totalRequests} total · {selectedRequest.customerAccount.openRequests} open</strong></div>
+                  </div>
+                  {selectedRequest.requestType === "access" && <p className="privacy-muted-copy">This is an access request. Use this snapshot to prepare a full, reviewed disclosure of the eligible account records before completing the request.</p>}
+                </div>}
                 <div className="privacy-request-message-block"><span>Customer-provided context</span><p>{selectedRequest.details || "The customer did not provide additional context."}</p></div>
                 <div className="privacy-request-history"><strong>Recorded event history</strong>{(selectedRequest.events || []).length === 0 ? <p>No additional events recorded yet.</p> : selectedRequest.events.map((event) => <div className="privacy-admin-event" key={event.id}><span>{formatAdminDate(event.createdAt)}</span><strong>{event.eventType.replaceAll(".", " ")}</strong>{event.customerMessage && <p><b>Customer-visible message:</b> {event.customerMessage}</p>}{event.internalNote && <p><b>Internal note:</b> {event.internalNote}</p>}</div>)}</div>
                 <div className="privacy-review-form">

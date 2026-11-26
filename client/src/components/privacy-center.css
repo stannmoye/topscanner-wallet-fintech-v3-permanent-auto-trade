@@ -225,6 +225,11 @@
 .privacy-detail-facts span,.privacy-detail-facts strong{display:block}
 .privacy-detail-facts span{font-size:8px;color:var(--privacy-muted)}
 .privacy-detail-facts strong{margin-top:5px;font-size:9px;overflow-wrap:anywhere}
+.privacy-request-subject{display:grid;gap:9px;margin:4px 0 15px}
+.privacy-request-subject-heading{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:800;color:var(--privacy-text)}
+.privacy-request-subject-heading>svg{color:var(--privacy-accent)}
+.privacy-request-subject .privacy-detail-facts{margin:0;padding:10px 0}
+.privacy-account-facts>div>strong{color:var(--privacy-text-soft)}
 .privacy-request-message-block{padding:12px;border:1px solid var(--privacy-border);border-radius:9px;background:var(--privacy-surface)}
 .privacy-request-message-block>span,.privacy-request-history>strong{display:block;font-size:10px;font-weight:800}
 .privacy-request-message-block p,.privacy-request-history>p{white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0 0;font-size:10px;color:var(--privacy-text-soft);line-height:1.7}

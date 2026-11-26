@@ -9,6 +9,7 @@ import { assertWorkerSchemaContracts } from "./worker-schema-contracts.mjs";
 import { inspectMainMigrationSchema } from "./main-migration-schema-diagnostic.mjs";
 import { ensureMiningCustomerPackageSchema } from "./mining-customer-package-schema.mjs";
 import { ensureMiningPackageThemeSchema } from "./mining-package-theme-schema.mjs";
+import { ensurePrivacyCenterSchema } from "./privacy-schema.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databaseUrl = process.env.DATABASE_URL;
@@ -29,6 +30,7 @@ const IDEMPOTENT_RECONCILIATION_STEPS = new Set([
   "manual-payout-request-lifecycle-schema-reconciliation",
   "delivery-diagnostics-schema-reconciliation",
   "mining-customer-package-schema-reconciliation",
+  "privacy-center-schema-reconciliation",
 ]);
 
 function safeCode(error, fallback = "UNKNOWN") {
@@ -539,6 +541,17 @@ async function main() {
       console.log("[main-migrate] Verified mining_package_versions.themeKey" +
         (miningPackageThemeSchema.repaired ? " after additive repair." : "."));
     }
+
+    // The Privacy Centre tables live outside the Drizzle journal. Apply their
+    // idempotent additive DDL here too so a main-migration-only host cannot
+    // start with the customer/admin privacy menus returning HTTP 500.
+    currentMigration = "privacy-center-schema-reconciliation";
+    currentStatement = { index: null, label: "privacy centre schema verification and additive repair" };
+    const privacyCenterSchema = await ensurePrivacyCenterSchema(connection, { required: false });
+    console.log("[main-migrate] Privacy Centre schema " +
+      (privacyCenterSchema.present
+        ? (privacyCenterSchema.repaired ? "created and verified." : "verified.")
+        : "verification incomplete; the startup privacy repair phase will retry."));
 
     currentMigration = "post-migration-schema-verification";
     currentStatement = { index: null, label: "worker schema contract verification" };

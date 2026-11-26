@@ -57,4 +57,19 @@ describe("Privacy Centre end-to-end source contracts", () => {
     expect(admin).toContain('markEditorFieldTouched("htmlContent")');
     expect(admin).toContain("updateRequest.mutateAsync");
   });
+
+  it("surfaces a customer account snapshot to the customer and to administrators reviewing a request", async () => {
+    const router = await read("../server/routers.ts");
+    const service = await read("../server/privacy.ts");
+    const customer = await read("../client/src/components/CustomerPrivacyCenter.tsx");
+    const admin = await read("../client/src/components/AdminPrivacyManagement.tsx");
+    expect(router).toContain("myAccountSummary: protectedProcedure.query");
+    expect(router).toContain("privacyService.getAccountPrivacySummary(ctx.user.id)");
+    expect(service).toContain("export async function getAccountPrivacySummary(userId: number)");
+    expect(service).toContain("customerAccount");
+    expect(service).not.toContain("passwordHash");
+    expect(customer).toContain("trpc.privacy.myAccountSummary.useQuery");
+    expect(admin).toContain("Customer account snapshot");
+    expect(admin).toContain("selectedRequest.customerAccount");
+  });
 });

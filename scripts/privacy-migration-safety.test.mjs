@@ -9,6 +9,10 @@ const recoveryPath = new URL("../installer/migration-recovery-status.mjs", impor
 const privacyServicePath = new URL("../server/privacy.ts", import.meta.url);
 const privacyRouterPath = new URL("../server/routers.ts", import.meta.url);
 const installPath = new URL("../installer/run-install.mjs", import.meta.url);
+const privacySchemaModulePath = new URL("./privacy-schema.mjs", import.meta.url);
+const privacySchemaRunnerPath = new URL("./ensure-privacy-schema.mjs", import.meta.url);
+const startupWrapperPath = new URL("./start-with-diagnostics.mjs", import.meta.url);
+const mainMigratePath = new URL("./guarded-main-migrate.mjs", import.meta.url);
 
 describe("Privacy Centre migration and installation contract", () => {
   it("creates dedicated versioning, request, request-event and audit tables without destructive SQL", async () => {
@@ -58,5 +62,26 @@ describe("Privacy Centre migration and installation contract", () => {
     expect(privacyRouter).not.toContain("body: z.string().min(40).max(8000)");
     expect(privacyService).toContain("if (!reviewAcknowledged)");
     expect(privacyRouter).toContain("reviewAcknowledged: z.literal(true)");
+  });
+
+  it("bridges the Privacy Centre tables into the deployment migration and startup paths", async () => {
+    const [module, runner, startup, mainMigrate] = await Promise.all([
+      readFile(privacySchemaModulePath, "utf8"),
+      readFile(privacySchemaRunnerPath, "utf8"),
+      readFile(startupWrapperPath, "utf8"),
+      readFile(mainMigratePath, "utf8"),
+    ]);
+    for (const table of ["privacy_policy_versions", "privacy_requests", "privacy_request_events", "privacy_audit_events"]) {
+      expect(module).toContain('"' + table + '"');
+    }
+    expect(module).toContain("export async function ensurePrivacyCenterSchema");
+    expect(module).toContain("0062_privacy_center.sql");
+    expect(module).toContain("0063_privacy_notice_html.sql");
+    expect(runner).toContain("ensurePrivacyCenterSchema(db, { required: true })");
+    expect(startup).toContain('runPhase("privacy-center-schema-repair", ["scripts/ensure-privacy-schema.mjs"])');
+    expect(mainMigrate).toContain("ensurePrivacyCenterSchema(connection");
+    expect(mainMigrate).toContain('"privacy-center-schema-reconciliation"');
+    expect(mainMigrate.indexOf("ensurePrivacyCenterSchema(connection"))
+      .toBeLessThan(mainMigrate.indexOf("await assertWorkerSchemaContracts(connection)"));
   });
 });
