@@ -16,6 +16,7 @@ export const WORKER_HEALTH_REGISTRY = [
   { key: "notification-campaigns", label: "Notification campaigns", description: "Processes due and expired notification campaigns.", expectedIntervalMs: 30_000, staleAfterMs: 180_000 },
   { key: "email-outbox", label: "Email delivery outbox", description: "Processes queued and retryable email notifications when an email provider is configured.", expectedIntervalMs: 30_000, staleAfterMs: 180_000 },
   { key: "daily-digests", label: "Daily digest scheduler", description: "Queues scheduled account digests using the existing preferences and idempotency keys.", expectedIntervalMs: 30_000, staleAfterMs: 180_000 },
+  { key: "daily-reports", label: "Daily report generation", description: "Persists each customer's durable daily report and statement delivery once per day after the configured close time.", expectedIntervalMs: 60_000, staleAfterMs: 600_000 },
   { key: "mining-rewards", label: "Mining reward worker", description: "Processes the existing Mining background queue.", expectedIntervalMs: 30_000, staleAfterMs: 180_000 },
   { key: "mining-price-feeds", label: "Mining price feeds", description: "Refreshes configured Mining price-feed data.", expectedIntervalMs: 300_000, staleAfterMs: 1_200_000 },
   { key: "popup-retention", label: "Opportunity popup retention", description: "Prunes expired opportunity lifecycle and delivery records under retention policy.", expectedIntervalMs: 3_600_000, staleAfterMs: 10_800_000 },

@@ -26,6 +26,7 @@ import { runOpportunityRetention } from "../opportunityLifecycle";
 import { getLocalSessionFromRequest } from "./localAuth";
 import { confirmEmailVerification, requestEmailVerification, requestPasswordReset, resetPasswordWithCode } from "../emailAuth";
 import { startEmailWorkers } from "../emailQueue";
+import { runDailyEmailReports } from "../emailAdmin";
 import { startHeartbeatWorker } from "./heartbeat";
 import { runMonitoredWorkerCycle, sanitizeWorkerErrorMessage, waitForMonitoredWorkerCycles } from "./workerHealth";
 import { registerGracefulShutdown, registerWorkerInterval } from "./workerRuntime";
@@ -535,6 +536,16 @@ async function startServer() {
       .then(() => console.log("[Lending] Example auctions ensured on startup"))
       .catch(error => console.error("[Lending] Startup example seed failed:", error instanceof Error ? error.message : "UnknownError"));
     startEmailWorkers();
+    // Persist the durable daily report (`v5_reports` + `v5_email_jobs`) for every
+    // customer once per UTC day after the administrator-configured close time.
+    // The run is idempotent per customer and day, so this cheap periodic check is
+    // safe to repeat and recovers the day if the host restarts before it ran.
+    const runDailyReportCycle = () => runMonitoredWorkerCycle("daily-reports", () => runDailyEmailReports())
+      .then(result => { if (!(result as any).skipped) console.log("[DailyReports] daily report run", result); })
+      .catch(error => console.error("[DailyReports]", error instanceof Error ? error.message : error));
+    const dailyReportTimer = registerWorkerInterval(() => { void runDailyReportCycle(); }, 60_000);
+    dailyReportTimer.unref();
+    void runDailyReportCycle();
     startHeartbeatWorker();
     // Durable queue polling is cheap while idle (indexed lookup only), processes
     // new qualifying credits promptly, and recovers jobs left by process restarts.

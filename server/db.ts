@@ -4483,10 +4483,10 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   const quotaDay=now.toISOString().slice(0,10);
   const settled:Array<{tradeId:number;rewardMinor:number;currency:string;totalMinor:number}>=[];
   const controls=await ensureCustomerControls(userId);
-  const emptyResult=async (delivery:any,reason:string,counts:Record<string,number>={},nextOfferAvailableAt:string|null=null)=>({serverTime:new Date().toISOString(),offers:[],missed:await listMissedOpportunities(userId),autoTrades:[],settled,generatedOpportunityId:null,delivery,
+  const emptyResult=async (delivery:any,reason:string,counts:Record<string,number>={},nextOfferAvailableAt:string|null=null,dailySummaryOverride?:{offersAllowance:number;offersUsed:number;offersRemaining:number;allOffersUsed:boolean;earnedTodayUsd:number;nextOfferAvailableAt:string|null;windowPeriod?:string}|null)=>({serverTime:new Date().toISOString(),offers:[],missed:await listMissedOpportunities(userId),autoTrades:[],settled,generatedOpportunityId:null,delivery,
     dailySummary:{offersAllowance:Math.max(0,Number(delivery?.maxPopupsPerDay||0)),offersUsed:0,
       offersRemaining:Boolean(delivery?.dailySuccessfulCapReached)?0:Math.max(0,Number(delivery?.maxPopupsPerDay||0)),
-      allOffersUsed:Boolean(delivery?.dailySuccessfulCapReached),earnedTodayUsd:0,nextOfferAvailableAt},
+      allOffersUsed:Boolean(delivery?.dailySuccessfulCapReached),earnedTodayUsd:0,nextOfferAvailableAt,...(dailySummaryOverride||{})},
     generationDiagnostics:{attempted:false,reason,generationControlEnabled:options.automaticGenerationEnabled===true,
       globalControlsAvailable:globalPolicy.available,tierPolicyMasterEnabled:globalPolicy.tierPolicyMasterEnabled,
       popupDeliveryMasterEnabled:globalPolicy.informationalPopupDeliveryEnabled,...counts},
@@ -4618,9 +4618,18 @@ export async function listCustomerOpportunities(userId:number, options:{consumeD
   // opportunity at all (no popup, no hold, no debit) and report the reason so the
   // customer never sees a popup whose amount would not be deducted and locked.
   if(eligibleSubscriptions.every(subscription=>!subscriptionHasDailySuccessfulCapacity(subscription))){
+    // The customer's Today Profit / Offers Used tiles and the all-offers-used
+    // login notice must still reflect what actually happened today even though no
+    // further offer will be generated. Compute the durable daily actuals from the
+    // authoritative tables instead of reporting a hard-coded zero (owner
+    // guardrail: never present synthetic or zeroed figures).
+    const nextUtcMidnight=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())+24*60*60*1000).toISOString();
+    const offersUsedToday=countConsumedDeliveryOffers(deliveredToday);
+    const earnedTodayUsd=await getCustomerEarnedUsdInWindow(userId,effectiveQuotaStart,quotaWindow.end);
     return emptyResult({packageName:eligibleSubscriptions.map(row=>row.packageName).join(", "),maxPopupsPerDay:0,maxVisibleOffers:0,enabled:false,dailySuccessfulCapReached:true,popupPolicy:{}},
       "DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED",{activeAutomaticSubscriptions:subscriptions.length,validPolicySubscriptions:eligibleSubscriptions.length},
-      new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())+24*60*60*1000).toISOString());
+      nextUtcMidnight,{offersAllowance:maxPopupsPerDay,offersUsed:offersUsedToday,offersRemaining:0,allOffersUsed:true,
+        earnedTodayUsd,nextOfferAvailableAt:nextUtcMidnight,windowPeriod:effectiveSchedulingPeriod});
   }
   const subscriptionHasQuota=(subscription:any)=>{
     const dailyQuota=quotaFor(subscription);
@@ -5758,7 +5767,7 @@ export async function createTrade(userId:number,input:{offerId:number;amountMino
 // landed inside the requested window, converted to USD with the same live FX
 // rates the balance summary uses. A currency whose live rate is missing is
 // excluded (fail closed) rather than reported as a converted zero.
-async function getCustomerEarnedUsdInWindow(userId:number,start:Date,end:Date){
+export async function getCustomerEarnedUsdInWindow(userId:number,start:Date,end:Date){
   const db=await getDb();
   if(!db) throw new Error("Database is not available");
   const rows=await db.select({currency:tradePositions.currency,netProfitMinor:tradePositions.netProfitMinor})

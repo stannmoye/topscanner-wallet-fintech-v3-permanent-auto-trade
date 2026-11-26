@@ -17,6 +17,18 @@ describe("runtime Trading delivery quota semantics", () => {
     expect(app).toContain("delivery?.enabled&&policy");
   });
 
+  it("reports the real daily record on the daily-successful-cap early return instead of zeroed tiles", () => {
+    // The tiles (Offers Used / Today Profit) and the login notice read the
+    // shared dailySummary. When every package has hit its daily successful-trade
+    // cap the function still early-returns, but it must compute the durable
+    // daily actuals for that window rather than reporting a hard-coded zero.
+    expect(delivery).toContain("...(dailySummaryOverride||{})");
+    expect(delivery).toContain("const offersUsedToday=countConsumedDeliveryOffers(deliveredToday)");
+    expect(delivery).toContain("const earnedTodayUsd=await getCustomerEarnedUsdInWindow(userId,effectiveQuotaStart,quotaWindow.end)");
+    expect(delivery).toContain("offersAllowance:maxPopupsPerDay,offersUsed:offersUsedToday,offersRemaining:0,allOffersUsed:true,");
+    expect(delivery).toContain("earnedTodayUsd,nextOfferAvailableAt:nextUtcMidnight,windowPeriod:effectiveSchedulingPeriod");
+  });
+
 
   it("persists popup rows before consuming daily quota and repairs interrupted writes", () => {
     const popupPersistence = delivery.indexOf("const lifecycleIds=await ensurePopupDeliveries");

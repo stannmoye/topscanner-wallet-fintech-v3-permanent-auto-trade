@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import nodemailer from "nodemailer";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
-import { getAppSetting, getDb, setAppSetting } from "./db";
+import { getAppSetting, getCustomerEarnedUsdInWindow, getDb, setAppSetting } from "./db";
 import { sql } from "drizzle-orm";
 
 const execFileAsync = promisify(execFile);
@@ -158,21 +158,151 @@ export async function resetPassword(token: string, passwordHash: string) {
   return { success: true, userId: Number(row.userId) };
 }
 
-function dayKey() { return new Date().toISOString().slice(0, 10); }
+function utcDayKey(now = new Date()) { return now.toISOString().slice(0, 10); }
+
+type DailyReportFigures = {
+  reportingDate: string;
+  timezone: string;
+  periodStartUtc: Date;
+  periodEndUtc: Date;
+  trades: any[];
+  ledger: any[];
+  offersUsed: number;
+  netProfitUsd: number;
+};
+
+/**
+ * Compose the authoritative figures for one customer on one UTC reporting day.
+ * Every value is read from the durable table that already owns it (settled
+ * trade positions, the immutable balance ledger, the opportunity delivery
+ * events) and the USD total reuses the same live-FX helper the customer
+ * balance summary uses, so a persisted report can never disagree with the
+ * customer's balances, statements or dashboard offer record.
+ */
+async function loadDailyReportFigures(db: any, userId: number, reportingDate: string, timezone: string): Promise<DailyReportFigures> {
+  const periodStartUtc = new Date(`${reportingDate}T00:00:00.000Z`);
+  const periodEndUtc = new Date(periodStartUtc.getTime() + 24 * 60 * 60 * 1000);
+  const tradesResult = await db.execute(sql`SELECT currency,principalMinor,expectedRewardMinor,netProfitMinor,status,confirmedAt,settledAt FROM trade_positions WHERE userId=${userId} AND status='settled' AND walletUpdatedAt>=${periodStartUtc} AND walletUpdatedAt<${periodEndUtc} ORDER BY walletUpdatedAt DESC`);
+  const trades = ((tradesResult as any)[0] || []) as any[];
+  const ledgerResult = await db.execute(sql`SELECT currency,amountMinor,entryType,createdAt FROM balance_ledger WHERE userId=${userId} AND createdAt>=${periodStartUtc} AND createdAt<${periodEndUtc} ORDER BY createdAt DESC`);
+  const ledger = ((ledgerResult as any)[0] || []) as any[];
+  const offersResult = await db.execute(sql`SELECT COUNT(DISTINCT offerId) AS used FROM opportunity_delivery_events WHERE userId=${userId} AND quotaDay=${reportingDate} AND status<>'failed'`);
+  const offersUsed = Number((((offersResult as any)[0] || [])[0] || {}).used || 0);
+  const netProfitUsd = await getCustomerEarnedUsdInWindow(userId, periodStartUtc, periodEndUtc);
+  return { reportingDate, timezone, periodStartUtc, periodEndUtc, trades, ledger, offersUsed, netProfitUsd };
+}
+
+/**
+ * Record the durable report row for this customer and day. Idempotent: an
+ * existing row for the same (userId, reportingDate) is updated in place rather
+ * than duplicated, so the scheduled run, a manual run and a restart all
+ * converge on exactly one report per customer per day.
+ */
+async function persistDailyReport(db: any, userId: number, figures: DailyReportFigures) {
+  const existing = (((await db.execute(sql`SELECT id FROM v5_reports WHERE userId=${userId} AND reportingDate=${figures.reportingDate} ORDER BY id DESC LIMIT 1`)) as any)[0] || [])[0];
+  if (existing) {
+    await db.execute(sql`UPDATE v5_reports SET timezone=${figures.timezone},periodStartUtc=${figures.periodStartUtc},periodEndUtc=${figures.periodEndUtc},status='GENERATED' WHERE id=${Number(existing.id)}`);
+    return Number(existing.id);
+  }
+  const inserted = await db.execute(sql`INSERT INTO v5_reports (userId,reportingDate,timezone,periodStartUtc,periodEndUtc,status) VALUES (${userId},${figures.reportingDate},${figures.timezone},${figures.periodStartUtc},${figures.periodEndUtc},'GENERATED')`);
+  const reportId = Number((inserted as any)[0]?.insertId || 0);
+  if (!reportId) throw new Error("The daily report row could not be recorded.");
+  return reportId;
+}
+
+/**
+ * Record the report's email job. The unique idempotency key makes the queued
+ * delivery exactly-once per report even across retries and restarts.
+ */
+async function recordDailyReportEmailJob(db: any, userId: number, reportId: number, status: string, idempotencyKey: string, lastError: string | null = null) {
+  await db.execute(sql`INSERT INTO v5_email_jobs (userId,reportId,status,attempts,lastError,idempotencyKey) VALUES (${userId},${reportId},${status},${status === "QUEUED" ? 0 : 1},${lastError},${idempotencyKey}) ON DUPLICATE KEY UPDATE reportId=VALUES(reportId),status=VALUES(status),attempts=VALUES(attempts),lastError=VALUES(lastError)`);
+}
+
+/**
+ * Whether the automatic daily statement may be emailed to this customer. The
+ * report row is always written; only the email respects the verified-inbox
+ * requirement and the customer's dailyTradingReports preference, so the
+ * scheduler can never email an unverified or opted-out customer.
+ */
+async function dailyReportEmailAllowed(db: any, userId: number) {
+  const control = (((await db.execute(sql`SELECT emailVerified FROM customer_controls WHERE userId=${userId} LIMIT 1`)) as any)[0] || [])[0];
+  if (!control || !Number(control.emailVerified)) return false;
+  const pref = (((await db.execute(sql`SELECT dailyTradingReports FROM customer_email_preferences WHERE userId=${userId} LIMIT 1`)) as any)[0] || [])[0];
+  if (pref && Number(pref.dailyTradingReports) === 0) return false;
+  return true;
+}
+
+function renderDailyStatement(user: any, figures: DailyReportFigures) {
+  const { trades, ledger, offersUsed, netProfitUsd } = figures;
+  return `<div style="font-family:Arial,sans-serif"><h2>WiseBond daily trading statement</h2><p>Hello ${user.name || "Customer"}, here is your statement for ${figures.reportingDate} (${figures.timezone}).</p><h3>Summary</h3><ul><li>Offers used: ${offersUsed}</li><li>Settled trades: ${trades.length}</li><li>Net profit: ${netProfitUsd.toFixed(2)} USD</li></ul><h3>Trades (${trades.length})</h3><ul>${trades.map((t: any) => `<li>${t.currency} · ${t.status} · principal ${t.principalMinor} · expected reward ${t.expectedRewardMinor}</li>`).join("") || "<li>No settled trades recorded today.</li>"}</ul><h3>Ledger activity (${ledger.length})</h3><ul>${ledger.map((x: any) => `<li>${x.currency} · ${x.entryType} · ${x.amountMinor}</li>`).join("") || "<li>No ledger activity recorded today.</li>"}</ul><p>All figures are generated from the authoritative WiseBond database.</p></div>`;
+}
+
+/**
+ * Generate and persist the daily report for every customer, then deliver the
+ * statement email where the customer is eligible. Each report is recorded in
+ * `v5_reports` and its delivery in `v5_email_jobs`; both are idempotent per
+ * customer and day, so the scheduled run, the admin "Run daily reports now"
+ * action and a process restart all converge on exactly one report and one job
+ * per customer and day.
+ */
 export async function runDailyEmailReports(force = false) {
   const db = await getDb(); if (!db) return { skipped: true, reason: "database" };
-  const now = new Date(); const hour = Number(await getAppSetting("email.dailyCloseHourUtc", "23")); const minute = Number(await getAppSetting("email.dailyCloseMinuteUtc", "59"));
+  const now = new Date();
+  const hour = Number(await getAppSetting("email.dailyCloseHourUtc", "23"));
+  const minute = Number(await getAppSetting("email.dailyCloseMinuteUtc", "59"));
   if (!force && (now.getUTCHours() < hour || (now.getUTCHours() === hour && now.getUTCMinutes() < minute))) return { skipped: true, reason: "before-close" };
-  const key = `email.dailyReports.${dayKey()}`; if (!force && await getAppSetting(key)) return { skipped: true, reason: "already-sent" };
-  const rowsResult = await db.execute(sql`SELECT id,name,email FROM users WHERE role='user' AND email IS NOT NULL AND email<>''`); const users = ((rowsResult as any)[0] || []) as any[];
+  const reportingDate = utcDayKey(now);
+  const key = `email.dailyReports.${reportingDate}`;
+  if (!force && await getAppSetting(key)) return { skipped: true, reason: "already-generated" };
+  const systemTimezone = (await getAppSetting("reporting.systemTimezone", "UTC")) || "UTC";
+  const rowsResult = await db.execute(sql`SELECT id,name,email,reportingTimezone FROM users WHERE role='user' AND email IS NOT NULL AND email<>''`);
+  const users = ((rowsResult as any)[0] || []) as any[];
+  let reportsPersisted = 0;
   let customerSent = 0;
+  let suppressed = 0;
+  let failed = 0;
   for (const user of users) {
-    const tradesResult = await db.execute(sql`SELECT currency,principalMinor,expectedRewardMinor,status,confirmedAt,settledAt FROM trade_positions WHERE userId=${user.id} AND DATE(COALESCE(settledAt,confirmedAt))=${dayKey()} ORDER BY confirmedAt DESC`); const trades = ((tradesResult as any)[0] || []) as any[];
-    const ledgerResult = await db.execute(sql`SELECT currency,amountMinor,entryType,createdAt FROM balance_ledger WHERE userId=${user.id} AND DATE(createdAt)=${dayKey()} ORDER BY createdAt DESC`); const ledger = ((ledgerResult as any)[0] || []) as any[];
-    const html = `<div style="font-family:Arial,sans-serif"><h2>WiseBond daily trading statement</h2><p>Hello ${user.name || "Customer"}, here is your statement for ${dayKey()}.</p><h3>Trades (${trades.length})</h3><ul>${trades.map((t:any)=>`<li>${t.currency} · ${t.status} · principal ${t.principalMinor} · expected reward ${t.expectedRewardMinor}</li>`).join("") || "<li>No trades recorded today.</li>"}</ul><h3>Ledger activity (${ledger.length})</h3><ul>${ledger.map((x:any)=>`<li>${x.currency} · ${x.entryType} · ${x.amountMinor}</li>`).join("") || "<li>No ledger activity recorded today.</li>"}</ul><p>All figures are generated from the authoritative WiseBond database.</p></div>`;
-    try { await sendEmail({ to: user.email, subject: `WiseBond daily statement · ${dayKey()}`, html }); customerSent++; } catch (error) { console.error("[Email] customer daily statement failed", user.email, error); }
+    try {
+      const figures = await loadDailyReportFigures(db, user.id, reportingDate, user.reportingTimezone || systemTimezone);
+      const reportId = await persistDailyReport(db, user.id, figures);
+      reportsPersisted++;
+      const idempotencyKey = `daily-report:${user.id}:${reportingDate}`;
+      const priorJob = (((await db.execute(sql`SELECT status FROM v5_email_jobs WHERE idempotencyKey=${idempotencyKey} LIMIT 1`)) as any)[0] || [])[0];
+      if (priorJob && String(priorJob.status) === "SENT") {
+        await recordDailyReportEmailJob(db, user.id, reportId, "SENT", idempotencyKey, null);
+        customerSent++;
+        continue;
+      }
+      let status = "SUPPRESSED";
+      let lastError: string | null = null;
+      if (await dailyReportEmailAllowed(db, user.id)) {
+        try {
+          await sendEmail({ to: user.email, subject: `WiseBond daily statement · ${reportingDate}`, html: renderDailyStatement(user, figures) });
+          status = "SENT";
+          customerSent++;
+        } catch (error) {
+          status = "FAILED";
+          lastError = error instanceof Error ? error.name.slice(0, 120) : "EmailDeliveryError";
+          failed++;
+          console.error("[Email] customer daily statement failed", user.email, error);
+        }
+      } else {
+        suppressed++;
+      }
+      await recordDailyReportEmailJob(db, user.id, reportId, status, idempotencyKey, lastError);
+    } catch (error) {
+      failed++;
+      console.error("[DailyReports] report failed for user", user.id, error instanceof Error ? error.message : error);
+    }
   }
-  const adminsResult = await db.execute(sql`SELECT email FROM users WHERE role='admin' AND email IS NOT NULL AND email<>''`); const admins = ((adminsResult as any)[0] || []).map((x:any)=>x.email);
-  if (admins.length) { const activityResult = await db.execute(sql`SELECT u.email,bl.currency,bl.amountMinor,bl.entryType,bl.createdAt FROM balance_ledger bl LEFT JOIN users u ON u.id=bl.userId WHERE DATE(bl.createdAt)=${dayKey()} ORDER BY bl.createdAt DESC LIMIT 500`); const activity = ((activityResult as any)[0] || []) as any[]; const html = `<div style="font-family:Arial,sans-serif"><h2>WiseBond admin progress report</h2><p>Daily operational report for ${dayKey()}.</p><p><b>Customer statements sent:</b> ${customerSent} / ${users.length}</p><h3>Ledger activity</h3><ul>${activity.map((x:any)=>`<li>${x.email || "Unknown"} · ${x.currency} · ${x.entryType} · ${x.amountMinor}</li>`).join("") || "<li>No ledger activity today.</li>"}</ul></div>`; try { await sendEmail({ to: admins, subject: `WiseBond admin progress report · ${dayKey()}`, html }); } catch (error) { console.error("[Email] admin daily report failed", error); } }
-  await setAppSetting(key, new Date().toISOString()); return { customerSent, customerTotal: users.length, adminRecipients: admins.length };
+  const adminsResult = await db.execute(sql`SELECT email FROM users WHERE role='admin' AND email IS NOT NULL AND email<>''`);
+  const admins = ((adminsResult as any)[0] || []).map((x: any) => x.email);
+  if (admins.length) {
+    const activityResult = await db.execute(sql`SELECT u.email,bl.currency,bl.amountMinor,bl.entryType,bl.createdAt FROM balance_ledger bl LEFT JOIN users u ON u.id=bl.userId WHERE DATE(bl.createdAt)=${reportingDate} ORDER BY bl.createdAt DESC LIMIT 500`);
+    const activity = ((activityResult as any)[0] || []) as any[];
+    const html = `<div style="font-family:Arial,sans-serif"><h2>WiseBond admin progress report</h2><p>Daily operational report for ${reportingDate}.</p><p><b>Customer reports generated:</b> ${reportsPersisted} / ${users.length}</p><p><b>Statements sent:</b> ${customerSent} · <b>Suppressed:</b> ${suppressed} · <b>Failed:</b> ${failed}</p><h3>Ledger activity</h3><ul>${activity.map((x: any) => `<li>${x.email || "Unknown"} · ${x.currency} · ${x.entryType} · ${x.amountMinor}</li>`).join("") || "<li>No ledger activity today.</li>"}</ul></div>`;
+    try { await sendEmail({ to: admins, subject: `WiseBond admin progress report · ${reportingDate}`, html }); } catch (error) { console.error("[Email] admin daily report failed", error); }
+  }
+  await setAppSetting(key, new Date().toISOString());
+  return { reportingDate, reportsPersisted, customerTotal: users.length, customerSent, suppressed, failed, adminRecipients: admins.length };
 }

@@ -1,3 +1,55 @@
+## 2026-11-26 (fix + feat) — Daily reports persisted every day; no more zeroed daily offer record
+
+Owner request: reports must be saved every day and the customer daily offer record (Offers Used /
+Today Profit tiles and the login notice) must be 100% accurate — it was showing zero even when
+offers had been consumed that day. Two gaps were found and fixed.
+
+- **Root cause (zeroed tiles).** `listCustomerOpportunities` has a
+  `DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED` early return that fires once every eligible package has hit
+  its daily successful-trade cap (exactly what happens after offers are used). It called
+  `emptyResult(...)` with no figures, so `dailySummary` came back hard-coded
+  `{offersAllowance:0,offersUsed:0,offersRemaining:0,allOffersUsed:true,earnedTodayUsd:0}` — the
+  tiles and the login pop-up showed zeros. Confirmed live on `stan.prod.page/customer` (package
+  "Imperial Ledger", `delivery.maxPopupsPerDay:0`, `enabled:false`,
+  `generationDiagnostics.reason:"DAILY_SUCCESSFUL_TRADE_LIMIT_REACHED"`).
+- **Fix — real daily record on the early return (`server/db.ts`).** `emptyResult` gained an optional
+  `dailySummaryOverride` (spread last). The cap early return now computes
+  `offersUsedToday=countConsumedDeliveryOffers(deliveredToday)` and
+  `earnedTodayUsd=await getCustomerEarnedUsdInWindow(userId,effectiveQuotaStart,quotaWindow.end)`
+  and passes `{offersAllowance:maxPopupsPerDay,offersUsed:offersUsedToday,offersRemaining:0,
+  allOffersUsed:true,earnedTodayUsd,nextOfferAvailableAt:nextUtcMidnight,windowPeriod}`. No synthetic
+  numbers: values come from the durable delivery events and settled-trade ledger; missing FX fails
+  closed to 0. `getCustomerEarnedUsdInWindow` was exported so reporting can reuse the same live-FX
+  USD sum.
+- **Gap (reports never persisted).** `v5_reports` and `v5_email_jobs` existed but nothing wrote
+  them; the admin `runDailyEmailReports` only sent email — no durable per-customer/day report row.
+- **Fix — durable daily report (`server/emailAdmin.ts`, rewritten).**
+  `loadDailyReportFigures(db, userId, reportingDate, timezone)` derives the authoritative figures for
+  the UTC day from settled trades (`status='settled'` and `walletUpdatedAt` in `[start,end)`),
+  `balance_ledger` rows in the window, and `offersUsed` from
+  `opportunity_delivery_events` (`COUNT(DISTINCT offerId)` where `quotaDay=reportingDate` and
+  `status<>'failed'`), with `netProfitUsd` from `getCustomerEarnedUsdInWindow`. `persistDailyReport`
+  is idempotent: it UPDATEs the existing `v5_reports` row for `userId`+`reportingDate` or INSERTs a
+  new `GENERATED` row. `recordDailyReportEmailJob` upserts the `v5_email_jobs` row keyed by
+  `idempotencyKey = daily-report:<userId>:<reportingDate>` (`ON DUPLICATE KEY UPDATE`).
+  `dailyReportEmailAllowed` requires `customer_controls.emailVerified` and
+  `customer_email_preferences.dailyTradingReports`. Email is sent only when allowed, otherwise the
+  job is recorded `SUPPRESSED`/`FAILED`; a prior `SENT` job is never resent.
+- **Fix — scheduled every day (`server/_core/index.ts`, `server/_core/workerHealth.ts`).** New
+  `daily-reports` worker registered with `registerWorkerInterval(... 60_000)` +
+  `runMonitoredWorkerCycle("daily-reports", () => runDailyEmailReports())`, self-gating on the
+  admin-configured UTC close time (`email.dailyCloseHourUtc`/`MinuteUtc`) and the
+  `email.dailyReports.<day>` key so each day persists exactly once. Worker key added to
+  `WORKER_HEALTH_REGISTRY` (`expectedIntervalMs: 60_000`, `staleAfterMs: 600_000`).
+- **Verification.** `pnpm run check` (`tsc --noEmit`) exit 0; targeted contract tests pass; full
+  `vitest run` 221 files / 1,811 tests passed (9 files / 42 tests skipped); `pnpm run build`
+  succeeded. New `server/daily-reports.contract.test.ts` (5 tests) asserts the `v5_reports`/
+  `v5_email_jobs` writes, idempotency keys, authoritative figure queries, the send-gating, and the
+  worker registration; a new case in `server/trading-delivery-quota.contract.test.ts` asserts the
+  non-zero daily record on the cap early return. Live customer login still showed the zeroed
+  figures because production had not yet received the fix (working tree was unpushed); the portal
+  reflects the fix after the host deploys this commit.
+
 ## 2026-11-26 (fix) — Customer daily offer record: correct values at the correct moment
 
 Owner request: the four customer-dashboard offer-record tiles (Offers Remain, Offers Used, Today
