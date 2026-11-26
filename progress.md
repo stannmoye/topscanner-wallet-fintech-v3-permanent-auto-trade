@@ -1,3 +1,64 @@
+## 2026-11-27 (feature / Stage 6) — Tender Bid full source catalogue (23 countries + supranational) & hardening
+
+Owner request: "Proceed to next stage" — the owner approved the Stage 6 scope as **"Shared factories,
+all 23"**: build generic adapter factories and complete all 23 country sources plus the 5 supranational
+sources in this stage, with fragile scrapers failing closed and being health-flagged. Delivered per
+`docs/TENDER_BID_SPECIFICATION.md` (§3 data sources & attribution, §4 23-country table, §6 provider
+interface & ingestion, §11 Stage 6, §12 guardrails). Stage 6 "done when" is met: **all 23 countries are
+represented** and the catalogue resolves end-to-end; `pnpm run check`, targeted contract tests, the full
+`pnpm test`, the installer suite and `pnpm build` are all green.
+
+- **Shared adapter factories** — three reusable seams so a new source is a thin config, not a bespoke
+  scraper: `adapters/ocds.ts` (`createOcdsProvider` / `normaliseOcdsRelease`), `adapters/opendatasoft.ts`
+  (`createOpenDataSoftProvider` / `openDataSoftSinceClause` / `readOpenDataSoftRecords`) and
+  `adapters/html-listing.ts` (`createHtmlListingProvider` / `extractListingLinks` /
+  `externalIdFromUrl` / `externalIdFromQueryParam` / `normaliseHtmlListingRow`). Each is grounded in a
+  source's real documented endpoint and its raw shape; the factories carry **no** invented fields — a
+  field a source does not publish is normalised to `null`.
+- **HTML-listing scraper fails closed** — `createHtmlListingProvider` throws when a first page yields no
+  notice links (`failOnEmpty`, default `true`), so a changed/JS-only/bot-blocked listing is recorded as a
+  source `error` (health-flagged) rather than silently producing zero tenders; a genuinely optional
+  listing can opt out with `failOnEmpty: false`.
+- **Remaining country adapters (13 new)** — `simap.ts` (CH — simap.ch v2 project-search JSON),
+  `ppip.ts` (KE — tenders.go.ke active-tenders JSON), `etimad.ts` (AE/SA — shared Etimad aggregator,
+  resolves the country per source row), `etenders.ts` (IE — eTenders listing), `doffin.ts` (NO),
+  `hilma.ts` (FI), `enotification.ts` (BE), `cppp.ts` (IN), `nocopo.ts` (NG), `ghaneps.ts` (GH),
+  `ungm.ts`, `afdb.ts`, `adb.ts` (supranational). Sources with a documented JSON/OCDS feed read it
+  directly; HTML-only, JS-app-shell or bot-protected portals use the tolerant listing scraper and fail
+  closed. The OE/BOAMP/TenderNed/PLACSP/ANAC/e-Zamówienia/AusTender/ZA-eTenders/udbud/TED/World-Bank/SAM/
+  Find-a-Tender/Canada-Buys adapters from earlier stages are unchanged and now sit beside them.
+- **Adapter registry (`server/modules/tender/registry.ts`)** — expanded to **27 entries** covering every
+  `tender_sources.adapter` value (23 country + 5 supranational, with `etimad` shared by the AE and SA
+  rows). `resolveTenderAdapter` / `listImplementedAdapterKeys` unchanged in shape; a source with no
+  adapter is still recorded as `no_adapter`, never guessed.
+- **Hardening (`server/modules/tender/ingest.ts`)** — bounded **retries with exponential back-off**
+  (`TENDER_INGEST_MAX_FETCH_ATTEMPTS = 3`, `TENDER_INGEST_RETRY_BASE_DELAY_MS = 500`, `fetchPageWithRetry`)
+  so a transient fetch blip does not fail a source; **inter-page pacing** (`TENDER_INGEST_PAGE_DELAY_MS`)
+  for rate-limit etiquette; the source's registry key and `configJson` are forwarded to the adapter
+  (`sourceKey` / `config`) so a shared or configuration-driven adapter routes correctly; page and
+  per-cycle source caps bound **load**; tenders are never deleted and the raw payload is retained
+  (`rawJson`) for audit; dates normalise to UTC ISO instants regardless of the source's local format.
+- **Monitoring** — `tender-ingest` is registered in `WORKER_HEALTH_REGISTRY` and run through
+  `runMonitoredWorkerCycle("tender-ingest", …)` with `degradedWhen: result => result.sourcesFailed > 0`,
+  so a failing source surfaces as a degraded worker rather than a silent gap.
+- **Tests** — new `server/modules/tender/tender-stage6.contract.test.ts` (26 tests): the exact 27-key
+  catalogue and a real adapter file backing each key; every source-registry row resolving to an
+  implemented adapter with matching country/kind; 23-country coverage; a documented-endpoint map proving
+  every adapter is grounded in a real URL (nothing fabricated); the HTML-listing fail-closed behaviour;
+  per-country normaliser tests (simap, ppip, etimad, e-Zamówienia, AusTender, ZA eTenders, ANAC, BOAMP,
+  TenderNed, udbud, PLACSP); and the hardening seams (retry/back-off, pacing, `sourceKey`/`config`,
+  retention/no-delete, worker registration, UTC date normalisation). `tender-stage2.contract.test.ts`
+  was reconciled from an exact-key assertion to a superset assertion (the first cohort is now a subset of
+  the full catalogue).
+- Verification: `pnpm run check` exit 0; targeted contract tests `server/modules/tender` 6 files / 117
+  tests passed; full `pnpm test` 227 files passed (9 skipped) / 1,928 tests passed (42 skipped);
+  `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests passed; `pnpm build`
+  succeeded. No database was connected to (no `DATABASE_URL`); every service and worker fails closed
+  without one.
+- Next: Stage 7 (final hardening/verification pass) per the spec; and enable/adjust individual
+  `tender_sources` rows (enable flag, expected interval, config) from the admin Sources screen as real
+  portal access is confirmed in the deployment environment.
+
 ## 2026-11-27 (feature / Stage 5) — Tender Bid admin corrections, bid queue and source health
 
 Owner request: "Proceed" (continue the staged Tender Bid delivery). Delivered the Stage 5 admin

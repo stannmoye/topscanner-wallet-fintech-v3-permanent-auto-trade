@@ -37,6 +37,14 @@ export type TenderFetchParams = {
   since?: Date;
   /** Opaque pagination cursor returned by a previous page. */
   cursor?: string | null;
+  /**
+   * The registry key of the source being fetched. Only meaningful for an adapter
+   * shared by more than one source (for example the Etimad rows), so it can pick
+   * the right endpoint for its caller.
+   */
+  sourceKey?: string;
+  /** The source row's `configJson`, for an adapter whose endpoint is configuration-driven. */
+  config?: Record<string, unknown> | null;
 };
 
 /** One page of raw, source-shaped items plus the cursor for the next page. */

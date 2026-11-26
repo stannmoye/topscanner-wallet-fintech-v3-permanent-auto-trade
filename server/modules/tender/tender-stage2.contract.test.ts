@@ -41,9 +41,14 @@ const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, ""
 const FIRST_COHORT = ["sam_gov", "find_a_tender", "canada_buys", "oeffentlichevergabe", "ted", "world_bank"] as const;
 
 describe("Tender Bid Stage 2 — adapter registry", () => {
-  it("registers exactly the first-cohort adapters", () => {
-    expect(listImplementedAdapterKeys().sort()).toEqual([...FIRST_COHORT].sort());
-    expect(Object.keys(TENDER_ADAPTERS).sort()).toEqual([...FIRST_COHORT].sort());
+  it("registers the first-cohort adapters", () => {
+    // Stage 6 completes the catalogue, so the first cohort is now a required
+    // subset of the registry rather than the whole of it (Stage 6 asserts the
+    // full set).
+    expect(listImplementedAdapterKeys()).toEqual(expect.arrayContaining([...FIRST_COHORT]));
+    for (const key of FIRST_COHORT) {
+      expect(Object.keys(TENDER_ADAPTERS), key).toContain(key);
+    }
   });
 
   it("resolves each adapter with a provider and a normaliser", () => {

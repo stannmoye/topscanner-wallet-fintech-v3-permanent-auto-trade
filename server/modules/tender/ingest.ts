@@ -19,7 +19,9 @@ import type { FxRateSnapshot } from "../trading-wallet-fx";
  * conservative:
  *
  * - a source with no implemented adapter is recorded as `no_adapter`, never guessed;
- * - a page that fails to fetch fails only that source (recorded as `error`), never the cycle;
+ * - a page that fails to fetch fails only that source (recorded as `error`), never the cycle,
+ *   after a bounded number of retries with exponential back-off;
+ * - consecutive page requests to one source are paced (rate-limit etiquette);
  * - one unreadable tender fails only that row (counted), never the page;
  * - a tender's USD value is only set when a fresh FX rate resolves; otherwise the
  *   native amount is kept and the USD value stays null (fail closed, never guessed);
@@ -40,6 +42,15 @@ export const TENDER_INGEST_MAX_PAGES_PER_SOURCE = 100;
 
 /** Upper bound on the number of due sources handled in a single cycle. */
 export const TENDER_INGEST_MAX_SOURCES_PER_CYCLE = 25;
+
+/** Bounded retry attempts for a single page fetch before the source is marked failed. */
+export const TENDER_INGEST_MAX_FETCH_ATTEMPTS = 3;
+
+/** Base delay for the exponential back-off between page-fetch retries. */
+export const TENDER_INGEST_RETRY_BASE_DELAY_MS = 500;
+
+/** Polite delay between consecutive page requests to the same source (rate-limit etiquette). */
+export const TENDER_INGEST_PAGE_DELAY_MS = 250;
 
 type TenderSourceRow = typeof tenderSources.$inferSelect;
 
@@ -83,6 +94,41 @@ function isSourceDue(source: TenderSourceRow, nowMs: number): boolean {
     : 3_600_000;
   const last = source.lastSyncAt ? new Date(source.lastSyncAt).getTime() : 0;
   return !last || nowMs - last >= interval;
+}
+
+/** Resolve after `ms` milliseconds (used for retry back-off and inter-page pacing). */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(ms, 0)));
+}
+
+/** Read a source's `configJson` into a plain record, or null when absent/not an object. */
+function readSourceConfig(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * Fetch one page through the adapter with bounded retries and exponential
+ * back-off. A transient failure (network blip, momentary 5xx) is retried; once
+ * the attempt cap is reached the error propagates so the source is marked failed.
+ * The caller passes the source's registry key and config so an adapter shared by
+ * several sources (or driven by configuration) can route the request correctly.
+ */
+async function fetchPageWithRetry(
+  adapter: TenderAdapter,
+  params: { since?: Date; cursor: string | null; sourceKey: string; config: Record<string, unknown> | null },
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= TENDER_INGEST_MAX_FETCH_ATTEMPTS; attempt++) {
+    try {
+      return await adapter.provider.fetch(params);
+    } catch (error) {
+      lastError = error;
+      if (attempt < TENDER_INGEST_MAX_FETCH_ATTEMPTS) {
+        await sleep(TENDER_INGEST_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /** Read the enabled currency registry into a lookup for FX conversion. */
@@ -250,6 +296,7 @@ async function ingestSource(
   now: Date,
 ): Promise<SourceOutcome> {
   const since = source.lastSyncAt ? new Date(source.lastSyncAt) : undefined;
+  const config = readSourceConfig(source.configJson);
   let cursor: string | null = null;
   let pages = 0;
   let upserted = 0;
@@ -260,7 +307,7 @@ async function ingestSource(
   while (true) {
     let page;
     try {
-      page = await adapter.provider.fetch({ since, cursor });
+      page = await fetchPageWithRetry(adapter, { since, cursor, sourceKey: source.key, config });
     } catch (error) {
       return { kind: "failed", error: sanitizeWorkerErrorMessage(error) };
     }
@@ -293,6 +340,8 @@ async function ingestSource(
       drained = false;
       break;
     }
+    // Pace consecutive page requests to the same source (rate-limit etiquette).
+    await sleep(TENDER_INGEST_PAGE_DELAY_MS);
   }
   return { kind: "ok", pages, upserted, rowsFailed, drained, highWater };
 }
