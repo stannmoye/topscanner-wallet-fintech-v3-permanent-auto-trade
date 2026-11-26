@@ -1,3 +1,46 @@
+## 2026-11-27 (feature / Stage 3) — Customer Tender Bid desk (list, filters, detail pop-up)
+
+Owner request: "Proceed to stage 3 and push to main". Delivered the read-only customer Tender Bid
+desk per `docs/TENDER_BID_SPECIFICATION.md` (§8 experience, §11 Stage 3): a filterable catalogue of
+real ingested tenders with a per-tender pop-up holding the long description, timing/status,
+qualification amount and every source link. The generic placeholder is retired for this desk.
+
+- **Read seam (`server/modules/tender/customerDesk.ts`)** — `getTenderDeskOverview()` and
+  `getCustomerTender(id)` read the `tenders` table joined to `tender_sources`, so every tender always
+  carries a real source URL and attribution. Rows are grouped by `dedupeGroup` (the richest member
+  fronts, every member's source link kept) so a notice seen via two sources appears once. Status is
+  derived live from the bidding window at read time (`deriveTenderStatus`); a recorded `awarded`
+  outcome is preserved. A missing USD value is reported as `null` — never recomputed or guessed. The
+  reader is strictly read-only (no insert/update/delete) and fails closed
+  (`"Database is not available"`). `TENDER_DESK_MAX_ROWS = 500` bounds every read.
+- **tRPC (`server/routers.ts`)** — new protected `customer.tender` router: `overview` (no input) and
+  `detail` (`{ tenderId: positive int }`), delegating to the read seam.
+- **Customer desk UI (`client/src/components/CustomerTenderBid.tsx`, `tender-bid.css`)** — summary
+  tiles (published / open / closing within 7 days / countries), a filter bar (search, country,
+  industry, tender type, status, contract-value band, closing-soon, refresh, reset), a card grid
+  (government/private source badge, status chip, contract value + native amount, qualification amount
+  or "Not yet configured", bidding opens / expires / expected payout, "View details"), and a per-tender
+  pop-up with full key facts, the scrollable long `descriptionText`, documents and the source
+  attribution list. Every surface derives from the `--arb-color-*` tokens. Amounts are labelled as
+  configured/contractual values — explicitly not a market quote and not a guaranteed award.
+- **Wiring (`client/src/App.tsx`, `client/src/components/CustomerSlideMenu.tsx`)** — lazy-loaded
+  `CustomerTenderBid`, rendered on `section==="tender-bid"` inside `PortalRenderBoundary`, excluded
+  from the generic `CustomerInvestmentCategory` placeholder (`item.id!=="tender-bid"`). `tender-bid`
+  was already a valid `CUSTOMER_SECTIONS` id and a `customerInvestmentNavigation` card; its card copy
+  and the workspace-strip entry were updated from "planned / not live" to a live desk.
+- **Tests** — new `server/modules/tender/tender-stage3.contract.test.ts` (12 tests): the read seam is
+  joined/read-only/bounded/fail-closed; dedupe grouping + live status; USD never recomputed; the
+  `customer.tender` router wiring; the desk replaces the placeholder (lazy import + section render +
+  exclusion); placeholder labelling retired; the pop-up renders `descriptionText` and source
+  attribution with the configured-value labelling.
+- Verification: `pnpm run check` exit 0; full `pnpm test` 224 files / 1,860 tests passed (42 skipped);
+  `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests passed; `pnpm build`
+  succeeded (`CustomerTenderBid` emitted as its own lazy chunk). No database was connected to (no
+  `DATABASE_URL`), so the desk renders only when real tenders exist — an empty store shows the "No
+  tenders to display yet" state, never a fabricated row.
+- Next: Stage 4 (bidding — bid button, qualification/balance check, deposit prompt, admin
+  notification, admin charge/decline with classified ledger entries) per the spec.
+
 ## 2026-11-27 (feature / Stage 2) — First-cohort tender adapters and the ingestion worker
 
 Owner request: proceed with Stage 2 of `docs/TENDER_BID_SPECIFICATION.md` and push each completed

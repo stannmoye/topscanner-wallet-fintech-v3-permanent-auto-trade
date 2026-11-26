@@ -32,6 +32,7 @@ import { createAdminCarbonDossier, deleteAdminCarbonDossier, listAdminCarbonDoss
 import { getGreenEnergyInvestmentDashboard, listGreenEnergyOpenInstruments, purchaseGreenEnergyOpportunity, quoteGreenEnergyPurchase, recordGreenEnergyDistribution, settleGreenEnergyInstrument } from "./greenEnergy";
 import { createAdminGreenEnergyDossier, deleteAdminGreenEnergyDossier, listAdminGreenEnergyDossiers, reachAdminGreenEnergyMilestone, setAdminGreenEnergyDossierEnabled, setAdminGreenEnergyDossierStatus, updateAdminGreenEnergyDossier } from "./greenEnergyDossiers";
 import { disburseLendingLoan, fundLendingLoan, getLendingDesk, getLendingLoanView, listLendingLoanBids, listLendingLoansForSettlement, placeLendingBid, quoteLendingFunding, raiseLendingBid, settleLendingLoan, withdrawLendingBid } from "./lending";
+import { getCustomerTender, getTenderDeskOverview } from "./modules/tender/customerDesk";
 import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, seedExampleLendingDesk, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
 import {
   LENDING_CONDITION_STATUSES,
@@ -1330,6 +1331,11 @@ export const appRouter = router({
         idempotencyKey: z.string().min(8).max(160),
       })).mutation(({ ctx, input }) => raiseLendingBid(ctx.user.id, input)),
       withdrawBid: protectedProcedure.input(z.object({ bidId: z.string().trim().min(1).max(80) })).mutation(({ ctx, input }) => withdrawLendingBid(ctx.user.id, input.bidId)),
+    }),
+    tender: router({
+      // Read-only customer Tender Bid desk: real ingested tenders only.
+      overview: protectedProcedure.query(() => getTenderDeskOverview()),
+      detail: protectedProcedure.input(z.object({ tenderId: z.number().int().positive() })).query(({ input }) => getCustomerTender(input.tenderId)),
     }),
     mining: router({
       dashboard: protectedProcedure.query(({ ctx }) => mining.getCustomerMiningDashboard(ctx.user.id)),
