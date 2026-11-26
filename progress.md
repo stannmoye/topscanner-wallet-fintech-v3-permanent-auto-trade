@@ -1,3 +1,22 @@
+## 2026-11-27 (spec / Stage 0) — Tender Bid build plan approved and recorded
+
+Owner request: build a real "Tender Bid" desk — ingest public/private tenders from 23 countries, show
+contract value / qualification amount / dates / industry / type, let customers bid, notify admin, let
+admin manually deduct the administrative charge (deposit prompt when the customer is short). Deliver in
+stages, pushing each completed stage to `main`.
+
+- Added `docs/TENDER_BID_SPECIFICATION.md` — the Stage 0 build plan: 23-country source table, provider
+  interface, domain model (`tender_sources`, `tenders`, `tender_field_history`, `tender_bids`,
+  `tender_bid_events`), ingestion worker, fee model, customer + admin flows, guardrails, and the
+  7-stage delivery table.
+- Locked owner decisions: official open APIs + portal scraping; the 23-country list in the spec;
+  bid/qualification amount = administrator-configured **percentage of contract value** clamped to
+  $1,000–$600,000 (per-tender override); administrative charge = the same amount, applied manually;
+  contract-value inclusion range $100,000–$250,000,000.
+- Reuses existing infrastructure: `createNotification` per admin (as in `notifyAdminsOfPayoutRequest`),
+  the classified manual-adjustment ledger path for the charge, and `v5_email_jobs` for durable email.
+- Next: Stage 1 (schema + migration + provider interface + source registry + contract tests).
+
 ## 2026-11-27 (refactor) — Workspace desk "Token Launch" renamed to "Tender Bid"
 
 Owner request: turn the menu "Token Launch" into "Tender Bid" (full rename — label, copy, and the
