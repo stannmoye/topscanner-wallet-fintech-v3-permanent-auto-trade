@@ -1,3 +1,31 @@
+## 2026-11-26 (feat) — Privacy menu: request search & filtering on the customer and admin portals
+
+Owner request: improve the privacy menu on the customer and admin portals so everything works well.
+
+- **Customer Privacy Centre (`client/src/components/CustomerPrivacyCenter.tsx`).** Added a
+  request search toolbar: free-text search across reference/subject/category/status plus an
+  "All / Open / Closed" status filter, a "Showing X of Y" count line, and a no-match empty state
+  with a "Clear filters" action. Exposed all six privacy request categories in the side
+  "Privacy actions" card (`PRIVACY_REQUEST_TYPES.map`, previously only the first four).
+- **Admin Privacy Management (`client/src/components/AdminPrivacyManagement.tsx`).** Added a
+  request-queue search field (reference/subject/customer name/email) above the existing status
+  filter, a "Showing X of Y" count line, and a no-match empty state with "Clear search". The
+  empty-queue vs no-match states are now distinct so admins can tell an empty queue from a
+  filtered-out view.
+- **Styling (`client/src/components/privacy-center.css`).** Added token-based styles for the new
+  classes (`privacy-request-toolbar`, `privacy-request-search`, `privacy-request-filter`,
+  `privacy-request-count`, `privacy-admin-queue-tools`, `privacy-queue-search`,
+  `privacy-queue-count`), matching the existing privacy surface/accent tokens and focus rings.
+- **Verification.** `tsc --noEmit` clean; `vitest run` privacy suites 12/12 pass
+  (`server/privacy.test.ts`, `client/src/lib/privacyHtml.test.ts`,
+  `client/src/lib/privacyNoticePdf.test.ts`); installer-config contract suites 7/7 pass
+  (`scripts/privacy-workflow-contract.test.mjs`, `scripts/privacy-migration-safety.test.mjs`).
+
+**Next stage to continue (not yet done):**
+1. Optional: add the same request search/filter to the customer "Support Centre" privacy surfaces
+   if any duplicate the workspace.
+2. Optional: persist the customer's last-used privacy request filter so it survives navigation.
+
 ## 2026-11-25 (feat) — Customer "Language & time": auto-translated interface + country time zone
 
 Owner request: build the customer "Language & time" menu so a customer can (a) set their time

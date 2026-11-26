@@ -15,6 +15,7 @@ import {
   LockKeyhole,
   MessageSquareText,
   RotateCcw,
+  Search,
   ShieldCheck,
   Sparkles,
   XCircle,
@@ -63,6 +64,8 @@ export function CustomerPrivacyCenter() {
   const [notice, setNotice] = useState("");
   const [noticeTone, setNoticeTone] = useState<"success" | "error">("success");
   const [requestError, setRequestError] = useState("");
+  const [requestQuery, setRequestQuery] = useState("");
+  const [requestStatusFilter, setRequestStatusFilter] = useState<"all" | "open" | "closed">("all");
 
   const currentPolicy = policy.data;
   const viewedPolicy = selectedVersionId
@@ -70,6 +73,16 @@ export function CustomerPrivacyCenter() {
     : currentPolicy;
   const historicalView = Boolean(viewedPolicy && currentPolicy && viewedPolicy.id !== currentPolicy.id);
   const customerRequests = requests.data || [];
+  const closedRequestStatuses = new Set<PrivacyRequestStatus>(["completed", "declined", "cancelled"]);
+  const normalizedRequestQuery = requestQuery.trim().toLowerCase();
+  const filteredRequests = customerRequests.filter((request) => {
+    if (requestStatusFilter === "open" && closedRequestStatuses.has(request.status as PrivacyRequestStatus)) return false;
+    if (requestStatusFilter === "closed" && !closedRequestStatuses.has(request.status as PrivacyRequestStatus)) return false;
+    if (!normalizedRequestQuery) return true;
+    const category = PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType;
+    return `${request.requestReference} ${request.subject} ${category} ${request.status}`.toLowerCase().includes(normalizedRequestQuery);
+  });
+  const requestsFiltered = Boolean(normalizedRequestQuery) || requestStatusFilter !== "all";
 
   const openRequestForm = (type?: PrivacyRequestType) => {
     if (type) setRequestType(type);
@@ -287,34 +300,62 @@ export function CustomerPrivacyCenter() {
                   <button type="button" className="privacy-primary-button" onClick={() => openRequestForm()}>Create your first request <ArrowRight size={14} /></button>
                 </div>
               ) : (
-                <div className="privacy-request-list">
-                  {customerRequests.map((request) => (
-                    <article className="privacy-request-item" key={request.id}>
-                      <div className="privacy-request-item-top">
-                        <div>
-                          <span className="privacy-request-reference">{request.requestReference}</span>
-                          <h3>{request.subject}</h3>
-                        </div>
-                        <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
-                      </div>
-                      <div className="privacy-request-meta">
-                        <span>{PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType}</span>
-                        <span>Submitted {displayDateTime(request.createdAt)}</span>
-                      </div>
-                      {request.events?.length > 0 && <div className="privacy-timeline">
-                        {request.events.slice(0, 4).map((event) => (
-                          <div className="privacy-timeline-event" key={event.id}>
-                            <i />
-                            <div><span>{displayDateTime(event.createdAt)}</span><p>{event.message}</p></div>
-                          </div>
+                <>
+                  <div className="privacy-request-toolbar" role="search">
+                    <label className="privacy-request-search">
+                      <Search size={14} aria-hidden="true" />
+                      <input type="search" value={requestQuery} onChange={(event) => setRequestQuery(event.target.value)} placeholder="Search by reference, subject or category" aria-label="Search your privacy requests" />
+                    </label>
+                    <label className="privacy-request-filter">
+                      <span>Status</span>
+                      <select value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value as "all" | "open" | "closed")} aria-label="Filter your privacy requests by status">
+                        <option value="all">All requests</option>
+                        <option value="open">Open requests</option>
+                        <option value="closed">Closed requests</option>
+                      </select>
+                    </label>
+                  </div>
+                  {filteredRequests.length === 0 ? (
+                    <div className="privacy-empty-state privacy-empty-compact" role="status">
+                      <MessageSquareText size={22} />
+                      <strong>No requests match your search.</strong>
+                      <span>Try a different reference, subject, category or status filter.</span>
+                      <button type="button" className="privacy-secondary-button" onClick={() => { setRequestQuery(""); setRequestStatusFilter("all"); }}>Clear filters</button>
+                    </div>
+                  ) : (
+                    <>
+                      {requestsFiltered && <p className="privacy-request-count" role="status">Showing {filteredRequests.length} of {customerRequests.length} requests.</p>}
+                      <div className="privacy-request-list">
+                        {filteredRequests.map((request) => (
+                          <article className="privacy-request-item" key={request.id}>
+                            <div className="privacy-request-item-top">
+                              <div>
+                                <span className="privacy-request-reference">{request.requestReference}</span>
+                                <h3>{request.subject}</h3>
+                              </div>
+                              <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
+                            </div>
+                            <div className="privacy-request-meta">
+                              <span>{PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType}</span>
+                              <span>Submitted {displayDateTime(request.createdAt)}</span>
+                            </div>
+                            {request.events?.length > 0 && <div className="privacy-timeline">
+                              {request.events.slice(0, 4).map((event) => (
+                                <div className="privacy-timeline-event" key={event.id}>
+                                  <i />
+                                  <div><span>{displayDateTime(event.createdAt)}</span><p>{event.message}</p></div>
+                                </div>
+                              ))}
+                            </div>}
+                            {request.status === "submitted" && <button type="button" className="privacy-text-action" onClick={() => void cancelOwnRequest(request.id, request.requestReference)} disabled={cancelRequest.isPending}>
+                              Cancel before review
+                            </button>}
+                          </article>
                         ))}
-                      </div>}
-                      {request.status === "submitted" && <button type="button" className="privacy-text-action" onClick={() => void cancelOwnRequest(request.id, request.requestReference)} disabled={cancelRequest.isPending}>
-                        Cancel before review
-                      </button>}
-                    </article>
-                  ))}
-                </div>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
           </section>
         </main>
@@ -346,7 +387,7 @@ export function CustomerPrivacyCenter() {
           <section className="privacy-side-card privacy-request-actions">
             <span className="eyebrow">PRIVACY ACTIONS</span>
             <h2>What would you like us to review?</h2>
-            {PRIVACY_REQUEST_TYPES.slice(0, 4).map((item) => (
+            {PRIVACY_REQUEST_TYPES.map((item) => (
               <button type="button" className="privacy-action-row" key={item.value} onClick={() => openRequestForm(item.value)}>
                 <span><strong>{item.label}</strong><small>{item.description}</small></span>
                 <ArrowRight size={15} />

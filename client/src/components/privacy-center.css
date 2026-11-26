@@ -124,6 +124,15 @@
 .privacy-empty-compact span{max-width:430px}
 .privacy-empty-compact .privacy-primary-button,.privacy-empty-state .privacy-secondary-button{margin-top:5px}
 .privacy-request-list{display:grid}
+.privacy-request-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 0 14px;margin-bottom:2px}
+.privacy-request-search{display:flex;align-items:center;gap:8px;flex:1;min-width:200px;padding:8px 11px;border:1px solid var(--privacy-border);border-radius:8px;background:var(--privacy-canvas);color:var(--privacy-muted)}
+.privacy-request-search>svg{flex:0 0 auto;color:var(--privacy-muted)}
+.privacy-request-search input{flex:1;min-width:0;border:0;outline:none;background:transparent;color:var(--privacy-text);font:inherit;font-size:11px}
+.privacy-request-search:focus-within{border-color:var(--privacy-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--privacy-accent) 12%,transparent)}
+.privacy-request-filter{display:flex;align-items:center;gap:7px;font-size:9px;font-weight:750;color:var(--privacy-muted)}
+.privacy-request-filter select{width:auto;min-width:140px;padding:8px 9px;border:1px solid var(--privacy-border);border-radius:8px;outline:none;background:var(--privacy-canvas);color:var(--privacy-text);font:inherit;font-size:10px}
+.privacy-request-filter select:focus{border-color:var(--privacy-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--privacy-accent) 12%,transparent)}
+.privacy-request-count{margin:0 0 8px;color:var(--privacy-muted);font-size:9px}
 .privacy-request-item{padding:15px 0;border-top:1px solid var(--privacy-border)}
 .privacy-request-item:first-child{border-top:0;padding-top:0}
 .privacy-request-item-top,.privacy-request-detail-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
@@ -180,6 +189,12 @@
 .privacy-admin-filter-row{display:flex;align-items:center;gap:8px;padding:11px;border-bottom:1px solid var(--privacy-border);background:var(--privacy-surface-raised)}
 .privacy-admin-filter-row label{color:var(--privacy-muted);font-size:9px}
 .privacy-admin-filter-row select{flex:1;width:auto;padding:7px 9px;font-size:10px}
+.privacy-admin-queue-tools{padding:11px;border-bottom:1px solid var(--privacy-border);background:var(--privacy-surface-raised)}
+.privacy-queue-search{display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--privacy-border);border-radius:8px;background:var(--privacy-canvas);color:var(--privacy-muted)}
+.privacy-queue-search>svg{flex:0 0 auto;color:var(--privacy-muted)}
+.privacy-queue-search input{flex:1;min-width:0;border:0;outline:none;background:transparent;color:var(--privacy-text);font:inherit;font-size:11px}
+.privacy-queue-search:focus-within{border-color:var(--privacy-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--privacy-accent) 12%,transparent)}
+.privacy-queue-count{padding:9px 13px;margin:0;border-bottom:1px solid var(--privacy-border);color:var(--privacy-muted);font-size:9px}
 .privacy-admin-request-list{display:grid}
 .privacy-admin-request-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;width:100%;padding:13px;text-align:left;background:var(--privacy-surface);border-bottom:1px solid var(--privacy-border);color:var(--privacy-text)}
 .privacy-admin-request-row:last-child{border-bottom:0}

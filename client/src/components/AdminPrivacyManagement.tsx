@@ -14,6 +14,7 @@ import {
   MessageSquareText,
   Plus,
   Save,
+  Search,
   Send,
   ShieldCheck,
   Trash2,
@@ -55,6 +56,7 @@ const starterSummary = "How information is handled across account services, fina
 export function AdminPrivacyManagement() {
   const policyState = trpc.adminOperations.privacyPolicyState.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: 60000, refetchOnWindowFocus: false });
   const [requestFilter, setRequestFilter] = useState<"all" | PrivacyRequestStatus>("all");
+  const [queueQuery, setQueueQuery] = useState("");
   const requestQueue = trpc.adminOperations.privacyRequests.useQuery(
     { status: requestFilter === "all" ? undefined : requestFilter },
     { refetchInterval: 20000 },
@@ -290,6 +292,12 @@ export function AdminPrivacyManagement() {
   };
 
   const selectedRequest = requestDetail.data;
+  const privacyRequests = requestQueue.data || [];
+  const normalizedQueueQuery = queueQuery.trim().toLowerCase();
+  const filteredQueue = normalizedQueueQuery
+    ? privacyRequests.filter((request) => `${request.requestReference} ${request.subject} ${request.customerName || ""} ${request.customerEmail || ""}`.toLowerCase().includes(normalizedQueueQuery))
+    : privacyRequests;
+  const queueFiltered = Boolean(normalizedQueueQuery) || requestFilter !== "all";
   const hasHtmlNotice = Boolean(htmlContent.trim());
   const canPublish = Boolean(title.trim().length >= 5 && summary.trim().length >= 20 && controllerName.trim().length >= 3 && controllerName.trim().toLowerCase() !== "not configured" && privacyContact.trim().length >= 5 && (hasHtmlNotice || (sections.length >= 6 &&
     sections.every((section) => /^[a-z0-9-]{2,48}$/.test(section.id) && section.title.trim().length >= 3 && section.body.trim().length >= 40) &&
@@ -377,6 +385,12 @@ export function AdminPrivacyManagement() {
         </div>
         <div className="privacy-admin-queue-layout">
           <div className="privacy-admin-queue-list">
+            <div className="privacy-admin-queue-tools" role="search">
+              <label className="privacy-queue-search">
+                <Search size={14} aria-hidden="true" />
+                <input type="search" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Search reference, subject or customer" aria-label="Search privacy requests" />
+              </label>
+            </div>
             <div className="privacy-admin-filter-row">
               <label htmlFor="privacy-queue-filter">Filter by status</label>
               <select id="privacy-queue-filter" value={requestFilter} onChange={(event) => { setRequestFilter(event.target.value as "all" | PrivacyRequestStatus); setSelectedRequestId(null); }}>
@@ -387,12 +401,16 @@ export function AdminPrivacyManagement() {
             </div>
             {requestQueue.isLoading ? <div className="privacy-loading-panel" role="status">Loading privacy requests…</div> :
               requestQueue.isError ? <div className="privacy-empty-state" role="alert"><span>The request queue could not be loaded.</span><button type="button" className="privacy-secondary-button" onClick={() => requestQueue.refetch()}>Retry</button></div> :
-              (requestQueue.data || []).length === 0 ? <div className="privacy-empty-state privacy-empty-compact"><Inbox size={22} /><strong>No requests in this view.</strong><span>New customer privacy requests will appear here when submitted.</span></div> :
-              <div className="privacy-admin-request-list">{(requestQueue.data || []).map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequestId(request.id)} className={"privacy-admin-request-row " + (selectedRequestId === request.id ? "is-selected" : "")}>
-                <span className="privacy-request-reference">{request.requestReference}</span><strong>{request.subject}</strong><span>{request.customerName || request.customerEmail || "Customer " + request.userId}</span>
-                <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
-                <small>{formatAdminDate(request.createdAt)}</small>
-              </button>)}</div>}
+              privacyRequests.length === 0 ? <div className="privacy-empty-state privacy-empty-compact"><Inbox size={22} /><strong>No requests in this view.</strong><span>New customer privacy requests will appear here when submitted.</span></div> :
+              filteredQueue.length === 0 ? <div className="privacy-empty-state privacy-empty-compact" role="status"><Search size={22} /><strong>No requests match your search.</strong><span>Try a different reference, subject or customer.</span><button type="button" className="privacy-secondary-button" onClick={() => setQueueQuery("")}>Clear search</button></div> :
+              <>
+                {queueFiltered && <p className="privacy-queue-count" role="status">Showing {filteredQueue.length} of {privacyRequests.length} requests.</p>}
+                <div className="privacy-admin-request-list">{filteredQueue.map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequestId(request.id)} className={"privacy-admin-request-row " + (selectedRequestId === request.id ? "is-selected" : "")}>
+                  <span className="privacy-request-reference">{request.requestReference}</span><strong>{request.subject}</strong><span>{request.customerName || request.customerEmail || "Customer " + request.userId}</span>
+                  <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
+                  <small>{formatAdminDate(request.createdAt)}</small>
+                </button>)}</div>
+              </>}
           </div>
 
           <div className="privacy-admin-request-detail">
