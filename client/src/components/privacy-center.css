@@ -297,3 +297,27 @@
 @media (max-width: 700px) { .privacy-html-source { min-height: 220px; } .privacy-html-preview-frame { height: 520px; } .privacy-html-notice-frame { height: 78vh; min-height: 560px; } }
 
 .privacy-editor-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+
+/* Request list actions and CSV export (customer + admin enhancements). */
+.privacy-heading-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.privacy-heading-actions .privacy-secondary-button{min-height:34px;padding:7px 11px;font-size:10px}
+.privacy-text-action{display:inline-flex;align-items:center;gap:5px}
+.privacy-text-action svg{flex:0 0 auto}
+.privacy-request-item-actions{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:13px;padding-top:11px;border-top:1px dashed var(--privacy-border)}
+.privacy-request-item-actions .privacy-text-action{margin:0;padding:0}
+.privacy-text-action-danger{color:#e28a8a}
+
+/* Administrator queue tools, status summary and ageing indicators. */
+.privacy-admin-queue-tools{display:flex;align-items:center;gap:8px}
+.privacy-queue-search{flex:1;min-width:0}
+.privacy-queue-export{min-height:34px;padding:7px 11px;font-size:10px;white-space:nowrap;flex:0 0 auto}
+.privacy-admin-status-summary{display:flex;flex-wrap:wrap;gap:6px;padding:11px;border-bottom:1px solid var(--privacy-border);background:var(--privacy-surface)}
+.privacy-summary-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--privacy-border);border-radius:999px;background:var(--privacy-surface);color:var(--privacy-text-soft);font-size:9px;font-weight:720;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.privacy-summary-chip span{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--privacy-surface-raised);color:var(--privacy-muted);font-size:8px;font-weight:850}
+.privacy-summary-chip:hover{border-color:color-mix(in srgb,var(--privacy-accent) 32%,var(--privacy-border))}
+.privacy-summary-chip.is-active{border-color:color-mix(in srgb,var(--privacy-accent) 48%,var(--privacy-border));background:color-mix(in srgb,var(--privacy-accent) 12%,var(--privacy-surface));color:var(--privacy-text)}
+.privacy-summary-chip.is-active span{background:var(--privacy-accent);color:var(--privacy-accent-contrast)}
+.privacy-admin-request-row>small.privacy-admin-age-overdue{color:#e28a8a}
+.privacy-admin-request-row>small.privacy-admin-age-due_soon{color:#d7a84c}
+@media(min-width:561px){.privacy-detail-facts{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:560px){.privacy-heading-actions{width:100%}.privacy-heading-actions>button{flex:1}.privacy-admin-queue-tools{flex-wrap:wrap}.privacy-queue-export{width:100%}}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   Archive,
+  ArrowDownToLine,
   CheckCircle2,
   ChevronDown,
   Clock3,
@@ -22,11 +23,17 @@ import {
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { buildPrivacyHtmlDocument } from "@/lib/privacyHtml";
+import { buildPrivacyRequestCsv, privacyRequestCsvFilename } from "@/lib/privacy-requests";
 import {
   DEFAULT_PRIVACY_POLICY_SECTIONS,
   PRIVACY_REQUEST_TYPES,
   canTransitionPrivacyRequest,
+  countPrivacyRequestsByStatus,
   nextPrivacyVersion,
+  privacyRequestAgeDays,
+  privacyRequestAgingBand,
+  privacyRequestAgingLabel,
+  privacyRequestGroupCounts,
   privacyRequestStatusLabel,
   type PrivacyPolicySection,
   type PrivacyRequestStatus,
@@ -57,10 +64,9 @@ export function AdminPrivacyManagement() {
   const policyState = trpc.adminOperations.privacyPolicyState.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: 60000, refetchOnWindowFocus: false });
   const [requestFilter, setRequestFilter] = useState<"all" | PrivacyRequestStatus>("all");
   const [queueQuery, setQueueQuery] = useState("");
-  const requestQueue = trpc.adminOperations.privacyRequests.useQuery(
-    { status: requestFilter === "all" ? undefined : requestFilter },
-    { refetchInterval: 20000 },
-  );
+  // Fetch the full queue once and filter in the browser so the status summary
+  // counts stay accurate while a status filter is active.
+  const requestQueue = trpc.adminOperations.privacyRequests.useQuery(undefined, { refetchInterval: 20000 });
   const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null);
   const requestDetail = trpc.adminOperations.privacyRequestDetail.useQuery(
     { requestId: selectedRequestId || 0 },
@@ -294,10 +300,40 @@ export function AdminPrivacyManagement() {
   const selectedRequest = requestDetail.data;
   const privacyRequests = requestQueue.data || [];
   const normalizedQueueQuery = queueQuery.trim().toLowerCase();
-  const filteredQueue = normalizedQueueQuery
-    ? privacyRequests.filter((request) => `${request.requestReference} ${request.subject} ${request.customerName || ""} ${request.customerEmail || ""}`.toLowerCase().includes(normalizedQueueQuery))
-    : privacyRequests;
+  const queueGroupCounts = privacyRequestGroupCounts(privacyRequests);
+  const queueStatusCounts = countPrivacyRequestsByStatus(privacyRequests);
+  const filteredQueue = privacyRequests.filter((request) => {
+    if (requestFilter !== "all" && request.status !== requestFilter) return false;
+    if (!normalizedQueueQuery) return true;
+    return `${request.requestReference} ${request.subject} ${request.customerName || ""} ${request.customerEmail || ""}`.toLowerCase().includes(normalizedQueueQuery);
+  });
   const queueFiltered = Boolean(normalizedQueueQuery) || requestFilter !== "all";
+
+  const exportQueue = () => {
+    if (!filteredQueue.length) return;
+    const rows = filteredQueue.map((request) => ({
+      requestReference: request.requestReference,
+      requestType: PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType,
+      status: privacyRequestStatusLabel(request.status as PrivacyRequestStatus),
+      subject: request.subject,
+      createdAt: formatAdminDate(request.createdAt),
+      updatedAt: formatAdminDate(request.updatedAt),
+      ageDays: privacyRequestAgeDays(request.createdAt),
+      customerName: request.customerName || "Customer " + request.userId,
+      customerEmail: request.customerEmail || "",
+    }));
+    const url = URL.createObjectURL(new Blob([buildPrivacyRequestCsv(rows)], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = privacyRequestCsvFilename();
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setNotice("Exported " + rows.length + " " + (rows.length === 1 ? "request" : "requests") + " from the current queue view.");
+    setError("");
+  };
   const hasHtmlNotice = Boolean(htmlContent.trim());
   const canPublish = Boolean(title.trim().length >= 5 && summary.trim().length >= 20 && controllerName.trim().length >= 3 && controllerName.trim().toLowerCase() !== "not configured" && privacyContact.trim().length >= 5 && (hasHtmlNotice || (sections.length >= 6 &&
     sections.every((section) => /^[a-z0-9-]{2,48}$/.test(section.id) && section.title.trim().length >= 3 && section.body.trim().length >= 40) &&
@@ -322,7 +358,7 @@ export function AdminPrivacyManagement() {
       <div className="privacy-overview-grid privacy-admin-overview">
         <div className="privacy-overview-card"><span className="privacy-overview-icon"><FileText size={17} /></span><span className="privacy-overview-label">Published version</span><strong>{published?.versionLabel || "Not published"}</strong><small>{published ? "Published " + formatAdminDate(published.publishedAt) : "A notice needs to be published."}</small></div>
         <div className="privacy-overview-card"><span className="privacy-overview-icon"><FileClock size={17} /></span><span className="privacy-overview-label">Draft status</span><strong>{draft ? "Draft available" : "No draft"}</strong><small>{draft ? "Last saved " + formatAdminDate(draft.updatedAt) : "Start a new revision below."}</small></div>
-        <div className="privacy-overview-card"><span className="privacy-overview-icon"><Inbox size={17} /></span><span className="privacy-overview-label">Open requests</span><strong>{(requestQueue.data || []).filter((request) => !["completed", "declined", "cancelled"].includes(request.status)).length}</strong><small>Based on the current queue filter</small></div>
+        <div className="privacy-overview-card"><span className="privacy-overview-icon"><Inbox size={17} /></span><span className="privacy-overview-label">Open requests</span><strong>{requestQueue.isLoading ? "…" : queueGroupCounts.open}</strong><small>{queueGroupCounts.total} total · {queueGroupCounts.closed} closed</small></div>
       </div>
 
       <section className="privacy-admin-panel" aria-labelledby="privacy-admin-editor">
@@ -385,11 +421,14 @@ export function AdminPrivacyManagement() {
         </div>
         <div className="privacy-admin-queue-layout">
           <div className="privacy-admin-queue-list">
-            <div className="privacy-admin-queue-tools" role="search">
-              <label className="privacy-queue-search">
+            <div className="privacy-admin-queue-tools">
+              <div className="privacy-queue-search" role="search">
                 <Search size={14} aria-hidden="true" />
                 <input type="search" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Search reference, subject or customer" aria-label="Search privacy requests" />
-              </label>
+              </div>
+              <button type="button" className="privacy-secondary-button privacy-queue-export" onClick={exportQueue} disabled={!filteredQueue.length}>
+                <ArrowDownToLine size={14} /> Export
+              </button>
             </div>
             <div className="privacy-admin-filter-row">
               <label htmlFor="privacy-queue-filter">Filter by status</label>
@@ -398,6 +437,12 @@ export function AdminPrivacyManagement() {
                 {REQUEST_STATUSES.map((status) => <option value={status} key={status}>{privacyRequestStatusLabel(status)}</option>)}
               </select>
               <button type="button" className="privacy-icon-button" aria-label="Refresh privacy request queue" onClick={() => requestQueue.refetch()} disabled={requestQueue.isFetching}><History size={15} /></button>
+            </div>
+            <div className="privacy-admin-status-summary" role="group" aria-label="Privacy request status summary">
+              <button type="button" className={"privacy-summary-chip " + (requestFilter === "all" ? "is-active" : "")} aria-pressed={requestFilter === "all"} onClick={() => { setRequestFilter("all"); setSelectedRequestId(null); }}>All<span>{queueGroupCounts.total}</span></button>
+              {REQUEST_STATUSES.map((status) => (
+                <button type="button" key={status} className={"privacy-summary-chip " + (requestFilter === status ? "is-active" : "")} aria-pressed={requestFilter === status} onClick={() => { setRequestFilter(status); setSelectedRequestId(null); }}>{privacyRequestStatusLabel(status)}<span>{queueStatusCounts[status]}</span></button>
+              ))}
             </div>
             {requestQueue.isLoading ? <div className="privacy-loading-panel" role="status">Loading privacy requests…</div> :
               requestQueue.isError ? <div className="privacy-empty-state" role="alert"><span>The request queue could not be loaded.</span><button type="button" className="privacy-secondary-button" onClick={() => requestQueue.refetch()}>Retry</button></div> :
@@ -408,7 +453,7 @@ export function AdminPrivacyManagement() {
                 <div className="privacy-admin-request-list">{filteredQueue.map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequestId(request.id)} className={"privacy-admin-request-row " + (selectedRequestId === request.id ? "is-selected" : "")}>
                   <span className="privacy-request-reference">{request.requestReference}</span><strong>{request.subject}</strong><span>{request.customerName || request.customerEmail || "Customer " + request.userId}</span>
                   <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
-                  <small>{formatAdminDate(request.createdAt)}</small>
+                  <small className={"privacy-admin-age privacy-admin-age-" + privacyRequestAgingBand(privacyRequestAgeDays(request.createdAt))}>{formatAdminDate(request.createdAt)} · {privacyRequestAgingLabel(privacyRequestAgeDays(request.createdAt))}</small>
                 </button>)}</div>
               </>}
           </div>
@@ -423,6 +468,7 @@ export function AdminPrivacyManagement() {
                   <div><span>Request category</span><strong>{PRIVACY_REQUEST_TYPES.find((item) => item.value === selectedRequest.requestType)?.label || selectedRequest.requestType}</strong></div>
                   <div><span>Submitted</span><strong>{formatAdminDate(selectedRequest.createdAt)}</strong></div>
                   <div><span>Last updated</span><strong>{formatAdminDate(selectedRequest.updatedAt)}</strong></div>
+                  <div><span>Time open</span><strong>{privacyRequestAgingLabel(privacyRequestAgeDays(selectedRequest.createdAt))}</strong></div>
                 </div>
                 <div className="privacy-request-message-block"><span>Customer-provided context</span><p>{selectedRequest.details || "The customer did not provide additional context."}</p></div>
                 <div className="privacy-request-history"><strong>Recorded event history</strong>{(selectedRequest.events || []).length === 0 ? <p>No additional events recorded yet.</p> : selectedRequest.events.map((event) => <div className="privacy-admin-event" key={event.id}><span>{formatAdminDate(event.createdAt)}</span><strong>{event.eventType.replaceAll(".", " ")}</strong>{event.customerMessage && <p><b>Customer-visible message:</b> {event.customerMessage}</p>}{event.internalNote && <p><b>Internal note:</b> {event.internalNote}</p>}</div>)}</div>

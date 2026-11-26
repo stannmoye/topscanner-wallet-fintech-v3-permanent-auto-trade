@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  PRIVACY_REQUEST_REVIEW_TARGET_DAYS,
   canTransitionPrivacyRequest,
+  countPrivacyRequestsByStatus,
   nextPrivacyVersion,
+  privacyRequestAgeDays,
+  privacyRequestAgingBand,
+  privacyRequestAgingLabel,
+  privacyRequestGroupCounts,
+  privacyRequestIsOpen,
+  privacyRequestStatusGroup,
   privacyRequestStatusMessage,
+  type PrivacyRequestStatus,
 } from "../shared/privacy";
 
 describe("privacy policy versioning", () => {
@@ -41,5 +50,54 @@ describe("privacy request workflow", () => {
     for (const status of ["submitted", "identity_check", "in_review", "awaiting_customer", "completed", "declined", "cancelled"] as const) {
       expect(privacyRequestStatusMessage(status).length).toBeGreaterThan(15);
     }
+  });
+});
+
+describe("privacy request reporting helpers", () => {
+  it("classifies terminal statuses as closed and every other status as open", () => {
+    for (const status of ["completed", "declined", "cancelled"] as PrivacyRequestStatus[]) {
+      expect(privacyRequestStatusGroup(status)).toBe("closed");
+      expect(privacyRequestIsOpen(status)).toBe(false);
+    }
+    for (const status of ["submitted", "identity_check", "in_review", "awaiting_customer"] as PrivacyRequestStatus[]) {
+      expect(privacyRequestStatusGroup(status)).toBe("open");
+      expect(privacyRequestIsOpen(status)).toBe(true);
+    }
+  });
+
+  it("counts open and closed requests and every status bucket", () => {
+    const rows = [
+      { status: "submitted" as PrivacyRequestStatus },
+      { status: "in_review" as PrivacyRequestStatus },
+      { status: "completed" as PrivacyRequestStatus },
+      { status: "cancelled" as PrivacyRequestStatus },
+    ];
+    expect(privacyRequestGroupCounts(rows)).toEqual({ total: 4, open: 2, closed: 2 });
+    const byStatus = countPrivacyRequestsByStatus(rows);
+    expect(byStatus.submitted).toBe(1);
+    expect(byStatus.in_review).toBe(1);
+    expect(byStatus.completed).toBe(1);
+    expect(byStatus.cancelled).toBe(1);
+    expect(byStatus.awaiting_customer).toBe(0);
+  });
+
+  it("computes whole-day age without producing negative or NaN values", () => {
+    const now = new Date("2026-03-10T12:00:00Z");
+    expect(privacyRequestAgeDays("2026-03-10T08:00:00Z", now)).toBe(0);
+    expect(privacyRequestAgeDays("2026-03-01T08:00:00Z", now)).toBe(9);
+    expect(privacyRequestAgeDays("2026-04-01T08:00:00Z", now)).toBe(0);
+    expect(privacyRequestAgeDays(null, now)).toBe(0);
+    expect(privacyRequestAgeDays("not-a-date", now)).toBe(0);
+  });
+
+  it("bands request ageing against the accountable review target", () => {
+    expect(privacyRequestAgingBand(0)).toBe("on_track");
+    expect(privacyRequestAgingBand(14)).toBe("on_track");
+    expect(privacyRequestAgingBand(Math.floor(PRIVACY_REQUEST_REVIEW_TARGET_DAYS / 2))).toBe("due_soon");
+    expect(privacyRequestAgingBand(PRIVACY_REQUEST_REVIEW_TARGET_DAYS)).toBe("overdue");
+    expect(privacyRequestAgingBand(-4)).toBe("on_track");
+    expect(privacyRequestAgingLabel(0)).toBe("Received today");
+    expect(privacyRequestAgingLabel(1)).toBe("1 day since submission");
+    expect(privacyRequestAgingLabel(5)).toBe("5 days since submission");
   });
 });

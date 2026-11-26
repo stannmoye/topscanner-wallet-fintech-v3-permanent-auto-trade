@@ -1,3 +1,38 @@
+## 2026-11-26 (feat) — Privacy menu: exports, receipts, ageing and the admin status summary
+
+Owner request: improve the privacy menu on the customer and admin portals (see the previous
+entry) and add more features.
+
+- **Shared helpers (`shared/privacy.ts`).** Added status grouping (`privacyRequestStatusGroup`,
+  `privacyRequestIsOpen`), the accountable-review target constant
+  (`PRIVACY_REQUEST_REVIEW_TARGET_DAYS = 30`) with `privacyRequestAgeDays`,
+  `privacyRequestAgingBand` (on_track / due_soon at half the target / overdue), 
+  `privacyRequestAgingLabel`, `privacyRequestGroupCounts` and `countPrivacyRequestsByStatus`.
+- **New pure library (`client/src/lib/privacy-requests.ts`).** CSV builder with RFC 4180 quoting
+  and spreadsheet formula-injection neutralisation, an acknowledgement-receipt builder, and
+  safe filenames. Used by both portals so export logic is single-sourced.
+- **Customer Privacy Centre (`client/src/components/CustomerPrivacyCenter.tsx`).** Overview card
+  now shows "X open · Y closed"; status filter options carry live counts; added an **Export CSV**
+  action; each request now shows last-updated, an expandable event timeline ("Show all N updates"
+  / "Show fewer updates"), and a per-request action row with **Copy reference**, **Download
+  acknowledgement** and the existing cancel.
+- **Admin Privacy Management (`client/src/components/AdminPrivacyManagement.tsx`).** The queue now
+  always loads the full set and filters in-browser so the summary stays accurate; added a status
+  summary chip row (All + each status with counts), an **Export** button for the current view,
+  an ageing label on each row (colour-banded), and a "Time open" fact in the detail panel.
+- **Styling (`client/src/components/privacy-center.css`).** Added styles for the new classes
+  (`privacy-heading-actions`, `privacy-text-action`, `privacy-request-item-actions`,
+  `privacy-admin-status-summary`, `privacy-summary-chip`, ageing colours), a 4-column
+  `.privacy-detail-facts` layout ≥561px and a stacked small-screen rule.
+- **Tests.** `client/src/lib/privacy-requests.test.ts` (6 tests: column omission/inclusion,
+  quoting/formula neutralisation, filenames, receipt content) and new reporting-helper cases in
+  `server/privacy.test.ts`.
+- **Verification.** `tsc --noEmit` clean; `vitest run` 1800 passed / 42 skipped (220 files);
+  installer-config contract suites pass (incl. `scripts/privacy-workflow-contract.test.mjs`);
+  `pnpm build` exit 0. Note: the pre-existing, unrelated
+  `installer/migration-recovery-status.test.mjs` case ("keeps recovery diagnostics aligned with
+  the portal migration runner", 0120/0121) fails and is not touched by this change.
+
 ## 2026-11-26 (feat) — Privacy menu: request search & filtering on the customer and admin portals
 
 Owner request: improve the privacy menu on the customer and admin portals so everything works well.

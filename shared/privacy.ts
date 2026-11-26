@@ -133,6 +133,73 @@ export function privacyRequestStatusLabel(status: PrivacyRequestStatus): string 
   return labels[status];
 }
 
+export type PrivacyRequestStatusGroup = "open" | "closed";
+
+const CLOSED_PRIVACY_REQUEST_STATUSES: readonly PrivacyRequestStatus[] = ["completed", "declined", "cancelled"];
+
+export function privacyRequestStatusGroup(status: PrivacyRequestStatus): PrivacyRequestStatusGroup {
+  return CLOSED_PRIVACY_REQUEST_STATUSES.includes(status) ? "closed" : "open";
+}
+
+export function privacyRequestIsOpen(status: PrivacyRequestStatus): boolean {
+  return privacyRequestStatusGroup(status) === "open";
+}
+
+// Review target used to surface requests that are approaching or past the
+// accountable review window. It is a presentation aid, not a legal deadline.
+export const PRIVACY_REQUEST_REVIEW_TARGET_DAYS = 30;
+
+export type PrivacyRequestAgingBand = "on_track" | "due_soon" | "overdue";
+
+// Whole days elapsed since submission, never negative and never NaN.
+export function privacyRequestAgeDays(createdAt: Date | string | null | undefined, now: Date = new Date()): number {
+  if (!createdAt) return 0;
+  const created = new Date(createdAt).getTime();
+  if (Number.isNaN(created)) return 0;
+  const elapsed = now.getTime() - created;
+  return elapsed <= 0 ? 0 : Math.floor(elapsed / 86400000);
+}
+
+export function privacyRequestAgingBand(ageDays: number): PrivacyRequestAgingBand {
+  if (!Number.isFinite(ageDays) || ageDays < 0) return "on_track";
+  if (ageDays >= PRIVACY_REQUEST_REVIEW_TARGET_DAYS) return "overdue";
+  if (ageDays >= Math.floor(PRIVACY_REQUEST_REVIEW_TARGET_DAYS / 2)) return "due_soon";
+  return "on_track";
+}
+
+export function privacyRequestAgingLabel(ageDays: number): string {
+  if (ageDays <= 0) return "Received today";
+  return ageDays === 1 ? "1 day since submission" : ageDays + " days since submission";
+}
+
+export function privacyRequestGroupCounts(
+  requests: ReadonlyArray<{ status: PrivacyRequestStatus }>,
+): { total: number; open: number; closed: number } {
+  let open = 0;
+  let closed = 0;
+  for (const request of requests) {
+    if (privacyRequestIsOpen(request.status)) open += 1;
+    else closed += 1;
+  }
+  return { total: requests.length, open, closed };
+}
+
+export function countPrivacyRequestsByStatus(
+  requests: ReadonlyArray<{ status: PrivacyRequestStatus }>,
+): Record<PrivacyRequestStatus, number> {
+  const counts = {
+    submitted: 0,
+    identity_check: 0,
+    in_review: 0,
+    awaiting_customer: 0,
+    completed: 0,
+    declined: 0,
+    cancelled: 0,
+  } as Record<PrivacyRequestStatus, number>;
+  for (const request of requests) counts[request.status] += 1;
+  return counts;
+}
+
 export function privacyRequestStatusMessage(status: PrivacyRequestStatus): string {
   const messages: Record<PrivacyRequestStatus, string> = {
     submitted: "Your privacy request has been received and is awaiting review.",

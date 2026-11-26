@@ -8,7 +8,9 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ChevronUp,
   Clock3,
+  Copy,
   FileClock,
   FileText,
   History,
@@ -24,7 +26,15 @@ import { trpc } from "@/lib/trpc";
 import { buildPrivacyHtmlDocument } from "@/lib/privacyHtml";
 import { createPrivacyNoticePdf } from "@/lib/privacyNoticePdf";
 import {
+  buildPrivacyRequestCsv,
+  buildPrivacyRequestReceipt,
+  privacyRequestCsvFilename,
+  privacyRequestReceiptFilename,
+} from "@/lib/privacy-requests";
+import {
   PRIVACY_REQUEST_TYPES,
+  privacyRequestAgeDays,
+  privacyRequestGroupCounts,
   privacyRequestStatusLabel,
   type PrivacyRequestStatus,
   type PrivacyRequestType,
@@ -66,6 +76,8 @@ export function CustomerPrivacyCenter() {
   const [requestError, setRequestError] = useState("");
   const [requestQuery, setRequestQuery] = useState("");
   const [requestStatusFilter, setRequestStatusFilter] = useState<"all" | "open" | "closed">("all");
+  const [copiedReference, setCopiedReference] = useState("");
+  const [expandedRequestIds, setExpandedRequestIds] = useState<number[]>([]);
 
   const currentPolicy = policy.data;
   const viewedPolicy = selectedVersionId
@@ -83,6 +95,67 @@ export function CustomerPrivacyCenter() {
     return `${request.requestReference} ${request.subject} ${category} ${request.status}`.toLowerCase().includes(normalizedRequestQuery);
   });
   const requestsFiltered = Boolean(normalizedRequestQuery) || requestStatusFilter !== "all";
+  const requestGroupCounts = privacyRequestGroupCounts(customerRequests);
+  const requestTypeLabel = (value: string) => PRIVACY_REQUEST_TYPES.find((item) => item.value === value)?.label || value;
+
+  const downloadTextFile = (filename: string, contents: string, mime: string) => {
+    const url = URL.createObjectURL(new Blob([contents], { type: mime + ";charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const copyReference = async (reference: string) => {
+    try {
+      await navigator.clipboard.writeText(reference);
+      setCopiedReference(reference);
+      window.setTimeout(() => setCopiedReference((current) => (current === reference ? "" : current)), 2500);
+    } catch {
+      setNoticeTone("error");
+      setNotice("The reference could not be copied automatically. Select it in the list to copy it manually.");
+    }
+  };
+
+  const toggleRequestExpanded = (requestId: number) => {
+    setExpandedRequestIds((current) => current.includes(requestId) ? current.filter((id) => id !== requestId) : [...current, requestId]);
+  };
+
+  const exportRequests = () => {
+    if (!customerRequests.length) return;
+    const rows = customerRequests.map((request) => ({
+      requestReference: request.requestReference,
+      requestType: requestTypeLabel(request.requestType),
+      status: privacyRequestStatusLabel(request.status as PrivacyRequestStatus),
+      subject: request.subject,
+      createdAt: displayDateTime(request.createdAt),
+      updatedAt: displayDateTime(request.updatedAt),
+      ageDays: privacyRequestAgeDays(request.createdAt),
+    }));
+    downloadTextFile(privacyRequestCsvFilename(), buildPrivacyRequestCsv(rows), "text/csv");
+    setNoticeTone("success");
+    setNotice("Exported " + rows.length + " privacy " + (rows.length === 1 ? "request" : "requests") + " as a CSV file.");
+  };
+
+  const downloadRequestReceipt = (request: (typeof customerRequests)[number]) => {
+    const contents = buildPrivacyRequestReceipt({
+      requestReference: request.requestReference,
+      requestType: requestTypeLabel(request.requestType),
+      status: privacyRequestStatusLabel(request.status as PrivacyRequestStatus),
+      subject: request.subject,
+      createdAt: displayDateTime(request.createdAt),
+      updatedAt: displayDateTime(request.updatedAt),
+      details: request.details,
+      events: (request.events || []).map((event) => ({ createdAt: displayDateTime(event.createdAt), message: event.message })),
+    });
+    downloadTextFile(privacyRequestReceiptFilename(request.requestReference), contents, "text/plain");
+    setNoticeTone("success");
+    setNotice("Acknowledgement for " + request.requestReference + " has been downloaded.");
+  };
 
   const openRequestForm = (type?: PrivacyRequestType) => {
     if (type) setRequestType(type);
@@ -211,8 +284,8 @@ export function CustomerPrivacyCenter() {
         <div className="privacy-overview-card">
           <span className="privacy-overview-icon"><FileClock size={17} /></span>
           <span className="privacy-overview-label">Your requests</span>
-          <strong>{requests.isLoading ? "…" : customerRequests.length}</strong>
-          <small>Requests submitted from this account</small>
+          <strong>{requests.isLoading ? "…" : requestGroupCounts.total}</strong>
+          <small>{requests.isLoading ? "Requests submitted from this account" : requestGroupCounts.open + " open · " + requestGroupCounts.closed + " closed"}</small>
         </div>
         <div className="privacy-overview-card">
           <span className="privacy-overview-icon"><History size={17} /></span>
@@ -280,15 +353,20 @@ export function CustomerPrivacyCenter() {
           </section>
 
           <section className="privacy-request-list-card" aria-labelledby="privacy-requests-heading">
-            <div className="privacy-section-heading">
+            <div className="privacy-section-heading privacy-request-heading">
               <div>
                 <span className="eyebrow">ACCOUNTABLE FOLLOW-THROUGH</span>
                 <h2 id="privacy-requests-heading">Your privacy requests</h2>
                 <p>Each request receives a unique reference and a recorded status history.</p>
               </div>
-              <button type="button" className="privacy-secondary-button" onClick={() => requests.refetch()} disabled={requests.isFetching}>
-                <RotateCcw size={14} /> Refresh
-              </button>
+              <div className="privacy-heading-actions">
+                <button type="button" className="privacy-secondary-button" onClick={exportRequests} disabled={!customerRequests.length}>
+                  <ArrowDownToLine size={14} /> Export CSV
+                </button>
+                <button type="button" className="privacy-secondary-button" onClick={() => requests.refetch()} disabled={requests.isFetching}>
+                  <RotateCcw size={14} /> Refresh
+                </button>
+              </div>
             </div>
             {requests.isLoading ? <div className="privacy-loading-panel" role="status">Loading your requests…</div> :
               requests.isError ? <div className="privacy-empty-state" role="alert"><span>Your request history could not be loaded.</span><button type="button" className="privacy-secondary-button" onClick={() => requests.refetch()}>Retry</button></div> :
@@ -309,9 +387,9 @@ export function CustomerPrivacyCenter() {
                     <label className="privacy-request-filter">
                       <span>Status</span>
                       <select value={requestStatusFilter} onChange={(event) => setRequestStatusFilter(event.target.value as "all" | "open" | "closed")} aria-label="Filter your privacy requests by status">
-                        <option value="all">All requests</option>
-                        <option value="open">Open requests</option>
-                        <option value="closed">Closed requests</option>
+                        <option value="all">All requests ({requestGroupCounts.total})</option>
+                        <option value="open">Open requests ({requestGroupCounts.open})</option>
+                        <option value="closed">Closed requests ({requestGroupCounts.closed})</option>
                       </select>
                     </label>
                   </div>
@@ -326,32 +404,49 @@ export function CustomerPrivacyCenter() {
                     <>
                       {requestsFiltered && <p className="privacy-request-count" role="status">Showing {filteredRequests.length} of {customerRequests.length} requests.</p>}
                       <div className="privacy-request-list">
-                        {filteredRequests.map((request) => (
-                          <article className="privacy-request-item" key={request.id}>
-                            <div className="privacy-request-item-top">
-                              <div>
-                                <span className="privacy-request-reference">{request.requestReference}</span>
-                                <h3>{request.subject}</h3>
-                              </div>
-                              <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
-                            </div>
-                            <div className="privacy-request-meta">
-                              <span>{PRIVACY_REQUEST_TYPES.find((item) => item.value === request.requestType)?.label || request.requestType}</span>
-                              <span>Submitted {displayDateTime(request.createdAt)}</span>
-                            </div>
-                            {request.events?.length > 0 && <div className="privacy-timeline">
-                              {request.events.slice(0, 4).map((event) => (
-                                <div className="privacy-timeline-event" key={event.id}>
-                                  <i />
-                                  <div><span>{displayDateTime(event.createdAt)}</span><p>{event.message}</p></div>
+                        {filteredRequests.map((request) => {
+                          const isExpanded = expandedRequestIds.includes(request.id);
+                          const events = request.events || [];
+                          const visibleEvents = isExpanded ? events : events.slice(0, 3);
+                          return (
+                            <article className="privacy-request-item" key={request.id}>
+                              <div className="privacy-request-item-top">
+                                <div>
+                                  <span className="privacy-request-reference">{request.requestReference}</span>
+                                  <h3>{request.subject}</h3>
                                 </div>
-                              ))}
-                            </div>}
-                            {request.status === "submitted" && <button type="button" className="privacy-text-action" onClick={() => void cancelOwnRequest(request.id, request.requestReference)} disabled={cancelRequest.isPending}>
-                              Cancel before review
-                            </button>}
-                          </article>
-                        ))}
+                                <span className={"privacy-status-pill privacy-status-" + request.status}>{privacyRequestStatusLabel(request.status as PrivacyRequestStatus)}</span>
+                              </div>
+                              <div className="privacy-request-meta">
+                                <span>{requestTypeLabel(request.requestType)}</span>
+                                <span>Submitted {displayDateTime(request.createdAt)}</span>
+                                <span>Last updated {displayDateTime(request.updatedAt)}</span>
+                              </div>
+                              {events.length > 0 && <div className="privacy-timeline">
+                                {visibleEvents.map((event) => (
+                                  <div className="privacy-timeline-event" key={event.id}>
+                                    <i />
+                                    <div><span>{displayDateTime(event.createdAt)}</span><p>{event.message}</p></div>
+                                  </div>
+                                ))}
+                              </div>}
+                              {events.length > 3 && <button type="button" className="privacy-text-action" onClick={() => toggleRequestExpanded(request.id)}>
+                                {isExpanded ? <><ChevronUp size={13} /> Show fewer updates</> : <><ChevronDown size={13} /> Show all {events.length} updates</>}
+                              </button>}
+                              <div className="privacy-request-item-actions">
+                                <button type="button" className="privacy-text-action" onClick={() => void copyReference(request.requestReference)}>
+                                  <Copy size={13} /> {copiedReference === request.requestReference ? "Reference copied" : "Copy reference"}
+                                </button>
+                                <button type="button" className="privacy-text-action" onClick={() => downloadRequestReceipt(request)}>
+                                  <ArrowDownToLine size={13} /> Download acknowledgement
+                                </button>
+                                {request.status === "submitted" && <button type="button" className="privacy-text-action privacy-text-action-danger" onClick={() => void cancelOwnRequest(request.id, request.requestReference)} disabled={cancelRequest.isPending}>
+                                  Cancel before review
+                                </button>}
+                              </div>
+                            </article>
+                          );
+                        })}
                       </div>
                     </>
                   )}
