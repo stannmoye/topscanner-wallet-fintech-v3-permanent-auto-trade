@@ -26,6 +26,33 @@ import { worldBankProvider, normaliseWorldBankNotice } from "./adapters/world-ba
 import { ungmProvider, normaliseUngmRow } from "./adapters/ungm";
 import { afdbProvider, normaliseAfdbRow } from "./adapters/afdb";
 import { adbProvider, normaliseAdbRow } from "./adapters/adb";
+import { prozorroProvider, normaliseProzorroTender } from "./adapters/prozorro";
+import { pncpProvider, normalisePncpContratacao } from "./adapters/pncp";
+import { mercadoPublicoProvider, normaliseChileMercadoPublico } from "./adapters/mercado-publico";
+import { secopIiProvider, normaliseSecopIiProcess } from "./adapters/secop-ii";
+import { konepsProvider, normaliseKonepsNotice } from "./adapters/koneps";
+import { oeceProvider, normaliseOeceRelease } from "./adapters/oece";
+import { goszakupProvider, normaliseGoszakupRelease } from "./adapters/goszakup";
+import { ekapProvider, normaliseEkapRow } from "./adapters/ekap";
+import { comprasmxProvider, normaliseComprasmxRow } from "./adapters/comprasmx";
+import { ccgpProvider, normaliseCcgpRow } from "./adapters/ccgp";
+import { kkjProvider, normaliseKkjRow } from "./adapters/kkj";
+import { spseProvider, normaliseSpseRow } from "./adapters/spse";
+import { philgepsProvider, normalisePhilgepsRow } from "./adapters/philgeps";
+import { muasamcongProvider, normaliseMuasamcongRow } from "./adapters/muasamcong";
+import { eprocureBdProvider, normaliseEprocureBdRow } from "./adapters/eprocure-bd";
+import { pakistanEpmsProvider, normalisePakistanEpmsRow } from "./adapters/pakistan-epms";
+import { egyptEtendersProvider, normaliseEgyptEtendersRow } from "./adapters/egypt-etenders";
+import { marchespublicsProvider, normaliseMarchespublicsRow } from "./adapters/marchespublics";
+import { tunepsProvider, normaliseTunepsRow } from "./adapters/tuneps";
+import { gppUgandaProvider, normaliseGppUgandaRow } from "./adapters/gpp-uganda";
+import { nestProvider, normaliseNestRow } from "./adapters/nest";
+import { egpEthiopiaProvider, normaliseEgpEthiopiaRow } from "./adapters/egp-ethiopia";
+import { treasuryLkProvider, normaliseTreasuryLkRow } from "./adapters/treasury-lk";
+import { bolpatraProvider, normaliseBolpatraRow } from "./adapters/bolpatra";
+import { mtenderProvider, normaliseMtenderRow } from "./adapters/mtender";
+import { georgiaProcurementProvider, normaliseGeorgiaProcurementRow } from "./adapters/georgia-procurement";
+import { rsPortalProvider, normaliseRsPortalRow } from "./adapters/rs-portal";
 
 /**
  * Tender Bid — adapter registry.
@@ -37,11 +64,16 @@ import { adbProvider, normaliseAdbRow } from "./adapters/adb";
  * are not yet implemented are simply absent: the worker records the source as
  * `no_adapter` rather than guessing.
  *
- * Stage 6 completes the catalogue: every one of the 23 country sources and the 5
- * supranational sources now resolves to an adapter. Sources that publish a
- * documented API/OCDS feed are read directly; sources that are HTML-only or
- * bot-protected use the tolerant HTML-listing scraper and fail closed (the source
- * is flagged unhealthy rather than a tender being fabricated).
+ * Stage 6 completed the original catalogue: every one of the 23 country sources
+ * and the 5 supranational sources resolves to an adapter. Stage 8 expands the
+ * catalogue by 27 further countries (Ukraine, Brazil, Chile, Colombia, South
+ * Korea, Peru, Kazakhstan, Türkiye, Mexico, China, Japan, Indonesia, the
+ * Philippines, Vietnam, Bangladesh, Pakistan, Egypt, Morocco, Tunisia, Uganda,
+ * Tanzania, Ethiopia, Sri Lanka, Nepal, Moldova, Georgia and Serbia) so 50
+ * country sources now resolve to an adapter. Sources that publish a documented
+ * API/OCDS feed are read directly; sources that are HTML-only or bot-protected
+ * use the tolerant HTML-listing scraper and fail closed (the source is flagged
+ * unhealthy rather than a tender being fabricated).
  */
 export type TenderAdapter = {
   provider: TenderProvider;
@@ -157,6 +189,114 @@ export const TENDER_ADAPTERS: Record<string, TenderAdapter> = {
   adb: {
     provider: adbProvider,
     normalise: (raw) => normaliseAdbRow(raw as Record<string, unknown>),
+  },
+  prozorro: {
+    provider: prozorroProvider,
+    normalise: (raw) => normaliseProzorroTender(raw as Record<string, unknown>),
+  },
+  pncp: {
+    provider: pncpProvider,
+    normalise: (raw) => normalisePncpContratacao(raw as Record<string, unknown>),
+  },
+  mercado_publico: {
+    provider: mercadoPublicoProvider,
+    normalise: (raw) => normaliseChileMercadoPublico(raw as Record<string, unknown>),
+  },
+  secop_ii: {
+    provider: secopIiProvider,
+    normalise: (raw) => normaliseSecopIiProcess(raw as Record<string, unknown>),
+  },
+  koneps: {
+    provider: konepsProvider,
+    normalise: (raw) => normaliseKonepsNotice(raw as Record<string, unknown>),
+  },
+  oece: {
+    provider: oeceProvider,
+    normalise: (raw) => normaliseOeceRelease(raw as Record<string, unknown>),
+  },
+  goszakup: {
+    provider: goszakupProvider,
+    normalise: (raw) => normaliseGoszakupRelease(raw as Record<string, unknown>),
+  },
+  ekap: {
+    provider: ekapProvider,
+    normalise: (raw) => normaliseEkapRow(raw as Record<string, unknown>),
+  },
+  comprasmx: {
+    provider: comprasmxProvider,
+    normalise: (raw) => normaliseComprasmxRow(raw as Record<string, unknown>),
+  },
+  ccgp: {
+    provider: ccgpProvider,
+    normalise: (raw) => normaliseCcgpRow(raw as Record<string, unknown>),
+  },
+  kkj: {
+    provider: kkjProvider,
+    normalise: (raw) => normaliseKkjRow(raw as Record<string, unknown>),
+  },
+  spse: {
+    provider: spseProvider,
+    normalise: (raw) => normaliseSpseRow(raw as Record<string, unknown>),
+  },
+  philgeps: {
+    provider: philgepsProvider,
+    normalise: (raw) => normalisePhilgepsRow(raw as Record<string, unknown>),
+  },
+  muasamcong: {
+    provider: muasamcongProvider,
+    normalise: (raw) => normaliseMuasamcongRow(raw as Record<string, unknown>),
+  },
+  eprocure_bd: {
+    provider: eprocureBdProvider,
+    normalise: (raw) => normaliseEprocureBdRow(raw as Record<string, unknown>),
+  },
+  pakistan_epms: {
+    provider: pakistanEpmsProvider,
+    normalise: (raw) => normalisePakistanEpmsRow(raw as Record<string, unknown>),
+  },
+  egypt_etenders: {
+    provider: egyptEtendersProvider,
+    normalise: (raw) => normaliseEgyptEtendersRow(raw as Record<string, unknown>),
+  },
+  marchespublics: {
+    provider: marchespublicsProvider,
+    normalise: (raw) => normaliseMarchespublicsRow(raw as Record<string, unknown>),
+  },
+  tuneps: {
+    provider: tunepsProvider,
+    normalise: (raw) => normaliseTunepsRow(raw as Record<string, unknown>),
+  },
+  gpp_uganda: {
+    provider: gppUgandaProvider,
+    normalise: (raw) => normaliseGppUgandaRow(raw as Record<string, unknown>),
+  },
+  nest: {
+    provider: nestProvider,
+    normalise: (raw) => normaliseNestRow(raw as Record<string, unknown>),
+  },
+  egp_ethiopia: {
+    provider: egpEthiopiaProvider,
+    normalise: (raw) => normaliseEgpEthiopiaRow(raw as Record<string, unknown>),
+  },
+  treasury_lk: {
+    provider: treasuryLkProvider,
+    normalise: (raw) => normaliseTreasuryLkRow(raw as Record<string, unknown>),
+  },
+  bolpatra: {
+    provider: bolpatraProvider,
+    normalise: (raw) => normaliseBolpatraRow(raw as Record<string, unknown>),
+  },
+  mtender: {
+    provider: mtenderProvider,
+    normalise: (raw) => normaliseMtenderRow(raw as Record<string, unknown>),
+  },
+  georgia_procurement: {
+    provider: georgiaProcurementProvider,
+    normalise: (raw) => normaliseGeorgiaProcurementRow(raw as Record<string, unknown>),
+  },
+  rs_portal: {
+    provider: rsPortalProvider,
+    normalise: (raw) => normaliseRsPortalRow(raw as Record<string, unknown>),
   },
 };
 

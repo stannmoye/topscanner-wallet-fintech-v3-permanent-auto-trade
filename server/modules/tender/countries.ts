@@ -57,6 +57,17 @@ const COUNTRY_NAME_TO_ISO2: Record<string, string> = {
   ethiopia: "ET",
   "sri lanka": "LK",
   nepal: "NP",
+  ukraine: "UA",
+  colombia: "CO",
+  chile: "CL",
+  peru: "PE",
+  kazakhstan: "KZ",
+  "south korea": "KR",
+  korea: "KR",
+  "republic of korea": "KR",
+  moldova: "MD",
+  georgia: "GE",
+  serbia: "RS",
 };
 
 /** Resolve a country name to its ISO alpha-2 code, or "" when unknown. */

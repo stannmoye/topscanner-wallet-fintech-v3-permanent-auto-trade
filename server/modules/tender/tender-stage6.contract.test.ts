@@ -38,12 +38,16 @@ const read = (relative: string) => readFileSync(new URL(relative, import.meta.ur
 /** Strip comments so negative substring assertions test code, not prose. */
 const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 
-/** Every adapter key the Stage 6 catalogue must register. */
+/** Every adapter key the catalogue must register (23 original countries + 5 supranational + 27 stage-8 countries). */
 const EXPECTED_ADAPTER_KEYS = [
   "adb", "afdb", "anac", "austender", "boamp", "canada_buys", "cppp", "doffin", "enotification",
   "etenders", "etimad", "ezamowienia", "find_a_tender", "ghaneps", "hilma", "nocopo",
   "oeffentlichevergabe", "placsp", "ppip", "sam_gov", "simap", "ted", "tenderned", "udbud",
   "ungm", "world_bank", "za_etenders",
+  "bolpatra", "ccgp", "comprasmx", "egp_ethiopia", "egypt_etenders", "ekap", "eprocure_bd",
+  "georgia_procurement", "goszakup", "gpp_uganda", "kkj", "koneps", "marchespublics",
+  "mercado_publico", "mtender", "muasamcong", "nest", "oece", "pakistan_epms", "philgeps",
+  "pncp", "prozorro", "rs_portal", "secop_ii", "spse", "treasury_lk", "tuneps",
 ] as const;
 
 /** The shared factories plus the per-source modules in the adapters directory. */
@@ -92,10 +96,10 @@ describe("Tender Bid Stage 6 — full adapter catalogue", () => {
     }
   });
 
-  it("covers all 23 countries", () => {
-    expect(listTenderCountryCodes()).toHaveLength(23);
-    expect(new Set(listTenderCountryCodes()).size).toBe(23);
-    expect(TENDER_COUNTRY_SOURCES).toHaveLength(23);
+  it("covers all 50 countries", () => {
+    expect(listTenderCountryCodes()).toHaveLength(50);
+    expect(new Set(listTenderCountryCodes()).size).toBe(50);
+    expect(TENDER_COUNTRY_SOURCES).toHaveLength(50);
   });
 
   it("grounds every adapter in a real, documented endpoint (nothing fabricated)", () => {

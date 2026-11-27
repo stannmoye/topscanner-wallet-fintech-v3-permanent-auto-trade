@@ -1,7 +1,7 @@
 # Tender Bid — Build Specification
 
 Status: **Draft for owner approval (Stage 0)**
-Owner decisions locked: official open APIs + portal scraping; 23 countries (list below); bid/qualification
+Owner decisions locked: official open APIs + portal scraping; 50 countries (list below; 23 original + 27 added in Stage 8); bid/qualification
 amount = an administrator-configured **percentage of the contract value**, clamped to **$1,000–$600,000**,
 overridable per tender; the administrative charge is the same configured amount.
 
@@ -16,7 +16,7 @@ snapshot; when a source or rate is missing or invalid the feature fails closed.
 ## 1. Purpose
 
 Give customers a real, verifiable **Tender Bid** desk. The platform ingests public and private-sector
-tenders from national government procurement portals and commercial tender sources across 23 countries,
+tenders from national government procurement portals and commercial tender sources across 50 countries,
 normalises them into one schema, and displays each tender with the information needed to decide whether
 to bid. A customer can place a bid; the administrator is notified, reviews it, and may deduct the
 administrative charge from the customer's wallet. If the customer's balance does not cover the
@@ -40,7 +40,7 @@ The desk replaces the placeholder customer section currently keyed `tender-bid` 
 | Decision | Value |
 | --- | --- |
 | Source strategy | Official open APIs/OCDS where they exist; scrape national portals that have none |
-| Country coverage | The 23 countries in §4 |
+| Country coverage | The 50 countries in §4 (23 original + 27 Stage 8) |
 | Contract value inclusion range | $100,000 – $250,000,000 (USD equivalent) |
 | Qualification / bid amount | Administrator-configured **percent of contract value**, clamped to **$1,000 – $600,000** |
 | Administrative charge | The same configured amount as the qualification amount |
@@ -74,7 +74,10 @@ data; it simply stops refreshing and is flagged).
 
 ---
 
-## 4. Country coverage (23)
+## 4. Country coverage (50)
+
+The first 23 countries are the original coverage; the 27 below them were added in Stage 8 under the
+same guardrails (real documented endpoint, fail closed, no fabricated tender).
 
 | # | Country | Primary source | Access method |
 | --- | --- | --- | --- |
@@ -101,6 +104,41 @@ data; it simply stops refreshing and is flagged).
 | 21 | Ghana | GHANEPS | Scrape |
 | 22 | United Arab Emirates | Etimad / aggregator | Scrape / aggregator API |
 | 23 | Saudi Arabia | Etimad / aggregator | Scrape / aggregator API |
+
+### 4a. Stage 8 expansion (27 more countries)
+
+| # | Country | Primary source | Access method |
+| --- | --- | --- | --- |
+| 24 | Ukraine | Prozorro | Official OCDS-style JSON API (`/api/2.5/tenders`) |
+| 25 | Brazil | PNCP — Portal Nacional de Contratações Públicas | Official JSON API (`/api/consulta/v1/contratacoes/publicacao`) |
+| 26 | Chile | Mercado Público | Official JSON API (`/licitaciones.json`) |
+| 27 | Colombia | SECOP II | Official open-data API (Socrata `p6dx-8zbt`) |
+| 28 | South Korea | KONEPS / nara-jangteo | Official data.go.kr API (key) |
+| 29 | Peru | OECE Contrataciones Abiertas | Official OCDS API (`/api/releases`) |
+| 30 | Kazakhstan | Goszakup | Official OCDS API (`ows.goszakup.gov.kz/v2/ocds`) |
+| 31 | Türkiye | EKAP | Portal scrape |
+| 32 | Mexico | ComprasMX | Portal scrape |
+| 33 | China | China Government Procurement (CCGP) | Portal scrape |
+| 34 | Japan | Kokusai Chotatsu Joho (KKJ) | Portal scrape |
+| 35 | Indonesia | SPSE / LPSE | Portal scrape |
+| 36 | Philippines | PhilGEPS | Portal scrape |
+| 37 | Vietnam | MuaSamCong | Portal scrape |
+| 38 | Bangladesh | e-Procurement (e-GP) | Portal scrape |
+| 39 | Pakistan | EPMS / PPRA | Portal scrape |
+| 40 | Egypt | Government e-Tenders Portal | Portal scrape |
+| 41 | Morocco | MarchésPublics | Portal scrape |
+| 42 | Tunisia | TUNEPS | Portal scrape |
+| 43 | Uganda | Government Procurement Portal (GPP) | Portal scrape |
+| 44 | Tanzania | NeST (National e-Procurement System) | Portal scrape |
+| 45 | Ethiopia | Electronic Government Procurement (eGP) | Portal scrape |
+| 46 | Sri Lanka | Treasury Procurement Notices | Portal scrape |
+| 47 | Nepal | Bolpatra e-GP | Portal scrape |
+| 48 | Moldova | MTender | Portal scrape |
+| 49 | Georgia | State Procurement Agency | Portal scrape |
+| 50 | Serbia | Public Procurement Portal (UJN) | Portal scrape |
+
+JS-rendered portal sources that expose no static notice feed are health-flagged and fail closed until an
+API/token path is configured, in line with §12 — a source never produces a fabricated tender.
 
 Supranational feeds (**EU TED, World Bank, UNGM, AfDB, ADB**) are used as additional sources: they
 cover many of these countries and provide a resilient fallback for above-threshold and development

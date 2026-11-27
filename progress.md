@@ -1,3 +1,52 @@
+## 2026-11-27 (feature / Stage 8) — Tender Bid source expansion (27 more countries / real APIs)
+
+Owner request: **"add more countries and more APIs add 27 more countries"**. Delivered per
+`docs/TENDER_BID_SPECIFICATION.md` (§3 data sources & attribution, §6 provider interface & ingestion,
+§11 staged delivery, §12 guardrails) under the standing guardrails: real data only, fail closed,
+adapters grounded in real documented endpoints, nothing fabricated. The catalogue now covers **50
+countries** (the original 23 plus 27 new) and is driven end-to-end by the same registry.
+
+- **27 new country adapters** (`server/modules/tender/adapters/`) — 5 dedicated JSON, 2 OCDS and 20
+  HTML-listing, each grounded in a real documented endpoint (no invented field, no fabricated tender):
+  - Dedicated JSON: `prozorro.ts` (UA, `/api/2.5/tenders`), `pncp.ts` (BR, PNCP
+    `/api/consulta/v1/contratacoes/publicacao`), `mercado-publico.ts` (CL, `/licitaciones.json`),
+    `secop-ii.ts` (CO, Socrata `p6dx-8zbt.json`), `koneps.ts` (KR, `apis.data.go.kr` key-gated).
+  - OCDS: `oece.ts` (PE, `/api/releases`), `goszakup.ts` (KZ, `ows.goszakup.gov.kz/v2/ocds`).
+  - HTML-listing (thin `createHtmlListingProvider` configs): `ekap.ts` (TR), `comprasmx.ts` (MX),
+    `ccgp.ts` (CN), `kkj.ts` (JP), `spse.ts` (ID), `philgeps.ts` (PH), `muasamcong.ts` (VN),
+    `eprocure-bd.ts` (BD), `pakistan-epms.ts` (PK), `egypt-etenders.ts` (EG), `marchespublics.ts` (MA),
+    `tuneps.ts` (TN), `gpp-uganda.ts` (UG), `nest.ts` (TZ), `egp-ethiopia.ts` (ET), `treasury-lk.ts`
+    (LK), `bolpatra.ts` (NP), `mtender.ts` (MD), `georgia-procurement.ts` (GE), `rs-portal.ts` (RS).
+- **Registry / catalogue** — `server/modules/tender/registry.ts` registers all 27 new
+  `TENDER_ADAPTERS` entries and the header doc comment now describes Stage 8 (50 country sources);
+  `server/modules/tender/source-registry.ts` appends the 27 `TENDER_COUNTRY_SOURCES` rows
+  (`ua_prozorro`, `br_pncp`, `cl_mercado_publico`, `co_secop_ii`, `kr_koneps`, `pe_oece`, `kz_goszakup`,
+  `tr_ekap`, `mx_comprasmx`, `cn_ccgp`, `jp_kkj`, `id_spse`, `ph_philgeps`, `vn_muasamcong`,
+  `bd_eprocure`, `pk_epms`, `eg_etenders`, `ma_marchespublics`, `tn_tuneps`, `ug_gpp`, `tz_nest`,
+  `et_egp`, `lk_treasury`, `np_bolpatra`, `md_mtender`, `ge_procurement`, `rs_portal`); and
+  `server/modules/tender/countries.ts` adds the new country→ISO-code aliases.
+- **Forward-only migration** — `drizzle/0127_tender_expansion.sql` (new) idempotently seeds the 27 new
+  `tender_sources` rows (`ON DUPLICATE KEY UPDATE` label/countryCode/kind/adapter); the Drizzle journal
+  appends `0127_tender_expansion` (idx 91, when 1794484800009) after `0126_tender_admin_corrections` —
+  no existing migration was edited.
+- **Contract tests** — `server/modules/tender/tender-stage8.contract.test.ts` (new, 6 tests) asserts the
+  27 expand to exactly 50 unique countries, every expanded adapter resolves against a real module and is
+  grounded in a real documented endpoint, the JS-rendered portals fail closed when a listing yields no
+  notice links, and the 27 sources are seeded with a strictly-increasing migration.
+  `tender-stage1.contract.test.ts` / `tender-stage6.contract.test.ts` were forward-updated to 50
+  countries / 54 adapter keys, and the journal-tail pins in `scripts/worker-schema-contracts.test.mjs`,
+  `scripts/apply-portal-migrations-safety.test.mjs`, `scripts/trading-package-subscription-repair.test.mjs`
+  and `scripts/trading-settlement-timing-schema-repair.test.mjs` were shifted by one for the new entry.
+- Verification: `pnpm run check` exit 0; targeted contract tests `tender-stage1` / `tender-stage6` /
+  `tender-stage8` 3 files / 44 tests passed; full `pnpm test` 229 files passed (9 skipped) / 1,959 tests
+  passed (42 skipped); `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests
+  passed; `pnpm build` succeeded. No database was connected to (no `DATABASE_URL`); every service and
+  worker fails closed without one.
+- Next: enable/adjust the new `tender_sources` rows (enable flag, expected interval, config) from the
+  admin Sources screen as real portal access is confirmed in the deployment environment. Several of the
+  new national portals are JS-rendered SPAs that expose no static notice anchors, so their sources will
+  be health-flagged until an API/token path is configured — by design (fail closed, never fabricated).
+
 ## 2026-11-27 (feature / Stage 7) — Tender Bid final hardening/verification pass & interaction quality
 
 Owner request: move to Stage 7 after Stages 0–6. The owner confirmed the scope as **"Both"**, i.e.

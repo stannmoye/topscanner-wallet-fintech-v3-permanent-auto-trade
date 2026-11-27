@@ -9,9 +9,10 @@ import type { TenderSourceKind } from "./provider";
  * seed in the migration in lockstep — `tender-stage1.contract.test.ts` asserts
  * they match.
  *
- * The 23 country entries are the primary national source per country. The
- * supranational entries are additional private/development-bank feeds that cover
- * many of the same countries and act as a resilient fallback.
+ * The country entries are the primary national source per country: the original
+ * 23, plus 27 added in stage 8 — 50 in total. The supranational entries are
+ * additional private/development-bank feeds that cover many of the same
+ * countries and act as a resilient fallback.
  */
 export type TenderSourceDefinition = {
   /** Stable registry key, unique across the catalogue. */
@@ -49,6 +50,33 @@ export const TENDER_COUNTRY_SOURCES: readonly TenderSourceDefinition[] = [
   { key: "gh_ghaneps", label: "GHANEPS (Ghana)", countryCode: "GH", kind: "government", adapter: "ghaneps" },
   { key: "ae_etimad", label: "Etimad / aggregator (United Arab Emirates)", countryCode: "AE", kind: "private", adapter: "etimad" },
   { key: "sa_etimad", label: "Etimad / aggregator (Saudi Arabia)", countryCode: "SA", kind: "private", adapter: "etimad" },
+  { key: "ua_prozorro", label: "Prozorro (Ukraine)", countryCode: "UA", kind: "government", adapter: "prozorro" },
+  { key: "br_pncp", label: "PNCP Portal Nacional de Contratacoes Publicas (Brazil)", countryCode: "BR", kind: "government", adapter: "pncp" },
+  { key: "cl_mercado_publico", label: "Mercado Publico (Chile)", countryCode: "CL", kind: "government", adapter: "mercado_publico" },
+  { key: "co_secop_ii", label: "SECOP II (Colombia)", countryCode: "CO", kind: "government", adapter: "secop_ii" },
+  { key: "kr_koneps", label: "KONEPS / nara-jangteo (South Korea)", countryCode: "KR", kind: "government", adapter: "koneps" },
+  { key: "pe_oece", label: "OECE Contrataciones Abiertas (Peru)", countryCode: "PE", kind: "government", adapter: "oece" },
+  { key: "kz_goszakup", label: "Goszakup (Kazakhstan)", countryCode: "KZ", kind: "government", adapter: "goszakup" },
+  { key: "tr_ekap", label: "EKAP Elektronik Kamu Alimlari Platformu (Turkiye)", countryCode: "TR", kind: "government", adapter: "ekap" },
+  { key: "mx_comprasmx", label: "ComprasMX (Mexico)", countryCode: "MX", kind: "government", adapter: "comprasmx" },
+  { key: "cn_ccgp", label: "China Government Procurement (CCGP)", countryCode: "CN", kind: "government", adapter: "ccgp" },
+  { key: "jp_kkj", label: "Kokusai Chotatsu Joho (KKJ, Japan)", countryCode: "JP", kind: "government", adapter: "kkj" },
+  { key: "id_spse", label: "SPSE / LPSE (Indonesia)", countryCode: "ID", kind: "government", adapter: "spse" },
+  { key: "ph_philgeps", label: "PhilGEPS (Philippines)", countryCode: "PH", kind: "government", adapter: "philgeps" },
+  { key: "vn_muasamcong", label: "MuaSamCong (Vietnam)", countryCode: "VN", kind: "government", adapter: "muasamcong" },
+  { key: "bd_eprocure", label: "e-Procurement (Bangladesh)", countryCode: "BD", kind: "government", adapter: "eprocure_bd" },
+  { key: "pk_epms", label: "EPMS / PPRA (Pakistan)", countryCode: "PK", kind: "government", adapter: "pakistan_epms" },
+  { key: "eg_etenders", label: "Government e-Tenders Portal (Egypt)", countryCode: "EG", kind: "government", adapter: "egypt_etenders" },
+  { key: "ma_marchespublics", label: "MarchesPublics (Morocco)", countryCode: "MA", kind: "government", adapter: "marchespublics" },
+  { key: "tn_tuneps", label: "TUNEPS (Tunisia)", countryCode: "TN", kind: "government", adapter: "tuneps" },
+  { key: "ug_gpp", label: "Government Procurement Portal (Uganda)", countryCode: "UG", kind: "government", adapter: "gpp_uganda" },
+  { key: "tz_nest", label: "NeST National e-Procurement System (Tanzania)", countryCode: "TZ", kind: "government", adapter: "nest" },
+  { key: "et_egp", label: "Electronic Government Procurement (Ethiopia)", countryCode: "ET", kind: "government", adapter: "egp_ethiopia" },
+  { key: "lk_treasury", label: "Treasury Procurement Notices (Sri Lanka)", countryCode: "LK", kind: "government", adapter: "treasury_lk" },
+  { key: "np_bolpatra", label: "Bolpatra e-GP (Nepal)", countryCode: "NP", kind: "government", adapter: "bolpatra" },
+  { key: "md_mtender", label: "MTender (Moldova)", countryCode: "MD", kind: "government", adapter: "mtender" },
+  { key: "ge_procurement", label: "State Procurement Agency (Georgia)", countryCode: "GE", kind: "government", adapter: "georgia_procurement" },
+  { key: "rs_portal", label: "Public Procurement Portal (Serbia)", countryCode: "RS", kind: "government", adapter: "rs_portal" },
 ];
 
 /** Additional supranational/private feeds used as resilient fallbacks. */

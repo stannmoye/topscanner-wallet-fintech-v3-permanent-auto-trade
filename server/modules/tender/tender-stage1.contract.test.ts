@@ -14,19 +14,23 @@ const read = (relative: string) => readFileSync(new URL(relative, import.meta.ur
 const schema = read("../../../drizzle/schema.ts");
 const providerSource = read("./provider.ts");
 const migration = read("../../../drizzle/0125_tender_bid.sql");
+const expansionMigration = read("../../../drizzle/0127_tender_expansion.sql");
 const journal = JSON.parse(read("../../../drizzle/meta/_journal.json"));
 
 const NEW_TABLES = ["tender_sources", "tenders", "tender_field_history", "tender_bids", "tender_bid_events"] as const;
 
 describe("Tender Bid Stage 1 — source registry", () => {
-  it("covers exactly the 23 owner-approved countries", () => {
-    expect(TENDER_COUNTRY_SOURCES).toHaveLength(23);
+  it("covers exactly the 50 approved countries", () => {
+    expect(TENDER_COUNTRY_SOURCES).toHaveLength(50);
     expect(listTenderCountryCodes()).toEqual([
       "US", "GB", "CA", "DE", "FR", "NL", "BE", "ES", "IT", "PL",
       "DK", "FI", "IE", "NO", "CH", "AU", "IN", "NG", "KE", "ZA",
       "GH", "AE", "SA",
+      "UA", "BR", "CL", "CO", "KR", "PE", "KZ", "TR", "MX", "CN",
+      "JP", "ID", "PH", "VN", "BD", "PK", "EG", "MA", "TN", "UG",
+      "TZ", "ET", "LK", "NP", "MD", "GE", "RS",
     ]);
-    expect(new Set(listTenderCountryCodes()).size).toBe(23);
+    expect(new Set(listTenderCountryCodes()).size).toBe(50);
   });
 
   it("keeps registry keys unique and every definition well-formed", () => {
@@ -95,8 +99,11 @@ describe("Tender Bid Stage 1 — migration and journal", () => {
   });
 
   it("seeds every registry source", () => {
+    // New sources are added by their own forward-only migration, never by editing
+    // an applied one, so the seed spans 0125 (stage 1) plus 0127 (stage 8).
+    const seedSql = `${migration}\n${expansionMigration}`;
     for (const source of TENDER_SOURCES) {
-      expect(migration).toContain(`('${source.key}', '${source.label}', '${source.countryCode}', '${source.kind}', '${source.adapter}')`);
+      expect(seedSql).toContain(`('${source.key}', '${source.label}', '${source.countryCode}', '${source.kind}', '${source.adapter}')`);
     }
   });
 
