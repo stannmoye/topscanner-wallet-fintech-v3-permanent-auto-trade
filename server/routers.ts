@@ -80,7 +80,7 @@ import { getOpportunityGenerationControl, getOpportunityGenerationMonitor, listO
 import { getSystemDiagnosticsReport } from "./_core/systemDiagnostics";
 import { getApiHealthReport, probeApiProvider } from "./_core/apiHealth";
 import { getResourceReport } from "./_core/resourceReport";
-import { getIncidentReport, listIncidents, purgeIncidentLog } from "./incident-log";
+import { clearIncidents, deleteIncident, getIncidentReport, listIncidents, purgeIncidentLog } from "./incident-log";
 import { exportOpportunityDeliveryRecords, getOpportunityDeliveryCustomer, getOpportunityDeliveryDetails, getOpportunityDeliveryQueueDiagnostics, listOpportunityDeliveryRecords, searchOpportunityDeliveryCustomers } from "./opportunityDeliveryDiagnostics";
 import { createAdminApiKey, getAdminApiOverview, listAdminApiCustomerOptions, listAdminApiKeys, listAdminApiRequests, listAdminApiWebhookDeliveries, revokeAdminApiKey, updateAdminApiKey } from "./customer-api/admin";
 import { getCustomerApiSettings, updateCustomerApiSettings, ApiAccessPolicyError } from "./customer-api/settings";
@@ -1385,6 +1385,16 @@ export const appRouter = router({
     purgeIncidents: adminProcedure.input(z.object({
       olderThanDays: z.number().int().min(1).max(365).optional(),
     }).strict().optional()).mutation(({ input }) => purgeIncidentLog(input?.olderThanDays)),
+    // Manually remove recorded incidents. `deleteIncident` removes one specific
+    // crash report (for example the fatal record that caused a restart) and
+    // `clearIncidents` removes a whole restart session, or all retained records
+    // when no boot id is supplied.
+    deleteIncident: adminProcedure.input(z.object({
+      id: z.number().int().positive(),
+    }).strict()).mutation(({ input }) => deleteIncident(input.id)),
+    clearIncidents: adminProcedure.input(z.object({
+      bootId: z.string().trim().min(1).max(64).optional(),
+    }).strict().optional()).mutation(({ input }) => clearIncidents(input ?? {})),
     // Memory/disk usage plus the prioritised critical/major/minor improvement list.
     resourceReport: adminProcedure.query(() => getResourceReport()),
     // Outbound provider health: passive status by default, and an explicit

@@ -243,6 +243,8 @@ export function AdminCrashDiagnostics() {
   }, [severity, category]);
   const listQuery = trpc.adminOperations.incidentList.useQuery(listInput, { refetchOnWindowFocus: true });
   const purge = trpc.adminOperations.purgeIncidents.useMutation();
+  const deleteIncident = trpc.adminOperations.deleteIncident.useMutation();
+  const clearIncidents = trpc.adminOperations.clearIncidents.useMutation();
 
   const report = reportQuery.data as IncidentReport | undefined;
   const incidents = (listQuery.data as IncidentEntry[] | undefined) ?? [];
@@ -260,10 +262,39 @@ export function AdminCrashDiagnostics() {
     void listQuery.refetch();
   };
 
-  const runPurge = async () => {
-    await purge.mutateAsync({ olderThanDays: report?.retentionDays ?? 90 });
+  const refreshIncidentData = async () => {
     await utils.adminOperations.incidents.invalidate();
     await utils.adminOperations.incidentList.invalidate();
+  };
+
+  const runPurge = async () => {
+    await purge.mutateAsync({ olderThanDays: report?.retentionDays ?? 90 });
+    await refreshIncidentData();
+  };
+
+  // Manual delete of a single crash report — the record that explains a crash the
+  // administrator has already diagnosed, especially the fatal entry that caused a restart.
+  const runDeleteIncident = async (incident: IncidentEntry) => {
+    if (!window.confirm(`Permanently delete this ${incident.severity} incident record? This cannot be undone.`)) return;
+    await deleteIncident.mutateAsync({ id: incident.id });
+    if (expanded === incident.id) setExpanded(null);
+    await refreshIncidentData();
+  };
+
+  // Manual delete of every retained incident, so crash residue can be cleared by hand.
+  const runClearIncidents = async () => {
+    if (!window.confirm("Permanently delete every retained incident record? This cannot be undone.")) return;
+    await clearIncidents.mutateAsync({});
+    setExpanded(null);
+    await refreshIncidentData();
+  };
+
+  // Manual delete of one restart session's incidents (the crash that caused that boot).
+  const runDeleteBoot = async (boot: IncidentBootSummary) => {
+    if (!boot.bootId) return;
+    if (!window.confirm("Permanently delete every incident recorded in this restart session? This cannot be undone.")) return;
+    await clearIncidents.mutateAsync({ bootId: boot.bootId });
+    await refreshIncidentData();
   };
 
   return (
@@ -280,6 +311,9 @@ export function AdminCrashDiagnostics() {
           </button>
           <button className="secondary-button" type="button" onClick={() => void runPurge()} disabled={purge.isPending}>
             {purge.isPending ? <Loader2 size={14} className="diag-spin" /> : <Trash2 size={14} />} Clear expired
+          </button>
+          <button className="secondary-button diag-danger" type="button" onClick={() => void runClearIncidents()} disabled={clearIncidents.isPending}>
+            {clearIncidents.isPending ? <Loader2 size={14} className="diag-spin" /> : <Trash2 size={14} />} Delete all incidents
           </button>
         </div>
       </header>
@@ -322,6 +356,11 @@ export function AdminCrashDiagnostics() {
                   <span><strong>{boot.error}</strong> errors</span>
                 </div>
                 <small className="diag-boot-when">{formatWhen(boot.firstAt)} → {formatWhen(boot.lastAt)}</small>
+                {boot.bootId && (
+                  <button type="button" className="diag-incident-delete" onClick={() => void runDeleteBoot(boot)} disabled={clearIncidents.isPending}>
+                    {clearIncidents.isPending ? <Loader2 size={11} className="diag-spin" /> : <Trash2 size={11} />} Delete session
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -354,6 +393,9 @@ export function AdminCrashDiagnostics() {
 
         {listQuery.isLoading && <div role="status">Loading incidents…</div>}
         {listQuery.isError && <div className="admin-ops-empty error" role="alert">Incidents could not be read. {listQuery.error.message}</div>}
+        {(deleteIncident.isError || clearIncidents.isError) && (
+          <div className="admin-ops-empty error" role="alert">The incident record could not be deleted. {(deleteIncident.error ?? clearIncidents.error)?.message}</div>
+        )}
         {!listQuery.isLoading && !listQuery.isError && incidents.length === 0 && (
           <div className="empty-records">No recorded incidents match this filter. A healthy restart session records nothing here.</div>
         )}
@@ -400,13 +442,18 @@ export function AdminCrashDiagnostics() {
                       </dl>
                     </div>
                   )}
+                  <div className="diag-incident-actions">
+                    <button className="diag-incident-delete" type="button" onClick={() => void runDeleteIncident(incident)} disabled={deleteIncident.isPending}>
+                      {deleteIncident.isPending ? <Loader2 size={12} className="diag-spin" /> : <Trash2 size={12} />} Delete report
+                    </button>
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
 
-        <p className="admin-policy-note" role="note"><Trash2 size={14} /> Incidents are retained for {report?.retentionDays ?? 90} days and then cleared automatically, so no stale crash residue is kept.</p>
+        <p className="admin-policy-note" role="note"><Trash2 size={14} /> Incidents are retained for {report?.retentionDays ?? 90} days and then cleared automatically. Use <strong>Delete report</strong> to remove one crash record by hand, or <strong>Delete all incidents</strong> to clear the whole history.</p>
       </section>
     </div>
   );

@@ -110,6 +110,8 @@ export type IncidentReport = {
 
 export type IncidentPurgeResult = { deleted: number; retentionDays: number; cutoff: string };
 
+export type IncidentDeleteResult = { deleted: number };
+
 const EMPTY_SUMMARY: IncidentSummary = {
   total: 0, fatal: 0, error: 0, warning: 0, info: 0, last24h: 0, last7d: 0, categories: {},
 };
@@ -391,6 +393,50 @@ export async function getIncidentReport(limit: number = DEFAULT_LIST): Promise<I
     if (isMissingTableError(error)) return { ...base, sourceAvailable: false };
     console.error("[IncidentLog] Failed to build report:", error instanceof Error ? error.name : "UnknownError");
     return { ...base, sourceAvailable: false };
+  }
+}
+
+/**
+ * Delete one incident row by id so an administrator can remove a specific crash
+ * report by hand — for example the record that explains a crash they have
+ * already diagnosed, especially the fatal entry that caused the restart. Never
+ * throws: a failed delete must never become a second fault.
+ */
+export async function deleteIncident(id: number): Promise<IncidentDeleteResult> {
+  const incidentId = Number.isFinite(id) ? Math.trunc(id) : NaN;
+  if (!Number.isFinite(incidentId) || incidentId <= 0) return { deleted: 0 };
+  try {
+    if (!process.env.DATABASE_URL) return { deleted: 0 };
+    const pool = await getRawDbPool();
+    if (!pool) return { deleted: 0 };
+    const [result] = await pool.query<any>("DELETE FROM application_incident_events WHERE id = ?", [incidentId]);
+    return { deleted: Number((result as { affectedRows?: unknown } | null)?.affectedRows ?? 0) };
+  } catch (error) {
+    if (isMissingTableError(error)) return { deleted: 0 };
+    console.error("[IncidentLog] Failed to delete incident:", error instanceof Error ? error.name : "UnknownError");
+    return { deleted: 0 };
+  }
+}
+
+/**
+ * Delete every incident row for one restart session when a boot id is supplied,
+ * or the whole retained history otherwise. Powers the administrator "delete all"
+ * action so crash residue can be cleared manually. Never throws.
+ */
+export async function clearIncidents(options: { bootId?: string } = {}): Promise<IncidentDeleteResult> {
+  try {
+    if (!process.env.DATABASE_URL) return { deleted: 0 };
+    const pool = await getRawDbPool();
+    if (!pool) return { deleted: 0 };
+    const bootId = options.bootId?.trim();
+    const [result] = bootId
+      ? await pool.query<any>("DELETE FROM application_incident_events WHERE bootId = ?", [bootId])
+      : await pool.query<any>("DELETE FROM application_incident_events");
+    return { deleted: Number((result as { affectedRows?: unknown } | null)?.affectedRows ?? 0) };
+  } catch (error) {
+    if (isMissingTableError(error)) return { deleted: 0 };
+    console.error("[IncidentLog] Failed to clear incidents:", error instanceof Error ? error.name : "UnknownError");
+    return { deleted: 0 };
   }
 }
 

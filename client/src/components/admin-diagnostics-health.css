@@ -60,6 +60,12 @@
 .diag-incident-detail{padding:4px 13px 14px;border-top:1px solid rgba(132,164,177,.1)}
 .diag-incident-detail h4{margin:12px 0 6px;color:#8ba2ac;font-size:9px;font-weight:750;letter-spacing:.06em;text-transform:uppercase}
 .diag-stack{margin:0;padding:11px 12px;border:1px solid rgba(132,164,177,.12);border-radius:10px;background:rgba(0,0,0,.28);color:#c7d7dc;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:10px;line-height:1.55;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto}
+.diag-incident-actions{display:flex;justify-content:flex-end;padding:0 13px 12px}
+.diag-incident-delete{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border:1px solid rgba(245,126,126,.32);border-radius:8px;background:rgba(120,37,43,.14);color:#ff9b98;font-size:10px;font-weight:750;cursor:pointer}
+.diag-incident-delete:hover:not(:disabled){background:rgba(120,37,43,.26);border-color:rgba(245,126,126,.5)}
+.diag-incident-delete:disabled{opacity:.55;cursor:not-allowed}
+.diag-header-actions .secondary-button.diag-danger{border-color:rgba(245,126,126,.34);color:#ff9b98}
+.diag-header-actions .secondary-button.diag-danger:hover:not(:disabled){border-color:rgba(245,126,126,.55);background:rgba(120,37,43,.18)}
 
 /* Usage bars */
 .diag-bars{display:grid;gap:12px;margin:4px 0 0}

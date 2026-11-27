@@ -59,6 +59,13 @@ describe("crash & incident diagnostics contract", () => {
     expect(incidentModule).toContain("isCurrentBoot: bootId === INCIDENT_BOOT_ID");
     expect(incidentModule).toContain("DELETE FROM application_incident_events WHERE occurredAt < ?");
   });
+
+  it("lets an administrator manually delete one crash report or clear a session", () => {
+    expect(incidentModule).toContain("export async function deleteIncident");
+    expect(incidentModule).toContain("DELETE FROM application_incident_events WHERE id = ?");
+    expect(incidentModule).toContain("export async function clearIncidents");
+    expect(incidentModule).toContain("DELETE FROM application_incident_events WHERE bootId = ?");
+  });
 });
 
 describe("resource & improvement contract", () => {
@@ -117,10 +124,12 @@ describe("diagnostics tRPC surface", () => {
   it("exposes admin-only incident, resource and API-health procedures", () => {
     expect(router).toContain('import { getApiHealthReport, probeApiProvider } from "./_core/apiHealth"');
     expect(router).toContain('import { getResourceReport } from "./_core/resourceReport"');
-    expect(router).toContain('import { getIncidentReport, listIncidents, purgeIncidentLog } from "./incident-log"');
+    expect(router).toContain('import { clearIncidents, deleteIncident, getIncidentReport, listIncidents, purgeIncidentLog } from "./incident-log"');
     expect(router).toContain("incidents: adminProcedure.input(z.object({");
     expect(router).toContain("incidentList: adminProcedure.input(z.object({");
     expect(router).toContain("purgeIncidents: adminProcedure.input(z.object({");
+    expect(router).toContain("deleteIncident: adminProcedure.input(z.object({");
+    expect(router).toContain("clearIncidents: adminProcedure.input(z.object({");
     expect(router).toContain("resourceReport: adminProcedure.query(() => getResourceReport())");
     expect(router).toContain("apiHealth: adminProcedure.query(() => getApiHealthReport())");
     expect(router).toContain("probeApiProvider: adminProcedure.input(z.object({ providerId:");
@@ -149,6 +158,8 @@ describe("diagnostics admin console", () => {
   it("renders the crash cause, resource tiers and API probe controls", () => {
     expect(component).toContain("trpc.adminOperations.incidents.useQuery");
     expect(component).toContain("trpc.adminOperations.incidentList.useQuery");
+    expect(component).toContain("trpc.adminOperations.deleteIncident.useMutation");
+    expect(component).toContain("trpc.adminOperations.clearIncidents.useMutation");
     expect(component).toContain("trpc.adminOperations.resourceReport.useQuery");
     expect(component).toContain("trpc.adminOperations.apiHealth.useQuery");
     expect(component).toContain("trpc.adminOperations.probeApiProvider.useMutation");

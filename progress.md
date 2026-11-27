@@ -1,3 +1,25 @@
+## 2026-11-28 (feature / admin) — Manual delete for crash & incident reports
+
+Owner asked that the crash/incident report be persistent (already DB-backed, so it survives restarts) and,
+crucially, that they be able to **manually delete the report log that caused a crash**. The prior increment
+(`cd9688a`) only offered an age-based **Clear expired** purge, so a specific crash record could not be
+removed by hand.
+
+- **Server** — `server/incident-log.ts` gains `deleteIncident(id)` (removes one crash report by id) and
+  `clearIncidents({ bootId? })` (removes a whole restart session, or the entire retained history when no
+  boot id is given). Both are additive and never throw, mirroring `purgeIncidentLog`.
+- **API** — `server/routers.ts` exposes two new `adminProcedure` mutations: `deleteIncident` (`{ id }`) and
+  `clearIncidents` (`{ bootId? }`).
+- **UI** — `client/src/components/AdminDiagnosticsHealth.tsx` (Crash & Incident Diagnostics page) adds a
+  **Delete report** button on every incident card (with a confirmation), a **Delete session** button on each
+  restart-session card, and a **Delete all incidents** button in the header. Deletes invalidate the report
+  and list queries; a failed delete is surfaced inline. `admin-diagnostics-health.css` styles the danger
+  affordances.
+- **Tests** — `server/diagnostics-health.contract.test.ts` asserts the new exports, SQL, tRPC procedures and
+  UI wiring.
+- Verification: `pnpm check` (tsc) exit 0; `diagnostics-health` contract suite 16/16 passed; `pnpm build`
+  exit 0.
+
 ## 2026-11-28 (feature / admin) — Diagnostics & Health console (crash, resource, API)
 
 Owner asked for a new admin menu that captures **why the application crashes**, pins the exact
