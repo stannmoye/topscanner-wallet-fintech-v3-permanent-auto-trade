@@ -81,11 +81,36 @@ export const TENDER_SOURCE_DERIVED_FIELDS: ReadonlySet<string> = new Set(
 
 export type TenderOverrides = Record<string, unknown>;
 
+/**
+ * Normalise a stored override map to a plain object. The column is declared
+ * `json(...)`, but on MariaDB (where `json` is an alias for `longtext`) and on
+ * drivers that do not parse JSON columns, a read returns the raw JSON string
+ * rather than an object. Drizzle's MySQL `json` column serialises on write but
+ * does not deserialise on read, so we accept both shapes here — otherwise every
+ * override would read back empty and an administrator could neither see nor
+ * revert a correction.
+ */
+function coerceOverrides(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
 /** Read the stored override map, keeping only known fields. Tolerates null/legacy values. */
 export function readTenderOverrides(value: unknown): TenderOverrides {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const source = coerceOverrides(value);
+  if (!source) return {};
   const overrides: TenderOverrides = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, entry] of Object.entries(source)) {
     if (TENDER_CORRECTION_FIELD_MAP.has(key) && entry !== undefined) overrides[key] = entry;
   }
   return overrides;
@@ -93,9 +118,10 @@ export function readTenderOverrides(value: unknown): TenderOverrides {
 
 /** True when `field` is a known field and the row carries an override for it. */
 export function hasTenderFieldOverride(value: unknown, field: string): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = coerceOverrides(value);
+  if (!source) return false;
   if (!TENDER_CORRECTION_FIELD_MAP.has(field)) return false;
-  return Object.prototype.hasOwnProperty.call(value as Record<string, unknown>, field);
+  return Object.prototype.hasOwnProperty.call(source, field);
 }
 
 export type TenderCorrectionParse =

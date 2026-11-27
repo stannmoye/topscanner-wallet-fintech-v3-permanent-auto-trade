@@ -1,3 +1,41 @@
+## 2026-11-27 (fix / tender admin) — correction desk OOM + unreadable override map
+
+Owner report: the admin **enable/disable tender source** button and the **edit/save tender** button
+did nothing, with the UI showing **"Tenders could not be read. Service is reconnecting…"**. That message
+is produced by the client tRPC wrapper (`client/src/main.tsx`) whenever a response is not
+`application/json` — i.e. the request never reached the tRPC handler because the server process died and
+the SPA HTML fallback answered. Both buttons fail together because the whole process goes down.
+
+- **Root cause (OOM)** — `listTendersForAdmin` (`server/modules/tender/admin.ts`) selected every
+  `tenders` column via `tender: tenders`, including the `rawJson` and `descriptionText` longtext payloads,
+  for up to `TENDER_ADMIN_MAX_ROWS = 200` rows, then discarded all but the summary fields. With large
+  stored payloads this is a multi-hundred-MB heap burst → V8 heap OOM → `SIGABRT` → the SPA shell is
+  served → the client shows "Service is reconnecting…" and every admin action (source toggle, edit/save)
+  fails at once. The customer desk already guarded against this exact class of bug
+  (`7af8a59`, `getTableColumns` destructuring in `customerDesk.ts`); the admin path was missed.
+- **Fix** — `listTendersForAdmin` and `getTenderForAdmin` now project an explicit column set
+  (`const { rawJson: _adminRawJson, ...adminTenderColumns } = getTableColumns(tenders)`), so a 200-row
+  page never pulls `rawJson`. `toSummary`/`liveStatus` take the projected row type. Mirrors `customerDesk.ts`.
+- **Second defect found while verifying (unreadable overrides)** — the `tenders.overridesJson` column is
+  declared `json(...)`, but Drizzle's MySQL `json` column serialises on write and does **not** deserialise
+  on read; on MariaDB (`json` → `longtext`) mysql2 returns the raw JSON **string**. `readTenderOverrides` /
+  `hasTenderFieldOverride` rejected non-objects, so every override read back empty — `overrideCount` was
+  always 0, the admin "overridden" badge never showed, and **revert always failed** ("This field is not
+  overridden"), making an edit look unsaved. `server/modules/tender/corrections.ts` now normalises an
+  object **or** a JSON string before matching, so the correction is durable and revertible on MySQL & MariaDB.
+- **Live reproduction & fix verification** (local `.env`, real wrapper, `APP_MEMORY_LIMIT_MB=512` →
+  `maxOldSpaceSizeMB=192`): with 200 seeded tenders totalling ≈202 MB of longtext, `tenderCorrections.list`
+  previously aborted the process (`FATAL ERROR: Reached heap limit … SIGABRT`); after the fix it returns
+  **HTTP 200 / 84 KB** across repeated calls with the server alive. Also verified end-to-end:
+  `tenderSources.setEnabled` toggles true→false (200), `tenderCorrections.correct` sets the field, the list
+  reports `overrideCount=1`, detail returns `overrides`, and `tenderCorrections.revert` restores the source
+  value (200).
+- **Tests** — added regression cases in `server/modules/tender/tender-stage5.contract.test.ts`: the admin
+  selects must project `adminTenderColumns` and never `tender: tenders`; `readTenderOverrides` /
+  `hasTenderFieldOverride` must parse a JSON string and still tolerate `null`/arrays/bad JSON.
+- Verification: `pnpm check` exit 0; `pnpm test` 229 files / 1,963 tests passed (42 skipped); installer
+  suite 35 files / 208 tests passed; `pnpm build` exit 0.
+
 ## 2026-11-27 (fix / runtime) — stop the 512 MB crash: no host-RAM fallback + reserve budget
 
 Owner followed up that the service was **"still crashing"** on their **512 MB server** after `fc78e1d`,

@@ -83,6 +83,14 @@ describe("Tender Bid Stage 5 — correction catalogue is the one source of truth
     expect(hasTenderFieldOverride({ title: "x" }, "title")).toBe(true);
     expect(hasTenderFieldOverride({ title: "x" }, "status")).toBe(false);
     expect(hasTenderFieldOverride({ bogus: 1 }, "bogus")).toBe(false);
+    // On MariaDB (json → longtext) and any driver that does not parse JSON
+    // columns, a read returns the raw JSON string, not an object. The reader
+    // must parse it or every override reads back empty and cannot be reverted.
+    expect(readTenderOverrides('{"title":"kept","bogus":1}')).toEqual({ title: "kept" });
+    expect(readTenderOverrides("not json")).toEqual({});
+    expect(readTenderOverrides("")).toEqual({});
+    expect(hasTenderFieldOverride('{"title":"x"}', "title")).toBe(true);
+    expect(hasTenderFieldOverride('{"title":"x"}', "status")).toBe(false);
   });
 
   it("round-trips a stored value between column and JSON forms", () => {
@@ -147,6 +155,16 @@ describe("Tender Bid Stage 5 — audited corrections and revert-to-source", () =
     expect(admin).toContain("TENDER_CORRECTION_HISTORY_MAX_ROWS = 100");
     expect(admin).toContain(".limit(TENDER_ADMIN_MAX_ROWS)");
     expect(admin).toContain(".limit(TENDER_CORRECTION_HISTORY_MAX_ROWS)");
+  });
+
+  it("projects an explicit column set so a page of rows never pulls the heavy raw payload", () => {
+    const adminCode = stripComments(admin);
+    // The list and detail selects join the source but read only the desk columns;
+    // the multi-hundred-KB `rawJson` payload is excluded so a 200-row page cannot
+    // exhaust a small host's heap (the reported "Service is reconnecting…").
+    expect(adminCode).toContain("getTableColumns(tenders)");
+    expect(adminCode).toContain("tender: adminTenderColumns,");
+    expect(adminCode).not.toContain("tender: tenders,");
   });
 
   it("makes an administrator-pinned status authoritative for the customer view", () => {

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, like, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, like, or } from "drizzle-orm";
 import { getDb } from "../../db";
 import { tenderFieldHistory, tenderSources, tenders, v5AuditEvents } from "../../../drizzle/schema";
 import { runMonitoredWorkerCycle } from "../../_core/workerHealth";
@@ -37,6 +37,16 @@ export const TENDER_CORRECTION_HISTORY_MAX_ROWS = 100;
 
 type TenderRow = typeof tenders.$inferSelect;
 type TenderSourceRow = typeof tenderSources.$inferSelect;
+
+/**
+ * The correction desk only reads the summary and correction columns; the heavy
+ * `rawJson` longtext payload is never rendered or edited here and must never be
+ * pulled for a page of rows. Projecting an explicit column set (mirroring
+ * `customerDesk.ts`) keeps the heap flat regardless of how large an individual
+ * stored payload is, so a 200-row page cannot exhaust a small host's heap.
+ */
+const { rawJson: _adminRawJson, ...adminTenderColumns } = getTableColumns(tenders);
+type TenderAdminRow = Omit<TenderRow, "rawJson">;
 
 export type AdminTenderSource = {
   id: number;
@@ -118,7 +128,7 @@ export function listTenderCorrectionFields(): readonly TenderCorrectionField[] {
 }
 
 /** The customer-visible status: an administrator pin wins, then a recorded award, then the clock. */
-function liveStatus(row: TenderRow): string {
+function liveStatus(row: TenderAdminRow): string {
   if (hasTenderFieldOverride(row.overridesJson, "status")) return row.status;
   if (row.status === "awarded") return "awarded";
   return deriveTenderStatus({ bidOpenAt: iso(row.bidOpenAt), bidCloseAt: iso(row.bidCloseAt) });
@@ -267,7 +277,7 @@ export async function listTendersForAdmin(input?: {
   if (input?.countryCode) filters.push(eq(tenders.countryCode, String(input.countryCode).trim().toUpperCase().slice(0, 8)));
 
   const rows = await db.select({
-    tender: tenders,
+    tender: adminTenderColumns,
     sourceLabel: tenderSources.label,
     sourceKind: tenderSources.kind,
   })
@@ -280,7 +290,7 @@ export async function listTendersForAdmin(input?: {
   return { tenders: rows.map((row) => toSummary(row.tender, row.sourceLabel, row.sourceKind)), total: rows.length };
 }
 
-function toSummary(row: TenderRow, sourceLabel: string | null, sourceKind: string | null): AdminTenderSummary {
+function toSummary(row: TenderAdminRow, sourceLabel: string | null, sourceKind: string | null): AdminTenderSummary {
   return {
     id: row.id,
     sourceId: row.sourceId,
@@ -306,7 +316,7 @@ export async function getTenderForAdmin(tenderId: number): Promise<AdminTenderDe
   const id = Number(tenderId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   const joined = (await db.select({
-    tender: tenders,
+    tender: adminTenderColumns,
     sourceKey: tenderSources.key,
     sourceLabel: tenderSources.label,
     sourceKind: tenderSources.kind,
