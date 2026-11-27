@@ -32,6 +32,8 @@ import {
   TENDER_INGEST_PAGE_DELAY_MS,
   TENDER_INGEST_RETRY_BASE_DELAY_MS,
 } from "./ingest";
+import { readZipEntries } from "./zip";
+import { fetchText, TENDER_HTTP_MAX_RESPONSE_BYTES } from "./http";
 import { WORKER_HEALTH_REGISTRY } from "../../_core/workerHealth";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -409,5 +411,49 @@ describe("Tender Bid Stage 6 — hardening", () => {
     expect(toIsoString("2026-11-27 10:00:00")).toBe("2026-11-27T10:00:00.000Z");
     expect(toIsoString("2026-11-27")).toBe("2026-11-27T00:00:00.000Z");
     expect(toIsoString("11/27/2026")).toBe("2026-11-27T00:00:00.000Z");
+  });
+});
+
+describe("Tender Bid Stage 6 — bounded memory on source responses", () => {
+  it("refuses an oversized source response instead of buffering it into the heap", async () => {
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response("x", {
+      status: 200,
+      headers: { "content-length": String(TENDER_HTTP_MAX_RESPONSE_BYTES + 1) },
+    })));
+    await expect(fetchText("https://example.org/oversized")).rejects.toThrow(/exceeds the .*byte limit/);
+  });
+
+  it("refuses a ZIP member whose declared decompressed size exceeds the per-member limit", () => {
+    const content = Buffer.from("hello");
+    const name = Buffer.from("notice.json");
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(content.length, 18);
+    local.writeUInt32LE(content.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    const localBuf = Buffer.concat([local, name, content]);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(content.length, 20);
+    central.writeUInt32LE(0xffffffff, 24); // a declared size the payload does not honour (a ZIP bomb)
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(0, 42);
+    const centralBuf = Buffer.concat([central, name]);
+
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(1, 8);
+    end.writeUInt16LE(1, 10);
+    end.writeUInt32LE(centralBuf.length, 12);
+    end.writeUInt32LE(localBuf.length, 16);
+    const zip = Buffer.concat([localBuf, centralBuf, end]);
+
+    expect(() => readZipEntries(zip)).toThrow(/over the .*byte limit/);
   });
 });
