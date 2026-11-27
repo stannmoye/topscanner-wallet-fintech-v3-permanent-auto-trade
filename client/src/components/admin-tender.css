@@ -139,6 +139,30 @@
 }
 
 /* --------------------------- Corrections ---------------------------- */
+.tb-admin-row-edit {
+  display: flex;
+  margin-top: 8px;
+}
+.tb-admin-row-edit button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+.tb-admin-detail {
+  scroll-margin-top: 18px;
+}
+.tb-admin-edit-title {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--tb-admin-muted);
+  font-size: 0.8rem;
+}
 .tb-admin-override-badge {
   display: inline-flex;
   align-items: center;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertTriangle, Check, Gavel, Globe2, History, RefreshCw, RotateCcw, Search, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, Check, Gavel, Globe2, History, Pencil, RefreshCw, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import "./admin-tender.css";
 
@@ -307,6 +307,7 @@ export function AdminTenderCorrections() {
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
   // Guards a single in-flight correction so a double-click cannot post twice.
   const actionLock = useRef(false);
+  const detailRef = useRef<HTMLElement | null>(null);
 
   const listQuery = trpc.adminOperations.tenderCorrections.list.useQuery({
     query: term.trim() || undefined,
@@ -326,6 +327,11 @@ export function AdminTenderCorrections() {
     if (!detail || !fields.length) return;
     setDrafts(buildDrafts(detail, fields));
   }, [detail, fields]);
+
+  useEffect(() => {
+    if (!selectedId || !detail || detail.id !== selectedId) return;
+    detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [selectedId, detail?.id]);
 
   const announce = (kind: "success" | "error", text: string) => {
     setMessageKind(kind);
@@ -448,7 +454,14 @@ export function AdminTenderCorrections() {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className={row.id === selectedId ? "is-selected" : undefined}>
-                    <td><strong>{row.title}</strong></td>
+                    <td>
+                      <strong>{row.title}</strong>
+                      <div className="tb-admin-row-edit">
+                        <button className="primary-button" type="button" onClick={() => setSelectedId(row.id)} aria-label={`Edit tender: ${row.title}`}>
+                          <Pencil size={14} /> Edit tender
+                        </button>
+                      </div>
+                    </td>
                     <td>{row.countryCode || "—"}</td>
                     <td>{row.sourceLabel ?? "—"}<small>{row.sourceKind ?? ""}</small></td>
                     <td>{row.status}</td>
@@ -456,7 +469,7 @@ export function AdminTenderCorrections() {
                     <td>{usd(row.qualificationAmountUsdMinor)}</td>
                     <td>{row.overrideCount > 0 ? <span className="tb-admin-override-badge">{row.overrideCount}</span> : "—"}</td>
                     <td>{dateText(row.lastSyncedAt)}</td>
-                    <td><button className="secondary-button" type="button" onClick={() => setSelectedId(row.id)}>Open</button></td>
+                    <td><button className="secondary-button" type="button" onClick={() => setSelectedId(row.id)}>Edit</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -466,13 +479,16 @@ export function AdminTenderCorrections() {
       </section>
 
       {selectedId && (
-        <section className="settings-card tb-admin-detail" aria-label="Tender detail">
+        <section className="settings-card tb-admin-detail" aria-label="Edit tender" ref={detailRef}>
           {detailQuery.isLoading && <div role="status">Loading tender…</div>}
           {detailQuery.isError && <div className="admin-ops-empty error" role="alert">The tender could not be read. {detailQuery.error.message}</div>}
           {detail && (
             <>
               <div className="api-access-section-heading">
-                <h2>{detail.title}</h2>
+                <div>
+                  <h2>Edit Tender</h2>
+                  <span className="tb-admin-edit-title">{detail.title}</span>
+                </div>
                 <button className="secondary-button" type="button" onClick={() => setSelectedId(null)}>Close</button>
               </div>
               <p><span className="tb-admin-meta">{detail.countryCode || "—"} · {detail.sourceLabel ?? "—"} · {detail.externalId}</span> {detail.sourceUrl && <a href={detail.sourceUrl} target="_blank" rel="noreferrer">source</a>}</p>

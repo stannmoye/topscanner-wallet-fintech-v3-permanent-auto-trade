@@ -260,6 +260,14 @@ describe("Tender Bid Stage 5 — administrator console UI", () => {
     expect(component).toContain("Audit note (required for each change)");
   });
 
+  it("puts a visible edit action beside each tender and jumps to its editable form", () => {
+    expect(component).toContain("Edit tender");
+    expect(component).toContain('aria-label={`Edit tender: ${row.title}`}');
+    expect(component).toContain('detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })');
+    expect(component).toContain('aria-label="Edit tender"');
+    expect(component).toContain("<h2>Edit Tender</h2>");
+  });
+
   it("renders only what the server returns (no client-side valuation)", () => {
     expect(component).not.toContain("getFreshTradingFxRate");
     expect(component).not.toContain("calculateCombinedBalanceSnapshot");

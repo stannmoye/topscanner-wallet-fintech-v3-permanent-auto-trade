@@ -1,3 +1,20 @@
+## 2026-11-27 (fix / tender admin UI) — expose the real edit action on mobile
+
+Owner supplied a mobile screenshot showing the tender corrections screen rendering only a dense,
+horizontally scrollable table. The existing per-row action was a small **Open** button in the last
+column, while the editable inputs appeared below the entire results table; on a phone the action was
+effectively hidden and the form was not discoverable.
+
+- Replaced the visible per-row affordance with a prominent **Edit tender** button immediately beneath
+  each title (the first table column, visible without horizontal scrolling).
+- Selecting a tender now scrolls directly to the correction form, which is headed **Edit Tender** and
+  displays the selected tender title. The existing editable field inputs, per-field Save buttons, audit
+  note, override badges and Revert buttons remain in the form.
+- Added a stage 5 UI contract assertion for the row action, accessible label, scroll-to-form behavior and
+  visible edit heading.
+- Verification: `pnpm check` passed; stage 5 contract suite passed (27 tests); `pnpm build` passed.
+- Base main commit verified against GitHub before this increment: `5cf5321b5106e7e0c3a8ed9222380c3d4df21faa`.
+
 ## 2026-11-27 (fix / tender admin) — correction desk OOM + unreadable override map
 
 Owner report: the admin **enable/disable tender source** button and the **edit/save tender** button
