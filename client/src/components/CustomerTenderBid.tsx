@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import "./tender-bid.css";
 import {
@@ -95,6 +95,9 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
   const [band, setBand] = useState("any");
   const [openId, setOpenId] = useState<number | null>(null);
   const [biddingId, setBiddingId] = useState<number | null>(null);
+  const [bidFeedback, setBidFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  // Guards a single in-flight bid so a double-click cannot fire two requests.
+  const bidLock = useRef(false);
 
   const tenders: Tender[] = overview.data?.tenders || [];
   const facets = overview.data?.facets;
@@ -108,21 +111,33 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
   }, [bidContext.data?.bids]);
 
   const requestBid = (tender: Tender) => {
+    // One in-flight bid at a time: a double-click or a retry cannot place two.
+    if (bidLock.current) return;
+    bidLock.current = true;
     setBiddingId(tender.id);
+    setBidFeedback(null);
     placeBid.mutate({ tenderId: tender.id, idempotencyKey: newIdempotencyKey() }, {
       onSuccess: (result: any) => {
+        bidLock.current = false;
         setBiddingId(null);
         void bidContext.refetch();
         if (result?.status === "insufficient_balance") {
           void overview.refetch();
-          push(result?.message || "Your balance does not cover the qualification amount. Deposit funds to qualify.");
+          const text = result?.message || "Your balance does not cover the qualification amount. Deposit funds to qualify.";
+          setBidFeedback({ kind: "error", text });
+          push(text);
           return;
         }
-        push(result?.alreadyPlaced ? "Your bid on this tender is already recorded." : "Bid placed. The administrator will review it and apply the charge or decline it.");
+        const text = result?.alreadyPlaced ? "Your bid on this tender is already recorded." : "Bid placed. The administrator will review it and apply the charge or decline it.";
+        setBidFeedback({ kind: "success", text });
+        push(text);
       },
       onError: (error: any) => {
+        bidLock.current = false;
         setBiddingId(null);
-        push(error?.message || "Your bid could not be placed. Please try again.");
+        const text = error?.message || "Your bid could not be placed. Please try again.";
+        setBidFeedback({ kind: "error", text });
+        push(text);
       },
     });
   };
@@ -159,7 +174,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
     setStatus(""); setClosingSoon(false); setBand("any");
   };
 
-  const openDetail = (tender: Tender) => { setOpenId(tender.id); };
+  const openDetail = (tender: Tender) => { setBidFeedback(null); setOpenId(tender.id); };
 
   return <div className="arb-page portal-page tb-desk">
     <div className="portal-page-top">
@@ -186,7 +201,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
       <label className="tb-field"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{Object.entries(STATUS_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <label className="tb-field"><span>Contract value</span><select value={band} onChange={(event) => setBand(event.target.value)} aria-label="Filter by contract value">{CONTRACT_BANDS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></label>
       <button type="button" className={`tb-toggle${closingSoon ? " is-on" : ""}`} aria-pressed={closingSoon} onClick={() => setClosingSoon((value) => !value)}><Filter size={14}/> Closing soon</button>
-      <button type="button" className="tb-refresh" onClick={() => overview.refetch()} aria-label="Refresh tenders" title="Refresh tenders"><RefreshCw size={15}/></button>
+      <button type="button" className="tb-refresh" onClick={() => overview.refetch()} aria-label="Refresh tenders" title="Refresh tenders" aria-busy={overview.isFetching}>{overview.isFetching ? <span className="tb-spinner" aria-hidden="true"/> : <RefreshCw size={15}/>}</button>
       {filtersActive && <button type="button" className="tb-reset" onClick={resetFilters}>Reset filters</button>}
     </section>
 
@@ -242,23 +257,33 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
       eligibleUsdMinor={eligibleUsdMinor}
       valuationAvailable={valuationAvailable}
       bidding={biddingId === openId}
+      bidFeedback={bidFeedback}
       onBid={requestBid}
       onClose={() => setOpenId(null)}
     />}
   </div>;
 }
 
-function TenderDetailModal({ tenderId, myBid, eligibleUsdMinor, valuationAvailable, bidding, onBid, onClose }: {
+function TenderDetailModal({ tenderId, myBid, eligibleUsdMinor, valuationAvailable, bidding, bidFeedback, onBid, onClose }: {
   tenderId: number;
   myBid?: MyBid;
   eligibleUsdMinor: number | null;
   valuationAvailable: boolean;
   bidding: boolean;
+  bidFeedback: { kind: "success" | "error"; text: string } | null;
   onBid: (tender: Tender) => void;
   onClose: () => void;
 }) {
   const detail = trpc.customer.tender.detail.useQuery({ tenderId }, { enabled: Number.isFinite(tenderId) });
   const tender: Tender | null | undefined = detail.data;
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  // The pop-up is a real dialog: focus the close control on open and let Escape dismiss it.
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
   const canBid = tender?.status === "open" || tender?.status === "closing";
   const qualified = tender?.qualificationConfigured && eligibleUsdMinor != null && eligibleUsdMinor >= Number(tender.qualificationAmountUsdMinor);
   const shortfall = tender?.qualificationConfigured && eligibleUsdMinor != null
@@ -272,7 +297,7 @@ function TenderDetailModal({ tenderId, myBid, eligibleUsdMinor, valuationAvailab
           <h2>{tender?.title || (detail.isLoading ? "Loading…" : "Tender unavailable")}</h2>
           {tender && <div className="tb-modal-sub">{countryLabel(tender.countryCode)} · {tender.buyer || "Buyer not stated"}{tender.tenderType ? ` · ${tender.tenderType}` : ""}</div>}
         </div>
-        <button type="button" className="tb-modal-close" onClick={onClose} aria-label="Close tender details"><X size={18}/></button>
+        <button type="button" className="tb-modal-close" ref={closeButtonRef} onClick={onClose} aria-label="Close tender details"><X size={18}/></button>
       </header>
 
       <div className="tb-modal-body">
@@ -287,6 +312,10 @@ function TenderDetailModal({ tenderId, myBid, eligibleUsdMinor, valuationAvailab
             <div><small>Contract value</small><strong>{usd(tender.contractAmountUsdMinor)}</strong>{tender.contractCurrency && tender.contractAmountMinor != null && <em>Published as {native(tender.contractAmountMinor, tender.contractCurrency)}</em>}</div>
             <div><small>Qualification amount</small><strong>{tender.qualificationConfigured ? usd(tender.qualificationAmountUsdMinor) : "Not yet configured"}</strong><em>{tender.qualificationConfigured ? "Configured/contractual value" : "Set by the administrator before bidding opens"}</em></div>
           </section>
+
+          {bidFeedback && <p className={`tb-bid-feedback tb-bid-feedback-${bidFeedback.kind}`} role={bidFeedback.kind === "error" ? "alert" : "status"}>
+            <span className="tb-bid-feedback-dot" aria-hidden="true"/>{bidFeedback.text}
+          </p>}
 
           <BidPanel
             tender={tender}
@@ -392,7 +421,7 @@ function BidPanel({ tender, myBid, eligibleUsdMinor, valuationAvailable, canBid,
       <div><small>Your eligible balance</small><strong>{valuationAvailable && eligibleUsdMinor != null ? usd(eligibleUsdMinor) : "Valuation unavailable"}</strong></div>
     </div>
     {qualified
-      ? <button type="button" className="tb-bid-button" onClick={onBid} disabled={bidding}>{bidding ? "Placing your bid…" : "Bid on this tender"}</button>
+      ? <button type="button" className="tb-bid-button" onClick={onBid} disabled={bidding} aria-busy={bidding}>{bidding && <span className="tb-spinner" aria-hidden="true"/>}{bidding ? "Placing your bid…" : "Bid on this tender"}</button>
       : <div className="tb-bid-deposit">
         <p>{!valuationAvailable || eligibleUsdMinor == null
           ? `Your eligible balance could not be valued at a current exchange rate. Add funds to your wallet, then place your bid.`

@@ -19,8 +19,50 @@
   --tb-admin-tint-weak: color-mix(in srgb, var(--arb-color-text) 5%, transparent);
   --tb-admin-well: color-mix(in srgb, var(--arb-color-canvas) 58%, transparent);
   --tb-admin-radius: 14px;
+  /* Interaction/motion system (Stage 7). Cosmetic-only and short, so feedback is
+     immediate and never delays an operation; every duration collapses under
+     prefers-reduced-motion below. */
+  --tb-admin-motion-fast: 140ms;
+  --tb-admin-motion-slow: 220ms;
+  --tb-admin-motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   display: grid;
   gap: 18px;
+}
+
+/* A single visible focus ring for every interactive element on the console. */
+.admin-tender-page button:focus-visible,
+.admin-tender-page a:focus-visible,
+.admin-tender-page select:focus-visible,
+.admin-tender-page input:focus-visible,
+.admin-tender-page textarea:focus-visible {
+  outline: 2px solid var(--arb-color-accent);
+  outline-offset: 2px;
+}
+
+/* In-flight spinner for an administrator action. */
+.tb-admin-spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  flex: none;
+  vertical-align: -0.1em;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 34%, transparent);
+  border-top-color: currentColor;
+  animation: tb-admin-spin 0.7s linear infinite;
+}
+@keyframes tb-admin-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Pressed feedback for every console button. */
+.admin-tender-page button { transition: transform var(--tb-admin-motion-fast) var(--tb-admin-motion-ease); }
+.admin-tender-page button:active:not(:disabled) { transform: translateY(1px); }
+/* The inline result notice animates in so a change is noticed, without delay. */
+.admin-tender-page .test-notice { animation: tb-admin-notice-in var(--tb-admin-motion-slow) var(--tb-admin-motion-ease) both; }
+@keyframes tb-admin-notice-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ------------------------------- Chips ------------------------------- */
@@ -249,5 +291,31 @@
   }
   .tb-admin-actions {
     min-width: 0;
+  }
+}
+
+/* Touch devices: no hover, so give a clear tap response and a comfortable hit area. */
+@media (hover: none) {
+  .admin-tender-page button {
+    min-height: 40px;
+    touch-action: manipulation;
+  }
+  .admin-tender-page button:active:not(:disabled) {
+    transform: translateY(1px) scale(0.99);
+  }
+}
+
+/* Respect a reduced-motion preference: collapse transitions and animations, and
+   drop the cosmetic transforms, so no action is delayed by motion. */
+@media (prefers-reduced-motion: reduce) {
+  .admin-tender-page *,
+  .admin-tender-page *::before,
+  .admin-tender-page *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .admin-tender-page button:active:not(:disabled) {
+    transform: none !important;
   }
 }

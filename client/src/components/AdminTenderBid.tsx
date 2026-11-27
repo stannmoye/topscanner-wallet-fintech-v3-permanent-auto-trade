@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, AlertTriangle, Check, Gavel, Globe2, History, RefreshCw, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import "./admin-tender.css";
@@ -87,6 +87,8 @@ export function AdminTenderBids() {
   const [reasons, setReasons] = useState<Record<number, string>>({});
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
+  // Guards a single in-flight administrator action so a double-click cannot post twice.
+  const actionLock = useRef(false);
 
   const announce = (kind: "success" | "error", text: string) => {
     setMessageKind(kind);
@@ -95,10 +97,14 @@ export function AdminTenderBids() {
 
   const refresh = () => void utils.adminOperations.tenderBids.list.invalidate();
   const onDone = (text: string) => () => {
+    actionLock.current = false;
     announce("success", text);
     refresh();
   };
-  const onFail = (error: { message: string }) => announce("error", error.message);
+  const onFail = (error: { message: string }) => {
+    actionLock.current = false;
+    announce("error", error.message);
+  };
 
   const charge = trpc.adminOperations.tenderBids.applyCharge.useMutation({
     onSuccess: onDone("Charge applied through the classified manual-adjustment ledger."),
@@ -127,20 +133,26 @@ export function AdminTenderBids() {
   };
 
   const applyCharge = (bid: TenderBidRow) => {
+    if (actionLock.current) return;
     const reason = requireReason(bid);
     if (!reason) return;
     if (!window.confirm(`Apply the ${usd(bid.qualificationAmountUsdMinor)} charge to ${bid.customerName || bid.customerEmail || `customer ${bid.id}`}? This posts a classified ledger debit.`)) return;
+    actionLock.current = true;
     charge.mutate({ bidId: bid.id, idempotencyKey: newIdempotencyKey(), reason });
   };
   const declineBid = (bid: TenderBidRow) => {
+    if (actionLock.current) return;
     const reason = requireReason(bid);
     if (!reason) return;
     if (!window.confirm(`Decline bid #${bid.id}? No funds will move.`)) return;
+    actionLock.current = true;
     decline.mutate({ bidId: bid.id, reason });
   };
   const recordOutcome = (bid: TenderBidRow, result: "won" | "lost") => {
+    if (actionLock.current) return;
     const reason = requireReason(bid);
     if (!reason) return;
+    actionLock.current = true;
     outcome.mutate({ bidId: bid.id, outcome: result, reason });
   };
 
@@ -152,8 +164,8 @@ export function AdminTenderBids() {
           <h1>Tender Bids</h1>
           <p>Every customer bid on a real, ingested tender with the balance they held at bid time. Apply the configured qualification charge through the classified manual-adjustment ledger, decline the bid (no funds move), or record the administration outcome. Every action is audited.</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching}>
-          <RefreshCw size={14} /> Refresh
+        <button className="secondary-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching} aria-busy={query.isFetching}>
+          {query.isFetching ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RefreshCw size={14} />} Refresh
         </button>
       </header>
 
@@ -201,10 +213,10 @@ export function AdminTenderBids() {
                             />
                           </label>
                           <div className="tb-admin-action-buttons">
-                            <button className="primary-button" type="button" disabled={busy || !canChargeOrDecline} onClick={() => applyCharge(bid)}>Apply charge</button>
-                            <button className="secondary-button" type="button" disabled={busy || !canChargeOrDecline} onClick={() => declineBid(bid)}>Decline</button>
-                            <button className="secondary-button" type="button" disabled={busy || !canOutcome} onClick={() => recordOutcome(bid, "won")}>Record won</button>
-                            <button className="secondary-button" type="button" disabled={busy || !canOutcome} onClick={() => recordOutcome(bid, "lost")}>Record lost</button>
+                            <button className="primary-button" type="button" disabled={busy || !canChargeOrDecline} aria-busy={charge.isPending} onClick={() => applyCharge(bid)}>{charge.isPending && <span className="tb-admin-spinner" aria-hidden="true" />}Apply charge</button>
+                            <button className="secondary-button" type="button" disabled={busy || !canChargeOrDecline} aria-busy={decline.isPending} onClick={() => declineBid(bid)}>{decline.isPending && <span className="tb-admin-spinner" aria-hidden="true" />}Decline</button>
+                            <button className="secondary-button" type="button" disabled={busy || !canOutcome} aria-busy={outcome.isPending} onClick={() => recordOutcome(bid, "won")}>{outcome.isPending && <span className="tb-admin-spinner" aria-hidden="true" />}Record won</button>
+                            <button className="secondary-button" type="button" disabled={busy || !canOutcome} aria-busy={outcome.isPending} onClick={() => recordOutcome(bid, "lost")}>{outcome.isPending && <span className="tb-admin-spinner" aria-hidden="true" />}Record lost</button>
                           </div>
                         </div>
                       </td>
@@ -293,6 +305,8 @@ export function AdminTenderCorrections() {
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
+  // Guards a single in-flight correction so a double-click cannot post twice.
+  const actionLock = useRef(false);
 
   const listQuery = trpc.adminOperations.tenderCorrections.list.useQuery({
     query: term.trim() || undefined,
@@ -319,15 +333,20 @@ export function AdminTenderCorrections() {
   };
   const refreshAll = () => void utils.adminOperations.tenderCorrections.list.invalidate();
   const onSaved = () => {
+    actionLock.current = false;
     announce("success", "Correction saved and audited. It is live on the customer desk and will survive re-ingestion.");
     refreshAll();
     void detailQuery.refetch();
   };
-  const onFail = (error: { message: string }) => announce("error", error.message);
+  const onFail = (error: { message: string }) => {
+    actionLock.current = false;
+    announce("error", error.message);
+  };
 
   const correct = trpc.adminOperations.tenderCorrections.correct.useMutation({ onSuccess: onSaved, onError: onFail });
   const revert = trpc.adminOperations.tenderCorrections.revert.useMutation({
     onSuccess: () => {
+      actionLock.current = false;
       announce("success", "Field reverted to the source value.");
       refreshAll();
       void detailQuery.refetch();
@@ -337,7 +356,7 @@ export function AdminTenderCorrections() {
   const busy = correct.isPending || revert.isPending;
 
   const saveField = (field: CorrectionField) => {
-    if (!detail) return;
+    if (!detail || actionLock.current) return;
     const trimmed = note.trim();
     if (trimmed.length < 3) {
       announce("error", "Add a note of at least 3 characters describing the change (it is stored in the audit trail).");
@@ -345,17 +364,19 @@ export function AdminTenderCorrections() {
     }
     const raw = drafts[field.field] ?? "";
     const value = field.kind === "datetime" ? fromLocalDateTime(raw) : raw;
+    actionLock.current = true;
     correct.mutate({ tenderId: detail.id, field: field.field, value, note: trimmed });
   };
 
   const revertField = (field: CorrectionField) => {
-    if (!detail) return;
+    if (!detail || actionLock.current) return;
     const trimmed = note.trim();
     if (trimmed.length < 3) {
       announce("error", "Add a note of at least 3 characters describing the revert.");
       return;
     }
     if (!window.confirm(`Revert “${field.label}” to the source value? The next ingestion cycle will resume writing this field.`)) return;
+    actionLock.current = true;
     revert.mutate({ tenderId: detail.id, field: field.field, note: trimmed });
   };
 
@@ -392,8 +413,8 @@ export function AdminTenderCorrections() {
           <h1>Tender Corrections</h1>
           <p>Edit any field on a real ingested tender. Each change writes an audit row (old → new, administrator, note) and is live on the customer desk immediately. An administrator override survives re-ingestion; a source-derived field can be reverted to the value the source last provided.</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void listQuery.refetch()} disabled={listQuery.isFetching}>
-          <RefreshCw size={14} /> Refresh
+        <button className="secondary-button" type="button" onClick={() => void listQuery.refetch()} disabled={listQuery.isFetching} aria-busy={listQuery.isFetching}>
+          {listQuery.isFetching ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RefreshCw size={14} />} Refresh
         </button>
       </header>
 
@@ -468,9 +489,9 @@ export function AdminTenderCorrections() {
                     </div>
                     <div className="tb-admin-field-row">
                       {renderInput(field)}
-                      <button className="primary-button" type="button" disabled={busy} onClick={() => saveField(field)}>Save</button>
+                      <button className="primary-button" type="button" disabled={busy} aria-busy={correct.isPending} onClick={() => saveField(field)}>{correct.isPending && <span className="tb-admin-spinner" aria-hidden="true" />}Save</button>
                       {field.sourceDerived && isOverridden(field.field) && (
-                        <button className="secondary-button" type="button" disabled={busy} onClick={() => revertField(field)}><RotateCcw size={14} /> Revert</button>
+                        <button className="secondary-button" type="button" disabled={busy} aria-busy={revert.isPending} onClick={() => revertField(field)}>{revert.isPending ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RotateCcw size={14} />} Revert</button>
                       )}
                     </div>
                     <small>{field.hint}</small>
@@ -530,14 +551,18 @@ export function AdminTenderSources() {
   const query = trpc.adminOperations.tenderSources.list.useQuery(undefined, { refetchOnWindowFocus: true });
   const [message, setMessage] = useState("");
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
+  // Guards a single in-flight source toggle so a double-click cannot post twice.
+  const actionLock = useRef(false);
 
   const toggle = trpc.adminOperations.tenderSources.setEnabled.useMutation({
     onSuccess: () => {
+      actionLock.current = false;
       setMessageKind("success");
       setMessage("Source updated and audited.");
       void utils.adminOperations.tenderSources.list.invalidate();
     },
     onError: (error) => {
+      actionLock.current = false;
       setMessageKind("error");
       setMessage(error.message);
     },
@@ -547,6 +572,7 @@ export function AdminTenderSources() {
   const enabledCount = rows.filter((row) => row.enabled).length;
 
   const setEnabled = (row: SourceRow, enabled: boolean) => {
+    if (actionLock.current) return;
     const verb = enabled ? "Enable" : "Disable";
     const reason = window.prompt(`${verb} “${row.label}”? Enter the administrator reason (3–500 characters).`, "");
     if (reason === null) return;
@@ -555,6 +581,7 @@ export function AdminTenderSources() {
       setMessage("Enter an administrator reason of at least 3 characters.");
       return;
     }
+    actionLock.current = true;
     toggle.mutate({ sourceId: row.id, enabled, reason: reason.trim() });
   };
 
@@ -566,8 +593,8 @@ export function AdminTenderSources() {
           <h1>Tender Sources</h1>
           <p>Each configured country and supranational source with its sync health and per-source tender count. A source is only polled while it is enabled; disabling stops future polling and leaves stored tenders in place. Enable and disable actions are audited.</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching}>
-          <RefreshCw size={14} /> Refresh
+        <button className="secondary-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching} aria-busy={query.isFetching}>
+          {query.isFetching ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RefreshCw size={14} />} Refresh
         </button>
       </header>
 
@@ -594,8 +621,8 @@ export function AdminTenderSources() {
                     <td><span className={`tb-admin-chip tb-admin-sync-${row.lastStatus ?? "never"}`}>{row.lastStatus ?? "never run"}</span></td>
                     <td>{row.lastError ? <span className="tb-admin-error" title={row.lastError}>{row.lastError}</span> : "—"}</td>
                     <td>
-                      <button className={row.enabled ? "primary-button" : "secondary-button"} type="button" disabled={toggle.isPending} onClick={() => setEnabled(row, !row.enabled)}>
-                        {row.enabled ? "Enabled · disable" : "Disabled · enable"}
+                      <button className={row.enabled ? "primary-button" : "secondary-button"} type="button" disabled={toggle.isPending} aria-busy={toggle.isPending} onClick={() => setEnabled(row, !row.enabled)}>
+                        {toggle.isPending && <span className="tb-admin-spinner" aria-hidden="true" />}{row.enabled ? "Enabled · disable" : "Disabled · enable"}
                       </button>
                     </td>
                   </tr>

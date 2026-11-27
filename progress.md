@@ -1,3 +1,65 @@
+## 2026-11-27 (feature / Stage 7) — Tender Bid final hardening/verification pass & interaction quality
+
+Owner request: move to Stage 7 after Stages 0–6. The owner confirmed the scope as **"Both"**, i.e.
+(a) the Stage 7 **final hardening/verification pass** named in `progress.md` / the Tender Bid spec's
+staged plan, and (b) the master-roadmap **"Stage 7 — Button Feedback, Animations and Interaction
+Quality"** polish on both portal surfaces. Delivered per `docs/TENDER_BID_SPECIFICATION.md` (§7 fee
+model, §8–§10 customer/admin experience, §12 guardrails) and
+`docs/ARBITRADE_MASTER_DEVELOPMENT_ROADMAP.md` (Stage 7). No behavioural rule was changed and no value
+was hard-coded; this stage adds a guardrail verification suite and the interaction-and-motion system.
+
+- **Guardrail verification suite (`server/modules/tender/tender-stage7.contract.test.ts`, new — 25
+  tests)** — Part A pins spec §12 end-to-end across every module the desk touches: real data only (the
+  customer catalogue is read through an inner join to a real source, never a left join; no
+  seed/demo/mock file and no `Math.random` in the desk, ingest or bidding modules); fail closed (an
+  unknown/malformed contract value is treated as unknown, never out of range; a missing/malformed
+  qualification percentage yields no amount; the owner-locked $100k–$250M inclusion band and the
+  $1,000–$600,000 qualification clamp are exercised directly; a missing fresh FX rate keeps USD null;
+  no bid row is written when the balance cannot be valued); admin-configured / persisted / audited (the
+  inclusion band and clamp are owner-locked constants and the percentage is an argument, never a
+  literal; the configured percentage, computed amount and override flag are persisted on the tender; the
+  charge is audited through the classified manual-adjustment ledger with the administrator and a
+  reason); idempotent bids and charges (the key is hashed, one bid per customer/tender is enforced in
+  storage via `tender_bids_user_tender_uq` / `tender_bids_idempotency_uq`, a duplicate-key race is
+  survived, the bid row is locked `.for("update")` before a transition, and every mutating entry point
+  validates an idempotency key); ledger discipline and immutable history (the charge is a classified
+  `ordinary_debit` that resolves to a reversible admin entry; no `.delete(` and every transition appends
+  a `tender_bid_events` row); attribution and labelling (every tender carries its real source URL, every
+  source link stays in its dedupe group, every amount is labelled a configured/contractual value, the
+  source is linked but never submitted to); and the monitored `tender-ingest` worker with every read and
+  cycle bounded (`TENDER_DESK_MAX_ROWS` / `TENDER_BID_QUEUE_MAX_ROWS` = 500, ingest retry/back-off = 3 /
+  500 ms). Part B pins the roadmap Stage 7 interaction quality on both surfaces (below). The services are
+  asserted on their source because they need a live database the contract harness does not provide; every
+  guarantee that can be exercised without one is called directly.
+- **Customer interaction quality (`client/src/components/CustomerTenderBid.tsx`)** — a duplicate-bid
+  guard (`bidLock` ref) so a double-click cannot post twice; an in-flight `tb-spinner` on the refresh and
+  bid buttons with `aria-busy`; a clear success/error feedback banner (`tb-bid-feedback`, `role="alert"`
+  on error, `role="status"` on success) that resets when a tender is opened; and the tender pop-up is now
+  a real dialog — `aria-modal="true"`, focus moved to the close button on open, and Escape to close.
+- **Customer motion system (`client/src/components/tender-bid.css`)** — motion tokens
+  (`--tb-motion-fast` / `--tb-motion-slow` / `--tb-motion-ease`); a `:focus-visible` ring on every
+  control; `:active` pressed states; an inline `.tb-spinner` + `@keyframes tb-spin`; modal
+  open animations (`tb-backdrop-in` / `tb-panel-in`); the feedback banner styles (`tb-feedback-in`, dot,
+  success/error variants); a `@media (hover: none)` touch block (≥40px targets, `touch-action`);
+  and a `@media (prefers-reduced-motion: reduce)` block that collapses durations and removes transforms.
+- **Admin interaction quality (`client/src/components/AdminTenderBid.tsx`)** — a shared `actionLock` ref
+  guards a single in-flight request on all three surfaces (Tender Bids queue, Corrections, Sources) so a
+  double-click cannot post twice; in-flight `tb-admin-spinner` + `aria-busy` on the refresh buttons and
+  on every mutating action (apply charge / decline / record outcome, save / revert, enable / disable).
+- **Admin motion system (`client/src/components/admin-tender.css`)** — motion tokens
+  (`--tb-admin-motion-fast` / `--tb-admin-motion-slow` / `--tb-admin-motion-ease`); a `:focus-visible`
+  ring; `:active` pressed states; an inline `.tb-admin-spinner` + `@keyframes tb-admin-spin`; a notice
+  entry animation; a `@media (hover: none)` touch block; and a `@media (prefers-reduced-motion:
+  reduce)` block.
+- Verification: `pnpm run check` exit 0; targeted contract tests `server/modules/tender` 7 files / 142
+  tests passed; full `pnpm test` 228 files passed (9 skipped) / 1,953 tests passed (42 skipped);
+  `pnpm exec vitest run --config vitest.installer.config.ts` 34 files / 198 tests passed; `pnpm build`
+  succeeded. No database was connected to (no `DATABASE_URL`); every service and worker fails closed
+  without one.
+- Next: enable/adjust individual `tender_sources` rows (enable flag, expected interval, config) from the
+  admin Sources screen as real portal access is confirmed in the deployment environment, and confirm the
+  customer/admin desks against `https://stan.prod.page` once a source has ingested live data.
+
 ## 2026-11-27 (feature / Stage 6) — Tender Bid full source catalogue (23 countries + supranational) & hardening
 
 Owner request: "Proceed to next stage" — the owner approved the Stage 6 scope as **"Shared factories,
