@@ -1,3 +1,32 @@
+## 2026-11-28 (fix / diagnostics) — Preserve fatal V8 heap OOM evidence
+
+Owner reported a fatal Node.js heap-limit abort (`SIGABRT`), a follow-on supervisor DB write failure
+(`Can't add new command when connection is in closed state`), and an admin page where both incident
+queries displayed “could not be read”. The V8 native abort cannot be caught by the application's JS
+crash hooks; the supervisor must capture the child stderr and persist the exit after stdio closes.
+
+- **Supervisor disk fallback** — `scripts/incident-log.mjs` now writes failed supervisor records to the
+  same `logs/incidents.jsonl` journal used by the app, with the configured `INCIDENT_LOG_DIR` honored.
+  Text and JSON context are redacted/bounded before writing.
+- **Capture exact OOM evidence** — `scripts/start-with-diagnostics.mjs` keeps a bounded sanitized tail
+  of child stderr, waits for child `close` (not merely `exit`) so buffered stderr is included, and
+  distinguishes the exact V8 heap-limit text as `V8_HEAP_OOM`. The report includes the fatal stderr
+  excerpt and preserves the exit signal. Other `SIGABRT`/`SIGKILL` cases remain classified as suspected
+  resource exhaustion, not falsely labeled as proven V8 heap OOM.
+- **Fix shutdown race** — the supervisor awaits incident persistence before rejecting the application
+  phase; its writer serializes writes and drains pending records before closing its DB connection.
+- **Make journal reports visible** — `listIncidents()` merges/filter/sorts DB and journal records, and
+  `getIncidentReport()` reads the merged list even when `DATABASE_URL` is absent. Thus both the summary
+  and the visible “Recorded incidents” panel show a supervisor OOM fallback record.
+- **Tests** — added `server/supervisor-incident-log.test.ts` for sanitized DB-down disk persistence and
+  `server/incident-log.persistence.test.ts` for journal visibility in both admin query results.
+- Verification: `pnpm check` passed; targeted incident suite 19/19 passed; full `pnpm test` — 232 files /
+  1,983 tests passed (42 skipped); `pnpm build` passed. Existing Vite large-chunk advisory remains.
+- **Important** — this change makes the *next* fatal heap abort readable after recovery; it does not
+  prove the cause of this particular allocation. Do not increase `NODE_OPTIONS` heap size without the
+  hosting memory limit and off-heap budget; a larger V8 heap may turn a catchable heap abort into a
+  platform OOM kill.
+
 ## 2026-11-28 (fix / admin) — Durable disk journal so a crash is never lost
 
 Owner reported the live portal kept crashing and "did not save any logs". Root cause: on the managed

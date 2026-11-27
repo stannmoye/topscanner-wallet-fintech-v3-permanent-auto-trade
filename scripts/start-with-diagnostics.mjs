@@ -117,10 +117,12 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
     }
 
     activeChild = child;
+    let stderrTail = "";
     for (const [streamName, stream] of [["stdout", child.stdout], ["stderr", child.stderr]]) {
       const lines = createInterface({ input: stream });
       lines.on("line", (line) => {
         const output = redact(line);
+        if (streamName === "stderr") stderrTail = `${stderrTail}${output}\n`.slice(-12000);
         (streamName === "stderr" ? process.stderr : process.stdout).write(output + "\n");
       });
     }
@@ -138,21 +140,30 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
       reject(error);
     });
 
-    child.on("exit", (code, signal) => {
+    child.on("close", async (code, signal) => {
       activeChild = undefined;
       if (requirePersistent && !shuttingDown) {
         log("error", "persistent-process-exited-unexpectedly", { phase: name, exitCode: code, signal: signal || undefined });
-        // A null exit code or a SIGKILL/SIGABRT signal is how an out-of-memory
-        // kill reaches the wrapper; classify it so the console points straight at
-        // resource exhaustion rather than a generic unexpected exit.
-        const suspectedOom = signal === "SIGKILL" || signal === "SIGABRT" || code === null;
-        void incidents.record({
+        const heapOom = /FATAL ERROR:\s*(?:Reached heap limit|Ineffective mark-compacts near heap limit)|JavaScript heap out of memory/i.test(stderrTail);
+        // SIGKILL/SIGABRT can be memory-related, but only label the precise V8
+        // heap failure when the child's bounded stderr tail contains its fatal text.
+        const suspectedOom = heapOom || signal === "SIGKILL" || signal === "SIGABRT" || code === null;
+        await incidents.record({
           severity: "fatal",
           category: suspectedOom ? "resource_exhaustion" : "unexpected_exit",
           processRole: "supervisor",
-          eventCode: signal || `EXIT_${code ?? "NULL"}`,
-          message: `Persistent startup phase "${name}" exited before a shutdown signal was received (exit code ${code ?? "null"}, signal ${signal || "none"}).`,
-          context: { phase: name, exitCode: code, signal: signal || null, suspectedMemoryLimit: suspectedOom },
+          eventCode: heapOom ? "V8_HEAP_OOM" : signal || `EXIT_${code ?? "NULL"}`,
+          message: heapOom
+            ? `Node.js V8 aborted after reaching the JavaScript heap limit in phase "${name}".`
+            : `Persistent startup phase "${name}" exited before a shutdown signal was received (exit code ${code ?? "null"}, signal ${signal || "none"}).`,
+          stack: stderrTail.slice(-8000) || null,
+          context: {
+            phase: name,
+            exitCode: code,
+            signal: signal || null,
+            suspectedMemoryLimit: suspectedOom,
+            stderrTail: stderrTail.slice(-3000) || null,
+          },
           exitCode: code ?? null,
           signal: signal || null,
         });

@@ -367,28 +367,35 @@ function addSummaries(left: IncidentSummary, right: IncidentSummary): IncidentSu
 /** Read a bounded, filtered list of incident rows, newest first. */
 export async function listIncidents(filters: { limit?: number; category?: IncidentCategory; severity?: IncidentSeverity } = {}): Promise<IncidentEntry[]> {
   const limit = Number.isFinite(filters.limit) ? Math.min(MAX_LIST, Math.max(1, Math.trunc(filters.limit as number))) : DEFAULT_LIST;
+  let databaseEntries: IncidentEntry[] = [];
   try {
-    if (!process.env.DATABASE_URL) return [];
-    const db = await getDb();
-    if (!db) return [];
-    const conditions = [sql`1=1`];
-    if (filters.category) conditions.push(sql`category=${filters.category}`);
-    if (filters.severity) conditions.push(sql`severity=${filters.severity}`);
-    const where = sql.join(conditions, sql` AND `);
-    const result = await db.execute(sql`SELECT
-        id,severity,category,processRole,eventCode,message,stack,contextJson,appVersion,sourceRevision,instanceId,bootId,exitCode,signal,
-        DATE_FORMAT(occurredAt,'%Y-%m-%dT%H:%i:%s.000Z') AS occurredAt
-      FROM application_incident_events
-      WHERE ${where}
-      ORDER BY occurredAt DESC, id DESC
-      LIMIT ${limit}`);
-    const rows = ((result as unknown as [Record<string, unknown>[], unknown])[0] || []) as Record<string, unknown>[];
-    return rows.map(toEntry);
+    if (process.env.DATABASE_URL) {
+      const db = await getDb();
+      if (db) {
+        const conditions = [sql`1=1`];
+        if (filters.category) conditions.push(sql`category=${filters.category}`);
+        if (filters.severity) conditions.push(sql`severity=${filters.severity}`);
+        const where = sql.join(conditions, sql` AND `);
+        const result = await db.execute(sql`SELECT
+            id,severity,category,processRole,eventCode,message,stack,contextJson,appVersion,sourceRevision,instanceId,bootId,exitCode,signal,
+            DATE_FORMAT(occurredAt,'%Y-%m-%dT%H:%i:%s.000Z') AS occurredAt
+          FROM application_incident_events
+          WHERE ${where}
+          ORDER BY occurredAt DESC, id DESC
+          LIMIT ${limit}`);
+        const rows = ((result as unknown as [Record<string, unknown>[], unknown])[0] || []) as Record<string, unknown>[];
+        databaseEntries = rows.map(toEntry);
+      }
+    }
   } catch (error) {
-    if (isMissingTableError(error)) return [];
-    console.error("[IncidentLog] Failed to list incidents:", error instanceof Error ? error.name : "UnknownError");
-    return [];
+    if (!isMissingTableError(error)) console.error("[IncidentLog] Failed to list incidents:", error instanceof Error ? error.name : "UnknownError");
   }
+  const journalEntries = readJournalEntries()
+    .map(journalEntryToIncident)
+    .filter((entry) => (!filters.category || entry.category === filters.category) && (!filters.severity || entry.severity === filters.severity));
+  return [...databaseEntries, ...journalEntries]
+    .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : b.id - a.id))
+    .slice(0, limit);
 }
 
 /** Aggregate incident counts for the summary blocks used across the console. */
@@ -442,7 +449,7 @@ export async function getIncidentReport(limit: number = DEFAULT_LIST): Promise<I
   const now = new Date();
   const journalEntries = readJournalEntries();
   const journalIncidents = journalEntries.map(journalEntryToIncident);
-  let dbIncidents: IncidentEntry[] = [];
+  let incidents: IncidentEntry[] = [];
   let summary: IncidentSummary = { ...EMPTY_SUMMARY };
   let dbAvailable = false;
   try {
@@ -451,17 +458,16 @@ export async function getIncidentReport(limit: number = DEFAULT_LIST): Promise<I
       if (db) {
         dbAvailable = true;
         summary = await getIncidentSummary();
-        dbIncidents = await listIncidents({ limit: Math.max(safeLimit, MAX_RECENT) });
       }
     }
   } catch (error) {
     if (!isMissingTableError(error)) console.error("[IncidentLog] Failed to build report:", error instanceof Error ? error.name : "UnknownError");
   }
+  incidents = await listIncidents({ limit: Math.max(safeLimit, MAX_RECENT) });
   // The disk journal holds crashes captured before the database was reachable
   // (and every incident recorded while it was down). Merge it so the console
   // shows one continuous history across restarts.
-  const merged = [...dbIncidents, ...journalIncidents]
-    .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : b.id - a.id));
+  const merged = incidents;
   summary = addSummaries(summary, summarizeEntries(journalIncidents, now));
   const bootMap = new Map<string, IncidentBootSummary>();
   for (const incident of merged) {

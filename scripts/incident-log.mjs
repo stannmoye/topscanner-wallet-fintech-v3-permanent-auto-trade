@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import mysql from "mysql2/promise";
 
 /**
@@ -74,6 +76,43 @@ function isMissingTableError(error) {
   return code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_FIELD_ERROR";
 }
 
+function appendJournalRecord(input, { bootId, appVersion, sourceRevision }) {
+  try {
+    const journalDir = process.env.INCIDENT_LOG_DIR?.trim() || join(process.cwd(), "logs");
+    const journalPath = join(journalDir, "incidents.jsonl");
+    mkdirSync(dirname(journalPath), { recursive: true });
+    const at = input.occurredAt instanceof Date && !Number.isNaN(input.occurredAt.getTime()) ? input.occurredAt : new Date();
+    const contextText = input.context ? sanitizeIncidentText(JSON.stringify(input.context), 4000) : null;
+    let context = null;
+    if (contextText) {
+      try {
+        context = JSON.parse(contextText);
+      } catch {
+        context = { detail: contextText };
+      }
+    }
+    const record = {
+      occurredAt: at.toISOString(),
+      severity: input.severity,
+      category: input.category,
+      processRole: input.processRole ?? "supervisor",
+      eventCode: safeEventCode(input.eventCode),
+      message: sanitizeIncidentText(input.message || "Incident without a message", 1000) || "Incident without a message",
+      stack: input.stack ? sanitizeIncidentText(input.stack, 8000) : null,
+      context,
+      appVersion: input.appVersion ?? appVersion,
+      sourceRevision: input.sourceRevision ?? sourceRevision,
+      instanceId: input.instanceId ?? null,
+      bootId: input.bootId ?? bootId,
+      exitCode: input.exitCode ?? null,
+      signal: input.signal ? sanitizeIncidentText(input.signal, 32) : null,
+    };
+    appendFileSync(journalPath, `${JSON.stringify(record)}\n`, { encoding: "utf8" });
+  } catch {
+    // Supervisor diagnostics must never cause a second startup failure.
+  }
+}
+
 /** Idempotently create the additive incident table. Never throws. */
 export async function ensureIncidentLogSchema(db) {
   const [tables] = await db.query(
@@ -92,6 +131,7 @@ export async function ensureIncidentLogSchema(db) {
 export function createIncidentWriter({ bootId, appVersion = null, sourceRevision = null, logger = () => {} } = {}) {
   let connectionPromise = null;
   let schemaReady = false;
+  let pendingWrites = Promise.resolve();
   const resolvedBootId = bootId || process.env.ARBITRADE_BOOT_ID || null;
 
   const connect = async () => {
@@ -104,48 +144,63 @@ export function createIncidentWriter({ bootId, appVersion = null, sourceRevision
     return mysql.createConnection(url.toString());
   };
 
-  return {
-    async record(input) {
-      try {
-        if (!connectionPromise) connectionPromise = connect();
-        const db = await connectionPromise;
-        if (!schemaReady) {
-          await ensureIncidentLogSchema(db);
-          schemaReady = true;
-        }
-        const at = input.occurredAt instanceof Date && !Number.isNaN(input.occurredAt.getTime()) ? input.occurredAt : new Date();
-        const message = sanitizeIncidentText(input.message || "Incident without a message", 1000) || "Incident without a message";
-        const stack = input.stack ? sanitizeIncidentText(input.stack, 8000) : null;
-        const contextJson = input.context ? sanitizeIncidentText(JSON.stringify(input.context), 4000) : null;
-        await db.execute(
-          `INSERT INTO ${INCIDENT_LOG_TABLE}
-            (severity,category,processRole,eventCode,message,stack,contextJson,appVersion,sourceRevision,instanceId,bootId,exitCode,signal,occurredAt,occurredDate)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [
-            input.severity,
-            input.category,
-            input.processRole ?? "supervisor",
-            safeEventCode(input.eventCode),
-            message,
-            stack,
-            contextJson,
-            input.appVersion ?? appVersion,
-            input.sourceRevision ?? sourceRevision,
-            input.instanceId ?? null,
-            input.bootId ?? resolvedBootId,
-            input.exitCode ?? null,
-            input.signal ? sanitizeIncidentText(input.signal, 32) : null,
-            utcStamp(at),
-            utcDateKey(at),
-          ],
-        );
-      } catch (error) {
-        connectionPromise = null;
-        schemaReady = false;
-        if (!isMissingTableError(error)) logger(error);
+  const persist = async (input) => {
+    let dbError = null;
+    try {
+      if (!connectionPromise) connectionPromise = connect();
+      const db = await connectionPromise;
+      if (!schemaReady) {
+        await ensureIncidentLogSchema(db);
+        schemaReady = true;
       }
+      const at = input.occurredAt instanceof Date && !Number.isNaN(input.occurredAt.getTime()) ? input.occurredAt : new Date();
+      const message = sanitizeIncidentText(input.message || "Incident without a message", 1000) || "Incident without a message";
+      const stack = input.stack ? sanitizeIncidentText(input.stack, 8000) : null;
+      const contextJson = input.context ? sanitizeIncidentText(JSON.stringify(input.context), 4000) : null;
+      await db.execute(
+        `INSERT INTO ${INCIDENT_LOG_TABLE}
+          (severity,category,processRole,eventCode,message,stack,contextJson,appVersion,sourceRevision,instanceId,bootId,exitCode,signal,occurredAt,occurredDate)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          input.severity,
+          input.category,
+          input.processRole ?? "supervisor",
+          safeEventCode(input.eventCode),
+          message,
+          stack,
+          contextJson,
+          input.appVersion ?? appVersion,
+          input.sourceRevision ?? sourceRevision,
+          input.instanceId ?? null,
+          input.bootId ?? resolvedBootId,
+          input.exitCode ?? null,
+          input.signal ? sanitizeIncidentText(input.signal, 32) : null,
+          utcStamp(at),
+          utcDateKey(at),
+        ],
+      );
+      return;
+    } catch (error) {
+      dbError = error;
+      connectionPromise = null;
+      schemaReady = false;
+    }
+    if (!isMissingTableError(dbError)) logger(dbError);
+    appendJournalRecord(input, {
+      bootId: resolvedBootId,
+      appVersion,
+      sourceRevision,
+    });
+  };
+
+  return {
+    record(input) {
+      const write = pendingWrites.then(() => persist(input));
+      pendingWrites = write.catch(() => undefined);
+      return write;
     },
     async close() {
+      await pendingWrites;
       if (!connectionPromise) return;
       const pending = connectionPromise;
       connectionPromise = null;

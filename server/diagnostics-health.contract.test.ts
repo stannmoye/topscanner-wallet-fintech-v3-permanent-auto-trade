@@ -60,7 +60,12 @@ describe("crash & incident diagnostics contract", () => {
     expect(wrapper).toContain("process.env.ARBITRADE_BOOT_ID = BOOT_ID");
     expect(wrapper).toContain("createIncidentWriter");
     expect(supervisorLog).toContain('export const INCIDENT_LOG_TABLE = "application_incident_events"');
-    // A supervisor-observed exit is classified as an OOM when the signal says so.
+    expect(supervisorLog).toContain('join(process.cwd(), "logs")');
+    expect(supervisorLog).toContain("appendFileSync(journalPath");
+    // A supervisor-observed V8 heap abort retains its stderr explanation on disk.
+    expect(wrapper).toContain("JavaScript heap out of memory");
+    expect(wrapper).toContain('eventCode: heapOom ? "V8_HEAP_OOM"');
+    expect(wrapper).toContain("await incidents.record({");
     expect(wrapper).toContain('signal === "SIGKILL"');
     expect(wrapper).toContain('category: suspectedOom ? "resource_exhaustion" : "unexpected_exit"');
   });
