@@ -1388,9 +1388,10 @@ export const appRouter = router({
     // Manually remove recorded incidents. `deleteIncident` removes one specific
     // crash report (for example the fatal record that caused a restart) and
     // `clearIncidents` removes a whole restart session, or all retained records
-    // when no boot id is supplied.
+    // when no boot id is supplied. Journal-backed records use negative ids, so
+    // the id is any non-zero integer rather than strictly positive.
     deleteIncident: adminProcedure.input(z.object({
-      id: z.number().int().positive(),
+      id: z.number().int().refine((value) => value !== 0, "id must be a non-zero integer"),
     }).strict()).mutation(({ input }) => deleteIncident(input.id)),
     clearIncidents: adminProcedure.input(z.object({
       bootId: z.string().trim().min(1).max(64).optional(),

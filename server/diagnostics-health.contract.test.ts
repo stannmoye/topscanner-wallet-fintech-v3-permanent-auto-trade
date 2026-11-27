@@ -7,6 +7,8 @@ const apiHealthModule = readFileSync(new URL("./_core/apiHealth.ts", import.meta
 const resourceModule = readFileSync(new URL("./_core/resourceReport.ts", import.meta.url), "utf8");
 const workerHealth = readFileSync(new URL("./_core/workerHealth.ts", import.meta.url), "utf8");
 const core = readFileSync(new URL("./_core/index.ts", import.meta.url), "utf8");
+const hooks = readFileSync(new URL("./_core/incident-hooks.ts", import.meta.url), "utf8");
+const journal = readFileSync(new URL("./incident-journal.ts", import.meta.url), "utf8");
 const router = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const wrapper = readFileSync(new URL("../scripts/start-with-diagnostics.mjs", import.meta.url), "utf8");
 const supervisorLog = readFileSync(new URL("../scripts/incident-log.mjs", import.meta.url), "utf8");
@@ -21,19 +23,36 @@ describe("crash & incident diagnostics contract", () => {
     expect(incidentModule).toContain("export async function ensureIncidentLogSchema");
     expect(incidentModule).toContain("export async function recordIncident");
     // Recording a crash must never become a second fault.
-    expect(incidentModule).toContain("if (isMissingTableError(error)) return;");
+    expect(incidentModule).toContain("isMissingTableError(error)");
   });
 
   it("captures uncaught errors, unhandled rejections, startup failures, OOM and worker failures", () => {
-    expect(core).toContain('process.on("uncaughtException"');
-    expect(core).toContain('category: "uncaught_exception"');
-    expect(core).toContain('process.on("unhandledRejection"');
-    expect(core).toContain('category: "unhandled_rejection"');
+    // Crash handlers are installed earliest, before the app module graph loads,
+    // so an import-time throw is still captured.
+    expect(hooks).toContain('process.on("uncaughtException"');
+    expect(hooks).toContain('category: "uncaught_exception"');
+    expect(hooks).toContain('process.on("unhandledRejection"');
+    expect(hooks).toContain('category: "unhandled_rejection"');
+    expect(core).toContain('import "./incident-hooks"');
     expect(core).toContain('category: "startup_failure"');
     expect(core).toContain('category: "resource_exhaustion"');
     expect(core).toContain('eventCode: "MEMORY_PRESSURE"');
     expect(workerHealth).toContain('category: "worker_failure"');
     expect(workerHealth).toContain("recordWorkerIncident");
+  });
+
+  it("journals crashes straight to disk so they survive a restart even without a database", () => {
+    expect(journal).toContain('export const INCIDENT_JOURNAL_FILENAME = "incidents.jsonl"');
+    expect(journal).toContain("appendFileSync");
+    expect(journal).toContain("export function appendJournalRecord");
+    expect(journal).toContain("export function readJournalEntries");
+    // Journal ids are negative so they never collide with database ids.
+    expect(journal).toContain("id: -position");
+    // A crash recorded while the database is unavailable is kept on disk instead.
+    expect(incidentModule).toContain("if (!stored) {");
+    expect(incidentModule).toContain("appendJournalRecord(");
+    const report = incidentModule.slice(incidentModule.indexOf("export async function getIncidentReport"));
+    expect(report).toContain("readJournalEntries()");
   });
 
   it("shares one boot id between the supervisor and the app so a restart groups into one session", () => {

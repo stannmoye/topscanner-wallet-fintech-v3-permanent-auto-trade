@@ -1,3 +1,31 @@
+## 2026-11-28 (fix / admin) — Durable disk journal so a crash is never lost
+
+Owner reported the live portal kept crashing and "did not save any logs". Root cause: on the managed
+host cPanel launches `dist/index.js` **directly**, so the external supervisor (`scripts/start-with-diagnostics.mjs`)
+never runs, the crash handlers were installed only **after** ~46 application imports (an import-time throw
+vanished), and the incident log was **database-only** — useless when the database is the thing failing or
+before the pool is ready.
+
+- **Earliest crash capture** — new dependency-free `server/_core/incident-hooks.ts` is imported as the
+  **first** module in `server/_core/index.ts` (right after `dotenv/config`), so `uncaughtException` /
+  `unhandledRejection` are hooked before the application module graph evaluates. It imports only Node
+  built-ins plus the journal/sanitizer, and publishes its boot id back into `ARBITRADE_BOOT_ID` so the
+  rest of the app groups into the same restart session. The duplicate inline handlers in `index.ts` are
+  removed.
+- **Disk-backed journal** — new `server/incident-journal.ts` appends every crash to an append-only
+  `incidents.jsonl` with **synchronous** Node built-ins (`appendFileSync`), so it survives a restart even
+  with no database. Path is `<cwd>/logs/incidents.jsonl`, overridable with `INCIDENT_LOG_DIR`. Journal
+  rows get **negative synthetic ids** so they never collide with database auto-increment ids. New
+  `server/incident-sanitize.ts` is a dependency-free redactor the journal can use before writing to disk.
+- **Merge + fallback** — `server/incident-log.ts` `recordIncident()` now falls back to the journal when
+  the database is unavailable/missing-table/failing, and `getIncidentReport()` merges journal rows into
+  one continuous history (summary, per-boot grouping, newest-first list). `deleteIncident()` routes
+  negative ids to the journal, and `clearIncidents()` / `purgeIncidentLog()` cover both stores.
+- **API** — `deleteIncident` input id relaxed to any non-zero integer (journal ids are negative).
+- **Housekeeping** — `logs/` added to `.gitignore`.
+- Verification: `pnpm check` (tsc) exit 0; `pnpm build` exit 0; full `pnpm test` — 230 files / 1981 tests
+  passed (42 skipped); journal append/read/delete/clear verified with a live `tsx` run.
+
 ## 2026-11-28 (feature / admin) — Manual delete for crash & incident reports
 
 Owner asked that the crash/incident report be persistent (already DB-backed, so it survives restarts) and,

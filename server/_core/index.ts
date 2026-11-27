@@ -1,4 +1,7 @@
 import "dotenv/config";
+// Install the crash handlers before any other module evaluates so an import-time
+// failure is still journaled to disk. See server/_core/incident-hooks.ts.
+import "./incident-hooks";
 import express from "express";
 import { randomBytes } from "node:crypto";
 import { createServer } from "http";
@@ -45,33 +48,10 @@ import { parse as parseCookieHeader } from "cookie";
 import { ensureIncidentLogSchema, purgeIncidentLog, recordIncident } from "../incident-log";
 import { ensureApiHealthSchema } from "./apiHealth";
 
-// Persist uncaught errors and unhandled rejections to the durable incident log so
-// the crash cause is still visible after the process restarts. The handler keeps
-// the existing crash semantics: it records best-effort, then exits non-zero.
+// uncaughtException and unhandledRejection handlers are installed by
+// server/_core/incident-hooks.ts (imported first above) so a crash is captured
+// even when a later module throws while it is still being loaded.
 const APP_SOURCE_REVISION = process.env.GIT_COMMIT_SHA || process.env.SOURCE_VERSION || null;
-process.on("uncaughtException", (error) => {
-  void recordIncident({
-    severity: "fatal",
-    category: "uncaught_exception",
-    eventCode: error?.name,
-    message: error?.message || "Uncaught exception",
-    stack: error?.stack ?? String(error),
-    context: { code: (error as { code?: unknown })?.code ?? null },
-    sourceRevision: APP_SOURCE_REVISION,
-  }).catch(() => undefined).finally(() => process.exit(1));
-});
-process.on("unhandledRejection", (reason) => {
-  const error = reason instanceof Error ? reason : new Error(String(reason));
-  void recordIncident({
-    severity: "error",
-    category: "unhandled_rejection",
-    eventCode: error.name,
-    message: error.message || "Unhandled promise rejection",
-    stack: error.stack ?? String(reason),
-    context: { code: (error as { code?: unknown }).code ?? null },
-    sourceRevision: APP_SOURCE_REVISION,
-  }).catch(() => undefined);
-});
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
 const customerLoginRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_000, max: 10, message: "Too many login attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-login" });

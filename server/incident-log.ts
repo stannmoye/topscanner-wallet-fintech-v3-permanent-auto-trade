@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, getRawDbPool } from "./db";
+import {
+  appendJournalRecord,
+  clearJournalEntries,
+  deleteJournalEntry,
+  purgeJournalEntries,
+  readJournalEntries,
+  journalFileSize,
+  type JournalEntry,
+} from "./incident-journal";
 
 /**
  * Application incident log.
@@ -222,20 +231,45 @@ export async function ensureIncidentLogSchema(): Promise<void> {
  * not been installed on this host yet.
  */
 export async function recordIncident(input: RecordIncidentInput): Promise<void> {
+  const at = input.occurredAt instanceof Date && !Number.isNaN(input.occurredAt.getTime()) ? input.occurredAt : new Date();
+  const bootId = input.bootId ?? INCIDENT_BOOT_ID;
+  const message = sanitizeIncidentText(input.message || "Incident without a message", 1000) || "Incident without a message";
+  const stack = input.stack ? sanitizeIncidentText(input.stack, 8000) : null;
+  const contextJson = input.context ? sanitizeIncidentText(safeStringify(input.context), 4000) : null;
+  let stored = false;
   try {
-    if (!process.env.DATABASE_URL) return;
-    const db = await getDb();
-    if (!db) return;
-    const at = input.occurredAt instanceof Date && !Number.isNaN(input.occurredAt.getTime()) ? input.occurredAt : new Date();
-    const message = sanitizeIncidentText(input.message || "Incident without a message", 1000) || "Incident without a message";
-    const stack = input.stack ? sanitizeIncidentText(input.stack, 8000) : null;
-    const contextJson = input.context ? sanitizeIncidentText(safeStringify(input.context), 4000) : null;
-    await db.execute(sql`INSERT INTO application_incident_events
-      (severity,category,processRole,eventCode,message,stack,contextJson,appVersion,sourceRevision,instanceId,bootId,exitCode,signal,occurredAt,occurredDate)
-      VALUES (${input.severity},${input.category},${input.processRole ?? "application"},${safeEventCode(input.eventCode)},${message},${stack},${contextJson},${input.appVersion ?? null},${input.sourceRevision ?? null},${input.instanceId ?? null},${input.bootId ?? INCIDENT_BOOT_ID},${input.exitCode ?? null},${input.signal ? sanitizeIncidentText(input.signal, 32) : null},${utcStamp(at)},${utcDateKey(at)})`);
+    if (process.env.DATABASE_URL) {
+      const db = await getDb();
+      if (db) {
+        await db.execute(sql`INSERT INTO application_incident_events
+          (severity,category,processRole,eventCode,message,stack,contextJson,appVersion,sourceRevision,instanceId,bootId,exitCode,signal,occurredAt,occurredDate)
+          VALUES (${input.severity},${input.category},${input.processRole ?? "application"},${safeEventCode(input.eventCode)},${message},${stack},${contextJson},${input.appVersion ?? null},${input.sourceRevision ?? null},${input.instanceId ?? null},${bootId},${input.exitCode ?? null},${input.signal ? sanitizeIncidentText(input.signal, 32) : null},${utcStamp(at)},${utcDateKey(at)})`);
+        stored = true;
+      }
+    }
   } catch (error) {
-    if (isMissingTableError(error)) return;
-    console.error("[IncidentLog] Failed to record incident:", error instanceof Error ? error.name : "UnknownError");
+    if (!isMissingTableError(error)) console.error("[IncidentLog] Failed to record incident:", error instanceof Error ? error.name : "UnknownError");
+  }
+  // The database is unavailable (offline, missing table or a failing query).
+  // Keep the incident on disk so it is still visible after a restart instead of
+  // being lost with the process.
+  if (!stored) {
+    appendJournalRecord({
+      occurredAt: at.toISOString(),
+      severity: input.severity,
+      category: input.category,
+      processRole: input.processRole ?? "application",
+      eventCode: safeEventCode(input.eventCode),
+      message,
+      stack,
+      context: input.context ?? null,
+      appVersion: input.appVersion ?? null,
+      sourceRevision: input.sourceRevision ?? null,
+      instanceId: input.instanceId ?? null,
+      bootId: bootId ?? null,
+      exitCode: input.exitCode ?? null,
+      signal: input.signal ? sanitizeIncidentText(input.signal, 32) : null,
+    });
   }
 }
 
@@ -266,6 +300,67 @@ function toEntry(row: Record<string, unknown>): IncidentEntry {
     signal: row.signal == null ? null : String(row.signal),
     occurredAt: row.occurredAt == null ? "" : String(row.occurredAt),
     isCurrentBoot: bootId === INCIDENT_BOOT_ID,
+  };
+}
+
+/** Convert a durable journal record into the console entry shape. Ids stay negative. */
+function journalEntryToIncident(entry: JournalEntry): IncidentEntry {
+  const bootId = entry.bootId ?? null;
+  return {
+    id: entry.id,
+    severity: String(entry.severity ?? "error"),
+    category: String(entry.category ?? "uncaught_exception"),
+    processRole: String(entry.processRole ?? "application"),
+    eventCode: entry.eventCode ?? null,
+    message: String(entry.message ?? ""),
+    stack: entry.stack ?? null,
+    context: entry.context ?? null,
+    appVersion: entry.appVersion ?? null,
+    sourceRevision: entry.sourceRevision ?? null,
+    instanceId: entry.instanceId ?? null,
+    bootId,
+    exitCode: entry.exitCode ?? null,
+    signal: entry.signal ?? null,
+    occurredAt: String(entry.occurredAt ?? ""),
+    isCurrentBoot: bootId === INCIDENT_BOOT_ID,
+  };
+}
+
+/** Count a set of entries into the shared summary shape. */
+function summarizeEntries(entries: IncidentEntry[], now: Date): IncidentSummary {
+  const summary: IncidentSummary = { ...EMPTY_SUMMARY, categories: {} };
+  const dayAgo = now.getTime() - 24 * 60 * 60 * 1000;
+  const weekAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000;
+  for (const entry of entries) {
+    summary.total += 1;
+    if (entry.severity === "fatal") summary.fatal += 1;
+    else if (entry.severity === "error") summary.error += 1;
+    else if (entry.severity === "warning") summary.warning += 1;
+    else if (entry.severity === "info") summary.info += 1;
+    const at = Date.parse(entry.occurredAt);
+    if (Number.isFinite(at)) {
+      if (at >= dayAgo) summary.last24h += 1;
+      if (at >= weekAgo) summary.last7d += 1;
+    }
+    const category = entry.category || "unknown";
+    summary.categories[category] = (summary.categories[category] ?? 0) + 1;
+  }
+  return summary;
+}
+
+/** Fold a journal summary into a database summary. */
+function addSummaries(left: IncidentSummary, right: IncidentSummary): IncidentSummary {
+  const categories: Record<string, number> = { ...left.categories };
+  for (const [key, value] of Object.entries(right.categories)) categories[key] = (categories[key] ?? 0) + value;
+  return {
+    total: left.total + right.total,
+    fatal: left.fatal + right.fatal,
+    error: left.error + right.error,
+    warning: left.warning + right.warning,
+    info: left.info + right.info,
+    last24h: left.last24h + right.last24h,
+    last7d: left.last7d + right.last7d,
+    categories,
   };
 }
 
@@ -345,55 +440,61 @@ export async function getIncidentSummary(): Promise<IncidentSummary> {
 export async function getIncidentReport(limit: number = DEFAULT_LIST): Promise<IncidentReport> {
   const safeLimit = Number.isFinite(limit) ? Math.min(MAX_LIST, Math.max(1, Math.trunc(limit))) : DEFAULT_LIST;
   const now = new Date();
-  const base: IncidentReport = {
-    sourceAvailable: true,
+  const journalEntries = readJournalEntries();
+  const journalIncidents = journalEntries.map(journalEntryToIncident);
+  let dbIncidents: IncidentEntry[] = [];
+  let summary: IncidentSummary = { ...EMPTY_SUMMARY };
+  let dbAvailable = false;
+  try {
+    if (process.env.DATABASE_URL) {
+      const db = await getDb();
+      if (db) {
+        dbAvailable = true;
+        summary = await getIncidentSummary();
+        dbIncidents = await listIncidents({ limit: Math.max(safeLimit, MAX_RECENT) });
+      }
+    }
+  } catch (error) {
+    if (!isMissingTableError(error)) console.error("[IncidentLog] Failed to build report:", error instanceof Error ? error.name : "UnknownError");
+  }
+  // The disk journal holds crashes captured before the database was reachable
+  // (and every incident recorded while it was down). Merge it so the console
+  // shows one continuous history across restarts.
+  const merged = [...dbIncidents, ...journalIncidents]
+    .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : a.occurredAt > b.occurredAt ? -1 : b.id - a.id));
+  summary = addSummaries(summary, summarizeEntries(journalIncidents, now));
+  const bootMap = new Map<string, IncidentBootSummary>();
+  for (const incident of merged) {
+    const key = incident.bootId ?? "__unattributed__";
+    const existing = bootMap.get(key);
+    if (existing) {
+      existing.incidents += 1;
+      if (incident.severity === "fatal") existing.fatal += 1;
+      if (incident.severity === "error") existing.error += 1;
+      if (!existing.firstAt) existing.firstAt = incident.occurredAt;
+    } else {
+      bootMap.set(key, {
+        bootId: incident.bootId,
+        firstAt: incident.occurredAt,
+        lastAt: incident.occurredAt,
+        incidents: 1,
+        fatal: incident.severity === "fatal" ? 1 : 0,
+        error: incident.severity === "error" ? 1 : 0,
+        isCurrent: incident.isCurrentBoot,
+      });
+    }
+  }
+  const boots = [...bootMap.values()].sort((a, b) => (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0)).slice(0, 8);
+  return {
+    sourceAvailable: dbAvailable || journalEntries.length > 0 || journalFileSize() !== null,
     generatedAt: now.toISOString(),
     retentionDays: INCIDENT_RETENTION_DAYS,
     currentBootId: INCIDENT_BOOT_ID,
     currentBootStartedAt: INCIDENT_PROCESS_STARTED_AT.toISOString(),
-    summary: { ...EMPTY_SUMMARY },
-    boots: [],
-    incidents: [],
+    summary,
+    boots,
+    incidents: merged.slice(0, safeLimit),
   };
-  try {
-    if (!process.env.DATABASE_URL) return { ...base, sourceAvailable: false };
-    const db = await getDb();
-    if (!db) return { ...base, sourceAvailable: false };
-    const summary = await getIncidentSummary();
-    const recent = await listIncidents({ limit: Math.max(safeLimit, MAX_RECENT) });
-    const bootMap = new Map<string, IncidentBootSummary>();
-    for (const incident of recent) {
-      const key = incident.bootId ?? "__unattributed__";
-      const existing = bootMap.get(key);
-      if (existing) {
-        existing.incidents += 1;
-        if (incident.severity === "fatal") existing.fatal += 1;
-        if (incident.severity === "error") existing.error += 1;
-        if (!existing.firstAt) existing.firstAt = incident.occurredAt;
-      } else {
-        bootMap.set(key, {
-          bootId: incident.bootId,
-          firstAt: incident.occurredAt,
-          lastAt: incident.occurredAt,
-          incidents: 1,
-          fatal: incident.severity === "fatal" ? 1 : 0,
-          error: incident.severity === "error" ? 1 : 0,
-          isCurrent: incident.isCurrentBoot,
-        });
-      }
-    }
-    const boots = [...bootMap.values()].slice(0, 8);
-    return {
-      ...base,
-      summary,
-      boots,
-      incidents: recent.slice(0, safeLimit),
-    };
-  } catch (error) {
-    if (isMissingTableError(error)) return { ...base, sourceAvailable: false };
-    console.error("[IncidentLog] Failed to build report:", error instanceof Error ? error.name : "UnknownError");
-    return { ...base, sourceAvailable: false };
-  }
 }
 
 /**
@@ -404,7 +505,9 @@ export async function getIncidentReport(limit: number = DEFAULT_LIST): Promise<I
  */
 export async function deleteIncident(id: number): Promise<IncidentDeleteResult> {
   const incidentId = Number.isFinite(id) ? Math.trunc(id) : NaN;
-  if (!Number.isFinite(incidentId) || incidentId <= 0) return { deleted: 0 };
+  if (!Number.isFinite(incidentId) || incidentId === 0) return { deleted: 0 };
+  // Journal ids are negative so they can never collide with database ids.
+  if (incidentId < 0) return { deleted: deleteJournalEntry(incidentId) };
   try {
     if (!process.env.DATABASE_URL) return { deleted: 0 };
     const pool = await getRawDbPool();
@@ -421,41 +524,48 @@ export async function deleteIncident(id: number): Promise<IncidentDeleteResult> 
 /**
  * Delete every incident row for one restart session when a boot id is supplied,
  * or the whole retained history otherwise. Powers the administrator "delete all"
- * action so crash residue can be cleared manually. Never throws.
+ * action so crash residue can be cleared manually. Removes database rows and
+ * durable journal records. Never throws.
  */
 export async function clearIncidents(options: { bootId?: string } = {}): Promise<IncidentDeleteResult> {
+  const bootId = options.bootId?.trim();
+  let deleted = clearJournalEntries(bootId ? { bootId } : {});
   try {
-    if (!process.env.DATABASE_URL) return { deleted: 0 };
+    if (!process.env.DATABASE_URL) return { deleted };
     const pool = await getRawDbPool();
-    if (!pool) return { deleted: 0 };
-    const bootId = options.bootId?.trim();
+    if (!pool) return { deleted };
     const [result] = bootId
       ? await pool.query<any>("DELETE FROM application_incident_events WHERE bootId = ?", [bootId])
       : await pool.query<any>("DELETE FROM application_incident_events");
-    return { deleted: Number((result as { affectedRows?: unknown } | null)?.affectedRows ?? 0) };
+    deleted += Number((result as { affectedRows?: unknown } | null)?.affectedRows ?? 0);
+    return { deleted };
   } catch (error) {
-    if (isMissingTableError(error)) return { deleted: 0 };
+    if (isMissingTableError(error)) return { deleted };
     console.error("[IncidentLog] Failed to clear incidents:", error instanceof Error ? error.name : "UnknownError");
-    return { deleted: 0 };
+    return { deleted };
   }
 }
 
 /**
  * Delete incident rows older than the retention window so the table stays
- * bounded. Runs at boot and on a schedule. Never throws.
+ * bounded. Runs at boot and on a schedule. Removes database rows and durable
+ * journal records. Never throws.
  */
 export async function purgeIncidentLog(olderThanDays: number = INCIDENT_RETENTION_DAYS): Promise<IncidentPurgeResult> {
   const retentionDays = Number.isFinite(olderThanDays) ? Math.max(1, Math.trunc(olderThanDays)) : INCIDENT_RETENTION_DAYS;
-  const cutoff = utcStamp(new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000));
+  const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const cutoff = utcStamp(cutoffDate);
+  let deleted = purgeJournalEntries(cutoffDate.toISOString());
   try {
-    if (!process.env.DATABASE_URL) return { deleted: 0, retentionDays, cutoff };
+    if (!process.env.DATABASE_URL) return { deleted, retentionDays, cutoff };
     const pool = await getRawDbPool();
-    if (!pool) return { deleted: 0, retentionDays, cutoff };
+    if (!pool) return { deleted, retentionDays, cutoff };
     const [result] = await pool.query<any>("DELETE FROM application_incident_events WHERE occurredAt < ?", [cutoff]);
-    return { deleted: Number((result as { affectedRows?: unknown } | null)?.affectedRows ?? 0), retentionDays, cutoff };
+    deleted += Number((result as { affectedRows?: unknown } | null)?.affectedRows ?? 0);
+    return { deleted, retentionDays, cutoff };
   } catch (error) {
-    if (isMissingTableError(error)) return { deleted: 0, retentionDays, cutoff };
+    if (isMissingTableError(error)) return { deleted, retentionDays, cutoff };
     console.error("[IncidentLog] Failed to purge expired incidents:", error instanceof Error ? error.name : "UnknownError");
-    return { deleted: 0, retentionDays, cutoff };
+    return { deleted, retentionDays, cutoff };
   }
 }
