@@ -37,6 +37,7 @@ arbitrade_root_path_is_allowed "$ROOT" || fail "Deploy the application under /va
 [[ "$ROOT" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "The deployment path must contain only letters, numbers, dots, underscores, slashes, or hyphens so it can be represented safely in the systemd unit. Move the checkout to a simple path such as /var/www/arbitrade-platform."
 [[ ! -L "$ROOT/.env" && -f "$ROOT/.env" ]] || fail "Missing or symlinked $ROOT/.env. Provide a regular, non-symlink production environment file before provisioning."
 [[ -f "$ROOT/dist/index.js" ]] || fail "Missing dist/index.js. Build the app with pnpm build before provisioning."
+[[ -f "$ROOT/scripts/run-server.sh" ]] || fail "Missing scripts/run-server.sh, which bounds the V8 heap to this server's memory so the service cannot be OOM-killed. Update the checkout before provisioning."
 [[ "$DOMAIN" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$ ]] || fail "Provide a valid --domain=example.com."
 if [[ "$ENABLE_HTTPS" == 1 && ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
   fail "--enable-https requires a valid --email= address for Let's Encrypt."
@@ -231,7 +232,7 @@ User=$APP_USER
 Group=$APP_USER
 WorkingDirectory=$ROOT
 EnvironmentFile=/etc/arbitrade/arbitrade.env
-ExecStart=/usr/bin/node $ROOT/dist/index.js
+ExecStart=/bin/sh $ROOT/scripts/run-server.sh --trace-uncaught --unhandled-rejections=strict dist/index.js
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

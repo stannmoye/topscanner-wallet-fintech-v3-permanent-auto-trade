@@ -38,7 +38,7 @@ describe("Trading customer package subscription schema repair", () => {
     expect(entry.idx).toBe(entries.indexOf(entry));
     expect(entries[entry.idx - 1].tag).toBe("0077_trading_package_catalogue_schema_repair");
     expect(entries[entry.idx + 1].tag).toBe("0079_trade_settlement_timing_schema_repair");
-    const tailStart = entries.length - 26;
+    const tailStart = entries.length - 27;
     const tail = entries.slice(tailStart);
     expect(tail.map((item) => item.tag)).toEqual([
       "0097_trading_daily_execution_attempt_accounting",
@@ -67,6 +67,7 @@ describe("Trading customer package subscription schema repair", () => {
       "0125_tender_bid",
       "0126_tender_admin_corrections",
       "0127_tender_expansion",
+      "0128_tender_weekly_ingest",
     ]);
     tail.forEach((item, offset) => {
       const index = tailStart + offset;

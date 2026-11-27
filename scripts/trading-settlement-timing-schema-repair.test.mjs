@@ -24,7 +24,7 @@ describe("Trading settlement timing schema drift repair", () => {
     expect(entry.idx).toBe(entries.indexOf(entry));
     expect(entries[entry.idx - 1].tag).toBe("0078_trading_customer_package_subscription_repair");
     expect(entries[entry.idx + 1].tag).toBe("0080_qualifying_admin_deposit_attribution");
-    expect(entries.slice(-26).map((item) => item.tag)).toEqual([
+    expect(entries.slice(-27).map((item) => item.tag)).toEqual([
       "0097_trading_daily_execution_attempt_accounting",
       "0098_enable_automatic_financial_execution",
       "0099_trading_global_timing_policy_version",
@@ -51,6 +51,7 @@ describe("Trading settlement timing schema drift repair", () => {
       "0125_tender_bid",
       "0126_tender_admin_corrections",
       "0127_tender_expansion",
+      "0128_tender_weekly_ingest",
     ]);
     expect(entry.idx).toBeGreaterThan(0);
     expect(entry.when).toBeGreaterThan(entries[entry.idx - 1].when);

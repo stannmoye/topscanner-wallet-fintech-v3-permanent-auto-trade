@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { mergeNodeOptions, resolveMemoryFlags } from "./memory-limit.mjs";
+
+// Size the V8 heap to the container/host once, before any phase is spawned, and
+// hand the same bound to every child (migrations and the application server).
+const memory = resolveMemoryFlags();
 
 const timestamp = () => new Date().toISOString();
 const log = (level, event, details = {}) => {
@@ -52,7 +57,12 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
     try {
       child = spawn(process.execPath, args, {
         cwd: process.cwd(),
-        env: { ...process.env, NODE_ENV: "production", ...extraEnv },
+        env: {
+          ...process.env,
+          NODE_ENV: "production",
+          NODE_OPTIONS: mergeNodeOptions(process.env.NODE_OPTIONS, memory),
+          ...extraEnv,
+        },
         stdio: ["inherit", "pipe", "pipe"],
       });
     } catch (error) {
@@ -119,6 +129,9 @@ async function main() {
     workingDirectory: process.cwd(),
     portConfigured: Boolean(process.env.PORT),
     databaseUrlConfigured: Boolean(process.env.DATABASE_URL),
+    detectedMemoryLimitMB: memory.limitMib,
+    maxOldSpaceSizeMB: memory.maxOldSpaceSizeMb,
+    maxSemiSpaceSizeMB: memory.maxSemiSpaceSizeMb,
   });
 
   await runPhase("main-database-migrations", ["scripts/guarded-main-migrate.mjs"]);

@@ -20,6 +20,21 @@ Do not choose fresh-install mode for a database containing existing customer or 
 5. The browser installer defaults `TRUST_PROXY_HOPS=0` because it cannot safely infer your network topology. This is the safe direct-client mode and does not trust forwarded headers. Only change it to `1` after verifying that exactly one trusted reverse proxy sits in front of Node and sanitizes forwarded headers. If the proxy chain is unknown, keep `0`; invalid values fall back to `0` rather than crashing startup.
 6. Create only any additional required environment variables from `.env.example` in cPanel; do not upload `.env` to a public directory.
 
+### Bound the V8 heap
+
+cPanel launches the startup file (`dist/index.js`) directly, so it bypasses the adaptive memory padding that `scripts/start-with-diagnostics.mjs` applies on the container and VPS paths. Node then sizes its heap from the *host's* physical RAM — which, on shared hosting, can be far larger than the account's own limit — and the process can be OOM-killed as the heap grows.
+
+In **Setup Node.js App → Environment Variables**, add `NODE_OPTIONS` sized to the account's memory and restart the application so Node reads it at startup. Keep the heap to roughly half the account limit and leave room for off-heap memory (the floor is around 180 MB):
+
+| Account RAM | `NODE_OPTIONS` |
+| --- | --- |
+| 256 MB | `--max-old-space-size=96 --max-semi-space-size=3` |
+| 512 MB | `--max-old-space-size=256 --max-semi-space-size=8` |
+| 1 GB | `--max-old-space-size=512 --max-semi-space-size=16` |
+| 2 GB or more | `--max-old-space-size=1024 --max-semi-space-size=16` |
+
+On a host that exposes a real cgroup memory limit, `node scripts/memory-limit.mjs --node-options` prints the same value for you to paste. On CloudLinux/LVE accounts that do not, use the table above.
+
 ## 2. Install and initialize
 
 If you used the browser wizard, run only the matching installer command below. Do not separately rerun the migration/provisioning commands from older versions of this guide.

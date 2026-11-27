@@ -37,4 +37,21 @@ describe("production startup diagnostics contract", () => {
     expect(server).toContain('"application-bootstrap-failed"');
     expect(server).toContain("stack:");
   });
+
+  it("bounds the V8 heap adaptively on every deployment path", () => {
+    const dockerfile = read("Dockerfile");
+    const launcher = read("scripts/start-with-diagnostics.mjs");
+    const vpsSetup = read("installer/vps-setup.sh");
+    // The launcher derives the heap bound from the real cgroup/host limit and
+    // hands it to every spawned phase, so the process cannot be OOM-killed on
+    // any server size (256 MB container up to a 64 GB host).
+    expect(launcher).toContain('from "./memory-limit.mjs"');
+    expect(launcher).toContain("resolveMemoryFlags");
+    expect(launcher).toContain("NODE_OPTIONS:");
+    // No static heap bound may be baked into the image; the runtime decides.
+    expect(dockerfile).not.toContain("max-old-space-size");
+    // The VPS systemd unit launches through the same adaptive launcher instead of
+    // running dist/index.js directly.
+    expect(vpsSetup).toContain("scripts/run-server.sh");
+  });
 });

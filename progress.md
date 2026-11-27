@@ -1,3 +1,35 @@
+## 2026-11-27 (fix / runtime) — adaptive V8 heap bound for any server size (256 MB → 64 GB)
+
+Owner report: the service **"keeps crashing"** with a heap-size symptom, and the owner asked to make it
+**work on any server — from a 256 MB container up to a 64 GB host — without this problem**, fixed properly
+rather than with a single hard-coded number. The earlier static bound (`b148818`,
+`--max-old-space-size=512`) only moved the number; it can still be wrong on a differently sized host. This
+increment sizes the heap to the memory that is actually available and applies it on every deployment path.
+
+- **Root cause** — inside a container `os.totalmem()` reports the *host's* RAM, not the cgroup limit, so
+  Node sized its old-space ceiling from the host figure (measured 2154 MB here) and grew the heap until the
+  kernel OOM-killed the process. The ceiling cannot be changed after startup —
+  `v8.setFlagsFromString('--max-old-space-size=256')` left `heap_size_limit` at 2154 MB — so the bound must
+  be applied **before** Node launches.
+- **Adaptive sizing** (`scripts/memory-limit.mjs`, new) — reads the real limit (cgroup v2
+  `/sys/fs/cgroup/memory.max` → cgroup v1 `memory.limit_in_bytes` → `os.totalmem()`) and pins
+  `--max-old-space-size` (½ the limit, floor 96 MB, cap 4096 MB) plus `--max-semi-space-size` (2–16 MB; the
+  young generation alone was ~100 MB of RSS). `APP_MAX_OLD_SPACE_MB` / `APP_MAX_SEMI_SPACE_MB` override.
+  Table: 256 MB→96/3, 512→256/8, 1 GB→512/16, 2 GB→1024/16, 4 GB→2048/16, 8 GB+→4096/16.
+- **Container/wrapper path** (`scripts/start-with-diagnostics.mjs`) — resolves the size once and passes the
+  merged `NODE_OPTIONS` to every spawned phase; the `startup-begin` log records the detected limit.
+- **Direct-launch path** (`scripts/run-server.sh`, new) — a zero-shadow launcher that `exec`s Node with the
+  same bound (no leftover supervisor process, important on a 256 MB server). The VPS systemd unit now runs
+  through it (`installer/vps-setup.sh`, plus a preflight guard), and `cpanel/README.md` documents the
+  `NODE_OPTIONS` value to paste for cPanel's direct `dist/index.js` launch.
+- **Dockerfile** — removed the static `NODE_OPTIONS`; startup now sizes the heap to the container.
+- **Tests** — `scripts/memory-limit.test.mjs` (new, 8 tests: sizing table, floors, overrides, merge) and a
+  new adaptive-wiring case in `server/startup-diagnostics.contract.test.ts`; the four stale journal-tail
+  pins (`0127` → `0128_tender_weekly_ingest`) are forward-updated.
+- Verification: `pnpm check` exit 0; `pnpm test` 229 files passed (9 skipped) / 1,962 tests passed (42
+  skipped); installer suite 35 files / 206 tests passed; `pnpm build` exit 0; the launcher applies the bound
+  (heap_size_limit 2096 MB detected, 108 MB under a 96 MB override).
+
 ## 2026-11-27 (fix / Tender Bid) — weekly ingestion cadence + lower request heap
 
 Owner report: the service **"keeps crashing"** with a heap-size symptom; the owner asked to **"keep the

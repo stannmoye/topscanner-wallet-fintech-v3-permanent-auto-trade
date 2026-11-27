@@ -8,10 +8,10 @@ COPY . .
 RUN pnpm build
 ENV NODE_ENV=production
 ENV PORT=3000
-# Bound the V8 old-space so a memory spike cannot let the heap grow toward the
-# host/container limit and abort with "JavaScript heap out of memory" (OOM).
-ENV NODE_OPTIONS="--max-old-space-size=512"
 EXPOSE 3000
+# V8 heap and semi-space limits are sized to the container's memory at startup by
+# scripts/start-with-diagnostics.mjs via scripts/memory-limit.mjs, so the server
+# is bounded correctly on any host size (256 MB container up to 64 GB host).
 # Use pnpm's command resolver; node_modules/.bin/drizzle-kit is a shell shim, not JavaScript.
 # Stop startup if migrations fail rather than launching against an incomplete schema.
 CMD ["node", "scripts/start-with-diagnostics.mjs"]
