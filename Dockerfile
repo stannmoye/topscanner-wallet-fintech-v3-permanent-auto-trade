@@ -8,6 +8,9 @@ COPY . .
 RUN pnpm build
 ENV NODE_ENV=production
 ENV PORT=3000
+# Bound the V8 old-space so a memory spike cannot let the heap grow toward the
+# host/container limit and abort with "JavaScript heap out of memory" (OOM).
+ENV NODE_OPTIONS="--max-old-space-size=512"
 EXPOSE 3000
 # Use pnpm's command resolver; node_modules/.bin/drizzle-kit is a shell shim, not JavaScript.
 # Stop startup if migrations fail rather than launching against an incomplete schema.
