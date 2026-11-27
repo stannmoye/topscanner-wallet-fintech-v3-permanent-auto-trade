@@ -146,6 +146,29 @@ export const adminNavigationGroups: AdminNavigationGroup[] = [
     { id: "trade-audit-policy-history", target: "audit", label: "Audit & Policy History", detail: "Review who changed Trading settings, why they changed and the saved versions", icon: FileText },
     { id: "trade-admin-guide", target: "tradeAdminGuide", label: "Trade Settings Guide", detail: "Read the menu guide and explanations for each Trading control", icon: BookOpen },
   ]},
+  { id: "diagnostics-health", label: "Diagnostics & Health", detail: "Crash causes, memory and disk usage, improvement tiers and API health", items: [
+    { id: "crash-diagnostics", target: "crashDiagnostics", label: "Crash & Incident Diagnostics", detail: "Why the application crashed, pinned to the exact error and kept across restarts", icon: ShieldAlert, children: [
+      { label: "Crashes & Boots", detail: "Every recorded incident grouped by restart session, newest first" },
+      { label: "Uncaught Errors & Rejections", detail: "Uncaught exceptions and unhandled promise rejections" },
+      { label: "Startup & Exit Failures", detail: "Failed boot phases and unexpected process exits" },
+      { label: "Resource Exhaustion (OOM)", detail: "Out-of-memory and heap-pressure records captured before a restart" },
+      { label: "Worker Failures", detail: "Background worker cycles that failed their task" },
+    ]},
+    { id: "resource-health", target: "resourceHealth", label: "Resource & Improvement", detail: "What is eating memory and disk, and what needs critical, major or minor improvement", icon: Activity, children: [
+      { label: "Memory & Process", detail: "Heap, resident memory and the container memory limit" },
+      { label: "Disk & Volume", detail: "Used, free and percentage used of the uploads volume" },
+      { label: "Critical Improvements", detail: "Fix first — recent fatal incidents, failed market data, a nearly full disk" },
+      { label: "Major Improvements", detail: "Fix soon — degraded APIs, worker degradation and high memory or disk usage" },
+      { label: "Minor Improvements", detail: "Keep an eye on — comfort-band and rising usage" },
+    ]},
+    { id: "api-health", target: "apiHealth", label: "API Health & Providers", detail: "Which API works, which fails, which pulls too many resources and how to reduce it", icon: PlugZap, children: [
+      { label: "Provider Status", detail: "Every outbound provider with its live passive status" },
+      { label: "Working & Not Working", detail: "Reachable providers versus failing or unconfigured ones" },
+      { label: "High-Resource Providers", detail: "Providers measured pulling too much latency or payload size" },
+      { label: "Reduce Resource Use", detail: "A concrete reduction note for each provider" },
+      { label: "Test Now", detail: "Run one on-demand probe that measures latency and payload size" },
+    ]},
+  ]},
   { id: "tender-bid", label: "Tender Bid", detail: "Public-tender bidding desk, corrections and ingestion health", items: [
     { id: "tender-bids", target: "tenderBids", label: "Tender Bids", detail: "Every customer bid on a real ingested tender with the balance they held at bid time; apply the charge, decline or record the outcome", icon: Gavel, children: [
       { label: "Bid Queue", detail: "Apply the classified charge, decline the bid or record won/lost" },

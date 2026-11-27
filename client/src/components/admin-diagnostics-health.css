@@ -1,0 +1,110 @@
+/* Crash, resource and API diagnostics console.
+   Reuses the shared admin metric/table/card classes and adds the diagnostics-
+   specific badges, bars, incident cards and provider rows below. */
+
+.admin-diagnostics .diag-header-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+
+.diag-spin{animation:diag-spin 1s linear infinite}
+@keyframes diag-spin{to{transform:rotate(360deg)}}
+
+/* Metric icon tones (the metric grid itself is shared with Sign-in Activity). */
+.admin-sign-in-metric-icon.is-critical{background:rgba(245,126,126,.15);color:#ff9b98}
+.admin-sign-in-metric-icon.is-major{background:rgba(247,190,92,.16);color:#f7c66a}
+.admin-sign-in-metric-icon.is-minor{background:rgba(96,165,250,.15);color:#a9cdfb}
+.admin-sign-in-metric-icon.is-ok{background:rgba(124,231,194,.12);color:#70dcb8}
+
+/* Badges and chips */
+.diag-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid rgba(132,164,177,.22);border-radius:999px;background:rgba(255,255,255,.04);color:#aec3cb;font-size:10px;font-weight:750;letter-spacing:.02em;text-transform:capitalize;white-space:nowrap}
+.diag-badge.is-critical{border-color:rgba(245,126,126,.32);background:rgba(120,37,43,.16);color:#ff9b98}
+.diag-badge.is-major{border-color:rgba(247,190,92,.32);background:rgba(120,84,27,.18);color:#f7c66a}
+.diag-badge.is-minor{border-color:rgba(96,165,250,.32);background:rgba(30,64,110,.2);color:#a9cdfb}
+.diag-badge.is-ok{border-color:rgba(124,231,194,.3);background:rgba(124,231,194,.12);color:#8fe9ca}
+.diag-badge.is-info{border-color:rgba(56,189,248,.3);background:rgba(56,189,248,.12);color:#7dd3fc}
+.diag-badge.is-muted{color:#8ba2ac}
+
+.diag-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border:1px solid rgba(132,164,177,.18);border-radius:8px;background:rgba(255,255,255,.03);color:#9fb4bd;font-size:9.5px;font-weight:650;white-space:nowrap}
+.diag-chip.is-current{border-color:rgba(124,231,194,.3);background:rgba(124,231,194,.1);color:#8fe9ca}
+.diag-chip.is-critical{border-color:rgba(245,126,126,.3);background:rgba(120,37,43,.16);color:#ff9b98}
+.diag-chip.is-major{border-color:rgba(247,190,92,.3);background:rgba(120,84,27,.16);color:#f7c66a}
+.diag-chip.is-minor{border-color:rgba(96,165,250,.3);background:rgba(30,64,110,.18);color:#a9cdfb}
+.diag-chip.is-ok{border-color:rgba(124,231,194,.28);background:rgba(124,231,194,.1);color:#8fe9ca}
+
+/* Key/value definition lists */
+.diag-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:12px 0 0;padding:0}
+.diag-kv>div{display:grid;gap:3px;padding:10px 12px;border:1px solid rgba(132,164,177,.12);border-radius:11px;background:rgba(255,255,255,.017)}
+.diag-kv dt{color:#7d95a0;font-size:9px;font-weight:750;letter-spacing:.06em;text-transform:uppercase}
+.diag-kv dd{margin:0;color:#dbe8e7;font-size:11px;word-break:break-word}
+.diag-kv dd code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#cfe4ee}
+
+/* Restart sessions */
+.diag-boot-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.diag-boot-card{display:grid;gap:7px;padding:13px 14px;border:1px solid rgba(132,164,177,.14);border-radius:13px;background:rgba(255,255,255,.018)}
+.diag-boot-card.is-current{border-color:rgba(124,231,194,.3);background:rgba(124,231,194,.05)}
+.diag-boot-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.diag-boot-head code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#cfe4ee}
+.diag-boot-stats{display:flex;flex-wrap:wrap;gap:10px;color:#91a9b3;font-size:10px}
+.diag-boot-stats strong{color:#eef6f5}
+.diag-boot-when{color:#718d99;font-size:9px}
+
+/* Incident list */
+.diag-incident-list{display:grid;gap:9px;margin:0;padding:0;list-style:none}
+.diag-incident-card{border:1px solid rgba(132,164,177,.14);border-left:3px solid rgba(132,164,177,.3);border-radius:12px;background:rgba(255,255,255,.017);overflow:hidden}
+.diag-incident-card.is-critical{border-left-color:#ff9b98}
+.diag-incident-card.is-major{border-left-color:#f7c66a}
+.diag-incident-card.is-minor{border-left-color:#a9cdfb}
+.diag-incident-head{display:flex;align-items:center;gap:10px;width:100%;padding:11px 13px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.diag-incident-head:hover{background:rgba(124,231,194,.03)}
+.diag-incident-title{flex:1 1 auto;min-width:0;color:#e2ecec;font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diag-incident-when{flex:0 0 auto;color:#7d95a0;font-size:9.5px;white-space:nowrap}
+.diag-incident-meta{display:flex;flex-wrap:wrap;gap:7px;padding:0 13px 11px}
+.diag-incident-detail{padding:4px 13px 14px;border-top:1px solid rgba(132,164,177,.1)}
+.diag-incident-detail h4{margin:12px 0 6px;color:#8ba2ac;font-size:9px;font-weight:750;letter-spacing:.06em;text-transform:uppercase}
+.diag-stack{margin:0;padding:11px 12px;border:1px solid rgba(132,164,177,.12);border-radius:10px;background:rgba(0,0,0,.28);color:#c7d7dc;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:10px;line-height:1.55;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto}
+
+/* Usage bars */
+.diag-bars{display:grid;gap:12px;margin:4px 0 0}
+.diag-bar-row{display:grid;gap:6px}
+.diag-bar-track{width:100%;height:9px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden}
+.diag-bar-fill{display:block;height:100%;border-radius:999px;background:#70dcb8;transition:width .3s ease}
+.diag-bar-fill.is-minor{background:#a9cdfb}
+.diag-bar-fill.is-major{background:#f7c66a}
+.diag-bar-fill.is-critical{background:#ff9b98}
+.diag-bar-label{color:#91a9b3;font-size:10px}
+
+/* Improvement tiers */
+.diag-tier{margin-top:16px}
+.diag-tier-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
+.diag-tier-head small{color:#718d99;font-size:9.5px}
+.diag-improvement-list{display:grid;gap:9px;margin:0;padding:0;list-style:none}
+.diag-improvement{padding:12px 13px;border:1px solid rgba(132,164,177,.14);border-radius:12px;background:rgba(255,255,255,.017)}
+.diag-tier.is-critical .diag-improvement{border-color:rgba(245,126,126,.2);background:rgba(120,37,43,.08)}
+.diag-tier.is-major .diag-improvement{border-color:rgba(247,190,92,.2);background:rgba(120,84,27,.07)}
+.diag-improvement-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
+.diag-improvement-head strong{color:#e8f1f0;font-size:11px;font-weight:650}
+.diag-improvement p{margin:8px 0 0;color:#9db0b8;font-size:10.5px;line-height:1.6}
+.diag-recommendation{display:flex;align-items:flex-start;gap:7px;color:#8fe9ca!important}
+.diag-recommendation>svg{flex:0 0 auto;margin-top:2px}
+
+.diag-notes{display:grid;gap:7px;margin:14px 0 0;padding:0;list-style:none}
+.diag-notes li{display:flex;align-items:flex-start;gap:7px;color:#8ba2ac;font-size:10px;line-height:1.55}
+.diag-notes li>svg{flex:0 0 auto;margin-top:2px;color:#7ce7c2}
+
+/* Providers */
+.diag-provider-list{display:grid;gap:11px}
+.diag-provider{padding:14px 15px;border:1px solid rgba(132,164,177,.15);border-radius:14px;background:linear-gradient(145deg,rgba(20,38,49,.7),rgba(11,23,34,.85))}
+.diag-provider-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.diag-provider-head h3{margin:0;color:#eef6f5;font-size:12.5px;font-weight:700}
+.diag-provider-head small{display:block;margin-top:3px;color:#718d99;font-size:9.5px}
+.diag-provider-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+.diag-provider-endpoint{margin:11px 0 0}
+.diag-provider-endpoint code{display:inline-block;max-width:100%;padding:5px 9px;border-radius:8px;background:rgba(0,0,0,.25);color:#bcd2da;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:9.5px;word-break:break-all}
+.diag-provider-note{margin:10px 0 0;color:#9db0b8;font-size:10.5px;line-height:1.6}
+.diag-provider-error{display:flex;align-items:flex-start;gap:7px;margin:9px 0 0;color:#ff9b98;font-size:10px;line-height:1.55}
+.diag-provider-error>svg{flex:0 0 auto;margin-top:2px}
+.diag-provider-actions{display:flex;flex-wrap:wrap;align-items:center;gap:11px;margin-top:12px}
+.diag-probe-note{color:#8fe9ca;font-size:9.5px}
+
+@media(max-width:720px){
+  .diag-incident-title{white-space:normal}
+  .diag-boot-list{grid-template-columns:1fr}
+}

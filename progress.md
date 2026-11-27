@@ -1,3 +1,38 @@
+## 2026-11-28 (feature / admin) — Diagnostics & Health console (crash, resource, API)
+
+Owner asked for a new admin menu that captures **why the application crashes**, pins the exact
+problem so it is visible **after a restart**, and holds a submenu covering what eats memory and disk,
+what needs **critical / major / minor** improvement, and the **health of every API** (working, not
+working, high-resource, how to reduce usage). Built end to end on the existing additive-schema and
+navigation patterns.
+
+- **Crash & Incident Diagnostics** — new `server/incident-log.ts` persists incidents to the additive
+  `application_incident_events` table (created lazily by `ensureIncidentLogSchema()`, never throws),
+  with a rolling 90-day retention and an automatic purge. Captures uncaught exceptions and unhandled
+  rejections (`server/_core/index.ts` process handlers), startup/boot failures, unexpected exits,
+  out-of-memory / heap pressure (a rate-limited memory watchdog plus supervisor OOM classification)
+  and repeated background-worker failures (`server/_core/workerHealth.ts`). A shared
+  `ARBITRADE_BOOT_ID` groups the supervisor and the application child into **one restart session**.
+- **Supervisor capture** — `scripts/incident-log.mjs` + `scripts/start-with-diagnostics.mjs` record
+  crashes the application could not record itself (a failed migration phase, a `SIGKILL`/`SIGABRT`
+  OOM kill, an unexpected exit) into the same table.
+- **Resource & Improvement** — `server/_core/resourceReport.ts` reports live memory (heap, RSS,
+  container limit) and disk (`statfs`) and derives a single list of improvements tiered
+  critical / major / minor from real signals (incidents, API health, worker health, thresholds).
+- **API Health & Providers** — `server/_core/apiHealth.ts` replaces the static admin API list with a
+  real provider registry plus a passive report (no outbound calls) and a rate-limited, admin-only
+  on-demand **Test now** probe that measures latency and payload size and classifies resource use.
+- **UI + nav** — new `Diagnostics & Health` group in `client/src/admin-navigation.ts` with three
+  submenu pages, lazy-loaded from `client/src/components/AdminDiagnosticsHealth.tsx` and routed in
+  `client/src/App.tsx`; `ADMIN_SECTIONS` picks up the new targets automatically. New
+  `trpc.adminOperations` procedures: `incidents`, `incidentList`, `purgeIncidents`, `resourceReport`,
+  `apiHealth`, `probeApiProvider` (all `adminProcedure`).
+- **Tests** — `server/diagnostics-health.contract.test.ts` (15 cases) asserts the incident capture,
+  boot grouping, resource tiers, probe classification/status, the tRPC surface and the nav/UI wiring.
+- Verification: `pnpm check` (tsc) exit 0; `pnpm build` exit 0; targeted suites
+  (`diagnostics-health`, `sign-in-activity`, `startup-diagnostics`, `workerHealth`, `admin-navigation`,
+  `admin-navigation-drawer`) all passed (67 tests).
+
 ## 2026-11-27 (fix / tender admin UI) — expose the real edit action on mobile
 
 Owner supplied a mobile screenshot showing the tender corrections screen rendering only a dense,

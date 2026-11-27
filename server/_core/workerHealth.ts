@@ -5,6 +5,7 @@ import { getDb } from "../db";
 import { assertExactlyOneAffectedRow } from "../db-mutation-guards";
 import { balanceLedger, appSettings, opportunityPopupEvents, tradingTierQualificationJobs, v5AuditEvents, workerHealthRegistry } from "../../drizzle/schema";
 import { parseTradeGlobalControlPolicy } from "../trading-global-policy";
+import { recordIncident } from "../incident-log";
 
 export const WORKER_HEALTH_REGISTRY = [
   { key: "trading-tier-qualification", label: "Trading tier qualification", description: "Assigns or upgrades tiers from committed qualifying admin-credit jobs.", expectedIntervalMs: 5_000, staleAfterMs: 60_000 },
@@ -35,6 +36,24 @@ const opportunityDeliverySettingKey = "trade.globalControls";
 const instanceId = randomUUID();
 let persistenceWarningLogged = false;
 const inFlightCycles = new Map<WorkerKey, Promise<unknown>>();
+// Rate-limit the durable incident record per worker so a persistently failing
+// worker produces a bounded history rather than one row per failed tick.
+const lastWorkerIncidentAt = new Map<WorkerKey, number>();
+const WORKER_INCIDENT_COOLDOWN_MS = 15 * 60_000;
+
+function recordWorkerIncident(workerKey: WorkerKey, errorMessage: string): void {
+  const now = Date.now();
+  if (now - (lastWorkerIncidentAt.get(workerKey) ?? 0) < WORKER_INCIDENT_COOLDOWN_MS) return;
+  lastWorkerIncidentAt.set(workerKey, now);
+  const definition = WORKER_HEALTH_REGISTRY.find((worker) => worker.key === workerKey);
+  void recordIncident({
+    severity: "warning",
+    category: "worker_failure",
+    eventCode: "WORKER_CYCLE_FAILED",
+    message: `Background worker "${definition?.label ?? workerKey}" failed its cycle: ${errorMessage}`,
+    context: { workerKey, workerLabel: definition?.label ?? workerKey },
+  }).catch(() => undefined);
+}
 
 export function sanitizeWorkerErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
@@ -142,21 +161,25 @@ export function runMonitoredWorkerCycle<T>(
     try {
       const result = await task();
       if (options.degradedWhen?.(result)) {
+        const degradedMessage = options.degradedMessage?.(result) ?? "Worker cycle completed with partial failures";
         await persistCycleEvent(workerKey, {
           status: "degraded",
           durationMs: Math.max(0, Date.now() - startedAt),
-          errorMessage: options.degradedMessage?.(result) ?? "Worker cycle completed with partial failures",
+          errorMessage: degradedMessage,
         });
+        recordWorkerIncident(workerKey, degradedMessage);
       } else {
         await persistCycleEvent(workerKey, { status: "healthy", durationMs: Math.max(0, Date.now() - startedAt) });
       }
       return result;
     } catch (error) {
+      const errorMessage = sanitizeWorkerErrorMessage(error);
       await persistCycleEvent(workerKey, {
         status: "degraded",
         durationMs: Math.max(0, Date.now() - startedAt),
-        errorMessage: sanitizeWorkerErrorMessage(error),
+        errorMessage,
       });
+      recordWorkerIncident(workerKey, errorMessage);
       throw error;
     }
   })();

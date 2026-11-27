@@ -42,6 +42,36 @@ import { ensureCustomerApiSchema } from "../customer-api/schema";
 import { registerCustomerApiRoutes } from "../customer-api/gateway";
 import { TENDER_INGEST_INTERVAL_MS, runTenderIngestCycle } from "../modules/tender/ingest";
 import { parse as parseCookieHeader } from "cookie";
+import { ensureIncidentLogSchema, purgeIncidentLog, recordIncident } from "../incident-log";
+import { ensureApiHealthSchema } from "./apiHealth";
+
+// Persist uncaught errors and unhandled rejections to the durable incident log so
+// the crash cause is still visible after the process restarts. The handler keeps
+// the existing crash semantics: it records best-effort, then exits non-zero.
+const APP_SOURCE_REVISION = process.env.GIT_COMMIT_SHA || process.env.SOURCE_VERSION || null;
+process.on("uncaughtException", (error) => {
+  void recordIncident({
+    severity: "fatal",
+    category: "uncaught_exception",
+    eventCode: error?.name,
+    message: error?.message || "Uncaught exception",
+    stack: error?.stack ?? String(error),
+    context: { code: (error as { code?: unknown })?.code ?? null },
+    sourceRevision: APP_SOURCE_REVISION,
+  }).catch(() => undefined).finally(() => process.exit(1));
+});
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  void recordIncident({
+    severity: "error",
+    category: "unhandled_rejection",
+    eventCode: error.name,
+    message: error.message || "Unhandled promise rejection",
+    stack: error.stack ?? String(reason),
+    context: { code: (error as { code?: unknown }).code ?? null },
+    sourceRevision: APP_SOURCE_REVISION,
+  }).catch(() => undefined);
+});
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
 const customerLoginRateLimit = createAuthRateLimiter({ windowMs: 15 * 60_000, max: 10, message: "Too many login attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-login" });
@@ -529,6 +559,49 @@ async function startServer() {
         .catch(error => console.error("[SignInActivity] retention sweep failed", error instanceof Error ? error.message : "UnknownError"));
     }, 60 * 60_000);
     signInActivityRetentionTimer.unref();
+    // Guarantee the additive incident log and API-health tables exist before
+    // serving, so the administrator Diagnostics & Health console works on hosts
+    // that run only the guarded main migrations.
+    await ensureIncidentLogSchema();
+    await ensureApiHealthSchema();
+    // Clear incident records older than the retention window and then keep
+    // clearing them automatically so the crash history stays bounded.
+    void purgeIncidentLog()
+      .then(result => { if (result.deleted) console.log("[IncidentLog] cleared expired incidents on startup", { deleted: result.deleted, retentionDays: result.retentionDays }); })
+      .catch(error => console.error("[IncidentLog] startup purge failed", error instanceof Error ? error.message : "UnknownError"));
+    const incidentRetentionTimer = registerWorkerInterval(() => {
+      void purgeIncidentLog()
+        .then(result => { if (result.deleted) console.log("[IncidentLog] auto-cleared expired incidents", { deleted: result.deleted, retentionDays: result.retentionDays }); })
+        .catch(error => console.error("[IncidentLog] retention sweep failed", error instanceof Error ? error.message : "UnknownError"));
+    }, 6 * 60 * 60_000);
+    incidentRetentionTimer.unref();
+    // Watch resident and heap memory and persist a resource-exhaustion incident
+    // before the process is killed for exceeding its memory limit. V8 heap
+    // exhaustion aborts the process without raising a catchable error, so this
+    // proactive record is the only in-process way to capture the cause; the
+    // supervisor additionally records a resource-exhaustion incident if the
+    // process is OOM-killed outright. Rate-limited to one record per 30 minutes.
+    let lastMemoryIncidentAt = 0;
+    const memoryWatchdogTimer = registerWorkerInterval(() => {
+      const usage = process.memoryUsage();
+      const heapUsePercent = usage.heapTotal > 0 ? usage.heapUsed / usage.heapTotal : 0;
+      const constrained = (process as unknown as { constrainedMemory?: () => number }).constrainedMemory;
+      const limitBytes = typeof constrained === "function" ? constrained.call(process) : 0;
+      const limitUsePercent = limitBytes > 0 ? usage.rss / limitBytes : 0;
+      if (heapUsePercent < 0.9 && limitUsePercent < 0.9) return;
+      const now = Date.now();
+      if (now - lastMemoryIncidentAt < 30 * 60_000) return;
+      lastMemoryIncidentAt = now;
+      void recordIncident({
+        severity: "fatal",
+        category: "resource_exhaustion",
+        eventCode: "MEMORY_PRESSURE",
+        message: `Memory reached a dangerous level (heap ${Math.round(heapUsePercent * 100)}% of allocated heap${limitBytes > 0 ? `, process ${Math.round(limitUsePercent * 100)}% of its ${Math.round(limitBytes / 1024 / 1024)} MB limit` : ""}).`,
+        context: { rssBytes: usage.rss, heapUsedBytes: usage.heapUsed, heapTotalBytes: usage.heapTotal, limitBytes: limitBytes > 0 ? limitBytes : null },
+        sourceRevision: APP_SOURCE_REVISION,
+      }).catch(() => undefined);
+    }, 60_000);
+    memoryWatchdogTimer.unref();
     // Publish the six demonstration loan auctions and lender reserves on boot so
     // the customer lending desk always has a working board after a rebuild. The
     // seed only touches rows whose id starts with `example-`, so real loans are
@@ -728,7 +801,16 @@ async function startServer() {
       message: String(error.message || "HTTP server error").replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]"),
       stack: String(error.stack || "").replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]").slice(0, 12000),
     }));
-    process.exit(1);
+    const details = error as NodeJS.ErrnoException & { address?: string; port?: number };
+    void recordIncident({
+      severity: "fatal",
+      category: "startup_failure",
+      eventCode: details.code,
+      message: error.message || "HTTP server error",
+      stack: error.stack ?? null,
+      context: { syscall: details.syscall ?? null, address: details.address ?? null, port: details.port ?? null },
+      sourceRevision: APP_SOURCE_REVISION,
+    }).catch(() => undefined).finally(() => process.exit(1));
   });
   console.info("[StartupDiagnostics] " + JSON.stringify({ timestamp: new Date().toISOString(), event: "http-listener-starting", host: "0.0.0.0", port }));
   server.listen(port, "0.0.0.0", () => {
@@ -737,7 +819,7 @@ async function startServer() {
   });
 }
 
-startServer().catch(error => {
+startServer().catch(async error => {
   const details = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; code?: unknown; stack?: unknown } : {};
   const redact = (value: unknown) => String(value ?? "").replace(/\b(?:mysql|mariadb):\/\/[^\s"'<>]+/gi, "[database-url-redacted]");
   console.error("[StartupDiagnostics] " + JSON.stringify({
@@ -749,5 +831,16 @@ startServer().catch(error => {
     message: redact(details.message || "Startup failed without an error message").slice(0, 2000),
     stack: redact(details.stack || "").slice(0, 12000),
   }));
+  // Persist the boot failure so it is still visible after the supervisor
+  // restarts the application, then exit non-zero as before.
+  await recordIncident({
+    severity: "fatal",
+    category: "startup_failure",
+    eventCode: details.code == null ? (typeof details.name === "string" ? details.name : null) : String(details.code),
+    message: String(details.message || "Startup failed without an error message"),
+    stack: typeof details.stack === "string" ? details.stack : null,
+    context: { code: details.code == null ? null : String(details.code) },
+    sourceRevision: APP_SOURCE_REVISION,
+  }).catch(() => undefined);
   process.exit(1);
 });

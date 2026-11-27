@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { mergeNodeOptions, resolveMemoryFlags } from "./memory-limit.mjs";
+import { createIncidentWriter } from "./incident-log.mjs";
 
 // Size the V8 heap to the container/host once, before any phase is spawned, and
 // hand the same bound to every child (migrations and the application server).
@@ -19,6 +21,24 @@ const redact = (value) =>
 let activeChild;
 let shuttingDown = false;
 
+// Share one boot id between the supervisor and its application child so a crash
+// recorded by either side is grouped into the same restart session, and persist
+// supervisor-observed crashes (a failed migration phase, an out-of-memory kill or
+// an unexpected exit) so the cause survives the platform restart.
+const BOOT_ID = process.env.ARBITRADE_BOOT_ID || randomUUID();
+process.env.ARBITRADE_BOOT_ID = BOOT_ID;
+const SOURCE_REVISION = process.env.GIT_COMMIT_SHA || process.env.SOURCE_VERSION || null;
+const incidents = createIncidentWriter({
+  bootId: BOOT_ID,
+  sourceRevision: SOURCE_REVISION,
+  logger: (error) =>
+    console.error(
+      "[StartupDiagnostics] " +
+        JSON.stringify({ timestamp: timestamp(), level: "warn", event: "supervisor-incident-record-failed", message: redact(error?.message || "Unable to record incident") }),
+    ),
+});
+let supervisorCrashRecorded = false;
+
 process.on("uncaughtException", (error) => {
   log("error", "startup-wrapper-uncaught-exception", {
     name: error?.name || "Error",
@@ -26,7 +46,16 @@ process.on("uncaughtException", (error) => {
     message: redact(error?.message || "No error message"),
     stack: redact(error?.stack || "").slice(0, 12000),
   });
-  process.exit(1);
+  void incidents
+    .record({
+      severity: "fatal",
+      category: "startup_failure",
+      processRole: "supervisor",
+      eventCode: error?.code ?? error?.name,
+      message: error?.message || "Supervisor uncaught exception",
+      stack: redact(error?.stack || "").slice(0, 12000),
+    })
+    .finally(() => process.exit(1));
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -37,7 +66,16 @@ process.on("unhandledRejection", (reason) => {
     message: redact(error.message),
     stack: redact(error.stack || "").slice(0, 12000),
   });
-  process.exit(1);
+  void incidents
+    .record({
+      severity: "error",
+      category: "startup_failure",
+      processRole: "supervisor",
+      eventCode: error.code ?? error.name,
+      message: error.message || "Supervisor unhandled rejection",
+      stack: redact(error.stack || "").slice(0, 12000),
+    })
+    .finally(() => process.exit(1));
 });
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
@@ -73,6 +111,7 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
         message: redact(error?.message || "Unable to spawn child process"),
         stack: redact(error?.stack || "").slice(0, 12000),
       });
+      if (error && typeof error === "object") error.phase = name;
       reject(error);
       return;
     }
@@ -95,6 +134,7 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
         stack: redact(error?.stack || "").slice(0, 12000),
       });
       activeChild = undefined;
+      if (error && typeof error === "object") error.phase = name;
       reject(error);
     });
 
@@ -102,8 +142,24 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
       activeChild = undefined;
       if (requirePersistent && !shuttingDown) {
         log("error", "persistent-process-exited-unexpectedly", { phase: name, exitCode: code, signal: signal || undefined });
+        // A null exit code or a SIGKILL/SIGABRT signal is how an out-of-memory
+        // kill reaches the wrapper; classify it so the console points straight at
+        // resource exhaustion rather than a generic unexpected exit.
+        const suspectedOom = signal === "SIGKILL" || signal === "SIGABRT" || code === null;
+        void incidents.record({
+          severity: "fatal",
+          category: suspectedOom ? "resource_exhaustion" : "unexpected_exit",
+          processRole: "supervisor",
+          eventCode: signal || `EXIT_${code ?? "NULL"}`,
+          message: `Persistent startup phase "${name}" exited before a shutdown signal was received (exit code ${code ?? "null"}, signal ${signal || "none"}).`,
+          context: { phase: name, exitCode: code, signal: signal || null, suspectedMemoryLimit: suspectedOom },
+          exitCode: code ?? null,
+          signal: signal || null,
+        });
+        supervisorCrashRecorded = true;
         const error = new Error(`Persistent startup phase "${name}" exited before a shutdown signal was received (exit code ${code ?? "null"}).`);
         error.code = "PERSISTENT_PROCESS_EXITED";
+        error.phase = name;
         reject(error);
         return;
       }
@@ -116,6 +172,7 @@ function runPhase(name, args, extraEnv = {}, requirePersistent = false) {
       log("error", "phase-failed", details);
       const error = new Error(`Startup phase "${name}" failed (exit code ${code ?? "null"}, signal ${signal || "none"}).`);
       error.code = code === null ? "CHILD_SIGNAL_EXIT" : "CHILD_EXIT_NONZERO";
+      error.phase = name;
       reject(error);
     });
   });
@@ -153,14 +210,30 @@ async function main() {
   log("info", "all-startup-phases-complete", {
     note: "The server process exited normally. A separate listening-ready message should be emitted by the application.",
   });
+  await incidents.close();
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   log("error", "startup-aborted", {
     name: error?.name || "Error",
     code: error?.code,
     message: redact(error?.message || "Startup failed without an error message"),
     stack: redact(error?.stack || "").slice(0, 12000),
   });
+  // Persist the boot failure unless the persistent-server crash was already
+  // recorded above, so a failed migration or aborted startup is still explained
+  // after the platform restarts everything.
+  if (!supervisorCrashRecorded) {
+    await incidents.record({
+      severity: "fatal",
+      category: "startup_failure",
+      processRole: "supervisor",
+      eventCode: error?.code ?? error?.name,
+      message: error?.message || "Startup failed without an error message",
+      stack: redact(error?.stack || "").slice(0, 12000),
+      context: { phase: error?.phase ?? null },
+    });
+  }
+  await incidents.close();
   process.exitCode = 1;
 });

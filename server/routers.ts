@@ -78,6 +78,9 @@ import { closeOpportunityOffer } from "./db";
 import { getWalletFundingPriority, setWalletFundingPriority, WalletFundingPriorityVersionConflictError } from "./db";
 import { getOpportunityGenerationControl, getOpportunityGenerationMonitor, listOpportunityGenerationTemplates, OpportunityGenerationControlVersionConflictError, saveOpportunityGenerationTemplate, setOpportunityGenerationControl } from "./db";
 import { getSystemDiagnosticsReport } from "./_core/systemDiagnostics";
+import { getApiHealthReport, probeApiProvider } from "./_core/apiHealth";
+import { getResourceReport } from "./_core/resourceReport";
+import { getIncidentReport, listIncidents, purgeIncidentLog } from "./incident-log";
 import { exportOpportunityDeliveryRecords, getOpportunityDeliveryCustomer, getOpportunityDeliveryDetails, getOpportunityDeliveryQueueDiagnostics, listOpportunityDeliveryRecords, searchOpportunityDeliveryCustomers } from "./opportunityDeliveryDiagnostics";
 import { createAdminApiKey, getAdminApiOverview, listAdminApiCustomerOptions, listAdminApiKeys, listAdminApiRequests, listAdminApiWebhookDeliveries, revokeAdminApiKey, updateAdminApiKey } from "./customer-api/admin";
 import { getCustomerApiSettings, updateCustomerApiSettings, ApiAccessPolicyError } from "./customer-api/settings";
@@ -1368,6 +1371,26 @@ export const appRouter = router({
     devices: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional()).query(({ input }) => listDevicesForAdmin(input?.limit)),
     restoreDevice: adminProcedure.input(z.object({ id: z.number().int().positive(), note: z.string().trim().max(500).optional() })).mutation(({ ctx, input }) => adminRestoreDevice(ctx.user.id, input.id, input.note)),
     systemDiagnostics: adminProcedure.query(() => getSystemDiagnosticsReport()),
+    // Crash & incident diagnostics: the durable log of why the application
+    // crashed, retained across restarts and grouped by boot so a crash from a
+    // previous run is obvious after the process comes back up.
+    incidents: adminProcedure.input(z.object({
+      limit: z.number().int().min(1).max(500).optional(),
+    }).strict().optional()).query(({ input }) => getIncidentReport(input?.limit ?? 150)),
+    incidentList: adminProcedure.input(z.object({
+      limit: z.number().int().min(1).max(500).optional(),
+      category: z.enum(["uncaught_exception", "unhandled_rejection", "startup_failure", "unexpected_exit", "resource_exhaustion", "worker_failure", "http_server_error"]).optional(),
+      severity: z.enum(["info", "warning", "error", "fatal"]).optional(),
+    }).strict().optional()).query(({ input }) => listIncidents(input ?? {})),
+    purgeIncidents: adminProcedure.input(z.object({
+      olderThanDays: z.number().int().min(1).max(365).optional(),
+    }).strict().optional()).mutation(({ input }) => purgeIncidentLog(input?.olderThanDays)),
+    // Memory/disk usage plus the prioritised critical/major/minor improvement list.
+    resourceReport: adminProcedure.query(() => getResourceReport()),
+    // Outbound provider health: passive status by default, and an explicit
+    // administrator-triggered on-demand probe that measures latency and payload.
+    apiHealth: adminProcedure.query(() => getApiHealthReport()),
+    probeApiProvider: adminProcedure.input(z.object({ providerId: z.string().trim().min(1).max(64) })).mutation(({ input }) => probeApiProvider(input.providerId)),
     requeueDeadQualificationJob: adminProcedure.input(z.object({
       jobId: z.number().int().positive(),
       reason: z.string().trim().min(8).max(500),
