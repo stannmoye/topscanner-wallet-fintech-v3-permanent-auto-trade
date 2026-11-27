@@ -40,7 +40,7 @@ import { ensureSignInActivitySchema, purgeSignInActivity, recordSignInActivity }
 import { ensureExampleLendingDesk } from "../lendingDossiers";
 import { ensureCustomerApiSchema } from "../customer-api/schema";
 import { registerCustomerApiRoutes } from "../customer-api/gateway";
-import { runTenderIngestCycle } from "../modules/tender/ingest";
+import { TENDER_INGEST_INTERVAL_MS, runTenderIngestCycle } from "../modules/tender/ingest";
 import { parse as parseCookieHeader } from "cookie";
 
 const registrationRateLimit = createAuthRateLimiter({ windowMs: 60 * 60_000, max: 5, message: "Too many registration attempts. Try again later.", store: configuredAuthRateLimitStore, scope: "customer-register" });
@@ -694,10 +694,13 @@ async function startServer() {
     const marketSyncTimer = registerWorkerInterval(() => { void runMarketRefresh().catch(error => console.error("[MarketSync]", error instanceof Error ? error.message : error)); }, safeRefreshMinutes * 60_000);
     marketSyncTimer.unref();
     void runMarketRefresh().catch(error => console.error("[MarketSync]", error instanceof Error ? error.message : error));
-    // Tender Bid: ingest the enabled government and private tender sources. A source
-    // is only polled when it is due for its own configured interval, and the monitored
-    // cycle prevents overlapping ticks. Per-source outcomes are recorded on
-    // `tender_sources.lastStatus`; worker health is recorded in the health registry.
+    // Tender Bid: ingest the enabled government and private tender sources. Each
+    // source is polled once a week (TENDER_INGEST_INTERVAL_MS), not continuously,
+    // and the monitored cycle prevents overlapping ticks. The startup run and the
+    // weekly tick both respect the per-source due check, so tenders are fetched at
+    // most weekly; an administrator can force an immediate refresh from the
+    // sources console. Per-source outcomes are recorded on `tender_sources.lastStatus`;
+    // worker health is recorded in the health registry.
     const runTenderIngest = () => runMonitoredWorkerCycle("tender-ingest", () => runTenderIngestCycle(), {
       degradedWhen: result => result.sourcesFailed > 0,
       degradedMessage: result => `${result.sourcesFailed} tender source(s) failed during ingestion`,
@@ -706,7 +709,7 @@ async function startServer() {
       void runTenderIngest()
         .then(result => { if (result.tendersUpserted || result.sourcesFailed) console.log("[TenderIngest] cycle", result); })
         .catch(error => console.error("[TenderIngest]", sanitizeWorkerErrorMessage(error)));
-    }, 300_000);
+    }, TENDER_INGEST_INTERVAL_MS);
     tenderIngestTimer.unref();
     void runTenderIngest().catch(error => console.error("[TenderIngest]", sanitizeWorkerErrorMessage(error)));
   } else {

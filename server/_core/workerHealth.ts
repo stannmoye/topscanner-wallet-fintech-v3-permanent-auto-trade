@@ -21,7 +21,7 @@ export const WORKER_HEALTH_REGISTRY = [
   { key: "mining-price-feeds", label: "Mining price feeds", description: "Refreshes configured Mining price-feed data.", expectedIntervalMs: 300_000, staleAfterMs: 1_200_000 },
   { key: "popup-retention", label: "Opportunity popup retention", description: "Prunes expired opportunity lifecycle and delivery records under retention policy.", expectedIntervalMs: 3_600_000, staleAfterMs: 10_800_000 },
   { key: "market-data-refresh", label: "Market data refresh", description: "Refreshes the configured market-data cache and eligible opportunity references.", expectedIntervalMs: 7_200_000, staleAfterMs: 14_400_000 },
-  { key: "tender-ingest", label: "Tender ingestion", description: "Ingests and refreshes tenders from the enabled government and private tender sources.", expectedIntervalMs: 300_000, staleAfterMs: 1_800_000 },
+  { key: "tender-ingest", label: "Tender ingestion", description: "Ingests and refreshes tenders from the enabled government and private tender sources once a week, not continuously.", expectedIntervalMs: 604_800_000, staleAfterMs: 1_209_600_000 },
 ] as const;
 
 type WorkerKey = typeof WORKER_HEALTH_REGISTRY[number]["key"];

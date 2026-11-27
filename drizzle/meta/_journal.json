@@ -645,6 +645,13 @@
       "when": 1794484800009,
       "tag": "0127_tender_expansion",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1794484800010,
+      "tag": "0128_tender_weekly_ingest",
+      "breakpoints": true
     }
   ]
 }

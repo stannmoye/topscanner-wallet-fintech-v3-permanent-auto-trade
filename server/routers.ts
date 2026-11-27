@@ -34,7 +34,7 @@ import { createAdminGreenEnergyDossier, deleteAdminGreenEnergyDossier, listAdmin
 import { disburseLendingLoan, fundLendingLoan, getLendingDesk, getLendingLoanView, listLendingLoanBids, listLendingLoansForSettlement, placeLendingBid, quoteLendingFunding, raiseLendingBid, settleLendingLoan, withdrawLendingBid } from "./lending";
 import { getCustomerTender, getTenderDeskOverview } from "./modules/tender/customerDesk";
 import { applyTenderBidCharge, declineTenderBid, getTenderBidContext, listTenderBidsForAdmin, placeTenderBid, recordTenderBidOutcome } from "./modules/tender/bidding";
-import { correctTenderField, getTenderForAdmin, listTenderCorrectionFields, listTenderSourcesForAdmin, listTendersForAdmin, revertTenderField, setTenderSourceEnabled } from "./modules/tender/admin";
+import { correctTenderField, getTenderForAdmin, listTenderCorrectionFields, listTenderSourcesForAdmin, listTendersForAdmin, revertTenderField, runTenderIngestNow, setTenderSourceEnabled } from "./modules/tender/admin";
 import { createAdminLenderReserve, createAdminLendingLoan, deleteAdminLenderReserve, deleteAdminLendingLoan, listAdminLenderReserves, listAdminLendingLoans, meetAdminLendingCondition, seedExampleLendingDesk, setAdminLenderReserveEnabled, setAdminLendingConditions, setAdminLendingLoanEnabled, setAdminLendingLoanSchedule, setAdminLendingLoanStage, updateAdminLenderReserve, updateAdminLendingLoan } from "./lendingDossiers";
 import {
   LENDING_CONDITION_STATUSES,
@@ -1604,7 +1604,8 @@ export const appRouter = router({
         note: z.string().trim().min(3).max(500),
       })).mutation(({ ctx, input }) => revertTenderField(ctx.user.id, input)),
     }),
-    // Tender sources: enable/disable each source and read its health and tender count.
+    // Tender sources: enable/disable each source, read its health and tender count,
+    // and run an audited immediate ingestion cycle instead of waiting for the weekly run.
     tenderSources: router({
       list: adminProcedure.query(() => listTenderSourcesForAdmin()),
       setEnabled: adminProcedure.input(z.object({
@@ -1612,6 +1613,9 @@ export const appRouter = router({
         enabled: z.boolean(),
         reason: z.string().trim().min(3).max(500),
       })).mutation(({ ctx, input }) => setTenderSourceEnabled(ctx.user.id, input)),
+      fetchNow: adminProcedure.input(z.object({
+        reason: z.string().trim().min(3).max(500),
+      })).mutation(({ ctx, input }) => runTenderIngestNow(ctx.user.id, input)),
     }),
     withdrawalPins: adminProcedure.query(() => listCustomerWithdrawalPins()),
     clearWithdrawalPin: adminProcedure.input(z.object({ userId: z.number().int().positive() })).mutation(({ input }) => clearCustomerWithdrawalPin(input.userId)),

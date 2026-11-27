@@ -568,6 +568,20 @@ export function AdminTenderSources() {
     },
   });
 
+  // "Fetch now" runs one audited ingestion cycle immediately instead of waiting
+  // for the weekly run; the server still bounds the cycle.
+  const fetchNow = trpc.adminOperations.tenderSources.fetchNow.useMutation({
+    onSuccess: (result) => {
+      setMessageKind("success");
+      setMessage(`Fetch now complete: ${result.sourcesProcessed} source(s) processed, ${result.tendersUpserted} tender(s) saved${result.sourcesFailed ? `, ${result.sourcesFailed} failed` : ""}.`);
+      void utils.adminOperations.tenderSources.list.invalidate();
+    },
+    onError: (error) => {
+      setMessageKind("error");
+      setMessage(error.message);
+    },
+  });
+
   const rows = useMemo(() => (query.data?.sources ?? []) as SourceRow[], [query.data]);
   const enabledCount = rows.filter((row) => row.enabled).length;
 
@@ -585,17 +599,34 @@ export function AdminTenderSources() {
     toggle.mutate({ sourceId: row.id, enabled, reason: reason.trim() });
   };
 
+  const runFetchNow = () => {
+    if (fetchNow.isPending) return;
+    const reason = window.prompt("Fetch all enabled tender sources now? The weekly fetch still runs on its own. Enter the administrator reason (3–500 characters).", "");
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      setMessageKind("error");
+      setMessage("Enter an administrator reason of at least 3 characters.");
+      return;
+    }
+    fetchNow.mutate({ reason: reason.trim() });
+  };
+
   return (
     <div className="arb-page portal-page admin-tender-page">
       <header className="portal-page-top">
         <div>
           <div className="eyebrow">Tender Bid · Ingestion health</div>
           <h1>Tender Sources</h1>
-          <p>Each configured country and supranational source with its sync health and per-source tender count. A source is only polled while it is enabled; disabling stops future polling and leaves stored tenders in place. Enable and disable actions are audited.</p>
+          <p>Each configured country and supranational source with its sync health and per-source tender count. A source is polled once a week while it is enabled; disabling stops future polling and leaves stored tenders in place. Enable, disable and fetch-now actions are audited.</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching} aria-busy={query.isFetching}>
-          {query.isFetching ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RefreshCw size={14} />} Refresh
-        </button>
+        <div className="tb-admin-action-buttons">
+          <button className="secondary-button" type="button" onClick={() => void query.refetch()} disabled={query.isFetching} aria-busy={query.isFetching}>
+            {query.isFetching ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RefreshCw size={14} />} Refresh
+          </button>
+          <button className="primary-button" type="button" onClick={runFetchNow} disabled={fetchNow.isPending} aria-busy={fetchNow.isPending}>
+            {fetchNow.isPending ? <span className="tb-admin-spinner" aria-hidden="true" /> : <RefreshCw size={14} />} Fetch now
+          </button>
+        </div>
       </header>
 
       {message && <div className={messageKind === "error" ? "test-notice error" : "test-notice"} role={messageKind === "error" ? "alert" : "status"}>{messageKind === "error" ? <AlertTriangle size={14} /> : <Check size={14} />}<span>{message}</span></div>}

@@ -1,3 +1,47 @@
+## 2026-11-27 (fix / Tender Bid) — weekly ingestion cadence + lower request heap
+
+Owner report: the service **"keeps crashing"** with a heap-size symptom; the owner asked to **"keep the
+heap size low"**, to make the **tender bid API run once a week** (not fetch continuously) and **save
+what it finds to the database weekly**, and to keep every tender input **fully editable from the admin
+side and saved in the database**. Scope confirmed with the owner: **weekly fetch + an admin "Fetch
+now" button**; **existing tender fields are sufficient** (focus on the cadence, memory, and verified
+admin editing); and the **customer desk refreshes on open / manual only** (no background polling).
+
+- **Weekly cadence** (`server/modules/tender/ingest.ts`) — added `TENDER_INGEST_INTERVAL_MS` (604,800,000
+  ms = 7 days); `isSourceDue` now falls back to the weekly interval instead of the old 1-hour default; the
+  ingest cycle gained an `options.force` flag so an administrator run ignores due-time.
+- **Worker wiring** (`server/_core/index.ts`) — the `tender-ingest` timer now runs every
+  `TENDER_INGEST_INTERVAL_MS` (was 300,000 ms) instead of polling every five minutes, so the process no
+  longer issues continuous API traffic; `server/_core/workerHealth.ts` `expectedIntervalMs` 300,000 →
+  604,800,000 and `staleAfterMs` → 1,209,600,000, description updated to "once a week, not continuously".
+- **Source-level default** (`drizzle/schema.ts`) — `tender_sources.expectedIntervalMs` default
+  3,600,000 → 604,800,000; forward-only migration `drizzle/0128_tender_weekly_ingest.sql` (new) sets the
+  column default and normalises only rows still on the old 3,600,000 default (custom intervals untouched).
+  The Drizzle journal appends `0128_tender_weekly_ingest` (idx 92, when 1794484800010) after
+  `0127_tender_expansion` — no existing migration was edited.
+- **Admin "Fetch now"** — `runTenderIngestNow` (`server/modules/tender/admin.ts`) runs one monitored,
+  forced cycle and writes a `tender_ingest_fetch_now` audit row; wired as the `tenderSources.fetchNow`
+  mutation (`server/routers.ts`) and a primary "Fetch now" button beside Refresh in
+  `client/src/components/AdminTenderBid.tsx` (`AdminTenderSources`), reusing the existing
+  `tb-admin-action-buttons` class.
+- **Lower request heap** (`server/modules/tender/customerDesk.ts`) — the desk list/detail reads now select
+  every `tenders` column **except** `rawJson` and the row timestamps (`getTableColumns` projection), so the
+  largest longtext column no longer loads for up to 500 rows per request. No customer-visible value changed.
+- **Customer desk freshness** (`client/src/components/CustomerTenderBid.tsx`) — removed the 60 s / 30 s
+  `refetchInterval` polling; the desk now loads on open and refreshes via a Refresh button that refetches
+  both the overview and the bid context.
+- **Contract tests forward-updated** — `tender-stage8.contract.test.ts` now locates its `0127` entry by tag
+  and asserts it was appended immediately after the then-last entry (matching the `tender-stage1` pattern)
+  instead of pinning it as the global last; `tender-stage5.contract.test.ts` keeps its admin import string
+  in sync with the new `runTenderIngestNow` symbol.
+- **Docs** — `docs/TENDER_BID_SPECIFICATION.md` §6 (weekly worker + Fetch now) and §8 (on-open/manual
+  freshness) updated to match.
+- Verification: `pnpm run check` exit 0; `server/modules/tender` 8 files / 150 tests passed; full
+  `pnpm test` 229 files passed (9 skipped) / 1,961 tests passed (42 skipped); the previously failing
+  `tender-stage8` journal-tail assertion is resolved.
+- Next: confirm in the deployment environment that the weekly timer and the admin "Fetch now" cycle run
+  against a live `DATABASE_URL`; no database was connected to here, so every worker still fails closed.
+
 ## 2026-11-27 (feature / Stage 8) — Tender Bid source expansion (27 more countries / real APIs)
 
 Owner request: **"add more countries and more APIs add 27 more countries"**. Delivered per

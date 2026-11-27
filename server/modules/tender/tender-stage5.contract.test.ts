@@ -199,7 +199,7 @@ describe("Tender Bid Stage 5 — sources health and audit", () => {
 
 describe("Tender Bid Stage 5 — server wiring", () => {
   it("exposes the corrections router with fields, list, detail, correct and revert", () => {
-    expect(routers).toContain('import { correctTenderField, getTenderForAdmin, listTenderCorrectionFields, listTenderSourcesForAdmin, listTendersForAdmin, revertTenderField, setTenderSourceEnabled } from "./modules/tender/admin";');
+    expect(routers).toContain('import { correctTenderField, getTenderForAdmin, listTenderCorrectionFields, listTenderSourcesForAdmin, listTendersForAdmin, revertTenderField, runTenderIngestNow, setTenderSourceEnabled } from "./modules/tender/admin";');
     expect(routers).toContain("tenderCorrections: router({");
     expect(routers).toContain("fields: adminProcedure.query(() => listTenderCorrectionFields())");
     expect(routers).toContain("mutation(({ ctx, input }) => correctTenderField(ctx.user.id, input))");

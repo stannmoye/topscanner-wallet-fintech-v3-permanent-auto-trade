@@ -83,8 +83,10 @@ type Tender = any;
 type MyBid = any;
 
 export function CustomerTenderBid({ push }: { push: (message: string) => void }) {
-  const overview = trpc.customer.tender.overview.useQuery(undefined, { refetchInterval: 60000 });
-  const bidContext = trpc.customer.tender.bidContext.useQuery(undefined, { refetchInterval: 30000 });
+  // Refreshed on open and via the manual Refresh button only — no background
+  // polling, so an idle tab never keeps the server (and its heap) busy.
+  const overview = trpc.customer.tender.overview.useQuery();
+  const bidContext = trpc.customer.tender.bidContext.useQuery();
   const placeBid = trpc.customer.tender.placeBid.useMutation();
   const [search, setSearch] = useState("");
   const [country, setCountry] = useState("");
@@ -103,6 +105,11 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
   const facets = overview.data?.facets;
   const eligibleUsdMinor = bidContext.data?.eligibleUsdMinor ?? null;
   const valuationAvailable = bidContext.data?.valuationAvailable ?? false;
+  const isRefreshing = overview.isFetching || bidContext.isFetching;
+  const refreshAll = () => {
+    void overview.refetch();
+    void bidContext.refetch();
+  };
 
   const bidsByTender = useMemo(() => {
     const map: Record<number, MyBid> = {};
@@ -201,7 +208,7 @@ export function CustomerTenderBid({ push }: { push: (message: string) => void })
       <label className="tb-field"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status"><option value="">All statuses</option>{Object.entries(STATUS_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <label className="tb-field"><span>Contract value</span><select value={band} onChange={(event) => setBand(event.target.value)} aria-label="Filter by contract value">{CONTRACT_BANDS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></label>
       <button type="button" className={`tb-toggle${closingSoon ? " is-on" : ""}`} aria-pressed={closingSoon} onClick={() => setClosingSoon((value) => !value)}><Filter size={14}/> Closing soon</button>
-      <button type="button" className="tb-refresh" onClick={() => overview.refetch()} aria-label="Refresh tenders" title="Refresh tenders" aria-busy={overview.isFetching}>{overview.isFetching ? <span className="tb-spinner" aria-hidden="true"/> : <RefreshCw size={15}/>}</button>
+      <button type="button" className="tb-refresh" onClick={refreshAll} aria-label="Refresh tenders" title="Refresh tenders" aria-busy={isRefreshing}>{isRefreshing ? <span className="tb-spinner" aria-hidden="true"/> : <RefreshCw size={15}/>}</button>
       {filtersActive && <button type="button" className="tb-reset" onClick={resetFilters}>Reset filters</button>}
     </section>
 

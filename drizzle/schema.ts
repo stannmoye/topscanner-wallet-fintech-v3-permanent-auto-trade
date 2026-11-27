@@ -1672,7 +1672,8 @@ export const tenderSources = mysqlTable("tender_sources", {
   configJson: json("configJson"),
   /** Administrator-controlled; disabled until explicitly enabled. */
   enabled: boolean("enabled").default(false).notNull(),
-  expectedIntervalMs: int("expectedIntervalMs").default(3600000).notNull(),
+  /** Polling cadence; defaults to once a week so providers are not fetched continuously. */
+  expectedIntervalMs: int("expectedIntervalMs").default(604800000).notNull(),
   lastSyncAt: timestamp("lastSyncAt"),
   lastStatus: varchar("lastStatus", { length: 32 }),
   lastError: varchar("lastError", { length: 500 }),

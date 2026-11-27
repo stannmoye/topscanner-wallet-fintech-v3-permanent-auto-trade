@@ -1,6 +1,8 @@
 import { and, asc, count, desc, eq, like, or } from "drizzle-orm";
 import { getDb } from "../../db";
 import { tenderFieldHistory, tenderSources, tenders, v5AuditEvents } from "../../../drizzle/schema";
+import { runMonitoredWorkerCycle } from "../../_core/workerHealth";
+import { runTenderIngestCycle, type TenderIngestCycleResult } from "./ingest";
 import { deriveTenderStatus } from "./normalise";
 import {
   TENDER_CORRECTION_FIELDS,
@@ -203,6 +205,46 @@ export async function setTenderSourceEnabled(
 
   const total = (await db.select({ total: count() }).from(tenders).where(eq(tenders.sourceId, sourceId)))[0];
   return toAdminSource({ ...source, enabled: Boolean(input.enabled) }, Number(total?.total ?? 0));
+}
+
+/**
+ * Run one tender-ingestion cycle immediately on demand (the administrator
+ * "Fetch now" action). The weekly cadence means providers are not polled
+ * continuously; this forces every enabled source to be treated as due so an
+ * administrator can refresh without waiting for the next weekly run. The cycle
+ * remains bounded, and the request is recorded in the shared audit trail.
+ */
+export async function runTenderIngestNow(
+  adminId: number,
+  input: { reason: string },
+): Promise<TenderIngestCycleResult> {
+  const db = requireDatabase(await getDb());
+  const reason = validateNote(input.reason, "reason");
+  const result = await runMonitoredWorkerCycle("tender-ingest", () => runTenderIngestCycle({ force: true }), {
+    degradedWhen: (cycle) => cycle.sourcesFailed > 0,
+    degradedMessage: (cycle) => `${cycle.sourcesFailed} tender source(s) failed during ingestion`,
+  });
+
+  try {
+    await db.insert(v5AuditEvents).values({
+      actorUserId: adminId,
+      action: "tender_ingest_fetch_now",
+      entityType: "tender_source",
+      entityId: "all",
+      reason,
+      reference: "tender-source:fetch-now",
+      metadataJson: JSON.stringify({
+        sourcesDue: result.sourcesDue,
+        sourcesProcessed: result.sourcesProcessed,
+        sourcesFailed: result.sourcesFailed,
+        tendersUpserted: result.tendersUpserted,
+      }),
+    });
+  } catch (error) {
+    console.error("[Tender] Fetch-now audit write failed:", error instanceof Error ? error.name : "UnknownError");
+  }
+
+  return result;
 }
 
 /**

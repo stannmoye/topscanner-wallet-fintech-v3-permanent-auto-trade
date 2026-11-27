@@ -132,10 +132,15 @@ describe("Tender Bid Stage 8 — expanded country catalogue", () => {
       expect(sql).toContain(`('${key}', '${source.label}', '${country}', 'government', '${adapter}')`);
     }
     expect(sql).toContain("ON DUPLICATE KEY UPDATE");
-    const last = journal.entries.at(-1)!;
-    expect(last.tag).toBe("0127_tender_expansion");
-    expect(journal.entries.at(-2)!.tag).toBe("0126_tender_admin_corrections");
-    expect(last.idx).toBe(journal.entries.length - 1);
-    expect(last.when).toBeGreaterThan(journal.entries.at(-2)!.when);
+    const entry = journal.entries.find((item) => item.tag === "0127_tender_expansion")!;
+    expect(entry).toBeDefined();
+    const previousLast = journal.entries.filter((item) => item.when < entry.when).at(-1);
+    expect(previousLast?.tag).toBe("0126_tender_admin_corrections");
+    // Later tender stages may append newer migrations (e.g. the weekly ingest
+    // cadence), so assert this migration was appended immediately after the
+    // then-last entry rather than pinning it as the global last.
+    expect(journal.entries.indexOf(entry)).toBe(journal.entries.indexOf(previousLast!) + 1);
+    expect(entry.idx).toBe(journal.entries.indexOf(entry));
+    expect(entry.when).toBeGreaterThan(previousLast!.when);
   });
 });

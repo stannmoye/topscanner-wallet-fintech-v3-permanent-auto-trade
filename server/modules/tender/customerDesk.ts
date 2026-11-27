@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, getTableColumns } from "drizzle-orm";
 import { getDb } from "../../db";
 import { tenderSources, tenders } from "../../../drizzle/schema";
 import { deriveTenderStatus } from "./normalise";
@@ -74,6 +74,18 @@ export type TenderDeskOverview = {
 
 type TenderRow = typeof tenders.$inferSelect;
 
+/**
+ * The customer desk never renders `rawJson` (the provider's raw payload) or the
+ * row timestamps. At up to {@link TENDER_DESK_MAX_ROWS} rows per request that
+ * longtext column is by far the largest item in the result set, so excluding it
+ * keeps each desk request's heap footprint small without changing any value the
+ * customer sees.
+ */
+const { rawJson: _rawJson, createdAt: _createdAt, updatedAt: _updatedAt, ...deskTenderColumns } =
+  getTableColumns(tenders);
+
+type TenderDeskRow = Omit<TenderRow, "rawJson" | "createdAt" | "updatedAt">;
+
 function iso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -104,14 +116,14 @@ function readDocuments(value: unknown): { label: string; url: string }[] {
  * immediately); otherwise a tender keeps its recorded award outcome, and for
  * every other status the clock decides.
  */
-function liveStatus(row: TenderRow): TenderStatus {
+function liveStatus(row: TenderDeskRow): TenderStatus {
   if (hasTenderFieldOverride(row.overridesJson, "status")) return row.status;
   if (row.status === "awarded") return "awarded";
   return deriveTenderStatus({ bidOpenAt: iso(row.bidOpenAt), bidCloseAt: iso(row.bidCloseAt) });
 }
 
 /** Rank a row by how complete it is, so the richest record fronts a dedupe group. */
-function completeness(row: TenderRow): number {
+function completeness(row: TenderDeskRow): number {
   let score = 0;
   if (row.contractAmountUsdMinor != null) score += 4;
   if (row.buyer) score += 1;
@@ -123,7 +135,7 @@ function completeness(row: TenderRow): number {
 }
 
 type JoinedRow = {
-  tender: TenderRow;
+  tender: TenderDeskRow;
   sourceKey: string | null;
   sourceLabel: string | null;
   sourceKind: string | null;
@@ -234,7 +246,7 @@ export async function getTenderDeskOverview(): Promise<TenderDeskOverview> {
 
   const rows = await db
     .select({
-      tender: tenders,
+      tender: deskTenderColumns,
       sourceKey: tenderSources.key,
       sourceLabel: tenderSources.label,
       sourceKind: tenderSources.kind,
@@ -264,7 +276,7 @@ export async function getCustomerTender(tenderId: number): Promise<CustomerTende
 
   const rows = await db
     .select({
-      tender: tenders,
+      tender: deskTenderColumns,
       sourceKey: tenderSources.key,
       sourceLabel: tenderSources.label,
       sourceKind: tenderSources.kind,

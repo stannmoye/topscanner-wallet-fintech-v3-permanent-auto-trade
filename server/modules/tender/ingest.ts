@@ -37,6 +37,14 @@ import type { FxRateSnapshot } from "../trading-wallet-fx";
  * calculation input; USD values come only from a fresh `getFreshTradingFxRate` quote.
  */
 
+/**
+ * The canonical polling cadence for an enabled tender source: once every seven
+ * days. Tender providers are only contacted weekly, so ingestion is not a
+ * continuous background fetch; an administrator can still force an immediate
+ * refresh through the audited "Fetch now" action.
+ */
+export const TENDER_INGEST_INTERVAL_MS = 604_800_000;
+
 /** Upper bound on pages fetched per source per cycle, so one busy source cannot stall the cycle. */
 export const TENDER_INGEST_MAX_PAGES_PER_SOURCE = 100;
 
@@ -91,7 +99,7 @@ function toDate(value: string | null): Date | null {
 function isSourceDue(source: TenderSourceRow, nowMs: number): boolean {
   const interval = Number.isFinite(source.expectedIntervalMs) && source.expectedIntervalMs > 0
     ? source.expectedIntervalMs
-    : 3_600_000;
+    : TENDER_INGEST_INTERVAL_MS;
   const last = source.lastSyncAt ? new Date(source.lastSyncAt).getTime() : 0;
   return !last || nowMs - last >= interval;
 }
@@ -346,8 +354,15 @@ async function ingestSource(
   return { kind: "ok", pages, upserted, rowsFailed, drained, highWater };
 }
 
-/** Run one tender-ingestion cycle across every due, enabled source. */
-export async function runTenderIngestCycle(): Promise<TenderIngestCycleResult> {
+/**
+ * Run one tender-ingestion cycle across every due, enabled source.
+ *
+ * With `force` set, every enabled source is treated as due so an administrator
+ * can refresh immediately through the audited "Fetch now" action without waiting
+ * for the weekly cadence. The per-cycle source bound still applies, so a forced
+ * cycle stays bounded.
+ */
+export async function runTenderIngestCycle(options: { force?: boolean } = {}): Promise<TenderIngestCycleResult> {
   const startedAt = new Date();
   const db = await getDb();
   if (!db) throw new Error("Tender ingestion database is unavailable.");
@@ -360,7 +375,9 @@ export async function runTenderIngestCycle(): Promise<TenderIngestCycleResult> {
     .where(eq(tenderSources.enabled, true))
     .orderBy(asc(tenderSources.id));
   const nowMs = startedAt.getTime();
-  const due = enabled.filter((source) => isSourceDue(source, nowMs)).slice(0, TENDER_INGEST_MAX_SOURCES_PER_CYCLE);
+  const due = enabled
+    .filter((source) => options.force === true || isSourceDue(source, nowMs))
+    .slice(0, TENDER_INGEST_MAX_SOURCES_PER_CYCLE);
 
   let sourcesProcessed = 0;
   let sourcesFailed = 0;

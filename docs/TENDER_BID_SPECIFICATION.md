@@ -219,8 +219,13 @@ export type NormalizedTender = {
 };
 ```
 
-**Ingestion worker** (`tender-ingest`), registered in `WORKER_HEALTH_REGISTRY` like `daily-reports`:
-1. For each enabled source on its interval, call the adapter (paginated, rate-limited, retrying).
+**Ingestion worker** (`tender-ingest`), registered in `WORKER_HEALTH_REGISTRY` like `daily-reports`.
+The worker runs one ingestion cycle **once a week** (`TENDER_INGEST_INTERVAL_MS`, 7 days) instead of
+polling continuously, so the portal never depends on constant API traffic and the process keeps a low
+memory footprint. Each enabled source carries its own `expectedIntervalMs` (default 7 days) and is
+fetched only when it is due. An administrator may also trigger one immediate, audited cycle from the
+Sources console ("Fetch now"), which forces every enabled source to run regardless of its due time.
+1. For each enabled source that is due, call the adapter (paginated, rate-limited, retrying).
 2. Normalise (CPV/NAICS/category → canonical industry; currency kept with its code).
 3. Convert contract value to USD using a **fresh FX snapshot**; if the rate is missing/stale, keep the
    tender but mark the USD value unavailable (never guess) and exclude it from range filtering.
@@ -261,6 +266,8 @@ On the **Tender Bid** desk (`tender-bid`):
   `tender_bids.status`, plus notifications.
 - Every figure is labelled as a **configured/contractual** value; nothing implies an external-market
   execution or a guaranteed award.
+- Freshness: the desk loads when it is opened and refreshes on demand via its Refresh button. It does
+  **not** poll in the background, so an idle tab never keeps the server (and its heap) busy.
 
 ---
 
