@@ -673,7 +673,7 @@ export async function updateDeliveryRetryPolicy(input:{expectedVersion:number;po
   if(persisted.version!==saved.version||persisted.policy!==saved.policy||persisted.maxAttempts!==saved.maxAttempts||JSON.stringify(persisted.intervalsSeconds)!==JSON.stringify(saved.intervalsSeconds)||persisted.effectiveAt!==saved.effectiveAt||persisted.updatedBy!==updatedBy||persisted.configured!==true) throw new Error("Delivery retry policy save committed, but a fresh database read did not confirm every value and the new policy version.");
   return persisted;
 }
-export async function countOutstandingTrades(userId?: number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); const rows=await db.select({id:tradePositions.id}).from(tradePositions).where(userId===undefined?eq(tradePositions.status,"confirmed"):and(eq(tradePositions.userId,userId),eq(tradePositions.status,"confirmed"))); return rows.length; }
+export async function countOutstandingTrades(userId?: number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); const rows=await db.select({total:count()}).from(tradePositions).where(userId===undefined?eq(tradePositions.status,"confirmed"):and(eq(tradePositions.userId,userId),eq(tradePositions.status,"confirmed"))); return Number(rows[0]?.total??0); }
 export async function getTicketUploadPolicy() {
   return normalizeTicketUploadPolicy(
     await getAppSetting("ticket.maxAttachmentMb", "25"),
