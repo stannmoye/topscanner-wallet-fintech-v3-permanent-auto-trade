@@ -11,11 +11,14 @@ const MIB = 1024 * 1024;
 describe("container-aware V8 memory sizing", () => {
   it("sizes the heap inside the limit and caps growth on very large hosts", () => {
     // Server MB -> { maxOldSpaceSizeMb, maxSemiSpaceSizeMb }
+    // The heap plus the ~320 MB reserve (resident wrapper + off-heap floor) must
+    // stay under the server's limit, so a 512 MB server gets a 192 MB heap and
+    // its whole process tree peaks well below 512 MB.
     const expected = new Map([
       [128, { maxOldSpaceSizeMb: 96, maxSemiSpaceSizeMb: 3 }],
       [256, { maxOldSpaceSizeMb: 96, maxSemiSpaceSizeMb: 3 }],
-      [384, { maxOldSpaceSizeMb: 192, maxSemiSpaceSizeMb: 6 }],
-      [512, { maxOldSpaceSizeMb: 256, maxSemiSpaceSizeMb: 8 }],
+      [384, { maxOldSpaceSizeMb: 96, maxSemiSpaceSizeMb: 3 }],
+      [512, { maxOldSpaceSizeMb: 192, maxSemiSpaceSizeMb: 6 }],
       [1024, { maxOldSpaceSizeMb: 512, maxSemiSpaceSizeMb: 16 }],
       [2048, { maxOldSpaceSizeMb: 1024, maxSemiSpaceSizeMb: 16 }],
       [4096, { maxOldSpaceSizeMb: 2048, maxSemiSpaceSizeMb: 16 }],
@@ -44,6 +47,19 @@ describe("container-aware V8 memory sizing", () => {
     const flags = resolveMemoryFlags({ APP_MAX_OLD_SPACE_MB: "0", APP_MAX_SEMI_SPACE_MB: "abc" });
     expect(flags.maxOldSpaceSizeMb).toBe(detected.maxOldSpaceSizeMb);
     expect(flags.maxSemiSpaceSizeMb).toBe(detected.maxSemiSpaceSizeMb);
+  });
+
+  it("honours an explicitly declared server size when detection is wrong or impossible", () => {
+    const flags = resolveMemoryFlags({ APP_MEMORY_LIMIT_MB: "512" });
+    expect(flags.limitMib).toBe(512);
+    expect(flags.maxOldSpaceSizeMb).toBe(192);
+    expect(flags.maxSemiSpaceSizeMb).toBe(6);
+  });
+
+  it("ignores invalid declared sizes and keeps the detected values", () => {
+    const detected = computeMemoryFlags(detectMemoryLimitBytes());
+    const flags = resolveMemoryFlags({ APP_MEMORY_LIMIT_MB: "0" });
+    expect(flags.maxOldSpaceSizeMb).toBe(detected.maxOldSpaceSizeMb);
   });
 
   it("reports a positive detected limit", () => {

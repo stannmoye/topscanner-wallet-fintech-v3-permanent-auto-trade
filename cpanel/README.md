@@ -29,11 +29,11 @@ In **Setup Node.js App → Environment Variables**, add `NODE_OPTIONS` sized to 
 | Account RAM | `NODE_OPTIONS` |
 | --- | --- |
 | 256 MB | `--max-old-space-size=96 --max-semi-space-size=3` |
-| 512 MB | `--max-old-space-size=256 --max-semi-space-size=8` |
+| 512 MB | `--max-old-space-size=192 --max-semi-space-size=6` |
 | 1 GB | `--max-old-space-size=512 --max-semi-space-size=16` |
 | 2 GB or more | `--max-old-space-size=1024 --max-semi-space-size=16` |
 
-On a host that exposes a real cgroup memory limit, `node scripts/memory-limit.mjs --node-options` prints the same value for you to paste. On CloudLinux/LVE accounts that do not, use the table above.
+On a host that exposes a real cgroup memory limit, `node scripts/memory-limit.mjs --node-options` prints the same value for you to paste. On CloudLinux/LVE accounts that do not, use the table above — or set `APP_MEMORY_LIMIT_MB` to the account's memory so the adaptive sizing (used by `scripts/run-server.sh`) sizes the heap correctly instead of assuming the host's RAM.
 
 ## 2. Install and initialize
 

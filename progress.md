@@ -1,3 +1,32 @@
+## 2026-11-27 (fix / runtime) — stop the 512 MB crash: no host-RAM fallback + reserve budget
+
+Owner followed up that the service was **"still crashing"** on their **512 MB server** after `fc78e1d`,
+and asked to *"investigate completely"*. Live reproduction on this host (exporting the local `.env` and
+running the real wrapper under a 512 MB-equivalent bound) located two remaining defects in the adaptive
+sizing, both fixed in `scripts/memory-limit.mjs`:
+
+- **Host-RAM fallback re-created the original bug** — `detectMemoryLimitBytes()` fell back to
+  `os.totalmem()` whenever the cgroup limit could not be read. On a container whose cgroup files are not
+  exposed (or report `max`, with the real limit enforced elsewhere) that returns the *host's* RAM, so V8
+  sizes an unbounded heap again and the kernel OOM-kills the container. It now checks cgroup v2
+  `memory.max` → `memory.high` → cgroup v1 `memory.limit_in_bytes`; only a **genuine bare-metal host**
+  falls back to `os.totalmem()` — a detected container with no readable limit uses a conservative 512 MB
+  default instead. Added **`APP_MEMORY_LIMIT_MB`** so an operator can declare the real server size when
+  detection is impossible.
+- **The reserve did not cover the resident wrapper + off-heap floor** — the wrapper supervisor
+  (`start-with-diagnostics.mjs`) stays alive for the server's whole lifetime (~73 MB) on top of the
+  Node/V8 + native + mysql2 floor (~185 MB). The old 160 MB reserve let a "512 MB → 256 MB heap" plan
+  reach a tree of ~339 MB at idle and potentially ~(265+256) MB under load — over 512 MB. The reserve is
+  now **320 MB** (wrapper + off-heap + safety), so the whole tree stays under the limit even at full heap.
+- **New sizing table** (`--max-old-space-size`): 256 MB→96, 384→96, **512→192**, 1 GB→512, 2 GB→1024,
+  4 GB→2048, 8 GB+→4096; `--max-semi-space-size` 3–16.
+- **Live evidence** — with `APP_MEMORY_LIMIT_MB=512` the real wrapper boots clean
+  (`detectedMemoryLimitMB=512 maxOldSpaceSizeMB=192`) and the whole process tree peaks at **333.6 MB**
+  (wrapper 72.8 + app 260.7) — ~178 MB of headroom under 512 MB.
+- Tests updated: `scripts/memory-limit.test.mjs` (new table + declared-size override cases, 10 tests);
+  `cpanel/README.md` table updated to 512 MB→`192/6`. Verification: `pnpm check` exit 0; `pnpm test`
+  229 files / 1,962 tests passed; installer suite 35 files / 208 tests passed; `pnpm build` exit 0.
+
 ## 2026-11-27 (fix / runtime) — adaptive V8 heap bound for any server size (256 MB → 64 GB)
 
 Owner report: the service **"keeps crashing"** with a heap-size symptom, and the owner asked to make it
