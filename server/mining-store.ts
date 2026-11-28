@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import Decimal from "decimal.js";
-import mysql, { type PoolConnection } from "mysql2/promise";
+import { type PoolConnection } from "mysql2/promise";
 import { isQuoteFresh, isRateWithinDeviation } from "./mining-rules";
 import { fetchCurrencyUsdRate } from "./marketProviders";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 
 export class MiningError extends Error {
   constructor(message: string) { super(message); this.name = "MiningError"; }
@@ -64,10 +64,9 @@ export function requestKey(prefix: string, userId: number, input: string) {
 }
 
 export async function withMiningConnection<T>(fn: (conn: Db) => Promise<T>): Promise<T> {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
-  const conn = await pool.getConnection();
+  const conn = await getSharedMysqlPool().getConnection();
   try { return await fn(conn); }
-  finally { conn.release(); await pool.end(); }
+  finally { conn.release(); }
 }
 
 export async function inMiningTransaction<T>(conn: Db, fn: () => Promise<T>) {

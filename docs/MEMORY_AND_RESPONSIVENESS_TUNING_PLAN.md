@@ -89,12 +89,15 @@ behaviour.
       failures back off exponentially. The `visibilitychange`
       refetch-on-visible wiring is intact (covered by
       `client/src/visibility-aware-polling.test.ts`).
-- [ ] **Stage 2 — Shared MySQL pool.**
-      Add a lazy, bounded **shared** pool in `server/_core/mysql.ts`
-      (`getSharedMysqlPool()` / `closeSharedMysqlPool()`), switch every
-      `withConnection()` to reuse it and release the connection only, wire
-      `closeSharedMysqlPool()` into graceful shutdown, and update the affected
-      contract test.
+- [x] **Stage 2 — Shared MySQL pool.**
+      Added a lazy, bounded **shared** pool in `server/_core/mysql.ts`
+      (`getSharedMysqlPool()` / `closeSharedMysqlPool()`, default limit 8,
+      overridable via `DB_SHARED_POOL_CONNECTION_LIMIT`). Switched all 24
+      `withConnection()` / `withMiningConnection()` helpers to reuse it and
+      release the connection only (no per-call `createPool`/`pool.end`). Wired
+      `closeSharedMysqlPool()` into graceful shutdown after the main pool.
+      Updated `server/opportunity-lifecycle-summary.contract.test.ts` to assert
+      one shared pool, no per-read `end`, and one release.
 - [ ] **Stage 3 — Catalogue & hot-path allocation.**
       Single-pass, memoised `getCompanyReferenceSummary()`; allocation-free
       counting; avoid per-record spreads on count paths.
@@ -120,3 +123,7 @@ behaviour.
   sites in 29 client components routed through `visibilityAwareRefetchInterval`.
   `pnpm check` green; `visibility-aware-polling.test.ts` and
   `refresh-balance-invalidation.test.ts` green (14 tests).
+- **Stage 2** — shared bounded MySQL pool added; all 24 per-call pool
+  implementations converted to reuse it; graceful shutdown closes it.
+  `pnpm check` green; full `pnpm test` green (1993 passed, 42 skipped, 0
+  failed).

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 
 type Db = mysql.PoolConnection;
 type StakeProduct = {
@@ -29,9 +29,8 @@ const productSeed = [
 ] as const;
 
 async function withConnection<T>(fn: (conn: Db) => Promise<T>) {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
-  const conn = await pool.getConnection();
-  try { return await fn(conn); } finally { conn.release(); await pool.end(); }
+  const conn = await getSharedMysqlPool().getConnection();
+  try { return await fn(conn); } finally { conn.release(); }
 }
 
 async function ensureProducts(conn: Db) {

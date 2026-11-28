@@ -34,6 +34,7 @@ import { runDailyEmailReports } from "../emailAdmin";
 import { startHeartbeatWorker } from "./heartbeat";
 import { runMonitoredWorkerCycle, sanitizeWorkerErrorMessage, waitForMonitoredWorkerCycles } from "./workerHealth";
 import { registerGracefulShutdown, registerWorkerInterval } from "./workerRuntime";
+import { closeSharedMysqlPool } from "./mysql";
 import { registerLocalStorageRoutes } from "./localStorageRoutes";
 import { refreshMiningPriceFeeds } from "../mining-admin";
 import { runMiningWorkerCycle } from "../mining";
@@ -141,7 +142,19 @@ async function startServer() {
   }
   app.set("trust proxy", trustedProxyHops);
   const server = createServer(app);
-  registerGracefulShutdown({ server, drainWorkers: waitForMonitoredWorkerCycles, closeDatabase: closeDbPool });
+  registerGracefulShutdown({
+    server,
+    drainWorkers: waitForMonitoredWorkerCycles,
+    // Close the main pool, then the shared Desk/Dossier/Mining pool (Stage 2), so
+    // no MySQL sockets or keep-alive timers outlive the shutdown.
+    closeDatabase: async () => {
+      try {
+        await closeDbPool();
+      } finally {
+        await closeSharedMysqlPool();
+      }
+    },
+  });
   // Rate-limit local upload preparation requests before JSON parsing so oversized request
   // bodies cannot consume parser resources before the route limiter runs.
   app.use((req, res, next) => {

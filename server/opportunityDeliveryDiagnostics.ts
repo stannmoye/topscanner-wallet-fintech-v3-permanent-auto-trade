@@ -1,5 +1,5 @@
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 import { resolveCustomerPackageName, resolveCustomerPackageNames } from "./db";
 
 export type DeliveryDiagnosticsFilters = {
@@ -219,9 +219,8 @@ function mapRecord(row: SqlRow, now = Date.now()) {
 }
 
 async function withConnection<T>(run: (connection: mysql.PoolConnection) => Promise<T>): Promise<T> {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 3 });
-  const connection = await pool.getConnection();
-  try { return await run(connection); } finally { connection.release(); await pool.end(); }
+  const connection = await getSharedMysqlPool().getConnection();
+  try { return await run(connection); } finally { connection.release(); }
 }
 
 export async function listOpportunityDeliveryRecords(input: {

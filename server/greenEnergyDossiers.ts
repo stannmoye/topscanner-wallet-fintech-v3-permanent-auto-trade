@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 import { findCountry, flagFor } from "@shared/country-options";
 import {
   classifyGreenEnergyType,
@@ -191,9 +191,8 @@ export type AdminGreenEnergyDossierInput = {
 };
 
 async function withConnection<T>(fn: (conn: Db) => Promise<T>) {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
-  const conn = await pool.getConnection();
-  try { return await fn(conn); } finally { conn.release(); await pool.end(); }
+  const conn = await getSharedMysqlPool().getConnection();
+  try { return await fn(conn); } finally { conn.release(); }
 }
 
 let schemaReady: Promise<void> | null = null;

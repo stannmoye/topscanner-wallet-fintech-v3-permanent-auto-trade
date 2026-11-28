@@ -10,7 +10,12 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock("mysql2/promise", () => ({ default: { createPool: db.createPool } }));
-vi.mock("./_core/mysql", () => ({ mysqlConnectionOptions: () => ({}) }));
+// Keep the real shared-pool implementation under test (Stage 2) but stub the
+// connection options so no real MySQL connection is attempted.
+vi.mock("./_core/mysql", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./_core/mysql")>();
+  return { ...actual, mysqlConnectionOptions: () => ({}) };
+});
 
 import { getOpportunityLifecycleSummary } from "./opportunityLifecycle";
 
@@ -59,7 +64,11 @@ describe("Trading Overview lifecycle source availability", () => {
     expect(db.query.mock.calls[0]?.[0]).toContain("opportunity_generation_assignments");
     expect(db.query.mock.calls[0]?.[0]).toContain("MAX(id) AS id");
     expect(db.release).toHaveBeenCalledOnce();
-    expect(db.end).toHaveBeenCalledOnce();
+    // Stage 2: the module reuses one shared, lazily-created pool instead of
+    // opening and ending a pool per call. The pool is created on first use and
+    // is only closed on graceful shutdown, so a summary read must not end it.
+    expect(db.createPool).toHaveBeenCalledOnce();
+    expect(db.end).not.toHaveBeenCalled();
   });
 
   it("renders unavailable for missing lifecycle metrics instead of synthesizing zero", () => {

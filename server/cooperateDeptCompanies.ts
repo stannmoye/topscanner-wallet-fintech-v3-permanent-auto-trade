@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 import { flagFor, findCountry } from "@shared/country-options";
 import type {
   CompanyCountdown,
@@ -160,9 +160,8 @@ const NET_WORTH_NOTE =
   "No free public register publishes a private company's net worth. Enterprise value, debt and shareholder equity must be requested from the desk administrator and verified against audited accounts before any commitment.";
 
 async function withConnection<T>(fn: (conn: Db) => Promise<T>) {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
-  const conn = await pool.getConnection();
-  try { return await fn(conn); } finally { conn.release(); await pool.end(); }
+  const conn = await getSharedMysqlPool().getConnection();
+  try { return await fn(conn); } finally { conn.release(); }
 }
 
 let schemaReady: Promise<void> | null = null;

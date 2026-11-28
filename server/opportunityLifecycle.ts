@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 import { buildCompanySpotlightPool, nextCompanySpotlight, parseCompanyCatalogueAdminState, type CompanySpotlightState, type CompanySpotlightRepeatPolicy } from "./modules/company-spotlight-rotation";
 import { getCompanyReferenceById } from "./modules/company-catalogue-reference";
 import { acknowledgeDelivery, claimDeliveryDispatch, deliveryAdmissionLockKey, deliveryIdempotencyKey, failDeliveryAttempt, type DeliveryState } from "./modules/opportunity-delivery-lifecycle";
@@ -42,9 +42,8 @@ type PopupDelivery = {
 };
 
 async function withConnection<T>(fn: (connection: mysql.PoolConnection) => Promise<T>) {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 3 });
-  const connection = await pool.getConnection();
-  try { return await fn(connection); } finally { connection.release(); await pool.end(); }
+  const connection = await getSharedMysqlPool().getConnection();
+  try { return await fn(connection); } finally { connection.release(); }
 }
 
 const DELIVERY_HISTORY_WARNING_INTERVAL_MS = 60_000;

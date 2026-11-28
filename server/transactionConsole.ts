@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 
 export const TRANSACTION_CONSOLE_COOKIE = "arbitrade_transaction_console";
 const SESSION_TTL_SECONDS = 60 * 60 * 24;
@@ -19,9 +19,8 @@ type ConsoleEventInput = {
 };
 
 async function withConnection<T>(fn: (connection: mysql.PoolConnection) => Promise<T>) {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 3 });
-  const connection = await pool.getConnection();
-  try { return await fn(connection); } finally { connection.release(); await pool.end(); }
+  const connection = await getSharedMysqlPool().getConnection();
+  try { return await fn(connection); } finally { connection.release(); }
 }
 
 async function pruneConsoleEvents(connection: mysql.PoolConnection, userId: number, sessionKey: string) {

@@ -1,5 +1,5 @@
 import mysql from "mysql2/promise";
-import { mysqlConnectionOptions } from "./_core/mysql";
+import { getSharedMysqlPool } from "./_core/mysql";
 import {
   ECONOMICS_BOUNDS,
   TERM_DAY_CHOICES,
@@ -54,9 +54,8 @@ const CREATE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS desk_investment_economics (
 ) ENGINE=InnoDB`;
 
 async function withConnection<T>(fn: (conn: Db) => Promise<T>): Promise<T> {
-  const pool = mysql.createPool({ ...mysqlConnectionOptions(), connectionLimit: 2 });
-  const conn = await pool.getConnection();
-  try { return await fn(conn); } finally { conn.release(); await pool.end(); }
+  const conn = await getSharedMysqlPool().getConnection();
+  try { return await fn(conn); } finally { conn.release(); }
 }
 
 let schemaReady: Promise<void> | null = null;
