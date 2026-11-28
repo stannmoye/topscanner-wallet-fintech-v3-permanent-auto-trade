@@ -3,6 +3,7 @@ import { Check, Gauge, Landmark, RefreshCw, ShieldCheck, Trash2 } from "lucide-r
 import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS, findCountry, flagFor } from "@shared/country-options";
 import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor, profitRateIsPublished } from "@shared/investment-economics";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const CATEGORY_OPTIONS = [
   { id: "BILL", label: "Bill (short-dated)" },
@@ -75,7 +76,7 @@ const emptyEcon = (): EconForm => ({
  */
 export function AdminTreasuryInstruments() {
   const utils = trpc.useUtils();
-  const query = trpc.adminOperations.treasuryInstruments.useQuery(undefined, { refetchInterval: 20000 });
+  const query = trpc.adminOperations.treasuryInstruments.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -91,7 +92,7 @@ export function AdminTreasuryInstruments() {
   );
   const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
     { desk: "treasury", instrumentIds: economicsIds },
-    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+    { enabled: economicsIds.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) },
   );
 
   const onSaved = (text: string) => {

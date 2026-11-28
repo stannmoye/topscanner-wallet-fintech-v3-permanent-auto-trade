@@ -11,6 +11,7 @@ import {
 import { trpc } from "@/lib/trpc";
 import "./CustomerTradingEligibility.css";
 import "./CustomerTradingEligibility.polish.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const usdEquivalent = (minor: number) => new Intl.NumberFormat(undefined, {
   style: "currency",
@@ -23,7 +24,7 @@ const durationLabel = (months: number) => `${months} ${months === 1 ? "month" : 
 
 // The visible inactive label is now "NO PACKAGE ASSIGNED" instead of the older "AWAITING TIER" wording.
 export function CustomerTradingEligibility() {
-  const eligibilityQuery = trpc.customer.tradingEligibility.useQuery(undefined, { refetchInterval: 30_000 });
+  const eligibilityQuery = trpc.customer.tradingEligibility.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
   const data = eligibilityQuery.data;
   const currentPackage = data?.currentPackage;
   const nextPackage = data?.nextPackage;

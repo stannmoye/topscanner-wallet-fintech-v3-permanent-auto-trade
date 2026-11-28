@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Activity, Ban, Fingerprint, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, UserRound } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 type BlockedDevice = {
   id: number;
@@ -61,9 +62,9 @@ function describeScreen(device: Pick<BlockedDevice, "screen" | "gpuRenderer">) {
 }
 
 export function AdminDeviceOversight() {
-  const summary = trpc.adminOperations.deviceOversightSummary.useQuery(undefined, { refetchInterval: 15_000 });
-  const blockedQuery = trpc.adminOperations.blockedDevices.useQuery(undefined, { refetchInterval: 15_000 });
-  const allDevicesQuery = trpc.adminOperations.devices.useQuery({ limit: 200 }, { refetchInterval: 30_000 });
+  const summary = trpc.adminOperations.deviceOversightSummary.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const blockedQuery = trpc.adminOperations.blockedDevices.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const allDevicesQuery = trpc.adminOperations.devices.useQuery({ limit: 200 }, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
   const restore = trpc.adminOperations.restoreDevice.useMutation({
     onSuccess: async () => {
       setRestoreId(null);

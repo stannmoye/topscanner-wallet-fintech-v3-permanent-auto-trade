@@ -25,6 +25,7 @@ import {
   type AgroStage,
 } from "@shared/agro-investment-catalogue";
 import "./agro-investment.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const RISK_OPTIONS = AGRO_RISK_GRADES;
 const STATUS_OPTIONS = AGRO_DOSSIER_STATUSES;
@@ -113,8 +114,8 @@ const emptyEcon = (): EconForm => ({
  */
 export function AdminAgroInvestment() {
   const utils = trpc.useUtils();
-  const dossiersQuery = trpc.adminOperations.agroDossiers.useQuery(undefined, { refetchInterval: 20000 });
-  const openInstrumentsQuery = trpc.adminOperations.agroOpenInstruments.useQuery(undefined, { refetchInterval: 20000 });
+  const dossiersQuery = trpc.adminOperations.agroDossiers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const openInstrumentsQuery = trpc.adminOperations.agroOpenInstruments.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
 
   // Every opportunity the console knows about — published dossiers plus anything
   // carrying open commitments — is a candidate for an auto-assigned economic
@@ -127,7 +128,7 @@ export function AdminAgroInvestment() {
   }, [dossiersQuery.data, openInstrumentsQuery.data]);
   const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
     { desk: "agro", instrumentIds: economicsIds },
-    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+    { enabled: economicsIds.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) },
   );
 
   const [tab, setTab] = useState<"dossiers" | "distributions" | "settle" | "economics">("dossiers");

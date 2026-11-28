@@ -1,13 +1,14 @@
 import { lazy, Suspense, useState, type FormEvent } from "react";
 import { ArrowUpRight, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const AdminAccountClosureDecisionPanel = lazy(() => import("@/components/AdminAccountClosureDecisionPanel").then((module) => ({ default: module.AdminAccountClosureDecisionPanel })));
 function SendIcon() { return <ArrowUpRight size={14} />; }
 
 export function AdminTicketDeskView({ playNotificationChime }: { playNotificationChime: () => void }) {
- const tickets=trpc.adminOperations.tickets.useQuery(undefined,{refetchInterval:5000});
- const assignees=trpc.adminOperations.supportAssignees.useQuery(undefined,{refetchInterval:30000});
+ const tickets=trpc.adminOperations.tickets.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(5000,query.state.fetchFailureCount)});
+ const assignees=trpc.adminOperations.supportAssignees.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(30000,query.state.fetchFailureCount)});
  const [selected,setSelected]=useState<number|null>(null);
  const [body,setBody]=useState("");
  const [status,setStatus]=useState<"answered"|"resolved"|"closed">("answered");
@@ -19,8 +20,8 @@ export function AdminTicketDeskView({ playNotificationChime }: { playNotificatio
  const [noticeCategory,setNoticeCategory]=useState<"announcement"|"platform_update"|"promotion">("announcement");
  const [noticeMessage,setNoticeMessage]=useState("");
  const [pendingNoticeKey,setPendingNoticeKey]=useState<string|null>(null);
- const messages=trpc.adminOperations.ticketMessages.useQuery({ticketId:selected||0},{enabled:Boolean(selected),refetchInterval:3000});
- const attachments=trpc.adminOperations.ticketAttachments.useQuery({ticketId:selected||0},{enabled:Boolean(selected),refetchInterval:5000});
+ const messages=trpc.adminOperations.ticketMessages.useQuery({ticketId:selected||0},{enabled:Boolean(selected),refetchInterval:(query)=>visibilityAwareRefetchInterval(3000,query.state.fetchFailureCount)});
+ const attachments=trpc.adminOperations.ticketAttachments.useQuery({ticketId:selected||0},{enabled:Boolean(selected),refetchInterval:(query)=>visibilityAwareRefetchInterval(5000,query.state.fetchFailureCount)});
  const reply=trpc.adminOperations.replyTicket.useMutation({onSuccess:async()=>{playNotificationChime();setBody("");await tickets.refetch();if(selected)await messages.refetch();},onError:e=>window.alert(e.message)});
 
  const reopen=trpc.adminOperations.reopenTicket.useMutation({onSuccess:async()=>{await tickets.refetch();if(selected)await messages.refetch();},onError:e=>window.alert(e.message)});

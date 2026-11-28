@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Clock3, Lock, RefreshCw, Send, XCircle } fro
 import { trpc } from "@/lib/trpc";
 import "../payout-requests.css";
 import { currentWithdrawalCurrency } from "../withdrawal-navigation";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const PAYOUT_ASSETS = ["USD", "EUR", "GBP", "BTC", "ETH", "USDT"] as const;
 type PayoutAsset = (typeof PAYOUT_ASSETS)[number];
@@ -95,14 +96,14 @@ function composeBankDestination(fields: { beneficiaryName: string; bankName: str
 export function CustomerPayoutRequests() {
   const [cursorStack, setCursorStack] = useState<Array<string | undefined>>([undefined]);
   const currentCursor = cursorStack[cursorStack.length - 1];
-  const balances = trpc.customer.balances.useQuery(undefined, { refetchInterval: 10_000 });
+  const balances = trpc.customer.balances.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const requests = trpc.customer.payoutRequests.useQuery(
     { cursor: currentCursor, pageSize: 50 },
-    { refetchInterval: 10_000 },
+    { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) },
   );
-  const eligibility = trpc.customer.payoutEligibility.useQuery(undefined, { refetchInterval: 30_000 });
-  const authenticatorStatus = trpc.customer.authenticatorStatus.useQuery(undefined, { refetchInterval: 30_000 });
-  const pinStatus = trpc.customer.withdrawalPinStatus.useQuery(undefined, { refetchInterval: 30_000 });
+  const eligibility = trpc.customer.payoutEligibility.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
+  const authenticatorStatus = trpc.customer.authenticatorStatus.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
+  const pinStatus = trpc.customer.withdrawalPinStatus.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
   // Opens pre-set to the currency the customer clicked in their wallet; falls
   // back to USD when the page is reached from the navigation menu.
   const [currency, setCurrency] = useState<PayoutAsset>(() => {

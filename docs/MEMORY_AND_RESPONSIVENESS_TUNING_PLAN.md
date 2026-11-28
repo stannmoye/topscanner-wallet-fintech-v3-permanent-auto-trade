@@ -79,12 +79,15 @@ behaviour.
 
 - [x] **Stage 0 — Investigation & plan (this document).** Commit + push. Anchor
       so the programme is resumable.
-- [ ] **Stage 1 — Client responsiveness & cache bounds.**
-      `client/src/main.tsx`: give the `QueryClient` explicit `defaultOptions`
-      (`staleTime`, `gcTime`, `refetchOnWindowFocus: false`, bounded `retry`
-      with capped backoff). Route every remaining raw numeric
-      `refetchInterval` through `visibilityAwareRefetchInterval`. Keep the
-      `visibilitychange` refetch-on-visible wiring intact (covered by
+- [x] **Stage 1 — Client responsiveness & cache bounds.**
+      `client/src/main.tsx`: gave the `QueryClient` explicit `defaultOptions`
+      (`staleTime: 5_000`, `gcTime: 2 * 60_000`, `refetchOnWindowFocus: false`)
+      so navigating between the ~40 menus no longer re-fetches everything and
+      the cache no longer retains every payload for five minutes. Routed every
+      remaining raw numeric `refetchInterval` (124 sites across 29 components)
+      through `visibilityAwareRefetchInterval` so hidden tabs stop polling and
+      failures back off exponentially. The `visibilitychange`
+      refetch-on-visible wiring is intact (covered by
       `client/src/visibility-aware-polling.test.ts`).
 - [ ] **Stage 2 — Shared MySQL pool.**
       Add a lazy, bounded **shared** pool in `server/_core/mysql.ts`
@@ -112,4 +115,8 @@ behaviour.
 
 ## Progress log
 
-- **Stage 0** — investigation documented; plan committed.
+- **Stage 0** — investigation documented; plan committed (`9eb7188`).
+- **Stage 1** — `QueryClient` defaults bounded; 124 raw `refetchInterval`
+  sites in 29 client components routed through `visibilityAwareRefetchInterval`.
+  `pnpm check` green; `visibility-aware-polling.test.ts` and
+  `refresh-balance-invalidation.test.ts` green (14 tests).

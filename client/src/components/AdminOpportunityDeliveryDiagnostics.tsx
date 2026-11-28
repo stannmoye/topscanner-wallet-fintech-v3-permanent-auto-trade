@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, FileSearch, Filter, RefreshCw, Search, ShieldCheck, UserRound, X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 type Tab = "records" | "customers" | "failures" | "queue" | "worker";
 type DraftFilters = {
@@ -110,7 +111,7 @@ export function AdminOpportunityDeliveryDiagnostics() {
   const safeFilters = "filters" in activeFilters ? activeFilters.filters : {};
   const listQuery = trpc.adminOperations.opportunityDeliveryRecords.useQuery(
     { filters: safeFilters as any, page, pageSize: 20 },
-    { enabled: activeTab === "records" || activeTab === "failures", refetchInterval: 30_000, refetchOnWindowFocus: true },
+    { enabled: activeTab === "records" || activeTab === "failures", refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount), refetchOnWindowFocus: true },
   );
   const detailsQuery = trpc.adminOperations.opportunityDeliveryDetails.useQuery(
     { customerId: selectedRecord?.customerId ?? 1, offerId: selectedRecord?.opportunityId ?? 1 }, { enabled: selectedRecord !== null },
@@ -123,10 +124,10 @@ export function AdminOpportunityDeliveryDiagnostics() {
     { customerId: selectedCustomerId ?? 1 }, { enabled: activeTab === "customers" && selectedCustomerId !== null, refetchOnWindowFocus: false },
   );
   const queueQuery = trpc.adminOperations.opportunityDeliveryQueueDiagnostics.useQuery(undefined, {
-    enabled: activeTab === "queue", refetchInterval: 15_000, refetchOnWindowFocus: true,
+    enabled: activeTab === "queue", refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount), refetchOnWindowFocus: true,
   });
   const workerQuery = trpc.adminOperations.workerHealth.useQuery(undefined, {
-    enabled: activeTab === "worker", refetchInterval: 15_000, refetchOnWindowFocus: true,
+    enabled: activeTab === "worker", refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount), refetchOnWindowFocus: true,
   });
   const exportQuery = trpc.adminOperations.exportOpportunityDeliveryRecords.useQuery(
     { filters: "filters" in activeFilters ? activeFilters.filters as any : {}, maxRows: 10_000 },

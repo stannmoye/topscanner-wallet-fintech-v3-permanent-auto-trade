@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 export function AdminEmailCenter() {
-  const customers = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: 15000 });
-  const status = trpc.adminOperations.emailStatus.useQuery(undefined, { refetchInterval: 15000 });
+  const customers = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15000, query.state.fetchFailureCount) });
+  const status = trpc.adminOperations.emailStatus.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15000, query.state.fetchFailureCount) });
   const [userId, setUserId] = useState<number | "">("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");

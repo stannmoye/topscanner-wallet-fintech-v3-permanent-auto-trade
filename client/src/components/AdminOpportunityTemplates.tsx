@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Building2, Check, Pause, Play, RefreshCw, Save, ShieldCheck, Zap } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 type TemplateForm = {
   templateName: string;
@@ -20,11 +21,11 @@ const emptyForm: TemplateForm = {
 
 export default function AdminOpportunityTemplates() {
   const utils = trpc.useUtils();
-  const templates = trpc.adminOperations.opportunityGenerationTemplates.useQuery(undefined, { refetchInterval: 15_000 });
-  const monitor = trpc.adminOperations.opportunityGenerationMonitor.useQuery(undefined, { refetchInterval: 15_000 });
-  const control = trpc.adminOperations.opportunityGenerationControl.useQuery(undefined, { refetchInterval: 15_000 });
+  const templates = trpc.adminOperations.opportunityGenerationTemplates.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const monitor = trpc.adminOperations.opportunityGenerationMonitor.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const control = trpc.adminOperations.opportunityGenerationControl.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
   const companyRecords = trpc.companyCatalogueReference.search.useQuery({ offset: 0, limit: 1811 });
-  const companySummary = trpc.companyCatalogueReference.summary.useQuery(undefined, { refetchInterval: 60_000 });
+  const companySummary = trpc.companyCatalogueReference.summary.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(60_000, query.state.fetchFailureCount) });
   const companyState = trpc.companyCatalogueReference.adminState.useQuery();
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<TemplateForm>(emptyForm);

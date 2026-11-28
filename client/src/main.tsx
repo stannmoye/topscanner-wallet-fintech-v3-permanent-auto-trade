@@ -14,7 +14,24 @@ import "./theme-system.css";
 import "./portal-design-pass4.css";
 import "./portal-render-recovery.css";
 
-const queryClient = new QueryClient();
+// Explicit cache policy instead of the library defaults. Live screens already
+// poll on their own visibility-aware cadence, so:
+//  - `staleTime` stops every remount/navigation from re-fetching an identical
+//    payload within a few seconds (the customer poll floor is 5s);
+//  - `gcTime` keeps the cache bounded — the default is five minutes, which
+//    retains every menu payload long after the user has moved on;
+//  - `refetchOnWindowFocus` is off because main.tsx already refetches all
+//    active queries the moment the tab becomes visible again below, so the
+//    default focus refetch would double-fetch every menu.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5_000,
+      gcTime: 2 * 60_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof Error)) return;

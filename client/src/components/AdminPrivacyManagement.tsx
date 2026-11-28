@@ -43,6 +43,7 @@ import {
   type PrivacyRequestStatus,
 } from "../../../shared/privacy";
 import "./privacy-center.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const REQUEST_STATUSES: PrivacyRequestStatus[] = [
   "submitted",
@@ -65,13 +66,13 @@ function formatAdminDate(value: Date | string | null | undefined): string {
 const starterSummary = "How information is handled across account services, financial records, security and customer rights.";
 
 export function AdminPrivacyManagement() {
-  const policyState = trpc.adminOperations.privacyPolicyState.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: 60000, refetchOnWindowFocus: false });
+  const policyState = trpc.adminOperations.privacyPolicyState.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: (query) => visibilityAwareRefetchInterval(60000, query.state.fetchFailureCount), refetchOnWindowFocus: false });
   const [requestFilter, setRequestFilter] = useState<"all" | PrivacyRequestStatus>("all");
   const [queueQuery, setQueueQuery] = useState("");
   const [queueSort, setQueueSort] = useState<PrivacyRequestSortOrder>("newest");
   // Fetch the full queue once and filter in the browser so the status summary
   // counts stay accurate while a status filter is active.
-  const requestQueue = trpc.adminOperations.privacyRequests.useQuery(undefined, { refetchInterval: 20000 });
+  const requestQueue = trpc.adminOperations.privacyRequests.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
   const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null);
   const requestDetail = trpc.adminOperations.privacyRequestDetail.useQuery(
     { requestId: selectedRequestId || 0 },

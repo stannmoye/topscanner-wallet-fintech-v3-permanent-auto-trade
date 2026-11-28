@@ -14,6 +14,7 @@ import {
 } from "@shared/litigation-funds-catalogue";
 import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor } from "@shared/investment-economics";
 import "./litigation-funds.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const STAGE_OPTIONS = ["FILED", "DISCOVERY", "MEDIATION", "TRIAL", "JUDGMENT", "ENFORCEMENT", "DISTRIBUTION"];
 const STATUS_OPTIONS = ["FUNDING", "ESCROW", "ACTIVE", "RESOLVED", "WITHDRAWN"];
@@ -114,9 +115,9 @@ type MilestoneForm = { stage: string; label: string; releasePercent: string };
  */
 export function AdminLitigationFunds() {
   const utils = trpc.useUtils();
-  const dossiersQuery = trpc.adminOperations.litigationDossiers.useQuery(undefined, { refetchInterval: 20000 });
-  const bundlesQuery = trpc.adminOperations.litigationBundles.useQuery(undefined, { refetchInterval: 20000 });
-  const openCasesQuery = trpc.adminOperations.litigationOpenCases.useQuery(undefined, { refetchInterval: 20000 });
+  const dossiersQuery = trpc.adminOperations.litigationDossiers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const bundlesQuery = trpc.adminOperations.litigationBundles.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const openCasesQuery = trpc.adminOperations.litigationOpenCases.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
 
   const [tab, setTab] = useState<"dossiers" | "bundles" | "settle" | "economics">("dossiers");
   const [message, setMessage] = useState("");
@@ -388,7 +389,7 @@ export function AdminLitigationFunds() {
   );
   const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
     { desk: "litigation", instrumentIds: economicsIds },
-    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+    { enabled: economicsIds.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) },
   );
   const invalidateEconomics = () => {
     void utils.adminOperations.deskEconomicsBatch.invalidate();

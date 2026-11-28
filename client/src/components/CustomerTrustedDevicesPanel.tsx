@@ -16,6 +16,7 @@ import {
   Tablet,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 type DeviceRow = {
   id: number;
@@ -87,8 +88,8 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 export function CustomerTrustedDevicesPanel({ push }: { push?: (message: string) => void }) {
-  const devicesQuery = trpc.customer.trustedDevices.useQuery(undefined, { refetchInterval: 20_000 });
-  const eventsQuery = trpc.customer.deviceAccessEvents.useQuery(undefined, { refetchInterval: 30_000 });
+  const devicesQuery = trpc.customer.trustedDevices.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20_000, query.state.fetchFailureCount) });
+  const eventsQuery = trpc.customer.deviceAccessEvents.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
 
   const rename = trpc.customer.renameTrustedDevice.useMutation({
     onSuccess: async () => {

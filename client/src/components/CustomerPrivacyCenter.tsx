@@ -44,6 +44,7 @@ import {
   type PrivacyRequestType,
 } from "../../../shared/privacy";
 import "./privacy-center.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 function displayDate(value: Date | string | null | undefined): string {
   if (!value) return "Not available";
@@ -62,9 +63,9 @@ function displayDateTime(value: Date | string | null | undefined): string {
 }
 
 export function CustomerPrivacyCenter() {
-  const policy = trpc.privacy.currentPolicy.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: 60000, refetchOnWindowFocus: false });
-  const history = trpc.privacy.policyHistory.useQuery(undefined, { retry: 1, refetchInterval: 60000 });
-  const requests = trpc.privacy.myRequests.useQuery(undefined, { refetchInterval: 30000 });
+  const policy = trpc.privacy.currentPolicy.useQuery(undefined, { retry: 3, staleTime: 15000, refetchInterval: (query) => visibilityAwareRefetchInterval(60000, query.state.fetchFailureCount), refetchOnWindowFocus: false });
+  const history = trpc.privacy.policyHistory.useQuery(undefined, { retry: 1, refetchInterval: (query) => visibilityAwareRefetchInterval(60000, query.state.fetchFailureCount) });
+  const requests = trpc.privacy.myRequests.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) });
   const accountSummary = trpc.privacy.myAccountSummary.useQuery(undefined, { staleTime: 60000, refetchOnWindowFocus: false });
   const utils = trpc.useUtils();
   const createRequest = trpc.privacy.createRequest.useMutation();

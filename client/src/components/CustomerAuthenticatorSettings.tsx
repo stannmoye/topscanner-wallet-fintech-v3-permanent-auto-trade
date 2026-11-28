@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { KeyRound, ShieldCheck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 export function CustomerAuthenticatorSettings({ push }: { push?: (message: string) => void }) {
-  const status = trpc.customer.authenticatorStatus.useQuery(undefined, { refetchInterval: 30_000 });
+  const status = trpc.customer.authenticatorStatus.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
   const [secret, setSecret] = useState("");
   const [uri, setUri] = useState("");
   const [code, setCode] = useState("");

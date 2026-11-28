@@ -10,6 +10,7 @@ import {
   type DeskKey,
 } from "@shared/investment-economics";
 import "./desk-economics-admin.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 /** Only this many rows render at once; the search narrows the rest into view. */
 const VISIBLE_CAP = 200;
@@ -51,7 +52,7 @@ export function AdminDeskEconomics() {
   const [messageKind, setMessageKind] = useState<"success" | "error">("success");
 
   const queryInput = deskMode === ALL_DESKS ? {} : { desk: deskMode };
-  const query = trpc.adminOperations.deskEconomics.useQuery(queryInput, { refetchInterval: 20000 });
+  const query = trpc.adminOperations.deskEconomics.useQuery(queryInput, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
   const rows = useMemo(() => query.data ?? [], [query.data]);
   const rowByKey = useMemo(() => new Map(rows.map((row) => [rowKey(row), row])), [rows]);
 

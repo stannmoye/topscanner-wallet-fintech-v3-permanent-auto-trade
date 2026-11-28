@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import "../admin-kyc.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const CORE_STAGES = [
   { code: "EMAIL", title: "Email verification", detail: "Confirm inbox control before collecting further information.", icon: MailCheck },
@@ -58,15 +59,15 @@ export function AdminKycControlCenter() {
   const [policyMessage, setPolicyMessage] = useState("");
   const [reasons, setReasons] = useState<Record<string, string>>({});
 
-  const dashboard = trpc.adminOperations.kycDashboard.useQuery(undefined, { refetchInterval: 15_000 });
+  const dashboard = trpc.adminOperations.kycDashboard.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
   const customers = trpc.adminOperations.kycCustomers.useQuery({
     page, pageSize: 25, search: search.trim() || undefined,
     status: statusFilter === "ALL" ? undefined : statusFilter as "NOT_STARTED" | "IN_PROGRESS" | "VERIFIED" | "REVIEW_REQUIRED" | "RETRY_AVAILABLE" | "REJECTED",
-  }, { refetchInterval: 15_000 });
-  const queue = trpc.adminOperations.kycQueue.useQuery(undefined, { refetchInterval: 10_000 });
+  }, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const queue = trpc.adminOperations.kycQueue.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const settings = trpc.adminOperations.kycSettings.useQuery(undefined, { staleTime: 30_000 });
-  const auditChain = trpc.adminOperations.kycVerifyAudit.useQuery(undefined, { refetchInterval: 30_000 });
-  const auditEvents = trpc.adminOperations.kycAuditEvents.useQuery(undefined, { refetchInterval: 30_000 });
+  const auditChain = trpc.adminOperations.kycVerifyAudit.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
+  const auditEvents = trpc.adminOperations.kycAuditEvents.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
 
   useEffect(() => {
     setPage(1);

@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { COUNTRY_OPTIONS, flagFor } from "@shared/country-options";
 import { ECONOMICS_BOUNDS, INVESTMENT_CURRENCIES, currencyByCode, currencyMinorToUsdMinor } from "@shared/investment-economics";
 import "./cooperate-dept.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const STATUS_OPTIONS = [
   { id: "INSOLVENT", label: "Insolvent" },
@@ -106,7 +107,7 @@ const emptyEcon = (): EconForm => ({
  */
 export function AdminCooperateDept() {
   const utils = trpc.useUtils();
-  const query = trpc.adminOperations.cooperateDeptCompanies.useQuery(undefined, { refetchInterval: 20000 });
+  const query = trpc.adminOperations.cooperateDeptCompanies.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -257,7 +258,7 @@ export function AdminCooperateDept() {
   const economicsIds = useMemo(() => rows.map((row) => String(row.companyId)).filter(Boolean), [rows]);
   const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
     { desk: "cooperate", instrumentIds: economicsIds },
-    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+    { enabled: economicsIds.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) },
   );
   const invalidateEconomics = () => {
     void utils.adminOperations.deskEconomicsBatch.invalidate();

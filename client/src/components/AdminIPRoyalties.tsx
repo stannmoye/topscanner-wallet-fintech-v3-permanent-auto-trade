@@ -23,6 +23,7 @@ import {
   statusLabel,
 } from "@shared/ip-royalties-catalogue";
 import "./ip-royalties.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const RISK_OPTIONS = IP_ROYALTY_RISK_GRADES;
 const STATUS_OPTIONS = IP_ROYALTY_DOSSIER_STATUSES;
@@ -126,9 +127,9 @@ const emptyEcon = (): EconForm => ({
  */
 export function AdminIPRoyalties() {
   const utils = trpc.useUtils();
-  const dossiersQuery = trpc.adminOperations.ipRoyaltyDossiers.useQuery(undefined, { refetchInterval: 20000 });
-  const portfoliosQuery = trpc.adminOperations.ipRoyaltyPortfolios.useQuery(undefined, { refetchInterval: 20000 });
-  const openInstrumentsQuery = trpc.adminOperations.ipRoyaltyOpenInstruments.useQuery(undefined, { refetchInterval: 20000 });
+  const dossiersQuery = trpc.adminOperations.ipRoyaltyDossiers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const portfoliosQuery = trpc.adminOperations.ipRoyaltyPortfolios.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const openInstrumentsQuery = trpc.adminOperations.ipRoyaltyOpenInstruments.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
 
   // Every right the console knows about — published dossiers plus anything
   // carrying open commitments — is a candidate for an auto-assigned economic
@@ -141,7 +142,7 @@ export function AdminIPRoyalties() {
   }, [dossiersQuery.data, openInstrumentsQuery.data]);
   const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
     { desk: "ipRoyalty", instrumentIds: economicsIds },
-    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+    { enabled: economicsIds.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) },
   );
 
   const [tab, setTab] = useState<"dossiers" | "portfolios" | "distributions" | "settle" | "economics">("dossiers");

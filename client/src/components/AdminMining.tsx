@@ -5,6 +5,7 @@ import "../factory-cockpit.css";
 import { Activity, AlertTriangle, ArrowRight, BadgeCheck, BookOpenCheck, Check, CircleDollarSign, Clock3, Coins, Cpu, Database, FileClock, Gauge, LockKeyhole, Palette, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
 import { MiningCoreCanvas } from "./MiningCoreCanvas";
 import { DEFAULT_MINING_PACKAGE_THEME, MINING_PACKAGE_THEMES } from "@shared/mining-package-themes";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const blankPackage:any = {code:"",name:"",displayOrder:"",durationMonths:"",expectedDailyRewardCki:"",priceAmount:"",priceAsset:"",baseThs:"",boostBonusThs:"",boostDurationSeconds:null,maxPerCustomer:0,stackingPolicy:"",themeKey:DEFAULT_MINING_PACKAGE_THEME,termsText:"",simulationAcknowledgementRequired:true};
 const freshKey=()=>globalThis.crypto?.randomUUID?.()||`mining-admin-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -28,12 +29,12 @@ const MINING_PAGES:Record<string,{title:string;subtitle:string}>={
 export function AdminMining({view}:{view?:string}){
   const activeView=view&&MINING_PAGES[view]?view:"miningOverview";
   const page=MINING_PAGES[activeView];
-  const dashboard=trpc.adminOperations.miningDashboard.useQuery(undefined,{refetchInterval:15000});
-  const economics=trpc.adminOperations.miningEconomics.useQuery(undefined,{refetchInterval:30000});
-  const packages=trpc.adminOperations.miningPackages.useQuery(undefined,{refetchInterval:30000});
-  const feeds=trpc.adminOperations.miningPriceFeeds.useQuery(undefined,{refetchInterval:30000});
-  const approvals=trpc.adminOperations.miningAdjustmentQueue.useQuery(undefined,{refetchInterval:15000});
-  const personalMining=trpc.customer.mining.dashboard.useQuery(undefined,{refetchInterval:5000});
+  const dashboard=trpc.adminOperations.miningDashboard.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(15000,query.state.fetchFailureCount)});
+  const economics=trpc.adminOperations.miningEconomics.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(30000,query.state.fetchFailureCount)});
+  const packages=trpc.adminOperations.miningPackages.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(30000,query.state.fetchFailureCount)});
+  const feeds=trpc.adminOperations.miningPriceFeeds.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(30000,query.state.fetchFailureCount)});
+  const approvals=trpc.adminOperations.miningAdjustmentQueue.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(15000,query.state.fetchFailureCount)});
+  const personalMining=trpc.customer.mining.dashboard.useQuery(undefined,{refetchInterval:(query)=>visibilityAwareRefetchInterval(5000,query.state.fetchFailureCount)});
   const [message,setMessage]=useState("");
   const [error,setError]=useState("");
   const [settings,setSettings]=useState<any>({});
@@ -56,8 +57,8 @@ export function AdminMining({view}:{view?:string}){
   const [bulkResult,setBulkResult]=useState<any>(null);
 
   useEffect(()=>{if(economics.data?.current)setSettings({...economics.data.current,effectiveAt:""});},[economics.data?.current?.version]);
-  const customerRows=trpc.adminOperations.miningCustomers.useQuery({query:customerSearch,limit:50},{refetchInterval:30000});
-  const customerDetail=trpc.adminOperations.miningCustomerDetail.useQuery({userId:selectedUserId||1},{enabled:selectedUserId>0,refetchInterval:15000});
+  const customerRows=trpc.adminOperations.miningCustomers.useQuery({query:customerSearch,limit:50},{refetchInterval:(query)=>visibilityAwareRefetchInterval(30000,query.state.fetchFailureCount)});
+  const customerDetail=trpc.adminOperations.miningCustomerDetail.useQuery({userId:selectedUserId||1},{enabled:selectedUserId>0,refetchInterval:(query)=>visibilityAwareRefetchInterval(15000,query.state.fetchFailureCount)});
 
   const refreshAll=()=>{void dashboard.refetch();void economics.refetch();void packages.refetch();void feeds.refetch();void approvals.refetch();};
   const report=(text:string)=>{setMessage(text);setError("");};
@@ -75,7 +76,7 @@ export function AdminMining({view}:{view?:string}){
   const reverse=trpc.adminOperations.reverseMiningTransaction.useMutation({onSuccess:r=>{report(`Reversal ${r.reference} recorded for transaction ${r.reversesTransactionId}.`);setReverseId("");setReverseReason("");void dashboard.refetch();void customerDetail.refetch();},onError:e=>fail(e.message)});
   const reconcile=trpc.adminOperations.reconcileMiningLedger.useMutation({onSuccess:r=>{setReconcileResult(r);report(r.repaired?`Journal reconciliation checked ${r.checked} wallet(s) and rebuilt ${r.repaired} snapshot(s).`:`Journal check completed: ${r.discrepancies} discrepancy(ies), ${r.skipped} wallet(s) skipped.`);void dashboard.refetch();void customerDetail.refetch();},onError:e=>fail(e.message)});
 
-  const bulkHistory=trpc.adminOperations.miningBulkOperations.useQuery({limit:20},{refetchInterval:30000});
+  const bulkHistory=trpc.adminOperations.miningBulkOperations.useQuery({limit:20},{refetchInterval:(query)=>visibilityAwareRefetchInterval(30000,query.state.fetchFailureCount)});
   const runBulk=trpc.adminOperations.runBulkMiningCkiOperation.useMutation({onSuccess:r=>{setBulkResult(r);setBulk((x:any)=>({...x,amount:""}));report(`Bulk ${r.direction} finished: ${r.posted} posted, ${r.skipped} skipped, ${r.failed} failed of ${r.totalTargets} customer(s).`);void bulkHistory.refetch();void dashboard.refetch();},onError:e=>fail(e.message)});
 
   const pageQueries:any[]={

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RefreshCw, Save } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { parseDeliveryIntervals, parseLocalDateTime, validateDeliveryRetryDraft, type DeliveryRetryPolicy } from "../trading-settings-client-contracts";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 function asLocalInput(value: unknown) {
   if (!value) return "";
@@ -15,7 +16,7 @@ function exactInstant(actual: unknown, expected: string) {
 }
 export default function AdminDeliveryRetryPolicy() {
   const api = trpc.adminOperations as any;
-  const query = api.deliveryRetryPolicy.useQuery(undefined, { refetchInterval: 30_000, refetchOnWindowFocus: true });
+  const query = api.deliveryRetryPolicy.useQuery(undefined, { refetchInterval: (query: any) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount), refetchOnWindowFocus: true });
   const saveMutation = api.updateDeliveryRetryPolicy.useMutation();
   const policy = query.data as DeliveryRetryPolicy | undefined;
   const [selectedPolicy, setSelectedPolicy] = useState<"none" | "temporary">("none");

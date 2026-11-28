@@ -25,6 +25,7 @@ import { trpc } from "@/lib/trpc";
 import { AdminOpportunityDeliveryDiagnostics } from "./AdminOpportunityDeliveryDiagnostics";
 import { normalizeGlobalTradeTimingSettings } from "../trading-settings-client-contracts";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 type CustomerRecord = {
   id: number;
@@ -173,7 +174,7 @@ export function AdminSettings({focus}:{focus?:"tradeDuration"}={}){ const q=trpc
 </><div className="admin-toggle-row"><div><strong>Block opportunities until all trades settle</strong><span>No new offers are published or delivered while principal and profit remain outstanding.</span></div><button className={`toggle-switch ${blockUntilSettled?"on":""}`} onClick={()=>setBlockUntilSettled(!blockUntilSettled)}>{blockUntilSettled?<ToggleRight size={28}/>:<ToggleLeft size={28}/>}</button></div><label>Reason for this global policy change (required)<textarea value={tradeReason} onChange={event=>setTradeReason(event.target.value)} minLength={5} maxLength={500} rows={3} placeholder="Explain why this timing or safety policy is changing"/><small>5–500 characters. This reason is stored in the immutable audit history. Policy version: {q.data?.trade?.policyVersion??"loading"}. Changes apply to future timing decisions; existing trade snapshots are not rewritten.</small></label></div>}{tab==="password"&&!focus&&<div className="settings-card"><div className="eyebrow">Identity security</div><h2>Password & security</h2><p>The admin password is managed by the configured local identity session. Passwords are stored as salted hashes.</p></div>}{(focus==="tradeDuration"||tab==="ticket")&&<div className="settings-actions"><button className="primary-button" onClick={submit} disabled={save.isPending||q.isLoading||q.isError||(focus==="tradeDuration"&&(tradeReason.trim().length<5||tradeReason.trim().length>500))}>{save.isPending?"Saving…":saved?"Saved":focus?"Save global Trade timing settings":"Save ticket settings"} <Check size={14}/></button><span>Only the section shown on this page is submitted; other saved settings are left unchanged.</span></div>}</div>; }
 
 export function AdminOpportunityDelivery() {
-  const query = trpc.adminOperations.popupLifecycleSummary.useQuery(undefined, { refetchInterval: 10_000 });
+  const query = trpc.adminOperations.popupLifecycleSummary.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const data = (query.data ?? {}) as unknown as LifecycleSummary;
   const sourceAvailable = data.sourceAvailable === true;
   const totals = data.last24Hours ?? {};
@@ -233,11 +234,11 @@ export function AdminOpportunityDelivery() {
 }
 
 export function AdminTradeSettingsOverview() {
-  const lifecycle = trpc.adminOperations.popupLifecycleSummary.useQuery(undefined, { refetchInterval: 15_000 });
-  const offers = trpc.adminOperations.offers.useQuery(undefined, { refetchInterval: 15_000 });
-  const policies = trpc.adminOperations.overviewPackagePolicies.useQuery(undefined, { refetchInterval: 30_000 });
-  const pending = trpc.adminOperations.pendingSettlements.useQuery(undefined, { refetchInterval: 10_000 });
-  const allocation = trpc.adminOperations.tradeAllocationControls.useQuery(undefined, { refetchInterval: 10_000 });
+  const lifecycle = trpc.adminOperations.popupLifecycleSummary.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const offers = trpc.adminOperations.offers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount) });
+  const policies = trpc.adminOperations.overviewPackagePolicies.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
+  const pending = trpc.adminOperations.pendingSettlements.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
+  const allocation = trpc.adminOperations.tradeAllocationControls.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const data = (lifecycle.data ?? {}) as unknown as LifecycleSummary;
   const totals = data.last24Hours ?? {};
   const sourceAvailable = data.sourceAvailable === true;
@@ -332,7 +333,7 @@ function analyticsTrend(current: number | undefined, previous: number | undefine
 
 export function AdminVisitorAnalytics() {
   const [days, setDays] = useState<number>(30);
-  const query = trpc.adminOperations.visitorAnalytics.useQuery({ days }, { refetchInterval: 60_000 });
+  const query = trpc.adminOperations.visitorAnalytics.useQuery({ days }, { refetchInterval: (query) => visibilityAwareRefetchInterval(60_000, query.state.fetchFailureCount) });
   const report = query.data;
   const available = report?.sourceAvailable === true;
   const today = report?.today;
@@ -422,7 +423,7 @@ export function AdminVisitorAnalytics() {
 }
 
 export function AdminVerificationOversight() {
-  const query = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: 10_000 });
+  const query = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const customers = (query.data ?? []) as unknown as CustomerRecord[];
   const flagged = customers.filter((customer) => customer.emailVerified === false || customer.kyc === true);
   const emailPending = customers.filter((customer) => customer.emailVerified === false).length;
@@ -451,7 +452,7 @@ export function AdminVerificationOversight() {
 }
 
 export function AdminRiskWatchlist() {
-  const query = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: 10_000 });
+  const query = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const customers = (query.data ?? []) as unknown as CustomerRecord[];
   const rank = (tier: string) => ({ critical: 4, high: 3, elevated: 2, medium: 1 }[tier.toLowerCase()] ?? 0);
   const watchlist = customers.filter((customer) => rank(customer.riskTier || "") > 0 || ["suspended", "restricted", "deactivated"].includes((customer.accountState || customer.status || "").toLowerCase())).sort((a, b) => rank(b.riskTier || "") - rank(a.riskTier || ""));
@@ -493,25 +494,25 @@ export function AdminTransactionReview({ focus }: { focus?: "ledger" | "capital"
   const ledgerFilterValid = ledgerUserId !== undefined && ledgerUtcDayValid;
   const ledgerCustomersQuery = trpc.adminOperations.customers.useQuery(undefined, { enabled: focus === "ledger" || !focus, staleTime: 60_000 });
   const ledgerFilter = { userId: ledgerUserId ?? 1, utcDay: ledgerUtcDayValid ? ledgerUtcDay : "1970-01-01", ...(ledgerCursor ? { cursor: ledgerCursor } : {}) };
-  const ledgerQuery = trpc.adminOperations.ledgerActivity.useQuery(ledgerFilter, { enabled: ledgerFilterValid && (focus === "ledger" || !focus), refetchInterval: 10_000 });
-  const pendingQuery = trpc.adminOperations.pendingSettlements.useQuery(undefined, { enabled: focus === "reconciliation", refetchInterval: 5_000 });
+  const ledgerQuery = trpc.adminOperations.ledgerActivity.useQuery(ledgerFilter, { enabled: ledgerFilterValid && (focus === "ledger" || !focus), refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
+  const pendingQuery = trpc.adminOperations.pendingSettlements.useQuery(undefined, { enabled: focus === "reconciliation", refetchInterval: (query) => visibilityAwareRefetchInterval(5_000, query.state.fetchFailureCount) });
   const [integrityBeforeTradeId, setIntegrityBeforeTradeId] = useState<number | undefined>(undefined);
   const [settlementLedgerBeforeTradeId, setSettlementLedgerBeforeTradeId] = useState<number | undefined>(undefined);
   const integrityQuery = trpc.adminOperations.settlementIntegrityIssues.useQuery({
     limit: 250,
     ...(integrityBeforeTradeId === undefined ? {} : { beforeTradeId: integrityBeforeTradeId }),
-  }, { enabled: focus === "reconciliation", refetchInterval: 30_000 });
+  }, { enabled: focus === "reconciliation", refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
   const walletLedgerReconciliationQuery = trpc.adminOperations.walletLedgerReconciliation.useQuery({
     limit: 250,
     ...(settlementLedgerBeforeTradeId === undefined ? {} : { beforeTradeId: settlementLedgerBeforeTradeId }),
-  }, { enabled: focus === "reconciliation", refetchInterval: 30_000 });
+  }, { enabled: focus === "reconciliation", refetchInterval: (query) => visibilityAwareRefetchInterval(30_000, query.state.fetchFailureCount) });
   const confirmSettlement = trpc.adminOperations.confirmManualSettlement.useMutation({ onSuccess: () => { pendingQuery.refetch(); integrityQuery.refetch(); walletLedgerReconciliationQuery.refetch(); } });
   const [evidenceTradeId, setEvidenceTradeId] = useState(0);
   const [evidenceReference, setEvidenceReference] = useState("");
   const [evidenceType, setEvidenceType] = useState<"document"|"statement"|"screenshot"|"transaction_receipt"|"other">("document");
   const [evidenceNotes, setEvidenceNotes] = useState("");
   const [evidenceFile, setEvidenceFile] = useState<File|null>(null);
-  const evidenceQuery = trpc.adminOperations.settlementEvidence.useQuery({ tradeId: evidenceTradeId }, { enabled: focus === "reconciliation" && evidenceTradeId > 0, refetchInterval: 10_000 });
+  const evidenceQuery = trpc.adminOperations.settlementEvidence.useQuery({ tradeId: evidenceTradeId }, { enabled: focus === "reconciliation" && evidenceTradeId > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(10_000, query.state.fetchFailureCount) });
   const submitEvidence = trpc.adminOperations.submitSettlementEvidence.useMutation({ onSuccess: () => { evidenceQuery.refetch(); setEvidenceReference(""); setEvidenceNotes(""); setEvidenceFile(null); } });
   const reviewEvidence = trpc.adminOperations.reviewSettlementEvidence.useMutation({ onSuccess: () => evidenceQuery.refetch() });
   const submitEvidenceFile = async () => {
@@ -699,7 +700,7 @@ export function AdminTransactionReview({ focus }: { focus?: "ledger" | "capital"
 export function AdminManualPayouts() {
   const [payoutCursors, setPayoutCursors] = useState<Array<string | undefined>>([undefined]);
   const [payoutPageIndex, setPayoutPageIndex] = useState(0);
-  const payoutQuery = trpc.adminOperations.payoutRequests.useQuery({ cursor: payoutCursors[payoutPageIndex], pageSize: 50 }, { refetchInterval: 5_000 });
+  const payoutQuery = trpc.adminOperations.payoutRequests.useQuery({ cursor: payoutCursors[payoutPageIndex], pageSize: 50 }, { refetchInterval: (query) => visibilityAwareRefetchInterval(5_000, query.state.fetchFailureCount) });
   const resolvePayout = trpc.adminOperations.resolvePayoutRequest.useMutation({ onSuccess: () => { payoutQuery.refetch(); } });
   const [payoutDrafts, setPayoutDrafts] = useState<Record<number, { externalReference: string; note: string }>>({});
   const currencyQuery = trpc.adminOperations.currencies.useQuery(undefined, { staleTime: 60_000 });
@@ -961,7 +962,7 @@ function downloadDiagnosticsCsv(filename: string, rows: string[][]) {
 }
 
 export function AdminWorkerHealth() {
-  const query = trpc.adminOperations.workerHealth.useQuery(undefined, { refetchInterval: 15_000, refetchOnWindowFocus: true });
+  const query = trpc.adminOperations.workerHealth.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(15_000, query.state.fetchFailureCount), refetchOnWindowFocus: true });
   const exportQuery = trpc.adminOperations.systemDiagnostics.useQuery(undefined, { enabled: true, retry: false, staleTime: 60_000, refetchOnWindowFocus: false });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -1291,7 +1292,7 @@ export function AdminWorkerHealth() {
 
 
 export function AdminTradeOpportunityReset() {
-  const customers = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: 60_000 });
+  const customers = trpc.adminOperations.customers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(60_000, query.state.fetchFailureCount) });
   const reset = trpc.adminOperations.resetOpportunityUsage.useMutation();
   const utils = trpc.useUtils();
   const customerRows = customers.data ?? [];

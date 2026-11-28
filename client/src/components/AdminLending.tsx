@@ -31,6 +31,7 @@ import {
   type LoanStage,
 } from "@shared/lending-catalogue";
 import "./lending.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const lines = (value: string, max: number) => value.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, max);
 const toMinor = (value: string): number | null => (value.trim() === "" ? null : Math.round(Number(value) * 100));
@@ -118,9 +119,9 @@ const conditionFromDefault = (condition: DisbursementCondition): ConditionForm =
  */
 export function AdminLending() {
   const utils = trpc.useUtils();
-  const loansQuery = trpc.adminOperations.lendingLoans.useQuery(undefined, { refetchInterval: 20000 });
-  const reservesQuery = trpc.adminOperations.lenderReserves.useQuery(undefined, { refetchInterval: 20000 });
-  const settlementQuery = trpc.adminOperations.lendingLoansForSettlement.useQuery(undefined, { refetchInterval: 20000 });
+  const loansQuery = trpc.adminOperations.lendingLoans.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const reservesQuery = trpc.adminOperations.lenderReserves.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const settlementQuery = trpc.adminOperations.lendingLoansForSettlement.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
 
   const [tab, setTab] = useState<"loans" | "reserves" | "auction" | "settlement">("loans");
   const [message, setMessage] = useState("");
@@ -178,7 +179,7 @@ export function AdminLending() {
 
   const bidsQuery = trpc.adminOperations.lendingLoanBids.useQuery(
     { loanId: selectedLoanId },
-    { enabled: tab === "auction" && selectedLoanId.length > 0, refetchInterval: 15000 },
+    { enabled: tab === "auction" && selectedLoanId.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(15000, query.state.fetchFailureCount) },
   );
 
   const loans = useMemo(() => (loansQuery.data || []) as any[], [loansQuery.data]);

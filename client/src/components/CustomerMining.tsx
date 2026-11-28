@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Clock3, Cpu, Download, Info, Layers,
   RefreshCw, Scale, ShieldCheck, Sparkles, Target, TrendingUp, WalletCards, Zap,
 } from "lucide-react";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const TARGET_ASSETS = ["USD", "EUR", "GBP", "BTC", "ETH", "USDT"];
 const assetScaleFor = (asset: string, currencies?: any[]) =>
@@ -30,12 +31,12 @@ const currencyIcons: Record<string, string> = { BTC: "₿", USD: "$", EUR: "€"
 const CoinMark = ({ iconUrl, fallback = "₵" }: { iconUrl?: string | null; fallback?: string }) => iconUrl ? <img className="cm-coin-img" src={iconUrl} alt="" /> : <>{fallback}</>;
 
 export function CustomerMining({ push }: { push: (message: string) => void }) {
-  const dashboard = trpc.customer.mining.dashboard.useQuery(undefined, { refetchInterval: 5000 });
-  const packages = trpc.customer.mining.packages.useQuery(undefined, { refetchInterval: 30000 });
-  const boostStatus = trpc.customer.mining.boostStatus.useQuery(undefined, { refetchInterval: 5000 });
-  const history = trpc.customer.mining.transactions.useQuery(undefined, { refetchInterval: 12000 });
-  const walletPreferences = trpc.customer.walletPreferences.useQuery(undefined, { refetchInterval: 30000 });
-  const mainWallet = trpc.customer.balances.useQuery(undefined, { refetchInterval: 10000 });
+  const dashboard = trpc.customer.mining.dashboard.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(5000, query.state.fetchFailureCount) });
+  const packages = trpc.customer.mining.packages.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) });
+  const boostStatus = trpc.customer.mining.boostStatus.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(5000, query.state.fetchFailureCount) });
+  const history = trpc.customer.mining.transactions.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(12000, query.state.fetchFailureCount) });
+  const walletPreferences = trpc.customer.walletPreferences.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) });
+  const mainWallet = trpc.customer.balances.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(10000, query.state.fetchFailureCount) });
 
   const [now, setNow] = useState(Date.now());
   const [swapQuote, setSwapQuote] = useState<any | null>(null);

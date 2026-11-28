@@ -30,6 +30,7 @@ import {
   type GreenEnergyStandard,
 } from "@shared/green-energy-catalogue";
 import "./green-energy.css";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 const RISK_OPTIONS = GREEN_ENERGY_RISK_GRADES;
 const STATUS_OPTIONS = GREEN_ENERGY_DOSSIER_STATUSES;
@@ -122,8 +123,8 @@ const emptyEcon = (): EconForm => ({
  */
 export function AdminGreenEnergy() {
   const utils = trpc.useUtils();
-  const dossiersQuery = trpc.adminOperations.greenEnergyDossiers.useQuery(undefined, { refetchInterval: 20000 });
-  const openInstrumentsQuery = trpc.adminOperations.greenEnergyOpenInstruments.useQuery(undefined, { refetchInterval: 20000 });
+  const dossiersQuery = trpc.adminOperations.greenEnergyDossiers.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
+  const openInstrumentsQuery = trpc.adminOperations.greenEnergyOpenInstruments.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(20000, query.state.fetchFailureCount) });
 
   // Every opportunity the console knows about — published dossiers plus anything
   // carrying open commitments — is a candidate for an auto-assigned economic
@@ -136,7 +137,7 @@ export function AdminGreenEnergy() {
   }, [dossiersQuery.data, openInstrumentsQuery.data]);
   const economicsQuery = trpc.adminOperations.deskEconomicsBatch.useQuery(
     { desk: "greenEnergy", instrumentIds: economicsIds },
-    { enabled: economicsIds.length > 0, refetchInterval: 30000 },
+    { enabled: economicsIds.length > 0, refetchInterval: (query) => visibilityAwareRefetchInterval(30000, query.state.fetchFailureCount) },
   );
 
   const [tab, setTab] = useState<"dossiers" | "distributions" | "settle" | "economics">("dossiers");

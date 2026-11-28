@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Activity, Antenna, Check, ChevronRight, Radio, ScanLine, ShieldCheck, Signal, Waves } from "lucide-react";
+import { visibilityAwareRefetchInterval } from "../visibility-aware-polling";
 
 type ScannerOffer = { venueFrom?: string | null; venueTo?: string | null; exchange?: string | null; symbol?: string | null; popupEligible?: boolean; offerStatus?: string | null };
 type ScannerFeed = { offers?: ScannerOffer[]; serverTime?: string | null };
@@ -20,7 +21,7 @@ function uniqueNetwork(feed?: ScannerFeed) {
 
 export function CustomerExchangeScanner({ feed, connectionStatus, compact = false }: { feed?: ScannerFeed; connectionStatus: "connected" | "updating" | "offline"; compact?: boolean }) {
   const network = useMemo(() => uniqueNetwork(feed), [feed]);
-  const trades = trpc.customer.trades.useQuery(undefined, { refetchInterval: 5000, refetchOnWindowFocus: true });
+  const trades = trpc.customer.trades.useQuery(undefined, { refetchInterval: (query) => visibilityAwareRefetchInterval(5000, query.state.fetchFailureCount), refetchOnWindowFocus: true });
   const [cursor, setCursor] = useState(0);
   const [popupVisible, setPopupVisible] = useState(false);
 
