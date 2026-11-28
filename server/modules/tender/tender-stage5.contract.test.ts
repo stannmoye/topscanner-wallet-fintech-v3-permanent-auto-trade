@@ -174,8 +174,8 @@ describe("Tender Bid Stage 5 — audited corrections and revert-to-source", () =
 
 describe("Tender Bid Stage 5 — overrides survive re-ingestion and reach the customer", () => {
   it("removes overridden source-derived fields from the ingestion update set", () => {
-    expect(ingest).toContain('import { TENDER_SOURCE_DERIVED_FIELDS, readTenderOverrides } from "./corrections";');
-    expect(ingest).toContain("const overrides = readTenderOverrides(existing?.overridesJson);");
+    expect(ingest).toContain('import { TENDER_SOURCE_DERIVED_FIELDS, readTenderOverrides, type TenderOverrides } from "./corrections";');
+    expect(ingest).toContain("const overrides = readTenderOverrides(record.overridesJson);");
     expect(ingest).toContain("if (TENDER_SOURCE_DERIVED_FIELDS.has(field) && field in update) delete update[field];");
     // Ingestion never writes the administrator-owned qualification fields.
     const ingestCode = stripComments(ingest);

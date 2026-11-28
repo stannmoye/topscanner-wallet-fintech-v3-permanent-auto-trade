@@ -1,6 +1,6 @@
 import type { NormalizedTender, RawTenderPage, TenderFetchParams, TenderProvider } from "../provider";
 import { fetchBytes } from "../http";
-import { readZipEntries } from "../zip";
+import { forEachZipEntry } from "../zip";
 import { toIsoCountryCode } from "../countries";
 import {
   TENDER_COLUMN_LIMITS,
@@ -89,14 +89,16 @@ export async function fetchOeffentlichevergabePage(params: TenderFetchParams): P
 
   const buffer = Buffer.from(await fetchBytes(exportUrl, { headers: { Accept: GERMANY_OCDS_MIME } }));
   const releases: Record<string, unknown>[] = [];
-  for (const entry of readZipEntries(buffer)) {
-    if (!entry.name.toLowerCase().endsWith(".json")) continue;
+  // Each bundle member is inflated, parsed and released one at a time, so a day's
+  // export is never held in memory in full — only the largest single member.
+  forEachZipEntry(buffer, (entry) => {
+    if (!entry.name.toLowerCase().endsWith(".json")) return;
     try {
       releases.push(...readOcdsReleases(JSON.parse(entry.data.toString("utf8"))));
     } catch {
       // One unreadable member must not discard the rest of the day's notices.
     }
-  }
+  });
   const items = releases.map((release) => ({ ...release, __exportUrl: exportUrl }));
   const nextDay = addGermanyDays(day, 1);
   return { items, nextCursor: nextDay <= latest ? nextDay : null };

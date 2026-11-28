@@ -765,17 +765,28 @@ async function startServer() {
     // most weekly; an administrator can force an immediate refresh from the
     // sources console. Per-source outcomes are recorded on `tender_sources.lastStatus`;
     // worker health is recorded in the health registry.
-    const runTenderIngest = () => runMonitoredWorkerCycle("tender-ingest", () => runTenderIngestCycle(), {
-      degradedWhen: result => result.sourcesFailed > 0,
-      degradedMessage: result => `${result.sourcesFailed} tender source(s) failed during ingestion`,
-    });
-    const tenderIngestTimer = registerWorkerInterval(() => {
-      void runTenderIngest()
-        .then(result => { if (result.tendersUpserted || result.sourcesFailed) console.log("[TenderIngest] cycle", result); })
-        .catch(error => console.error("[TenderIngest]", sanitizeWorkerErrorMessage(error)));
-    }, TENDER_INGEST_INTERVAL_MS);
-    tenderIngestTimer.unref();
-    void runTenderIngest().catch(error => console.error("[TenderIngest]", sanitizeWorkerErrorMessage(error)));
+    //
+    // The worker can be isolated into its own process: with TENDER_INGEST_WORKER=dedicated
+    // this web process never starts the tender worker or fetches a provider page, so a
+    // large source response can never grow the API's heap. The dedicated process
+    // (server/_core/tender-ingest-worker.ts, run via `pnpm worker:tender`) owns the
+    // schedule and writes the same health registry, so the desk's worker status is
+    // unchanged. The default (unset/any other value) keeps the worker in-process.
+    if (process.env.TENDER_INGEST_WORKER === "dedicated") {
+      console.log("[TenderIngest] TENDER_INGEST_WORKER=dedicated; the tender ingestion worker runs in a dedicated process.");
+    } else {
+      const runTenderIngest = () => runMonitoredWorkerCycle("tender-ingest", () => runTenderIngestCycle(), {
+        degradedWhen: result => result.sourcesFailed > 0,
+        degradedMessage: result => `${result.sourcesFailed} tender source(s) failed during ingestion`,
+      });
+      const tenderIngestTimer = registerWorkerInterval(() => {
+        void runTenderIngest()
+          .then(result => { if (result.tendersUpserted || result.sourcesFailed) console.log("[TenderIngest] cycle", result); })
+          .catch(error => console.error("[TenderIngest]", sanitizeWorkerErrorMessage(error)));
+      }, TENDER_INGEST_INTERVAL_MS);
+      tenderIngestTimer.unref();
+      void runTenderIngest().catch(error => console.error("[TenderIngest]", sanitizeWorkerErrorMessage(error)));
+    }
   } else {
     console.warn("[Database] DATABASE_URL is not configured; database workers are paused until production configuration is supplied.");
   }

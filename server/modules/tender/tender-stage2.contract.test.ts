@@ -31,7 +31,7 @@ import { normaliseTedNotice } from "./adapters/ted";
 import { normaliseWorldBankNotice } from "./adapters/world-bank";
 import { TENDER_SOURCES, getTenderSource } from "./source-registry";
 import { WORKER_HEALTH_REGISTRY } from "../../_core/workerHealth";
-import { TENDER_INGEST_MAX_PAGES_PER_SOURCE, TENDER_INGEST_MAX_SOURCES_PER_CYCLE, selectTenderSourcesForCycle } from "./ingest";
+import { TENDER_INGEST_MAX_PAGES_PER_SOURCE, TENDER_INGEST_MAX_SOURCES_PER_CYCLE, TENDER_INGEST_UPSERT_BATCH_SIZE, TENDER_RAW_JSON_MAX_CHARS, selectTenderSourcesForCycle } from "./ingest";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
@@ -379,6 +379,39 @@ describe("Tender Bid Stage 2 — ingestion source rotation", () => {
     // Across the run of cycles every enabled source is reached — the bug was that
     // repeated forced cycles kept re-selecting the same first `limit` sources.
     expect(seen.size).toBe(55);
+  });
+});
+
+describe("Tender Bid Stage 2 — ingestion memory hardening", () => {
+  const ingest = read("./ingest.ts");
+  const index = read("../../_core/index.ts");
+  const worker = read("../../_core/tender-ingest-worker.ts");
+
+  it("writes rows in bounded batches instead of one round trip per row", () => {
+    expect(TENDER_INGEST_UPSERT_BATCH_SIZE).toBeGreaterThan(0);
+    expect(TENDER_INGEST_UPSERT_BATCH_SIZE).toBeLessThanOrEqual(200);
+    expect(ingest).toContain("writeTenderBatch");
+    // A single override lookup per batch keeps the round-trip count down.
+    expect(ingest).toContain("inArray(tenders.externalId, externalIds)");
+    // The update set must reuse the multi-row VALUES() the batch was inserted with.
+    expect(ingest).toContain("VALUES(");
+  });
+
+  it("stores a bounded rawJson excerpt rather than the whole payload for every row", () => {
+    expect(TENDER_RAW_JSON_MAX_CHARS).toBeGreaterThan(0);
+    expect(TENDER_RAW_JSON_MAX_CHARS).toBeLessThanOrEqual(64_000);
+    expect(ingest).toContain("safeStringify");
+    expect(ingest).toContain("rawJson: safeStringify(tender.raw)");
+    // Every raw payload must flow through the bounded stringifier.
+    expect(ingest).not.toContain("rawJson: JSON.stringify(tender.raw)");
+  });
+
+  it("runs the ingestion worker in a dedicated process when configured", () => {
+    // The web process skips the worker when TENDER_INGEST_WORKER=dedicated, so a
+    // page spike can never take the API down with it.
+    expect(index).toContain("TENDER_INGEST_WORKER");
+    expect(worker).toContain('runMonitoredWorkerCycle("tender-ingest"');
+    expect(worker).toContain("runTenderIngestCycle");
   });
 });
 

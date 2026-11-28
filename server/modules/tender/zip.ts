@@ -24,10 +24,10 @@ const DEFLATE = 8;
  * declared size lies) cannot exhaust the heap while inflating. An archive that
  * exceeds it throws, which the caller records as a failed source (fail closed).
  */
-const MAX_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
+const MAX_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
 
 /** Upper bound on an archive's total decompressed size across all members. */
-const MAX_TOTAL_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
+const MAX_TOTAL_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
 
 function findEndOfCentralDirectory(buffer: Buffer): number {
   const minimum = Math.max(0, buffer.length - 65_557);
@@ -37,13 +37,21 @@ function findEndOfCentralDirectory(buffer: Buffer): number {
   throw new Error("ZIP archive has no end-of-central-directory record");
 }
 
-/** Read every file entry from a ZIP buffer, inflating DEFLATE members. */
-export function readZipEntries(buffer: Buffer): ZipEntry[] {
+/**
+ * Visit every file entry in a ZIP buffer in turn, inflating DEFLATE members.
+ *
+ * Entries are visited one at a time: each member is decompressed, handed to
+ * `visit`, and then released before the next is inflated, so the peak heap cost
+ * of reading a bundle is the largest single member rather than the sum of every
+ * member. The cumulative decompressed total is still tracked, so an archive that
+ * expands past `MAX_TOTAL_UNCOMPRESSED_BYTES` in aggregate — even across many
+ * individually-bounded members — throws and the caller fails that source closed.
+ */
+export function forEachZipEntry(buffer: Buffer, visit: (entry: ZipEntry) => void): void {
   if (buffer.length < 22) throw new Error("ZIP archive is too small to be valid");
   const eocd = findEndOfCentralDirectory(buffer);
   const totalEntries = buffer.readUInt16LE(eocd + 10);
   let directoryOffset = buffer.readUInt32LE(eocd + 16);
-  const entries: ZipEntry[] = [];
   let totalUncompressed = 0;
 
   for (let index = 0; index < totalEntries; index++) {
@@ -77,16 +85,22 @@ export function readZipEntries(buffer: Buffer): ZipEntry[] {
       const data = Buffer.from(compressed);
       totalUncompressed += data.length;
       if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new Error("ZIP archive exceeds the decompressed-size limit");
-      entries.push({ name, data });
+      visit({ name, data });
     } else if (method === DEFLATE) {
       // `maxOutputLength` bounds the inflate itself, so a lying size header cannot
       // allocate past the per-member limit before it is checked.
       const data = inflateRawSync(compressed, { maxOutputLength: MAX_ENTRY_UNCOMPRESSED_BYTES });
       totalUncompressed += data.length;
       if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new Error("ZIP archive exceeds the decompressed-size limit");
-      entries.push({ name, data });
+      visit({ name, data });
     }
     // Unsupported compression methods are skipped rather than silently corrupted.
   }
+}
+
+/** Read every file entry from a ZIP buffer into an array (convenience over `forEachZipEntry`). */
+export function readZipEntries(buffer: Buffer): ZipEntry[] {
+  const entries: ZipEntry[] = [];
+  forEachZipEntry(buffer, (entry) => entries.push(entry));
   return entries;
 }

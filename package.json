@@ -5,8 +5,9 @@
   "license": "MIT",
   "scripts": {
     "dev": "NODE_ENV=development tsx watch server/_core/index.ts",
-    "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build": "vite build && esbuild server/_core/index.ts server/_core/tender-ingest-worker.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "node scripts/start-with-diagnostics.mjs",
+    "worker:tender": "node dist/tender-ingest-worker.js",
     "check": "tsc --noEmit",
     "test:popup-responsive": "node scripts/trading-popup-responsive-layout.mjs",
     "format": "prettier --write .",

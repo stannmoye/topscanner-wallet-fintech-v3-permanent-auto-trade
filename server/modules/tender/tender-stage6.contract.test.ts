@@ -415,6 +415,21 @@ describe("Tender Bid Stage 6 — hardening", () => {
 });
 
 describe("Tender Bid Stage 6 — bounded memory on source responses", () => {
+  it("caps the single-response ceiling well below the old 64 MiB", () => {
+    // A smaller per-response ceiling bounds the peak heap of any one fetch.
+    expect(TENDER_HTTP_MAX_RESPONSE_BYTES).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(read("./http.ts")).toContain("TENDER_HTTP_MAX_RESPONSE_BYTES");
+  });
+
+  it("streams ZIP members through a visitor so each is released before the next inflates", () => {
+    const zip = read("./zip.ts");
+    expect(zip).toContain("export function forEachZipEntry");
+    expect(zip).toContain("export function readZipEntries");
+    // The German export ships a large multi-member ZIP, so it must consume the
+    // streaming visitor rather than materialising every entry at once.
+    expect(read("./adapters/oeffentlichevergabe.ts")).toContain("forEachZipEntry");
+  });
+
   it("refuses an oversized source response instead of buffering it into the heap", async () => {
     vi.stubGlobal("fetch", () => Promise.resolve(new Response("x", {
       status: 200,

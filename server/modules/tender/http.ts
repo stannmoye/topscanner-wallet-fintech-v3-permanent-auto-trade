@@ -20,8 +20,15 @@ export const TENDER_HTTP_TIMEOUT_MS = 30_000;
  * cycle — the same fail-closed behaviour as any other unreadable page. This
  * keeps one portal's oversized feed (or a misbehaving endpoint) from growing the
  * ingestion worker's heap without limit.
+ *
+ * The ceiling is deliberately modest: no legitimate tender page (a JSON array, a
+ * CSV export or a compressed bundle) approaches it, and holding a whole response
+ * in the worker heap is the single largest per-fetch allocation. A response over
+ * the limit fails closed rather than being buffered, and multi-member archives
+ * are read one member at a time (see `zip.ts`) so a ZIP bundle never holds every
+ * decompressed member in memory at once.
  */
-export const TENDER_HTTP_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+export const TENDER_HTTP_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 function withDefaults(init: RequestInit | undefined): RequestInit {
   return {

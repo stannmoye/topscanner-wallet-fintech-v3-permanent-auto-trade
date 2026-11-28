@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, getFreshTradingFxRate } from "../../db";
 import { currencyRegistry, fxRateSnapshots, tenderSources, tenders } from "../../../drizzle/schema";
 import { nativeMinorToUsdMinorExact } from "../../../shared/money";
@@ -6,7 +6,7 @@ import { sanitizeWorkerErrorMessage } from "../../_core/workerHealth";
 import { computeTenderDedupeGroup } from "./dedupe";
 import { deriveTenderStatus } from "./normalise";
 import { resolveTenderAdapter, type TenderAdapter } from "./registry";
-import { TENDER_SOURCE_DERIVED_FIELDS, readTenderOverrides } from "./corrections";
+import { TENDER_SOURCE_DERIVED_FIELDS, readTenderOverrides, type TenderOverrides } from "./corrections";
 import type { NormalizedTender } from "./provider";
 import type { FxRateSnapshot } from "../trading-wallet-fx";
 
@@ -31,7 +31,13 @@ import type { FxRateSnapshot } from "../trading-wallet-fx";
  *   from the update set, so the correction also survives the next sync (the override
  *   map records which fields to leave alone);
  * - each page is bounded, and a source that does not drain within the page cap resumes
- *   from the high-water mark of the items it did ingest.
+ *   from the high-water mark of the items it did ingest;
+ * - rows are written in bounded multi-row upsert batches (one statement per batch and
+ *   one override lookup per batch instead of one of each per row), so a page of notices
+ *   does not cost a round trip per row; a row with an administrator override is written
+ *   on its own so its overridden fields are still preserved;
+ * - the raw provider payload retained for audit is bounded to an excerpt, so one huge
+ *   notice cannot grow the row (and the write buffer) without limit.
  *
  * The stored `currency_registry.usdRate` is an audit snapshot and is never used as a
  * calculation input; USD values come only from a fresh `getFreshTradingFxRate` quote.
@@ -60,6 +66,23 @@ export const TENDER_INGEST_RETRY_BASE_DELAY_MS = 500;
 /** Polite delay between consecutive page requests to the same source (rate-limit etiquette). */
 export const TENDER_INGEST_PAGE_DELAY_MS = 250;
 
+/**
+ * Number of prepared tenders written per multi-row upsert statement. Batching
+ * bounds both the number of database round trips for a page of notices and the
+ * peak heap held while a batch is built, so a large page is written in fixed-size
+ * chunks instead of one statement (and one override lookup) per row.
+ */
+export const TENDER_INGEST_UPSERT_BATCH_SIZE = 50;
+
+/**
+ * Maximum characters of a tender's raw provider payload retained in `rawJson` for
+ * audit. The column is never read back into the application (it is excluded from
+ * every customer and administrator projection), so storing an unbounded copy of
+ * every notice doubles the ingestion heap and row size for no functional gain; a
+ * bounded excerpt keeps the forensic value without the cost.
+ */
+export const TENDER_RAW_JSON_MAX_CHARS = 16_000;
+
 type TenderSourceRow = typeof tenderSources.$inferSelect;
 
 type CurrencyConfig = { scale: number; assetType: "fiat" | "crypto" | "token"; externalCode: string | null };
@@ -81,13 +104,21 @@ type SourceOutcome =
   | { kind: "ok"; pages: number; upserted: number; rowsFailed: number; drained: boolean; highWater: Date | null }
   | { kind: "failed"; error: string };
 
-function safeStringify(value: unknown): string | null {
+/**
+ * Serialise a provider payload for the audit-only `rawJson` column, bounded to
+ * `TENDER_RAW_JSON_MAX_CHARS`. The retained value is a forensic excerpt, not a
+ * value the application reads back, so a truncated payload is suffixed with an
+ * explicit marker rather than silently cut.
+ */
+function safeStringify(value: unknown, maxChars = TENDER_RAW_JSON_MAX_CHARS): string | null {
   if (value == null) return null;
+  let json: string;
   try {
-    return JSON.stringify(value);
+    json = JSON.stringify(value) ?? "";
   } catch {
     return null;
   }
+  return json.length <= maxChars ? json : `${json.slice(0, maxChars)}…[truncated]`;
 }
 
 function toDate(value: string | null): Date | null {
@@ -230,11 +261,24 @@ async function convertToUsdMinor(
   return { usdMinor, snapshotId };
 }
 
+/** A row's insert payload, minus the two key columns the writer always supplies. */
+type TenderSharedColumns = Omit<typeof tenders.$inferInsert, "sourceId" | "externalId">;
+
+/** A normalised tender validated and priced, ready for a batched write. */
+type PreparedTender = {
+  externalId: string;
+  shared: TenderSharedColumns;
+  publishedAt: Date | null;
+};
+
 /**
- * Upsert one normalised tender. Administrator-owned fields are intentionally absent
- * from the update set so a correction is never clobbered by a later sync.
+ * Validate and price one normalised tender into a write-ready payload. Returns
+ * `null` when the tender is missing a required field (external id, title, link),
+ * which the caller counts as an unreadable row. Administrator-owned fields are
+ * intentionally absent from the payload so a correction is never clobbered by a
+ * later sync.
  */
-async function upsertTender(
+async function prepareTender(
   db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
   source: TenderSourceRow,
   tender: NormalizedTender,
@@ -242,8 +286,8 @@ async function upsertTender(
   fxCache: Map<string, FxRateSnapshot>,
   snapshotIds: Map<string, number>,
   now: Date,
-): Promise<boolean> {
-  if (!tender.externalId || !tender.title || !tender.sourceUrl) return false;
+): Promise<PreparedTender | null> {
+  if (!tender.externalId || !tender.title || !tender.sourceUrl) return null;
   const { usdMinor, snapshotId } = await convertToUsdMinor(db, tender, currencyMap, fxCache, snapshotIds);
 
   const shared = {
@@ -272,26 +316,117 @@ async function upsertTender(
     rawJson: safeStringify(tender.raw),
   };
 
-  // Preserve administrator corrections: read the stored override map for this
-  // (sourceId, externalId) row and drop every overridden source-derived field from
-  // the update set, so a correction made in the corrections menu is not clobbered
-  // by the next sync. A fresh row has no overrides, so a first insert is unaffected.
-  const existing = (await db.select({ overridesJson: tenders.overridesJson })
-    .from(tenders)
-    .where(and(eq(tenders.sourceId, source.id), eq(tenders.externalId, tender.externalId)))
-    .limit(1))[0];
-  const overrides = readTenderOverrides(existing?.overridesJson);
-  const update: Record<string, unknown> = { ...shared, updatedAt: now };
+  return { externalId: tender.externalId, shared, publishedAt: shared.publishedAt };
+}
+
+/**
+ * The `ON DUPLICATE KEY UPDATE` set for a multi-row batch: every column takes the
+ * value of the row being inserted (`VALUES(col)`), so each row in the batch updates
+ * to its own values rather than a single shared literal, and `updatedAt` is stamped
+ * once for the whole statement. The column list is derived from the prepared payload
+ * and restricted to plain identifier keys, so nothing but our own column names can
+ * reach the statement.
+ */
+function buildBatchUpdateSet(shared: TenderSharedColumns, now: Date): Record<string, unknown> {
+  const set: Record<string, unknown> = {};
+  for (const key of Object.keys(shared)) {
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(key)) continue;
+    set[key] = sql.raw(`VALUES(\`${key}\`)`);
+  }
+  set.updatedAt = now;
+  return set;
+}
+
+/**
+ * Upsert one prepared tender on its own, dropping every overridden source-derived
+ * field from the update set so an administrator correction survives the sync.
+ */
+async function upsertPreparedTender(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  source: TenderSourceRow,
+  row: PreparedTender,
+  now: Date,
+  overrides: TenderOverrides,
+): Promise<void> {
+  const update: Record<string, unknown> = { ...row.shared, updatedAt: now };
   for (const field of Object.keys(overrides)) {
     if (TENDER_SOURCE_DERIVED_FIELDS.has(field) && field in update) delete update[field];
   }
-
   await db.insert(tenders).values({
     sourceId: source.id,
-    externalId: tender.externalId,
-    ...shared,
+    externalId: row.externalId,
+    ...row.shared,
   }).onDuplicateKeyUpdate({ set: update });
-  return true;
+}
+
+type UpsertCounts = { upserted: number; rowsFailed: number };
+
+/**
+ * Write a batch of prepared tenders.
+ *
+ * The override map for the whole batch is read in one query (not one per row).
+ * Rows without an override go through a single multi-row upsert; the (rare) rows
+ * that carry an administrator override are written individually, so their
+ * overridden fields are still left untouched. If the multi-row statement fails,
+ * the batch is retried row by row so one bad row cannot lose the whole batch.
+ */
+async function writeTenderBatch(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  source: TenderSourceRow,
+  rows: readonly PreparedTender[],
+  now: Date,
+): Promise<UpsertCounts> {
+  if (!rows.length) return { upserted: 0, rowsFailed: 0 };
+
+  const externalIds = [...new Set(rows.map((row) => row.externalId))];
+  const overrideMap = new Map<string, TenderOverrides>();
+  try {
+    const existing = await db.select({ externalId: tenders.externalId, overridesJson: tenders.overridesJson })
+      .from(tenders)
+      .where(and(eq(tenders.sourceId, source.id), inArray(tenders.externalId, externalIds)));
+    for (const record of existing) {
+      const overrides = readTenderOverrides(record.overridesJson);
+      if (Object.keys(overrides).length) overrideMap.set(record.externalId, overrides);
+    }
+  } catch {
+    // A failed override read must not drop the batch: every row is then written as
+    // if un-overridden, so the next successful sync restores the corrections.
+  }
+
+  const overridden = rows.filter((row) => overrideMap.has(row.externalId));
+  const clean = rows.filter((row) => !overrideMap.has(row.externalId));
+
+  let upserted = 0;
+  let rowsFailed = 0;
+
+  if (clean.length) {
+    try {
+      await db.insert(tenders).values(
+        clean.map((row) => ({ sourceId: source.id, externalId: row.externalId, ...row.shared })),
+      ).onDuplicateKeyUpdate({ set: buildBatchUpdateSet(clean[0].shared, now) });
+      upserted += clean.length;
+    } catch {
+      for (const row of clean) {
+        try {
+          await upsertPreparedTender(db, source, row, now, {});
+          upserted++;
+        } catch {
+          rowsFailed++;
+        }
+      }
+    }
+  }
+
+  for (const row of overridden) {
+    try {
+      await upsertPreparedTender(db, source, row, now, overrideMap.get(row.externalId) ?? {});
+      upserted++;
+    } catch {
+      rowsFailed++;
+    }
+  }
+
+  return { upserted, rowsFailed };
 }
 
 async function ingestSource(
@@ -311,12 +446,25 @@ async function ingestSource(
   let rowsFailed = 0;
   let drained = true;
   let highWater: Date | null = null;
+  // Rows accumulate here and are written in bounded batches, so a page of notices
+  // is not one database round trip per row and the in-flight set stays bounded.
+  const pending: PreparedTender[] = [];
+
+  const flush = async (): Promise<void> => {
+    if (!pending.length) return;
+    const batch = pending.splice(0, pending.length);
+    const counts = await writeTenderBatch(db, source, batch, now);
+    upserted += counts.upserted;
+    rowsFailed += counts.rowsFailed;
+  };
 
   while (true) {
     let page;
     try {
       page = await fetchPageWithRetry(adapter, { since, cursor, sourceKey: source.key, config });
     } catch (error) {
+      // Persist what earlier pages read before recording the source as failed.
+      await flush();
       return { kind: "failed", error: sanitizeWorkerErrorMessage(error) };
     }
     const items = Array.isArray(page.items) ? page.items : [];
@@ -332,14 +480,20 @@ async function ingestSource(
         rowsFailed++;
         continue;
       }
+      let prepared: PreparedTender | null;
       try {
-        const stored = await upsertTender(db, source, tender, currencyMap, fxCache, snapshotIds, now);
-        if (stored) upserted++; else rowsFailed++;
+        prepared = await prepareTender(db, source, tender, currencyMap, fxCache, snapshotIds, now);
       } catch {
         rowsFailed++;
+        continue;
       }
-      const published = toDate(tender.publishedAt);
-      if (published && (!highWater || published > highWater)) highWater = published;
+      if (!prepared) {
+        rowsFailed++;
+        continue;
+      }
+      pending.push(prepared);
+      if (prepared.publishedAt && (!highWater || prepared.publishedAt > highWater)) highWater = prepared.publishedAt;
+      if (pending.length >= TENDER_INGEST_UPSERT_BATCH_SIZE) await flush();
     }
     pages++;
     cursor = page.nextCursor ?? null;
@@ -351,6 +505,7 @@ async function ingestSource(
     // Pace consecutive page requests to the same source (rate-limit etiquette).
     await sleep(TENDER_INGEST_PAGE_DELAY_MS);
   }
+  await flush();
   return { kind: "ok", pages, upserted, rowsFailed, drained, highWater };
 }
 

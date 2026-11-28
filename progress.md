@@ -1,3 +1,32 @@
+## 2026-11-28 (fix / tender memory) — Cut tender ingestion heap, round trips, and API coupling
+
+Owner asked whether the tender bid catalogue is held in memory. It is not — `tenders` is DB-backed and ingestion
+streams provider pages row-by-row. The real heap/coupling levers were elsewhere, so all four were implemented.
+
+- **Ingestion worker can run in a dedicated process.** New `server/_core/tender-ingest-worker.ts` runs the
+  `tender-ingest` cycle (`runMonitoredWorkerCycle` + an unref'd `registerWorkerInterval`, with SIGTERM/SIGINT
+  graceful shutdown: `waitForMonitoredWorkerCycles` + `closeDbPool`). Start with `pnpm worker:tender` (added to
+  `package.json`, bundled by the existing esbuild step). `server/_core/index.ts` now skips scheduling the
+  in-process worker when `TENDER_INGEST_WORKER=dedicated`, so a large/hostile source response can no longer grow
+  the API server's heap. Health status is identical either way (same `worker_health_registry`).
+- **Lower single-response ceiling + streaming ZIP.** `TENDER_HTTP_MAX_RESPONSE_BYTES` 64 MiB → 16 MiB; ZIP limits
+  64/256 MiB → 16 MiB per member / 32 MiB total. `zip.ts` gained `forEachZipEntry(buffer, visit)` — each member
+  is inflated, handed to the visitor, and released before the next inflates — with `readZipEntries()` a thin
+  convenience wrapper. The German `oeffentlichevergabe` adapter now consumes the streaming visitor.
+- **Bounded `rawJson`.** `safeStringify(value, TENDER_RAW_JSON_MAX_CHARS = 16_000)` stores a truncated excerpt
+  (`…[truncated]`) instead of the whole provider payload per row; the full text is still retained where it matters
+  (failed/flagged rows keep their diagnostics). Audit-only column, unchanged contract otherwise.
+- **Batched upserts.** `writeTenderBatch` writes rows in multi-row `INSERT … ON DUPLICATE KEY UPDATE` batches of
+  `TENDER_INGEST_UPSERT_BATCH_SIZE = 50`, using `VALUES(\`col\`)` per-row semantics in the update set. One override
+  lookup per batch (`inArray(tenders.externalId, externalIds)`); rows with an admin override fall back to the
+  per-row path so corrections still survive; a failed batch retries row-by-row so one bad row cannot lose the rest.
+- **Tests** — memory-hardening regressions in `server/modules/tender/tender-stage2.contract.test.ts` (batch size,
+  `writeTenderBatch`/`inArray`/`VALUES(`, `safeStringify`, `TENDER_INGEST_WORKER` + worker entrypoint) and
+  `tender-stage6.contract.test.ts` (16 MiB ceiling, `forEachZipEntry` streaming). Updated the stage 5 assertions
+  pinned to the previous per-row override read.
+- Verification: `pnpm check` exit 0; `pnpm build` exit 0 (emits `dist/tender-ingest-worker.js`); full `pnpm test` —
+  232 files / 1,993 tests passed (42 skipped). Existing Vite large-chunk advisory remains.
+
 ## 2026-11-28 (fix / scaling) — Measure real memory pressure; bound the ingestion run and request working sets
 
 Owner delivered a memory-boundedness review after a 500 MiB soak (portal + MariaDB combined peaked ~466.8 MiB)
