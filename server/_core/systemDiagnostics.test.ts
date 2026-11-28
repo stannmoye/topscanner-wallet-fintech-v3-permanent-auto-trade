@@ -64,4 +64,13 @@ describe("system diagnostics summary", () => {
     expect(diagnosticsSource).toContain("operatingSystem.totalmem()");
     expect(adminUiSource).toContain("Complete diagnostic exports");
   });
+
+  it("measures heap pressure against the configured V8 heap ceiling, never the committed heap", () => {
+    const diagnosticsSource = readFileSync(resolve(process.cwd(), "server/_core/systemDiagnostics.ts"), "utf8");
+    expect(diagnosticsSource).toContain("getHeapStatistics");
+    expect(diagnosticsSource).toContain("heap_size_limit");
+    expect(diagnosticsSource).toContain("heapLimitUsePercent");
+    // The committed-heap ratio (`heapUsed / heapTotal`) must never gate the alarm.
+    expect(diagnosticsSource).not.toContain("heapUseRatio >= 0.9");
+  });
 });

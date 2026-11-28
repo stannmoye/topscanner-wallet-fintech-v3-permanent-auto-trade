@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { getHeapStatistics } from "node:v8";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { isValidTotpEncryptionKey } from "../modules/totp";
@@ -22,6 +23,15 @@ function check(id: string, area: string, status: CheckStatus, title: string, det
 async function readSourceFile(path: string): Promise<string | null> {
   try {
     return await readFile(resolve(process.cwd(), path), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Read the configured V8 heap limit, or null when the runtime does not expose it. */
+function readHeapStatistics(): ReturnType<typeof getHeapStatistics> | null {
+  try {
+    return getHeapStatistics();
   } catch {
     return null;
   }
@@ -203,14 +213,27 @@ export async function getSystemDiagnosticsReport() {
   ));
 
   const memory = process.memoryUsage();
+  // The committed-heap share (`heapUsed / heapTotal`) is informational only: a
+  // freshly-grown committed heap can sit at a high share of itself with plenty of
+  // headroom left. Real pressure is judged against the configured V8 heap ceiling
+  // and the container/cgroup limit — the actual budgets the process is killed by.
   const heapUseRatio = memory.heapTotal > 0 ? memory.heapUsed / memory.heapTotal : 0;
+  const heapStatistics = readHeapStatistics();
+  const heapLimitBytes = heapStatistics ? heapStatistics.heap_size_limit : 0;
+  const heapLimitUseRatio = heapLimitBytes > 0 ? memory.heapUsed / heapLimitBytes : 0;
+  const constrainedMemory = (process as unknown as { constrainedMemory?: () => number }).constrainedMemory;
+  const containerLimitBytes = typeof constrainedMemory === "function" ? constrainedMemory.call(process) : 0;
+  const containerUseRatio = containerLimitBytes > 0 ? memory.rss / containerLimitBytes : 0;
+  const memoryPressureRatio = Math.max(heapLimitUseRatio, containerUseRatio);
   checks.push(check(
     "runtime-heap-pressure",
     "server",
-    heapUseRatio >= 0.9 ? "warning" : "pass",
-    "Node.js heap pressure",
-    `Heap used ${Math.round(heapUseRatio * 100)}% of currently allocated heap.`,
-    heapUseRatio >= 0.9 ? "Inspect heap growth and application logs; capture a heap profile during a controlled maintenance window if pressure persists." : null,
+    memoryPressureRatio >= 0.9 ? "warning" : "pass",
+    "Node.js heap and container memory pressure",
+    heapLimitBytes > 0
+      ? `Heap used ${Math.round(heapLimitUseRatio * 100)}% of the ${Math.round(heapLimitBytes / 1024 / 1024)} MB configured V8 heap limit; resident memory ${containerLimitBytes > 0 ? `${Math.round(containerUseRatio * 100)}% of the ${Math.round(containerLimitBytes / 1024 / 1024)} MB container limit` : "against an unavailable container limit"}.`
+      : "The configured V8 heap limit is unavailable on this runtime; heap pressure is measured against the container limit only.",
+    memoryPressureRatio >= 0.9 ? "Inspect heap growth and application logs; capture a heap profile during a controlled maintenance window if pressure persists." : null,
   ));
 
   let database: { status: "connected" | "unavailable"; checkedAt: string; error: string | null } = {
@@ -410,6 +433,10 @@ export async function getSystemDiagnosticsReport() {
       freeMemoryBytes: operatingSystem.freemem(),
       memoryBytes: memory,
       heapUsePercent: Math.round(heapUseRatio * 100),
+      heapLimitBytes: heapLimitBytes > 0 ? heapLimitBytes : null,
+      heapLimitUsePercent: heapLimitBytes > 0 ? Math.round(heapLimitUseRatio * 100) : null,
+      containerLimitBytes: containerLimitBytes > 0 ? containerLimitBytes : null,
+      containerUsePercent: containerLimitBytes > 0 ? Math.round(containerUseRatio * 100) : null,
     },
     configuration: { requiredVariables: requiredEnv.map((name) => ({ name, configured: Boolean(process.env[name]?.trim()) })), missing: missingEnv },
     database: { ...database, schema },

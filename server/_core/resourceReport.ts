@@ -1,3 +1,4 @@
+import { getHeapStatistics } from "node:v8";
 import { getIncidentSummary } from "../incident-log";
 import { getApiHealthReport } from "./apiHealth";
 import { getWorkerHealthSummary } from "./workerHealth";
@@ -30,12 +31,25 @@ export type ResourceReport = {
     rssBytes: number;
     heapTotalBytes: number;
     heapUsedBytes: number;
+    /** Heap used as a share of the committed heap (`heapTotal`) — informational only. */
     heapUsePercent: number;
+    /** The configured V8 heap ceiling (`v8.getHeapStatistics().heap_size_limit`), the real heap budget. */
+    heapLimitBytes: number | null;
+    /** Heap used as a share of the configured heap ceiling; the signal a heap alarm should use. */
+    heapLimitUsePercent: number | null;
     externalBytes: number;
     arrayBuffersBytes: number;
     limitBytes: number | null;
     availableBytes: number | null;
     limitUsePercent: number | null;
+  };
+  database: {
+    connected: boolean;
+    connectionLimit: number | null;
+    totalConnections: number | null;
+    idleConnections: number | null;
+    activeConnections: number | null;
+    queuedRequests: number | null;
   };
   disk: {
     target: string;
@@ -85,30 +99,36 @@ export async function getResourceReport(): Promise<ResourceReport> {
   const limitBytes = typeof constrained === "function" ? boundedMemory(constrained.call(process)) : null;
   const availableBytes = typeof available === "function" ? boundedMemory(available.call(process)) : null;
   const heapUsePercent = usage.heapTotal > 0 ? pct(usage.heapUsed / usage.heapTotal) : 0;
+  const heapStatistics = readHeapStatistics();
+  const heapLimitBytes = heapStatistics ? boundedMemory(heapStatistics.heap_size_limit) : null;
+  const heapLimitUsePercent = heapLimitBytes && heapLimitBytes > 0 ? pct(usage.heapUsed / heapLimitBytes) : null;
   const limitUsePercent = limitBytes && limitBytes > 0 ? pct(usage.rss / limitBytes) : null;
 
   const disk = await readDiskUsage();
   const improvements: Improvement[] = [];
   const notes: string[] = [];
 
-  if (heapUsePercent >= 90) {
-    improvements.push({
-      tier: "critical", area: "Memory", title: "Node.js heap is at or above 90% of its allocation",
-      detail: `Heap used ${heapUsePercent}% of ${Math.round(usage.heapTotal / 1024 / 1024)} MB allocated.`,
-      recommendation: "Inspect large in-process reads (for example bulk row decodes) and the heap-growth trend before the next restart; capture a heap profile during a maintenance window.",
-    });
-  } else if (heapUsePercent >= 75) {
-    improvements.push({
-      tier: "major", area: "Memory", title: "Node.js heap pressure is elevated",
-      detail: `Heap used ${heapUsePercent}% of ${Math.round(usage.heapTotal / 1024 / 1024)} MB allocated.`,
-      recommendation: "Review recent large queries and payloads; confirm the heap limit is sized to the server before load grows further.",
-    });
-  } else if (heapUsePercent >= 60) {
-    improvements.push({
-      tier: "minor", area: "Memory", title: "Node.js heap above the comfort band",
-      detail: `Heap used ${heapUsePercent}% of allocated heap.`,
-      recommendation: "Monitor the trend; no action unless it keeps climbing toward 75%.",
-    });
+  // Heap pressure is judged against the configured V8 heap ceiling, never against
+  // the committed heap (`heapTotal`): a freshly-grown committed heap can sit at a
+  // high share of itself with plenty of headroom left, so a bare heap ratio is
+  // not a fatal signal. Only container pressure (RSS vs the cgroup limit) is
+  // severe enough to be critical; heap pressure alone is at most a warning.
+  if (heapLimitUsePercent != null) {
+    if (heapLimitUsePercent >= 90) {
+      improvements.push({
+        tier: "major", area: "Memory", title: "Node.js heap is close to its configured limit",
+        detail: `Heap used is ${heapLimitUsePercent}% of the ${formatBytes(heapLimitBytes ?? 0)} configured V8 heap limit (${formatBytes(usage.heapUsed)} used).`,
+        recommendation: "Raise the configured heap limit or reduce steady-state heap use before V8 aborts with an out-of-memory error; capture a heap profile during a maintenance window.",
+      });
+    } else if (heapLimitUsePercent >= 75) {
+      improvements.push({
+        tier: "minor", area: "Memory", title: "Node.js heap use is rising toward its configured limit",
+        detail: `Heap used is ${heapLimitUsePercent}% of the ${formatBytes(heapLimitBytes ?? 0)} configured V8 heap limit.`,
+        recommendation: "Monitor the heap-growth trend; no action unless it keeps climbing toward the limit.",
+      });
+    }
+  } else {
+    notes.push("The configured V8 heap limit is unavailable on this runtime, so heap pressure is not measured against a ceiling.");
   }
 
   if (limitUsePercent != null) {
@@ -125,6 +145,15 @@ export async function getResourceReport(): Promise<ResourceReport> {
         recommendation: "Keep headroom free for load spikes; review the largest allocations if this keeps rising.",
       });
     }
+  }
+
+  const database = await readDatabasePool();
+  if (database.connected && database.connectionLimit != null && database.activeConnections != null && database.activeConnections >= database.connectionLimit) {
+    improvements.push({
+      tier: "major", area: "Database", title: "Database connection pool is saturated",
+      detail: `All ${database.connectionLimit} pooled connection${database.connectionLimit === 1 ? "" : "s"} are in use${database.queuedRequests ? ` with ${database.queuedRequests} request(s) queued` : ""}.`,
+      recommendation: "Raise DB_POOL_CONNECTION_LIMIT only after confirming the database can accept more connections; otherwise reduce concurrent long-running queries and payload sizes.",
+    });
   }
 
   if (disk) {
@@ -229,17 +258,45 @@ export async function getResourceReport(): Promise<ResourceReport> {
       heapTotalBytes: usage.heapTotal,
       heapUsedBytes: usage.heapUsed,
       heapUsePercent,
+      heapLimitBytes,
+      heapLimitUsePercent,
       externalBytes: usage.external,
       arrayBuffersBytes: usage.arrayBuffers,
       limitBytes,
       availableBytes,
       limitUsePercent,
     },
+    database,
     disk,
     improvementSummary,
     improvements,
     notes,
   };
+}
+
+/** Read the configured V8 heap limit, or null when the runtime does not expose it. */
+function readHeapStatistics(): ReturnType<typeof getHeapStatistics> | null {
+  try {
+    return getHeapStatistics();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the shared MySQL pool for diagnostics. The pool is a singleton created in
+ * `../db`; the module is imported lazily so this read-only report never pulls the
+ * database module graph into a process that has no database configured.
+ */
+async function readDatabasePool(): Promise<ResourceReport["database"]> {
+  const empty = { connected: false, connectionLimit: null, totalConnections: null, idleConnections: null, activeConnections: null, queuedRequests: null };
+  try {
+    const { getDbPoolStats } = await import("../db");
+    const stats = getDbPoolStats();
+    return stats ? { connected: true, ...stats } : empty;
+  } catch {
+    return empty;
+  }
 }
 
 function boundedMemory(value: number): number | null {

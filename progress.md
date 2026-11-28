@@ -1,3 +1,40 @@
+## 2026-11-28 (fix / scaling) — Measure real memory pressure; bound the ingestion run and request working sets
+
+Owner delivered a memory-boundedness review after a 500 MiB soak (portal + MariaDB combined peaked ~466.8 MiB)
+and asked for the "fix first" items. Two were genuine bugs; the rest was hardening.
+
+- **Memory alarms measure the real budget.** The heap alarm no longer treats `heapUsed / heapTotal` near 90% as
+  fatal — `heapTotal` is only the *committed* heap, not the ceiling. Heap pressure is now judged against the
+  configured V8 limit (`v8.getHeapStatistics().heap_size_limit`) and container pressure against the cgroup
+  limit; heap-only pressure is at most a warning, and only container pressure is critical/fatal. Applied in
+  three surfaces: `server/_core/resourceReport.ts` (Resource & Improvement tiers), `server/_core/systemDiagnostics.ts`
+  (`runtime-heap-pressure`, now reporting heap limit / container limit separately), and the runtime watchdog in
+  `server/_core/index.ts` (`MEMORY_PRESSURE` records `fatal` only on container pressure, `error` on heap-limit
+  pressure; the supervisor still owns `V8_HEAP_OOM`).
+- **Fetch Now advances through the whole catalogue.** `server/modules/tender/ingest.ts` previously ordered due
+  sources by `asc(id)` then `.slice(0, 25)`, so a forced cycle re-selected the same first 25 of 55 enabled
+  sources forever and never reached the remaining 30. New `selectTenderSourcesForCycle()` orders
+  least-recently-attempted first (`updatedAt` ascending, tie-break `id`), using `updated_at` as a durable
+  cursor that advances on every attempt, so successive cycles rotate through all enabled sources while each
+  cycle stays bounded at `TENDER_INGEST_MAX_SOURCES_PER_CYCLE`.
+- **Predictable database use.** `server/db.ts` pool now sets an explicit `connectionLimit` from
+  `DB_POOL_CONNECTION_LIMIT` (default 10) plus `waitForConnections`/`maxIdle`/`idleTimeout`/`queueLimit`/
+  keep-alive/`connectTimeout`, and exposes the live pool state via `getDbPoolStats()`. `resourceReport.ts`
+  and the admin page surface pool limit/active/idle/queued.
+- **Pagination audit.** Bounded the remaining unbounded per-user list helpers (`listNotifications`,
+  `listCustomerSessions`, `listCustomerTickets`, `listRiskReports`) with `CUSTOMER_LIST_MAX_ROWS = 500`
+  (most-recent first); full history uses the existing paginated endpoints. Noted follow-ups: the admin
+  customer directory (`listAdminCustomers`) and `listPendingSettlements` are inherently full-set reads that
+  need a pagination/streaming design (and UI changes across ~10 consumers) rather than a silent truncation.
+- **Tests** — rotation regression in `server/modules/tender/tender-stage2.contract.test.ts` (repeated forced
+  cycles reach all 55 sources); heap-alarm and pool assertions in `server/diagnostics-health.contract.test.ts`
+  and `server/_core/systemDiagnostics.test.ts`.
+- Verification: `pnpm install --frozen-lockfile`; `pnpm check` exit 0; `pnpm build` exit 0; full `pnpm test` —
+  232 files / 1,988 tests passed (42 skipped). Existing Vite large-chunk advisory remains.
+- **Note** — a larger `NODE_OPTIONS` heap is not a fix; memory must depend on bounded pages, concurrency and
+  queues, not the size of the customer table. The DB test pool sizing is a test setting, not a production
+  recommendation.
+
 ## 2026-11-28 (fix / diagnostics) — Preserve fatal V8 heap OOM evidence
 
 Owner reported a fatal Node.js heap-limit abort (`SIGABRT`), a follow-on supervisor DB write failure

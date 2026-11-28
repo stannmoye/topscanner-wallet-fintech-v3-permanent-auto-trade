@@ -123,6 +123,7 @@ export async function getDb() {
           ssl = undefined;
         }
       }
+      const connectionLimit = resolvePoolConnectionLimit();
       const pool = createPool({
         host: connectionUrl.hostname,
         port: Number(connectionUrl.port || 3306),
@@ -130,6 +131,17 @@ export async function getDb() {
         password: decodeURIComponent(connectionUrl.password),
         database: decodeURIComponent(connectionUrl.pathname.slice(1)),
         ssl,
+        // Predictable, fixed pool sizing rather than an implicit default: a
+        // bounded connection count keeps memory and database load stable under
+        // concurrency and makes pool saturation observable in diagnostics.
+        waitForConnections: true,
+        connectionLimit,
+        maxIdle: connectionLimit,
+        idleTimeout: 60_000,
+        queueLimit: 0,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 10_000,
+        connectTimeout: 10_000,
       });
       _pool = pool;
       _db = drizzle(pool);
@@ -139,6 +151,59 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+/** Default fixed connection-pool size when `DB_POOL_CONNECTION_LIMIT` is unset. */
+export const DB_POOL_DEFAULT_CONNECTION_LIMIT = 10;
+
+/** Resolve the fixed pool size from `DB_POOL_CONNECTION_LIMIT`, bounded to a safe range. */
+export function resolvePoolConnectionLimit(): number {
+  const raw = Number(process.env.DB_POOL_CONNECTION_LIMIT);
+  if (Number.isFinite(raw) && raw >= 1) return Math.min(Math.floor(raw), 200);
+  return DB_POOL_DEFAULT_CONNECTION_LIMIT;
+}
+
+export type DbPoolStats = {
+  connectionLimit: number;
+  totalConnections: number | null;
+  idleConnections: number | null;
+  activeConnections: number | null;
+  queuedRequests: number | null;
+};
+
+function poolCollectionSize(value: unknown): number | null {
+  if (value instanceof Set) return value.size;
+  if (Array.isArray(value)) return value.length;
+  return null;
+}
+
+/**
+ * Best-effort live view of the shared MySQL pool for diagnostics. mysql2 keeps
+ * these counters on the underlying pool; when the shape is unavailable (a
+ * different driver version) the counts degrade to null rather than throwing, so
+ * the resource report can still show the configured limit. Returns null when the
+ * pool itself is not configured on this process.
+ */
+export function getDbPoolStats(): DbPoolStats | null {
+  if (!_pool) return null;
+  const connectionLimit = resolvePoolConnectionLimit();
+  try {
+    const core = (_pool as unknown as {
+      pool?: { _allConnections?: unknown; _freeConnections?: unknown; _connectionQueue?: unknown };
+    }).pool;
+    const total = core ? poolCollectionSize(core._allConnections) : null;
+    const idle = core ? poolCollectionSize(core._freeConnections) : null;
+    const queued = core ? poolCollectionSize(core._connectionQueue) : null;
+    return {
+      connectionLimit,
+      totalConnections: total,
+      idleConnections: idle,
+      activeConnections: total != null && idle != null ? Math.max(0, total - idle) : null,
+      queuedRequests: queued,
+    };
+  } catch {
+    return { connectionLimit, totalConnections: null, idleConnections: null, activeConnections: null, queuedRequests: null };
+  }
 }
 
 /** Close the shared MySQL pool after server requests and worker cycles have drained. */
@@ -845,9 +910,17 @@ export async function createRiskReport(userId: number, title: string, requestedF
   const result = await db.insert(riskReports).values({ userId, title, requestedFor: requestedFor || null });
   return { id: Number(result[0].insertId), status: "requested" as const };
 }
-export async function listRiskReports(userId: number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(riskReports).where(eq(riskReports.userId,userId)).orderBy(desc(riskReports.createdAt)); }
+/**
+ * Upper bound on rows returned by a single customer-facing list request. A
+ * long-lived account can accumulate an unbounded number of notifications,
+ * sessions, support tickets or risk reports; each request must return a bounded
+ * working set (most-recent first) rather than every row the account has ever
+ * produced. Full history is available through the paginated endpoints.
+ */
+export const CUSTOMER_LIST_MAX_ROWS = 500;
+export async function listRiskReports(userId: number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(riskReports).where(eq(riskReports.userId,userId)).orderBy(desc(riskReports.createdAt)).limit(CUSTOMER_LIST_MAX_ROWS); }
 export async function upsertCustomerSession(userId:number, data:{deviceLabel:string;ipAddress?:string;countryCode?:string;userAgent?:string}) { const db=await getDb(); if(!db) throw new Error("Database is not available"); const existing=await db.select().from(customerSessions).where(and(eq(customerSessions.userId,userId),eq(customerSessions.deviceLabel,data.deviceLabel))).limit(1); if(existing[0]) { await db.update(customerSessions).set({ ...data, lastSeenAt:new Date(), isCurrent:true }).where(eq(customerSessions.id,existing[0].id)); return existing[0].id; } const result=await db.insert(customerSessions).values({userId,...data}); return Number(result[0].insertId); }
-export async function listCustomerSessions(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(customerSessions).where(eq(customerSessions.userId,userId)).orderBy(desc(customerSessions.lastSeenAt)); }
+export async function listCustomerSessions(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(customerSessions).where(eq(customerSessions.userId,userId)).orderBy(desc(customerSessions.lastSeenAt)).limit(CUSTOMER_LIST_MAX_ROWS); }
 export async function revokeCustomerSession(userId:number,id:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); await db.update(customerSessions).set({isCurrent:false}).where(and(eq(customerSessions.id,id),eq(customerSessions.userId,userId))); }
 export async function createTicket(userId:number,input:{subject:string;body:string;priority:"low"|"normal"|"high"|"urgent";category?:string}) {
   const db=await getDb(); if(!db) throw new Error("Database is not available");
@@ -875,7 +948,7 @@ export async function createTicket(userId:number,input:{subject:string;body:stri
   }
   return {ticketId,ticketNumber};
  }
-export async function listCustomerTickets(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(supportTickets).where(eq(supportTickets.customerId,userId)).orderBy(desc(supportTickets.updatedAt)); }
+export async function listCustomerTickets(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(supportTickets).where(eq(supportTickets.customerId,userId)).orderBy(desc(supportTickets.updatedAt)).limit(CUSTOMER_LIST_MAX_ROWS); }
 export const ACCOUNT_CLOSURE_TICKET_SUBJECT = "Account closure request — administrator review required";
 export type AccountClosureReason = "not-using" | "experience" | "fees" | "privacy" | "support";
 
@@ -1348,7 +1421,7 @@ export async function listCustomerNotifications(userId:number) {
     .orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)).limit(50);
   return filterNotificationCategories(rows,visibility);
 }
-export async function listNotifications(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(customerNotifications).where(eq(customerNotifications.userId,userId)).orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)); }
+export async function listNotifications(userId:number) { const db=await getDb(); if(!db) throw new Error("Database is not available"); return db.select().from(customerNotifications).where(eq(customerNotifications.userId,userId)).orderBy(desc(customerNotifications.createdAt),desc(customerNotifications.id)).limit(CUSTOMER_LIST_MAX_ROWS); }
 export async function listNotificationEventCursor(userId:number) {
   const db=await getDb(); if(!db)throw new Error("Database is not available");
   const visibility=await getNotificationCategoryVisibility();

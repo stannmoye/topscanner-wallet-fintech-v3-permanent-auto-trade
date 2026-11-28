@@ -105,11 +105,21 @@ type ResourceReport = {
     heapTotalBytes: number;
     heapUsedBytes: number;
     heapUsePercent: number;
+    heapLimitBytes: number | null;
+    heapLimitUsePercent: number | null;
     externalBytes: number;
     arrayBuffersBytes: number;
     limitBytes: number | null;
     availableBytes: number | null;
     limitUsePercent: number | null;
+  };
+  database: {
+    connected: boolean;
+    connectionLimit: number | null;
+    totalConnections: number | null;
+    idleConnections: number | null;
+    activeConnections: number | null;
+    queuedRequests: number | null;
   };
   disk: {
     target: string;
@@ -473,10 +483,16 @@ export function AdminResourceHealth() {
   const query = trpc.adminOperations.resourceReport.useQuery(undefined, { refetchOnWindowFocus: true });
   const report = query.data as ResourceReport | undefined;
   const improvements = report?.improvements ?? [];
+  const memory = report?.memory;
+  // Heap pressure is shown against the configured heap limit (not the committed
+  // heap), and only the container/RSS ratio can make the tile critical — a high
+  // committed-heap ratio on its own is not a fatal signal.
+  const heapPressurePercent = memory?.heapLimitUsePercent ?? memory?.heapUsePercent ?? 0;
+  const heapTone = (memory?.limitUsePercent ?? 0) >= 85 ? "is-critical" : heapPressurePercent >= 90 || (memory?.limitUsePercent ?? 0) >= 70 ? "is-major" : undefined;
 
   const metrics = [
     { key: "rss", label: "Resident memory", value: formatBytes(report?.memory.rssBytes), hint: report?.memory.limitBytes ? `Limit ${formatBytes(report.memory.limitBytes)}` : "No container limit detected", icon: Cpu },
-    { key: "heap", label: "Heap used", value: `${report?.memory.heapUsePercent ?? 0}%`, hint: `${formatBytes(report?.memory.heapUsedBytes)} of ${formatBytes(report?.memory.heapTotalBytes)}`, icon: Activity, tone: (report?.memory.heapUsePercent ?? 0) >= 90 ? "is-critical" : (report?.memory.heapUsePercent ?? 0) >= 75 ? "is-major" : undefined },
+    { key: "heap", label: "Heap used", value: `${heapPressurePercent}%`, hint: memory?.heapLimitBytes ? `of ${formatBytes(memory.heapLimitBytes)} heap limit` : `${formatBytes(memory?.heapUsedBytes)} of ${formatBytes(memory?.heapTotalBytes)} committed`, icon: Activity, tone: heapTone },
     { key: "disk", label: "Disk used", value: report?.disk ? `${report.disk.usedPercent}%` : "n/a", hint: report?.disk ? `${formatBytes(report.disk.freeBytes)} free on ${report.disk.target}` : "Disk usage unavailable on this host", icon: HardDrive, tone: report?.disk && report.disk.usedPercent >= 90 ? "is-critical" : undefined },
     { key: "improvements", label: "Improvements", value: report?.improvementSummary.total ?? 0, hint: `${report?.improvementSummary.critical ?? 0} critical · ${report?.improvementSummary.major ?? 0} major · ${report?.improvementSummary.minor ?? 0} minor`, icon: Zap },
   ];
@@ -503,7 +519,7 @@ export function AdminResourceHealth() {
           <section className="settings-card" aria-label="Memory usage">
             <div className="api-access-section-heading"><h2>Memory &amp; process</h2></div>
             <div className="diag-bars">
-              <DiagBar label={`Heap used — ${report.memory.heapUsePercent}% of ${formatBytes(report.memory.heapTotalBytes)}`} percent={report.memory.heapUsePercent} />
+              <DiagBar label={report.memory.heapLimitBytes ? `Heap used — ${heapPressurePercent}% of ${formatBytes(report.memory.heapLimitBytes)} configured limit` : `Heap used — ${report.memory.heapUsePercent}% of ${formatBytes(report.memory.heapTotalBytes)} committed`} percent={heapPressurePercent} />
               {report.memory.limitUsePercent != null && (
                 <DiagBar label={`Resident memory — ${report.memory.limitUsePercent}% of ${formatBytes(report.memory.limitBytes)} limit`} percent={report.memory.limitUsePercent} />
               )}
@@ -511,6 +527,7 @@ export function AdminResourceHealth() {
             <dl className="diag-kv">
               <div><dt>Resident (RSS)</dt><dd>{formatBytes(report.memory.rssBytes)}</dd></div>
               <div><dt>Heap used</dt><dd>{formatBytes(report.memory.heapUsedBytes)}</dd></div>
+              <div><dt>Heap limit (V8)</dt><dd>{report.memory.heapLimitBytes ? formatBytes(report.memory.heapLimitBytes) : "not detected"}</dd></div>
               <div><dt>Heap total</dt><dd>{formatBytes(report.memory.heapTotalBytes)}</dd></div>
               <div><dt>External</dt><dd>{formatBytes(report.memory.externalBytes)}</dd></div>
               <div><dt>Array buffers</dt><dd>{formatBytes(report.memory.arrayBuffersBytes)}</dd></div>
@@ -518,6 +535,22 @@ export function AdminResourceHealth() {
               <div><dt>Available memory</dt><dd>{report.memory.availableBytes ? formatBytes(report.memory.availableBytes) : "not reported"}</dd></div>
             </dl>
           </section>
+
+          {report.database && (
+            <section className="settings-card" aria-label="Database connections">
+              <div className="api-access-section-heading"><h2>Database &amp; connections</h2></div>
+              {report.database.connected ? (
+                <dl className="diag-kv">
+                  <div><dt>Pool limit</dt><dd>{report.database.connectionLimit ?? "not set"}</dd></div>
+                  <div><dt>Active</dt><dd>{report.database.activeConnections ?? "n/a"}</dd></div>
+                  <div><dt>Idle</dt><dd>{report.database.idleConnections ?? "n/a"}</dd></div>
+                  <div><dt>Queued</dt><dd>{report.database.queuedRequests ?? "n/a"}</dd></div>
+                </dl>
+              ) : (
+                <div className="empty-records">The pooled database client is not configured on this process.</div>
+              )}
+            </section>
+          )}
 
           <section className="settings-card" aria-label="Disk usage">
             <div className="api-access-section-heading"><h2>Disk &amp; volume</h2></div>

@@ -4,6 +4,7 @@ import "dotenv/config";
 import "./incident-hooks";
 import express from "express";
 import { randomBytes } from "node:crypto";
+import { getHeapStatistics } from "node:v8";
 import { createServer } from "http";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerProviderOAuthRoutes } from "./providerOAuth";
@@ -564,20 +565,30 @@ async function startServer() {
     let lastMemoryIncidentAt = 0;
     const memoryWatchdogTimer = registerWorkerInterval(() => {
       const usage = process.memoryUsage();
-      const heapUsePercent = usage.heapTotal > 0 ? usage.heapUsed / usage.heapTotal : 0;
+      // Judge pressure against the real budgets, never the committed heap
+      // (`heapTotal`): a freshly-grown committed heap can sit at a high share of
+      // itself with plenty of headroom under the configured ceiling. Only the
+      // container/cgroup limit is fatal on its own (an imminent OOM kill); heap
+      // nearing its configured V8 ceiling is recorded at a lower severity, since
+      // a V8 heap abort is additionally captured by the supervisor as V8_HEAP_OOM.
+      let heapLimitBytes = 0;
+      try { heapLimitBytes = getHeapStatistics().heap_size_limit; } catch { heapLimitBytes = 0; }
+      const heapLimitUsePercent = heapLimitBytes > 0 ? usage.heapUsed / heapLimitBytes : 0;
       const constrained = (process as unknown as { constrainedMemory?: () => number }).constrainedMemory;
       const limitBytes = typeof constrained === "function" ? constrained.call(process) : 0;
       const limitUsePercent = limitBytes > 0 ? usage.rss / limitBytes : 0;
-      if (heapUsePercent < 0.9 && limitUsePercent < 0.9) return;
+      const containerCritical = limitUsePercent >= 0.9;
+      const heapCritical = heapLimitUsePercent >= 0.9;
+      if (!containerCritical && !heapCritical) return;
       const now = Date.now();
       if (now - lastMemoryIncidentAt < 30 * 60_000) return;
       lastMemoryIncidentAt = now;
       void recordIncident({
-        severity: "fatal",
+        severity: containerCritical ? "fatal" : "error",
         category: "resource_exhaustion",
         eventCode: "MEMORY_PRESSURE",
-        message: `Memory reached a dangerous level (heap ${Math.round(heapUsePercent * 100)}% of allocated heap${limitBytes > 0 ? `, process ${Math.round(limitUsePercent * 100)}% of its ${Math.round(limitBytes / 1024 / 1024)} MB limit` : ""}).`,
-        context: { rssBytes: usage.rss, heapUsedBytes: usage.heapUsed, heapTotalBytes: usage.heapTotal, limitBytes: limitBytes > 0 ? limitBytes : null },
+        message: `Memory reached a dangerous level (heap ${Math.round(heapLimitUsePercent * 100)}% of the ${heapLimitBytes > 0 ? `${Math.round(heapLimitBytes / 1024 / 1024)} MB configured heap limit` : "available heap"}${limitBytes > 0 ? `, process ${Math.round(limitUsePercent * 100)}% of its ${Math.round(limitBytes / 1024 / 1024)} MB limit` : ""}).`,
+        context: { rssBytes: usage.rss, heapUsedBytes: usage.heapUsed, heapTotalBytes: usage.heapTotal, heapLimitBytes: heapLimitBytes > 0 ? heapLimitBytes : null, limitBytes: limitBytes > 0 ? limitBytes : null },
         sourceRevision: APP_SOURCE_REVISION,
       }).catch(() => undefined);
     }, 60_000);

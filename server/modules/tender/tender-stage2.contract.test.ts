@@ -31,7 +31,7 @@ import { normaliseTedNotice } from "./adapters/ted";
 import { normaliseWorldBankNotice } from "./adapters/world-bank";
 import { TENDER_SOURCES, getTenderSource } from "./source-registry";
 import { WORKER_HEALTH_REGISTRY } from "../../_core/workerHealth";
-import { TENDER_INGEST_MAX_PAGES_PER_SOURCE } from "./ingest";
+import { TENDER_INGEST_MAX_PAGES_PER_SOURCE, TENDER_INGEST_MAX_SOURCES_PER_CYCLE, selectTenderSourcesForCycle } from "./ingest";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
@@ -342,6 +342,43 @@ describe("Tender Bid Stage 2 — ingestion worker guardrails", () => {
     expect(ingest).toContain("sanitizeWorkerErrorMessage");
     expect(TENDER_INGEST_MAX_PAGES_PER_SOURCE).toBeGreaterThan(0);
     expect(getTenderSource("sam_gov")?.adapter).toBe("sam_gov");
+  });
+});
+
+describe("Tender Bid Stage 2 — ingestion source rotation", () => {
+  it("rotates through every enabled source across repeated forced cycles instead of re-selecting the same first rows", () => {
+    const limit = TENDER_INGEST_MAX_SOURCES_PER_CYCLE;
+    expect(limit).toBeGreaterThan(0);
+    // 55 enabled sources, more than one cycle's worth, mirroring the catalogue.
+    const sources = Array.from({ length: 55 }, (_, index) => ({
+      id: index + 1,
+      key: `source-${index + 1}`,
+      enabled: true,
+      expectedIntervalMs: 604_800_000,
+      lastSyncAt: null as Date | null,
+      updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)),
+    }));
+    const nowMs = Date.UTC(2026, 5, 1);
+    const seen = new Set<number>();
+    let firstRun: number[] = [];
+    // Simulate the cycle: each forced run attempts the selected sources and then
+    // stamps `updatedAt` (exactly as runTenderIngestCycle does), so the following
+    // run continues with the sources that have not yet been attempted.
+    for (let run = 0; run < 4; run++) {
+      const selected = selectTenderSourcesForCycle(sources as never, { force: true, nowMs, limit });
+      const ids = selected.map((source) => source.id);
+      if (run === 0) firstRun = ids;
+      expect(ids.length).toBeLessThanOrEqual(limit);
+      ids.forEach((id) => seen.add(id));
+      const stamp = new Date(Date.UTC(2026, 6, 1, 0, 0, run + 1));
+      for (const source of selected) source.updatedAt = stamp;
+    }
+    // One cycle never exceeds the bound and never selects the same source twice.
+    expect(firstRun).toHaveLength(limit);
+    expect(new Set(firstRun).size).toBe(limit);
+    // Across the run of cycles every enabled source is reached — the bug was that
+    // repeated forced cycles kept re-selecting the same first `limit` sources.
+    expect(seen.size).toBe(55);
   });
 });
 

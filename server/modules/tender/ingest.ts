@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb, getFreshTradingFxRate } from "../../db";
 import { currencyRegistry, fxRateSnapshots, tenderSources, tenders } from "../../../drizzle/schema";
 import { nativeMinorToUsdMinorExact } from "../../../shared/money";
@@ -355,12 +355,39 @@ async function ingestSource(
 }
 
 /**
+ * Choose which enabled sources to ingest this cycle.
+ *
+ * Sources are ordered least-recently-attempted first (`updatedAt` ascending),
+ * which acts as the durable per-run cursor: `updatedAt` advances on every attempt
+ * (success, failure or no-adapter), so successive cycles — including repeated
+ * forced "Fetch now" runs — rotate through the whole enabled catalogue instead of
+ * re-selecting the same first rows and never reaching the rest. The per-cycle
+ * bound still caps how many sources one run touches, so a run never contacts all
+ * providers at once, and `force` only widens the due set, never the cap.
+ */
+export function selectTenderSourcesForCycle(
+  sources: readonly TenderSourceRow[],
+  options: { force: boolean; nowMs: number; limit: number },
+): TenderSourceRow[] {
+  return [...sources]
+    .filter((source) => options.force || isSourceDue(source, options.nowMs))
+    .sort((a, b) => {
+      const aAt = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const bAt = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      if (aAt !== bAt) return aAt - bAt;
+      return a.id - b.id;
+    })
+    .slice(0, Math.max(0, options.limit));
+}
+
+/**
  * Run one tender-ingestion cycle across every due, enabled source.
  *
  * With `force` set, every enabled source is treated as due so an administrator
  * can refresh immediately through the audited "Fetch now" action without waiting
- * for the weekly cadence. The per-cycle source bound still applies, so a forced
- * cycle stays bounded.
+ * for the weekly cadence. Sources are still processed least-recently-attempted
+ * first, and the per-cycle source bound still applies, so repeated forced cycles
+ * progress through the whole catalogue while each individual cycle stays bounded.
  */
 export async function runTenderIngestCycle(options: { force?: boolean } = {}): Promise<TenderIngestCycleResult> {
   const startedAt = new Date();
@@ -372,12 +399,13 @@ export async function runTenderIngestCycle(options: { force?: boolean } = {}): P
   const snapshotIds = new Map<string, number>();
 
   const enabled = await db.select().from(tenderSources)
-    .where(eq(tenderSources.enabled, true))
-    .orderBy(asc(tenderSources.id));
+    .where(eq(tenderSources.enabled, true));
   const nowMs = startedAt.getTime();
-  const due = enabled
-    .filter((source) => options.force === true || isSourceDue(source, nowMs))
-    .slice(0, TENDER_INGEST_MAX_SOURCES_PER_CYCLE);
+  const due = selectTenderSourcesForCycle(enabled, {
+    force: options.force === true,
+    nowMs,
+    limit: TENDER_INGEST_MAX_SOURCES_PER_CYCLE,
+  });
 
   let sourcesProcessed = 0;
   let sourcesFailed = 0;

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { classifyProbeResource, deriveProbeStatus } from "./_core/apiHealth";
+import { getResourceReport } from "./_core/resourceReport";
 
 const incidentModule = readFileSync(new URL("./incident-log.ts", import.meta.url), "utf8");
 const apiHealthModule = readFileSync(new URL("./_core/apiHealth.ts", import.meta.url), "utf8");
@@ -106,6 +107,29 @@ describe("resource & improvement contract", () => {
     expect(resourceModule).toContain("getApiHealthReport");
     expect(resourceModule).toContain("getWorkerHealthSummary");
     expect(resourceModule).toContain("TIER_ORDER");
+  });
+
+  it("judges heap pressure against the configured V8 heap ceiling, never the committed heap", () => {
+    // The real heap budget is the configured ceiling, not `heapTotal`.
+    expect(resourceModule).toContain("getHeapStatistics");
+    expect(resourceModule).toContain("heapLimitUsePercent");
+    expect(resourceModule).toContain("heap_size_limit");
+    // The committed-heap ratio must not itself be tiered (the old false fatal).
+    expect(resourceModule).not.toMatch(/heapUsePercent\s*>=/);
+  });
+
+  it("reports the shared database connection pool for diagnostics", () => {
+    expect(resourceModule).toContain("getDbPoolStats");
+    expect(resourceModule).toContain("queuedRequests");
+  });
+
+  it("reports the live heap limit and pool state without throwing", async () => {
+    const report = await getResourceReport();
+    expect(report.sourceAvailable).toBe(true);
+    expect(typeof report.memory.heapUsedBytes).toBe("number");
+    expect(report.memory.heapLimitBytes === null || report.memory.heapLimitBytes > 0).toBe(true);
+    expect(report.memory.heapLimitUsePercent === null || report.memory.heapLimitUsePercent >= 0).toBe(true);
+    expect(typeof report.database.connected).toBe("boolean");
   });
 });
 
