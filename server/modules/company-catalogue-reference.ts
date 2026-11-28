@@ -340,6 +340,21 @@ export function findCompanyReferencesBySymbol(symbol: string): CompanyReferenceR
     .map(asReferenceResponse);
 }
 
+/**
+ * Shared search predicate used by both the paged search (which materialises
+ * response objects) and the count path (which must not allocate one object per
+ * record just to take `.length`).
+ */
+function matchesCompanySearch(
+  company: CompanyReferenceRecord,
+  term: string | undefined,
+  countryName: string | undefined,
+): boolean {
+  if (term && company.id.toLowerCase() !== term && ![company.name, company.domain, company.ticker, company.exchangeCode].some((value) => value.toLowerCase().includes(term))) return false;
+  if (countryName && company.countryName.toLowerCase() !== countryName) return false;
+  return true;
+}
+
 export function searchCompanyReferences(filters: CompanyReferenceSearch = {}): CompanyReferenceResponse[] {
   const term = filters.search?.trim().toLowerCase();
   const countryName = filters.countryName?.trim().toLowerCase();
@@ -348,8 +363,7 @@ export function searchCompanyReferences(filters: CompanyReferenceSearch = {}): C
   const results: CompanyReferenceResponse[] = [];
   let matched = 0;
   for (const company of COMPANY_REFERENCE_CATALOGUE) {
-    if (term && company.id.toLowerCase() !== term && ![company.name, company.domain, company.ticker, company.exchangeCode].some((value) => value.toLowerCase().includes(term))) continue;
-    if (countryName && company.countryName.toLowerCase() !== countryName) continue;
+    if (!matchesCompanySearch(company, term, countryName)) continue;
     if (matched++ < offset) continue;
     results.push(asReferenceResponse(company));
     if (results.length >= limit) break;
@@ -357,29 +371,66 @@ export function searchCompanyReferences(filters: CompanyReferenceSearch = {}): C
   return results;
 }
 
+/**
+ * Counts matches with a single allocation-free pass. The previous implementation
+ * built the full 1,811-object response page (spreading ~25 fields per record)
+ * only to read its `.length`, which was a measurable per-poll allocation on the
+ * admin catalogue. Pagination is deliberately ignored here.
+ */
 export function countCompanyReferences(filters: CompanyReferenceSearch = {}): number {
-  return searchCompanyReferences({ ...filters, offset: 0, limit: 1811 }).length;
+  const term = filters.search?.trim().toLowerCase();
+  const countryName = filters.countryName?.trim().toLowerCase();
+  if (!term && !countryName) return COMPANY_REFERENCE_CATALOGUE.length;
+  let count = 0;
+  for (const company of COMPANY_REFERENCE_CATALOGUE) {
+    if (matchesCompanySearch(company, term, countryName)) count += 1;
+  }
+  return count;
 }
 
-export function getCompanyReferenceSummary() {
+/**
+ * Single-pass computation of the catalogue summary. The previous implementation
+ * walked all 1,811 records ~9 times per call (eight `.filter()` allocations plus
+ * a `reduce` that allocated a Map), which was repeated allocation on every
+ * admin poll. The catalogue is immutable and the summary carries no
+ * per-request data (`generatedAt: null`), so it is computed once and cached.
+ */
+function computeCompanyReferenceSummary() {
+  const total = COMPANY_REFERENCE_CATALOGUE.length;
+  let tickerCandidates = 0;
+  let suppliedTickerValues = 0;
+  let placeholderCodes = 0;
+  let parentTickerReferences = 0;
+  let historicalTickerReferences = 0;
+  let localLogoPaths = 0;
+  const countryCounts = new Map<string, number>();
+  for (const company of COMPANY_REFERENCE_CATALOGUE) {
+    const classification = company.tickerClassification;
+    if (classification === "public") tickerCandidates += 1;
+    if (company.ticker) suppliedTickerValues += 1;
+    if (classification === "placeholder") placeholderCodes += 1;
+    if (classification === "parent") parentTickerReferences += 1;
+    if (classification === "historic") historicalTickerReferences += 1;
+    if (company.logoUrl.startsWith("/assets/company-logo-source/")) localLogoPaths += 1;
+    countryCounts.set(company.countryName, (countryCounts.get(company.countryName) ?? 0) + 1);
+  }
   return {
-    total: COMPANY_REFERENCE_CATALOGUE.length,
-    incompleteRecords: COMPANY_REFERENCE_CATALOGUE.length,
-    unverified: COMPANY_REFERENCE_CATALOGUE.length,
-    tickerCandidates: COMPANY_REFERENCE_CATALOGUE.filter((company) => company.tickerClassification === "public").length,
-    suppliedTickerValues: COMPANY_REFERENCE_CATALOGUE.filter((company) => Boolean(company.ticker)).length,
-    placeholderCodes: COMPANY_REFERENCE_CATALOGUE.filter((company) => company.tickerClassification === "placeholder").length,
-    parentTickerReferences: COMPANY_REFERENCE_CATALOGUE.filter((company) => company.tickerClassification === "parent").length,
-    historicalTickerReferences: COMPANY_REFERENCE_CATALOGUE.filter((company) => company.tickerClassification === "historic").length,
+    total,
+    incompleteRecords: total,
+    unverified: total,
+    tickerCandidates,
+    suppliedTickerValues,
+    placeholderCodes,
+    parentTickerReferences,
+    historicalTickerReferences,
     verifiedActive: 0,
-    localLogoPaths: COMPANY_REFERENCE_CATALOGUE.filter((company) => company.logoUrl.startsWith("/assets/company-logo-source/")).length,
+    localLogoPaths,
     logoReusePermissionVerified: 0,
     eligibleForVerifiedTradeRotation: 0,
     generatedAt: null,
     countryCounts: Object.fromEntries(
-      [...COMPANY_REFERENCE_CATALOGUE.reduce((counts, company) => counts.set(company.countryName, (counts.get(company.countryName) ?? 0) + 1), new Map<string, number>())]
-        .sort(([left], [right]) => left.localeCompare(right)),
-    ),
+      [...countryCounts].sort(([left], [right]) => left.localeCompare(right)),
+    ) as Record<string, number>,
     dataLimitations: [
       "Ticker candidates were imported from company_trading_symbols.xlsx and are not independently verified.",
       "All ticker, exchange, status, parent-ticker, and explanatory fields from the supplied workbook are preserved for all 1,811 logo IDs.",
@@ -390,5 +441,18 @@ export function getCompanyReferenceSummary() {
     sourceProvider: null,
     logoProvider: "Logo.dev",
     note: "Brand-only reference data. Not a verified securities catalogue and not eligible for trade execution.",
+  };
+}
+
+let companyReferenceSummary: ReturnType<typeof computeCompanyReferenceSummary> | undefined;
+
+export function getCompanyReferenceSummary() {
+  const cached = (companyReferenceSummary ??= computeCompanyReferenceSummary());
+  // Return a fresh top-level object (with fresh nested containers) so callers
+  // keep today's "new object per call" behaviour without recomputing the walk.
+  return {
+    ...cached,
+    countryCounts: { ...cached.countryCounts },
+    dataLimitations: [...cached.dataLimitations],
   };
 }

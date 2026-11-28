@@ -98,9 +98,14 @@ behaviour.
       `closeSharedMysqlPool()` into graceful shutdown after the main pool.
       Updated `server/opportunity-lifecycle-summary.contract.test.ts` to assert
       one shared pool, no per-read `end`, and one release.
-- [ ] **Stage 3 — Catalogue & hot-path allocation.**
-      Single-pass, memoised `getCompanyReferenceSummary()`; allocation-free
-      counting; avoid per-record spreads on count paths.
+- [x] **Stage 3 — Catalogue & hot-path allocation.**
+      `getCompanyReferenceSummary()` is now a single pass over the 1,811
+      records, memoised (the catalogue is immutable and the summary has no
+      per-request data); callers still get a fresh object. `countCompanyReferences()`
+      no longer materialises the full 1,811-object page to read `.length` — it
+      shares one predicate with the paged search and counts in a single
+      allocation-free pass. (`getRandomCompanyReference` was reviewed but left
+      unchanged: it is admin-preview-only, not a hot path.)
 - [ ] **Stage 4 — Memory-pressure shedding & worker jitter.**
       On the existing watchdog trip, release recoverable caches and (when
       exposed) request a GC; add small jitter to periodic worker intervals to
@@ -127,3 +132,6 @@ behaviour.
   implementations converted to reuse it; graceful shutdown closes it.
   `pnpm check` green; full `pnpm test` green (1993 passed, 42 skipped, 0
   failed).
+- **Stage 3** — catalogue summary computed once (single pass, memoised);
+  counting is allocation-free. `pnpm check` green; full `pnpm test` green
+  (1993 passed, 42 skipped, 0 failed).
